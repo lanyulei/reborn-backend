@@ -1,0 +1,105 @@
+syntax = "proto3";
+
+package conf;
+
+import "google/protobuf/duration.proto";
+
+option go_package = "github.com/lanyulei/monitor/backend/core/internal/conf;conf";
+
+// Bootstrap 是服务启动配置的根结构，对应 configs/*.yaml。
+message Bootstrap {
+  // server 传输层服务器配置。
+  Server server = 1;
+  // data 数据层资源配置。
+  Data data = 2;
+  // security 安全相关配置（密码哈希等）。
+  Security security = 3;
+}
+
+// Server 是 HTTP/gRPC 服务器配置。
+message Server {
+  // HTTP 是 HTTP 服务器配置。
+  message HTTP {
+    // network 监听网络类型，如 tcp；留空使用默认值。
+    string network = 1;
+    // addr 监听地址。
+    string addr = 2;
+    // timeout 请求处理超时。
+    google.protobuf.Duration timeout = 3;
+  }
+  // GRPC 是 gRPC 服务器配置。
+  message GRPC {
+    // network 监听网络类型，如 tcp；留空使用默认值。
+    string network = 1;
+    // addr 监听地址。
+    string addr = 2;
+    // timeout 请求处理超时。
+    google.protobuf.Duration timeout = 3;
+  }
+  // http HTTP 配置。
+  HTTP http = 1;
+  // grpc gRPC 配置。
+  GRPC grpc = 2;
+}
+
+// Data 是数据层资源配置；密钥类字段一律从环境变量注入，禁止明文入库。
+message Data {
+  // Database 是 PostgreSQL 连接池配置（pgx）。
+  message Database {
+    // source 数据源 DSN；生产环境通过环境变量注入。
+    string source = 1;
+    // max_conns 最大连接数；0 使用驱动默认值。
+    int32 max_conns = 2;
+    // min_conns 最小空闲连接数；0 使用驱动默认值。
+    int32 min_conns = 3;
+    // max_conn_idle_time 连接最大空闲时长；未设置使用驱动默认值。
+    google.protobuf.Duration max_conn_idle_time = 4;
+  }
+  // Upload 是本地上传文件的落盘配置。
+  message Upload {
+    // dir 上传文件存储目录（相对或绝对路径），容器/裸机部署均需持久化；
+    // 留空使用默认值 ./uploads。
+    string dir = 1;
+  }
+  // database 数据库配置。
+  Database database = 1;
+  // upload 上传文件配置。
+  Upload upload = 2;
+}
+
+// Security 是安全相关配置。
+message Security {
+  // Authz 是接口授权（Casbin）参数；构造 NewAuthorizer 时校验。
+  message Authz {
+    // policy_ttl 策略内存快照的惰性刷新间隔，也是多实例部署下策略变更的
+    // 收敛上界；1s-10m，典型 30s。绑定/停用/删角色每请求实时读库，不受此值影响。
+    google.protobuf.Duration policy_ttl = 1;
+  }
+  // Password 是密码哈希（Argon2id）参数；构造时校验不得低于 OWASP 下限。
+  message Password {
+    // memory_kb 每次哈希内存开销，单位 KiB，不低于 19456。
+    uint32 memory_kb = 1;
+    // iterations 迭代次数，不低于 2。
+    uint32 iterations = 2;
+    // parallelism 并行度，不低于 1。
+    uint32 parallelism = 3;
+  }
+  // Jwt 是访问令牌（JWT/HS256）签发与校验参数；构造 NewTokenSigner 时校验。
+  message Jwt {
+    // secret HS256 签名密钥，32-512 字节；一律经 KRATOS_SECURITY_JWT_SECRET
+    // 环境变量注入，禁止写入配置文件（缺失时装配阶段快速失败）。
+    string secret = 1;
+    // access_ttl 访问令牌有效期，不低于 1m；典型 15m（短 TTL 缓解登出后的残留窗口）。
+    google.protobuf.Duration access_ttl = 2;
+    // refresh_ttl 刷新令牌有效期，须大于 access_ttl；典型 168h（7d）。
+    google.protobuf.Duration refresh_ttl = 3;
+    // issuer 签发方标识，非空；解析侧强制校验。
+    string issuer = 4;
+  }
+  // password 密码哈希参数。
+  Password password = 1;
+  // jwt 访问令牌签发与校验参数。
+  Jwt jwt = 2;
+  // authz 接口授权参数。
+  Authz authz = 3;
+}

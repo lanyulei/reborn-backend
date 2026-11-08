@@ -1,0 +1,39 @@
+# 服务启动配置；密钥类字段从环境变量注入，禁止在本文件写入明文口令。
+server:
+  http:
+    # 8000 被本地前端 dev server 占用，后端固定走 8010（前端代理指到这里）。
+    addr: 0.0.0.0:8010
+    timeout: 5s
+  grpc:
+    addr: 0.0.0.0:9010
+    timeout: 5s
+data:
+  database:
+    # 本地开发 DSN；生产环境通过环境变量注入（KRATOS_DATA_DATABASE_SOURCE）。
+    source: "host=127.0.0.1 user=postgres password=ekgGZebuZgCmyzv2WW5V dbname=reborn port=5432 sslmode=disable TimeZone=Asia/Shanghai"
+    max_conns: 16
+    min_conns: 2
+    max_conn_idle_time: 1800s
+  upload:
+    # 本地上传文件（系统 logo）落盘目录；需随部署持久化。
+    dir: ./uploads
+security:
+  password:
+    # Argon2id 参数；构造时校验不得低于 OWASP 下限（memory_kb≥19456, iterations≥2, parallelism≥1）。
+    memory_kb: 65536
+    iterations: 3
+    parallelism: 4
+  jwt:
+    # secret 不落配置文件：占位符由 config resolver 从环境变量填充
+    # （env.NewSource("KRATOS") 去掉 KRATOS_ 前缀后注入为 SECURITY_JWT_SECRET 键）：
+    #   export KRATOS_SECURITY_JWT_SECRET=$(openssl rand -hex 32)
+    # 未设置时解析为空串，装配阶段快速失败，不放占位默认值。
+    secret: ${SECURITY_JWT_SECRET}
+    # Duration 采用 protojson 秒格式（如 900s/604800s），不支持 15m 等简写。
+    access_ttl: 900s
+    refresh_ttl: 604800s
+    issuer: monitor
+  authz:
+    # 策略快照惰性刷新 TTL：超出后首个请求触发重载（stale-serve 兜底），
+    # 取值过小会放大数据库读放大，过大则跨实例生效延迟变长；界 1s~10m。
+    policy_ttl: 30s

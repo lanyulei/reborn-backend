@@ -1,0 +1,281 @@
+syntax = "proto3";
+
+package system.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "buf/validate/validate.proto";
+import "system/v1/annotations.proto";
+import "system/v1/role.proto";
+
+option go_package = "github.com/lanyulei/monitor/backend/core/api/system/v1;v1";
+
+// UserService 用户管理服务：用户 CRUD、状态、密码重置与角色绑定。
+service UserService {
+  // CreateUser 创建用户；username/email/phone 在未删除行内唯一。
+  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/system/user"
+      body: "*"
+    };
+    option (system.v1.title) = "创建用户";
+  }
+  // UpdateUser 更新用户资料（可选字段，传哪个改哪个）；username 不可改。
+  rpc UpdateUser(UpdateUserRequest) returns (UpdateUserResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/system/user/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "更新用户资料";
+  }
+  // UpdateUserStatus 变更用户状态（可用/停用/暂停/离职）。
+  rpc UpdateUserStatus(UpdateUserStatusRequest) returns (UpdateUserStatusResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/system/user/{id}/status"
+      body: "*"
+    };
+    option (system.v1.title) = "变更用户状态";
+  }
+  // ResetUserPassword 管理员重置用户密码。
+  rpc ResetUserPassword(ResetUserPasswordRequest) returns (ResetUserPasswordResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/system/user/{id}/password"
+      body: "*"
+    };
+    option (system.v1.title) = "重置用户密码";
+  }
+  // DeleteUser 删除用户（软删），并物理删除其全部角色绑定。
+  rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/system/user/{id}"
+    };
+    option (system.v1.title) = "删除用户";
+  }
+  // GetUser 查询用户详情，绝不返回密码。
+  rpc GetUser(GetUserRequest) returns (GetUserResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/system/user/{id}"
+    };
+    option (system.v1.title) = "查询用户详情";
+  }
+  // ListUsers 分页查询用户，page_size 上限 100。
+  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/system/user"
+    };
+    option (system.v1.title) = "查询用户列表";
+  }
+  // BindUserRoles 全量覆盖用户的角色绑定（先清空再写入，一个用户可绑多个角色）。
+  rpc BindUserRoles(BindUserRolesRequest) returns (BindUserRolesResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/system/user/{id}/role"
+      body: "*"
+    };
+    option (system.v1.title) = "设置用户角色";
+  }
+  // ListUserRoles 查询用户已绑定的角色列表。
+  rpc ListUserRoles(ListUserRolesRequest) returns (ListUserRolesResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/system/user/{id}/role"
+    };
+    option (system.v1.title) = "查询用户角色";
+  }
+}
+
+// User 用户实体（出参，不含密码）。
+message User {
+  // id 用户唯一标识（UUIDv7）。
+  string id = 1;
+  // username 登录名。
+  string username = 2;
+  // nickname 昵称。
+  string nickname = 3;
+  // email 邮箱，未填写为空。
+  string email = 4;
+  // phone 手机号，未填写为空。
+  string phone = 5;
+  // gender 性别：male / female / unknown。
+  string gender = 6;
+  // is_admin 是否超级管理员。
+  bool is_admin = 7;
+  // status 状态：1=可用 2=停用 3=暂停 4=离职。
+  int32 status = 8;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 9;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 10;
+}
+
+// CreateUserRequest 创建用户请求。
+message CreateUserRequest {
+  // username 登录名，3-64 位字母/数字/下划线/中划线。
+  string username = 1 [(buf.validate.field).string = {
+    pattern: "^[a-zA-Z0-9_-]{3,64}$"
+  }];
+  // password 密码：允许 b64$ 前缀的 Base64 编码值（前端统一编码）或明文，
+  // 服务端解码后断言明文 8-64 位；Argon2id 哈希后落库。
+  string password = 2 [(buf.validate.field).string = {
+    min_len: 8
+    max_len: 256
+  }];
+  // nickname 昵称，1-64 位。
+  string nickname = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // email 邮箱，可选，未填写时跳过校验。
+  optional string email = 4 [(buf.validate.field).string = {
+    email: true
+    max_len: 255
+  }];
+  // phone 手机号，可选，未填写时跳过校验。
+  optional string phone = 5 [(buf.validate.field).string = {
+    pattern: "^[0-9+]{5,20}$"
+  }];
+  // gender 性别，必填：male / female / unknown。
+  string gender = 6 [(buf.validate.field).string = {
+    in: ["male", "female", "unknown"]
+  }];
+  // is_admin 是否超级管理员。
+  bool is_admin = 7;
+  // status 初始状态，可选；未指定默认可用（1）。取值：1=可用 2=停用 3=暂停 4=离职。
+  optional int32 status = 8 [(buf.validate.field).int32 = { in: [1, 2, 3, 4] }];
+}
+
+// CreateUserResponse 创建用户响应。
+message CreateUserResponse {
+  // user 已创建的用户实体。
+  User user = 1;
+}
+
+// UpdateUserRequest 更新用户请求，可选字段传哪个改哪个，至少传一个。
+message UpdateUserRequest {
+  option (buf.validate.message).cel = {
+    id: "user.update.non_empty"
+    message: "at least one updatable field must be provided"
+    expression: "has(this.nickname) || has(this.email) || has(this.phone) || has(this.gender) || has(this.is_admin)"
+  };
+
+  // id 用户唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // nickname 新昵称。
+  optional string nickname = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // email 新邮箱。
+  optional string email = 3 [(buf.validate.field).string = {
+    email: true
+    max_len: 255
+  }];
+  // phone 新手机号。
+  optional string phone = 4 [(buf.validate.field).string = {
+    pattern: "^[0-9+]{5,20}$"
+  }];
+  // gender 新性别。
+  optional string gender = 5 [(buf.validate.field).string = {
+    in: ["male", "female", "unknown"]
+  }];
+  // is_admin 是否超级管理员。
+  optional bool is_admin = 6;
+}
+
+// UpdateUserResponse 更新用户响应。
+message UpdateUserResponse {}
+
+// UpdateUserStatusRequest 变更用户状态请求。
+message UpdateUserStatusRequest {
+  // id 用户唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // status 目标状态：1=可用 2=停用 3=暂停 4=离职。
+  int32 status = 2 [(buf.validate.field).int32 = { in: [1, 2, 3, 4] }];
+}
+
+// UpdateUserStatusResponse 变更用户状态响应。
+message UpdateUserStatusResponse {}
+
+// ResetUserPasswordRequest 重置用户密码请求。
+message ResetUserPasswordRequest {
+  // id 用户唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // password 新密码：允许 b64$ 前缀的 Base64 编码值（前端统一编码）或明文，
+  // 服务端解码后断言明文 8-64 位；Argon2id 哈希后落库。
+  string password = 2 [(buf.validate.field).string = {
+    min_len: 8
+    max_len: 256
+  }];
+}
+
+// ResetUserPasswordResponse 重置用户密码响应。
+message ResetUserPasswordResponse {}
+
+// DeleteUserRequest 删除用户请求。
+message DeleteUserRequest {
+  // id 用户唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteUserResponse 删除用户响应。
+message DeleteUserResponse {}
+
+// GetUserRequest 查询用户请求。
+message GetUserRequest {
+  // id 用户唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetUserResponse 查询用户响应。
+message GetUserResponse {
+  // user 用户实体。
+  User user = 1;
+}
+
+// ListUsersRequest 分页查询用户请求。
+message ListUsersRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // keyword 关键字，可选；模糊匹配用户名/昵称/邮箱/手机号。
+  optional string keyword = 3 [(buf.validate.field).string.max_len = 64];
+  // status 状态过滤，可选：1=可用 2=停用 3=暂停 4=离职。
+  optional int32 status = 4 [(buf.validate.field).int32 = { in: [1, 2, 3, 4] }];
+}
+
+// ListUsersResponse 分页查询用户响应。
+message ListUsersResponse {
+  // items 当前页数据。
+  repeated User items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// BindUserRolesRequest 全量覆盖角色绑定请求；role_ids 为空表示清空绑定。
+message BindUserRolesRequest {
+  // id 用户唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // role_ids 目标角色 ID 全集，去重、最多 100 个；空数组清空绑定。
+  repeated string role_ids = 2 [(buf.validate.field).repeated = {
+    unique: true
+    max_items: 100
+    items: { string: { uuid: true } }
+  }];
+}
+
+// BindUserRolesResponse 绑定角色响应。
+message BindUserRolesResponse {}
+
+// ListUserRolesRequest 查询用户角色请求。
+message ListUserRolesRequest {
+  // id 用户唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// ListUserRolesResponse 查询用户角色响应。
+message ListUserRolesResponse {
+  // items 用户已绑定的角色列表。
+  repeated Role items = 1;
+}

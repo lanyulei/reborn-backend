@@ -1,0 +1,105 @@
+syntax = "proto3";
+
+package system.v1;
+
+import "google/api/annotations.proto";
+import "google/api/httpbody.proto";
+import "buf/validate/validate.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/monitor/backend/core/api/system/v1;v1";
+
+// SystemConfigService 系统配置服务：全局展示配置（系统标题/子标题/logo/
+// 页脚文案）的单例读写。GetSystemConfig 匿名可读（登录页需在登录前拉取
+// 标题与 logo），UpdateSystemConfig 需登录且按接口授权判定（仅 admin 或
+// 被授权角色可调）。
+service SystemConfigService {
+  // GetSystemConfig 查询系统配置（未配置过的字段返回空串，前端兜底默认值）。
+  rpc GetSystemConfig(GetSystemConfigRequest) returns (GetSystemConfigResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/system/config"
+    };
+    option (system.v1.title) = "查询系统配置";
+  }
+  // UpdateSystemConfig 全量覆盖系统配置（四个字段同时提交，空串表示清空该项）。
+  rpc UpdateSystemConfig(UpdateSystemConfigRequest) returns (UpdateSystemConfigResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/system/config"
+      body: "*"
+    };
+    option (system.v1.title) = "更新系统配置";
+  }
+  // UploadSystemLogo 上传本地 logo 图片（覆盖式单文件），返回带内容指纹的
+  // URL；前端将其填入配置的 logo 字段随 UpdateSystemConfig 落库。
+  rpc UploadSystemLogo(UploadSystemLogoRequest) returns (UploadSystemLogoResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/system/config/logo"
+      body: "*"
+    };
+    option (system.v1.title) = "上传系统 Logo";
+  }
+  // GetSystemLogo 以原始字节流返回当前 logo 图片（HttpBody），供 <img> 直载；
+  // 匿名可读（登录页使用）。从未上传过返回 LOGO_NOT_FOUND。
+  rpc GetSystemLogo(GetSystemLogoRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {
+      get: "/api/v1/system/config/logo"
+    };
+    option (system.v1.title) = "查看系统 Logo";
+  }
+}
+
+// SystemConfig 系统配置实体（出参）。
+message SystemConfig {
+  // title 系统标题（主布局顶栏 + 浏览器标签页 + 登录页），空串表示未配置。
+  string title = 1;
+  // sub_title 系统子标题（标题旁的补充小字），空串表示未配置。
+  string sub_title = 2;
+  // logo 系统 logo 的图片 URL，空串表示未配置（前端回退默认 logo）。
+  string logo = 3;
+  // footer 页脚文案（版权/描述文字），空串表示未配置。
+  string footer = 4;
+}
+
+// GetSystemConfigRequest 查询系统配置请求（无参数）。
+message GetSystemConfigRequest {}
+
+// GetSystemConfigResponse 查询系统配置响应。
+message GetSystemConfigResponse {
+  // config 当前系统配置；从未配置过时各字段为空串。
+  SystemConfig config = 1;
+}
+
+// UpdateSystemConfigRequest 全量覆盖系统配置请求。
+message UpdateSystemConfigRequest {
+  // title 系统标题，0-50 位，空串表示清空（前端回退默认标题）。
+  string title = 1 [(buf.validate.field).string.max_len = 50];
+  // sub_title 系统子标题，0-100 位。
+  string sub_title = 2 [(buf.validate.field).string.max_len = 100];
+  // logo 系统 logo 图片 URL，0-500 位。
+  string logo = 3 [(buf.validate.field).string.max_len = 500];
+  // footer 页脚文案，0-200 位。
+  string footer = 4 [(buf.validate.field).string.max_len = 200];
+}
+
+// UpdateSystemConfigResponse 全量覆盖系统配置响应。
+message UpdateSystemConfigResponse {}
+
+// UploadSystemLogoRequest 上传 logo 请求：data 为图片二进制（protojson 以
+// base64 字符串传输），mime 限定浏览器可直载的位图/矢量格式。
+message UploadSystemLogoRequest {
+  // data 图片二进制内容，1B-2MB。
+  bytes data = 1 [(buf.validate.field).bytes = { min_len: 1, max_len: 2097152 }];
+  // mime 图片 MIME 类型，白名单五种。
+  string mime = 2 [(buf.validate.field).string = {
+    in: ["image/png", "image/jpeg", "image/svg+xml", "image/webp", "image/x-icon"]
+  }];
+}
+
+// UploadSystemLogoResponse 上传 logo 响应。
+message UploadSystemLogoResponse {
+  // url 带内容指纹的 logo 访问地址（内容变化即变化，天然防缓存）。
+  string url = 1;
+}
+
+// GetSystemLogoRequest 查看 logo 请求（无参数）。
+message GetSystemLogoRequest {}

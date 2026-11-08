@@ -1,0 +1,117 @@
+syntax = "proto3";
+
+package system.v1;
+
+import "google/api/annotations.proto";
+import "buf/validate/validate.proto";
+import "system/v1/role.proto";
+import "system/v1/user.proto";
+
+option go_package = "github.com/lanyulei/monitor/backend/core/api/system/v1;v1";
+
+// AuthService 认证服务：登录签发双令牌、刷新轮换、登出吊销与当前登录者信息。
+// 登录类路由独立于 /api/v1/system/ 域前缀（跨域入口）；除 Login/RefreshToken
+// 外的全部接口（含本服务的 Logout/GetLoginProfile）均要求 Bearer access token。
+service AuthService {
+  // Login 登录：校验用户名密码，签发 access + refresh 双令牌。
+  // 用户不存在与密码错误统一返回 INVALID_CREDENTIALS，不区分口径以防枚举。
+  rpc Login(LoginRequest) returns (LoginResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/login"
+      body: "*"
+    };
+  }
+  // RefreshToken 用刷新令牌换发新双令牌；旧刷新令牌即刻失效（轮换）。
+  rpc RefreshToken(RefreshTokenRequest) returns (RefreshTokenResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/token/refresh"
+      body: "*"
+    };
+  }
+  // Logout 登出：吊销当前用户全部刷新令牌；用户身份取自 Bearer token。
+  rpc Logout(LogoutRequest) returns (LogoutResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/logout"
+      body: "*"
+    };
+  }
+  // GetLoginProfile 查询当前登录用户信息与角色；用户身份取自 Bearer token。
+  rpc GetLoginProfile(GetLoginProfileRequest) returns (GetLoginProfileResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/me"
+    };
+  }
+}
+
+// LoginRequest 登录请求。
+message LoginRequest {
+  // username 登录名，3-64 位字母/数字/下划线/中划线（与创建用户同规则）。
+  string username = 1 [(buf.validate.field).string = {
+    pattern: "^[a-zA-Z0-9_-]{3,64}$"
+  }];
+  // password 密码：允许 b64$ 前缀的 Base64 编码值（前端统一编码）或明文，
+  // 服务端解码后断言明文 8-64 位；以 Argon2id 校验，绝不落日志。
+  string password = 2 [(buf.validate.field).string = {
+    min_len: 8
+    max_len: 256
+  }];
+}
+
+// LoginResponse 登录响应：双令牌 + 用户信息（前端免二次拉取）。
+message LoginResponse {
+  // access_token 短效访问令牌（JWT/HS256），置于 Authorization: Bearer 头使用。
+  string access_token = 1;
+  // expires_in access_token 有效期，单位秒。
+  int64 expires_in = 2;
+  // refresh_token 刷新令牌原文，仅本次响应返回一次；服务端只存 SHA-256 哈希。
+  string refresh_token = 3;
+  // user 登录用户实体（不含密码）。
+  User user = 4;
+}
+
+// RefreshTokenRequest 刷新令牌请求。
+message RefreshTokenRequest {
+  // refresh_token 登录/上次刷新时下发的刷新令牌原文；对客户端不透明，
+  // 边界校验从宽（1-128 位）以保留服务端版本化空间。
+  string refresh_token = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+}
+
+// RefreshTokenResponse 刷新令牌响应：新双令牌（旧刷新令牌已失效）。
+message RefreshTokenResponse {
+  // access_token 新访问令牌（JWT/HS256）。
+  string access_token = 1;
+  // expires_in 新 access_token 有效期，单位秒。
+  int64 expires_in = 2;
+  // refresh_token 新刷新令牌原文，仅本次响应返回一次。
+  string refresh_token = 3;
+}
+
+// LogoutRequest 登出请求（用户身份取自 Bearer token）。
+message LogoutRequest {}
+
+// LogoutResponse 登出响应。
+message LogoutResponse {}
+
+// GetLoginProfileRequest 当前登录者信息请求（用户身份取自 Bearer token）。
+message GetLoginProfileRequest {}
+
+// GetLoginProfileResponse 当前登录者信息响应。
+message GetLoginProfileResponse {
+  // user 当前登录用户实体（不含密码）。
+  User user = 1;
+  // roles 当前登录用户已绑定的角色列表。
+  repeated Role roles = 2;
+  // permissions 当前登录用户全部启用角色（status=1）授权操作 code（32 位小写
+  // md5 hex）的并集，字典序；is_admin 超管返回空——前端按 is_admin 全量放行，
+  // 无需枚举。与 authz 中间件判定同口径，供前端菜单/路由可见性使用。
+  repeated string permissions = 3;
+  // menus 当前登录用户全部启用角色直接授权的菜单（页面）码并集，字典序；
+  // is_admin 超管返回空（前端按 is_admin 放行）。
+  repeated string menus = 4;
+  // elements 当前登录用户全部启用角色直接授权的页面元素码并集，字典序；
+  // is_admin 超管返回空。
+  repeated string elements = 5;
+}

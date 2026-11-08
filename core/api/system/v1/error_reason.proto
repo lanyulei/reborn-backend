@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+package system.v1;
+
+import "errors/errors.proto";
+
+option go_package = "github.com/lanyulei/monitor/backend/core/api/system/v1;v1";
+
+// 合并 OpenAPI 规格的全局元信息（openapiv2_swagger）挂在字母序首个输入文件上，
+// 现为 annotations.proto，勿在本文件重复声明（两处声明会互相覆盖）。
+
+// ErrorReason 是用户管理中心（用户 + 角色 + 认证）的业务错误码枚举，
+// 由 protoc-gen-go-errors 生成带 code 的错误构造器。
+// 枚举值沿用 Kratos 错误码惯例（域前缀而非枚举名前缀），故豁免 ENUM_VALUE_PREFIX。
+enum ErrorReason {
+  option (errors.default_code) = 500;
+  // USER_UNSPECIFIED 未指定的用户错误。
+  USER_UNSPECIFIED = 0;
+  // USER_NOT_FOUND 用户不存在，映射 HTTP 404。
+  USER_NOT_FOUND = 1 [(errors.code) = 404];
+  // USER_EXISTS 用户名已被占用，映射 HTTP 409。
+  USER_EXISTS = 2 [(errors.code) = 409];
+  // USER_EMAIL_EXISTS 邮箱已被占用，映射 HTTP 409。
+  USER_EMAIL_EXISTS = 3 [(errors.code) = 409];
+  // USER_PHONE_EXISTS 手机号已被占用，映射 HTTP 409。
+  USER_PHONE_EXISTS = 4 [(errors.code) = 409];
+  // ROLE_UNSPECIFIED 未指定的角色错误。
+  ROLE_UNSPECIFIED = 5;
+  // ROLE_NOT_FOUND 角色不存在，映射 HTTP 404。
+  ROLE_NOT_FOUND = 6 [(errors.code) = 404];
+  // ROLE_CODE_EXISTS 角色标识已被占用，映射 HTTP 409。
+  ROLE_CODE_EXISTS = 7 [(errors.code) = 409];
+  // AUTH_UNSPECIFIED 未指定的认证错误。
+  AUTH_UNSPECIFIED = 8;
+  // INVALID_CREDENTIALS 用户名或密码错误，映射 HTTP 401；
+  // 用户不存在与密码错误统一此口径，防账号枚举。
+  INVALID_CREDENTIALS = 9 [(errors.code) = 401];
+  // ACCOUNT_DISABLED 凭据正确但账号非可用状态（停用/暂停/离职），映射 HTTP 403；
+  // 仅在凭据或令牌校验通过后触发，不构成枚举通道。
+  ACCOUNT_DISABLED = 10 [(errors.code) = 403];
+  // TOKEN_INVALID 未携带/无效/已被吊销的令牌，映射 HTTP 401。
+  TOKEN_INVALID = 11 [(errors.code) = 401];
+  // TOKEN_EXPIRED 令牌已过期，映射 HTTP 401；客户端可凭有效刷新令牌静默换发。
+  TOKEN_EXPIRED = 12 [(errors.code) = 401];
+  // PERMISSION_DENIED 已认证但无接口权限（非超管且角色未授权），映射 HTTP 403。
+  PERMISSION_DENIED = 13 [(errors.code) = 403];
+  // OPERATION_INVALID 授权请求携带的接口操作名不在可枚举范围内，映射 HTTP 400。
+  OPERATION_INVALID = 14 [(errors.code) = 400];
+  // GRANT_INVALID 授权请求携带的菜单/页面元素码未登记在权限目录内，映射 HTTP 400。
+  GRANT_INVALID = 15 [(errors.code) = 400];
+  // LOGO_NOT_FOUND 系统 logo 从未上传过（未配置语义，非错误状态），映射 HTTP 404。
+  LOGO_NOT_FOUND = 16 [(errors.code) = 404];
+}

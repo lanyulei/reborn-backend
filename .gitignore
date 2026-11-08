@@ -1,0 +1,38 @@
+# ===== Go =====
+# 二进制文件（程序及插件）
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# go test -c 生成的测试二进制
+*.test
+
+# go test 覆盖率输出
+*.out
+
+# Go workspace 文件
+go.work
+go.work.sum
+
+# 构建产物输出目录
+bin/
+dist/
+
+# ===== macOS =====
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+Icon
+
+# ===== VSCode =====
+.vscode/
+*.code-workspace
+.history/
+
+# ===== 文档 =====
+docs/

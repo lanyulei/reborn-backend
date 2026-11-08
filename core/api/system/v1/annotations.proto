@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package system.v1;
+
+import "google/protobuf/descriptor.proto";
+import "protoc-gen-openapiv2/options/annotations.proto";
+
+option go_package = "github.com/lanyulei/monitor/backend/core/api/system/v1;v1";
+
+// 合并 OpenAPI 规格的全局元信息挂在字母序首个输入文件上（allow_merge 的
+// title 取首个文件的 info）；annotations 按字母序先于 auth，故挂在本文件。
+// 注解定义见 third_party/protoc-gen-openapiv2/。
+option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {
+  info: {
+    title: "monitor core API";
+    version: "v1";
+    description: "system 域用户/角色管理 + 认证接口。由 proto + google.api.http 注解自动生成，proto 为唯一事实来源，勿手改。";
+  };
+};
+
+// 接口操作的展示元数据扩展：标注在各 rpc 上，运行时经 MethodOptions 读取
+// （ListOperations 枚举输出）。与 proto 注释不同，option 会嵌入生成代码、
+// 运行时可反射读取。字段号取官方自定义区间 50000-99999，勿与
+// google.api.http(72295728)/openapiv2_operation(1042) 冲突。
+extend google.protobuf.MethodOptions {
+  // title 操作的中文显示名（权限配置界面勾选树展示用）。
+  string title = 51000;
+}

@@ -1,0 +1,314 @@
+syntax = "proto3";
+
+package system.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "buf/validate/validate.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/monitor/backend/core/api/system/v1;v1";
+
+// RoleService 角色管理服务。
+service RoleService {
+  // CreateRole 创建角色；code 在未删除行内唯一且创建后不可改。
+  rpc CreateRole(CreateRoleRequest) returns (CreateRoleResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/system/role"
+      body: "*"
+    };
+    option (system.v1.title) = "创建角色";
+  }
+  // UpdateRole 更新角色（name / status）；code 不可改。
+  rpc UpdateRole(UpdateRoleRequest) returns (UpdateRoleResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/system/role/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "更新角色";
+  }
+  // DeleteRole 删除角色（软删），并物理删除其全部用户绑定。
+  rpc DeleteRole(DeleteRoleRequest) returns (DeleteRoleResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/system/role/{id}"
+    };
+    option (system.v1.title) = "删除角色";
+  }
+  // GetRole 查询角色详情。
+  rpc GetRole(GetRoleRequest) returns (GetRoleResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/system/role/{id}"
+    };
+    option (system.v1.title) = "查询角色详情";
+  }
+  // ListRoles 分页查询角色，page_size 上限 100。
+  rpc ListRoles(ListRolesRequest) returns (ListRolesResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/system/role"
+    };
+    option (system.v1.title) = "查询角色列表";
+  }
+  // GetRolePermissions 查询角色被授权的菜单/页面元素/接口三类直接授权。
+  rpc GetRolePermissions(GetRolePermissionsRequest) returns (GetRolePermissionsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/system/role/{id}/permission"
+    };
+    option (system.v1.title) = "查询角色权限";
+  }
+  // SetRolePermissions 全量覆盖角色直接授权（菜单/页面元素/接口三类）；
+  // 菜单/页面元素仅控制前端可见性，不产生接口授权；接口权限只来自 apis
+  // 直接授权（物化为判定策略）。全空表示清空。
+  rpc SetRolePermissions(SetRolePermissionsRequest) returns (SetRolePermissionsResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/system/role/{id}/permission"
+      body: "*"
+    };
+    option (system.v1.title) = "设置角色权限";
+  }
+  // ListOperations 枚举全部可授权的接口操作（proto full method），供前端勾选树；
+  // 路由避开 /role/{id} 参数段歧义，独立挂在 /api/v1/system/operations。
+  rpc ListOperations(ListOperationsRequest) returns (ListOperationsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/system/operations"
+    };
+    option (system.v1.title) = "查询可授权操作";
+  }
+  // ListPermissionCatalog 查询权限目录（菜单→页面元素→接口的级联结构），
+  // 供授权页渲染；目录为后端内置注册表，随代码版本演进。
+  rpc ListPermissionCatalog(ListPermissionCatalogRequest) returns (ListPermissionCatalogResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/system/permission-catalog"
+    };
+    option (system.v1.title) = "查询权限目录";
+  }
+}
+
+// Role 角色实体（出参）。
+message Role {
+  // id 角色唯一标识（UUIDv7）。
+  string id = 1;
+  // name 角色展示名。
+  string name = 2;
+  // code 角色业务标识，创建后不可改。
+  string code = 3;
+  // status 状态：1=启用 0=禁用。
+  int32 status = 4;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 5;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 6;
+}
+
+// CreateRoleRequest 创建角色请求。
+message CreateRoleRequest {
+  // name 角色展示名，1-64 位。
+  string name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // code 角色业务标识，2-64 位小写字母/数字/下划线，创建后不可改。
+  string code = 2 [(buf.validate.field).string = {
+    pattern: "^[a-z0-9_]{2,64}$"
+  }];
+  // status 初始状态，可选；未指定默认启用（1）。
+  optional int32 status = 3 [(buf.validate.field).int32 = { in: [0, 1] }];
+}
+
+// CreateRoleResponse 创建角色响应。
+message CreateRoleResponse {
+  // role 已创建的角色实体。
+  Role role = 1;
+}
+
+// UpdateRoleRequest 更新角色请求，可选字段传哪个改哪个，至少传一个。
+message UpdateRoleRequest {
+  option (buf.validate.message).cel = {
+    id: "role.update.non_empty"
+    message: "at least one updatable field must be provided"
+    expression: "has(this.name) || has(this.status)"
+  };
+
+  // id 角色唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // name 新角色展示名。
+  optional string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // status 新状态：1=启用 0=禁用。
+  optional int32 status = 3 [(buf.validate.field).int32 = { in: [0, 1] }];
+}
+
+// UpdateRoleResponse 更新角色响应。
+message UpdateRoleResponse {}
+
+// DeleteRoleRequest 删除角色请求。
+message DeleteRoleRequest {
+  // id 角色唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteRoleResponse 删除角色响应。
+message DeleteRoleResponse {}
+
+// GetRoleRequest 查询角色请求。
+message GetRoleRequest {
+  // id 角色唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetRoleResponse 查询角色响应。
+message GetRoleResponse {
+  // role 角色实体。
+  Role role = 1;
+}
+
+// ListRolesRequest 分页查询角色请求。
+message ListRolesRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // keyword 关键字，可选；模糊匹配角色名/标识。
+  optional string keyword = 3 [(buf.validate.field).string.max_len = 64];
+  // status 状态过滤，可选：1=启用 0=禁用。
+  optional int32 status = 4 [(buf.validate.field).int32 = { in: [0, 1] }];
+}
+
+// ListRolesResponse 分页查询角色响应。
+message ListRolesResponse {
+  // items 当前页数据。
+  repeated Role items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// GetRolePermissionsRequest 查询角色权限请求。
+message GetRolePermissionsRequest {
+  // id 角色唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetRolePermissionsResponse 查询角色权限响应：三类直接授权的全量集合，
+// 与 SetRolePermissions 传入值同口径往返（保存时已归一化去重排序）。
+message GetRolePermissionsResponse {
+  // menus 已授权的菜单（页面）码列表，如 system.user；未授权为空。
+  repeated string menus = 1;
+  // elements 已授权的页面元素码列表，如 system.user.create；未授权为空。
+  repeated string elements = 2;
+  // apis 已授权的接口操作 code（32 位小写 md5 hex）直接绑定列表，即角色
+  // 接口授权的全部来源（菜单/元素不级联产生接口授权）。
+  repeated string apis = 3;
+}
+
+// SetRolePermissionsRequest 全量覆盖角色权限请求；三类均传空表示清空授权。
+message SetRolePermissionsRequest {
+  // id 角色唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // menus 授权的菜单（页面）码全量集合，上限 64 条；须登记在权限目录内
+  // （service 层校验）。仅控制前端菜单可见性，不产生接口授权。
+  repeated string menus = 2 [(buf.validate.field).repeated = {
+    max_items: 64
+    items: {
+      string: {
+        min_len: 2
+        max_len: 64
+        pattern: "^[a-z0-9_.]{2,64}$"
+      }
+    }
+  }];
+  // elements 授权的页面元素码全量集合，上限 128 条；须登记在权限目录内。
+  // 仅控制前端页面元素（按钮等）可见性，不产生接口授权。
+  repeated string elements = 3 [(buf.validate.field).repeated = {
+    max_items: 128
+    items: {
+      string: {
+        min_len: 2
+        max_len: 64
+        pattern: "^[a-z0-9_.]{2,64}$"
+      }
+    }
+  }];
+  // apis 接口操作 code（32 位小写 md5 hex，取自 ListOperations）直接授权
+  // 全量集合，上限 256 条；元素须在 ListOperations 枚举范围内（service 层
+  // 校验）。统一用 code 而非 name 定位接口，规避字符集兼容问题。
+  repeated string apis = 4 [(buf.validate.field).repeated = {
+    max_items: 256
+    items: {
+      string: {
+        min_len: 32
+        max_len: 32
+        pattern: "^[a-f0-9]{32}$"
+      }
+    }
+  }];
+}
+
+// SetRolePermissionsResponse 全量覆盖角色权限响应。
+message SetRolePermissionsResponse {}
+
+// ListOperationsRequest 枚举接口操作请求（无参数）。
+message ListOperationsRequest {}
+
+// Operation 可授权接口操作条目。
+message Operation {
+  // name 操作的 proto full method（如 /system.v1.UserService/CreateUser），
+  // 仅供展示与排查；跨系统定位接口一律用 code。
+  string name = 1;
+  // code 操作的稳定标识 = md5(name) 的 32 位小写 hex。授权存储、authz
+  // 判定、前端回传统一使用此值；纯字符集（hex）无兼容问题，name 不变则
+  // code 永不变。
+  string code = 2;
+  // title 中文显示名（取自 rpc 上的 system.v1.title 注解），
+  // 仅供界面展示。
+  string title = 3;
+  // path HTTP 接口地址（取自 rpc 的 google.api.http 注解，如
+  // /api/v1/system/user）；多重绑定（additional_bindings）不拆分，仅取
+  // 主绑定；未标注注解为空串。
+  string path = 4;
+  // method HTTP 接口方法（GET/POST/PUT/DELETE/PATCH；custom 绑定为自定义
+  // 方法名）；未标注注解为空串。
+  string method = 5;
+}
+
+// ListOperationsResponse 枚举接口操作响应。
+message ListOperationsResponse {
+  // operations 全部可授权接口操作，按 name 字典序；前端按 "/" 切分服务分组。
+  repeated Operation operations = 1;
+}
+
+// ListPermissionCatalogRequest 查询权限目录请求（无参数）。
+message ListPermissionCatalogRequest {}
+
+// CatalogElement 目录页面元素：页面内的一个功能标签（如「新建用户」按钮）
+// 及其从属的接口（仅描述页面结构，供授权页展示；授权不级联）。
+message CatalogElement {
+  // code 页面元素码，如 system.user.create（以所属菜单码为前缀）。
+  string code = 1;
+  // name 中文展示名。
+  string name = 2;
+  // operations 该元素绑定的接口操作（含 name/code/title）。
+  repeated Operation operations = 3;
+}
+
+// CatalogMenu 目录菜单（页面）：页面默认接口（进页面即调用，不归属于任何
+// 元素）+ 页面元素及其接口；仅描述页面结构，供授权页展示，授权不级联。
+message CatalogMenu {
+  // code 菜单码，如 system.user（与前端路由对齐）。
+  string code = 1;
+  // name 中文展示名。
+  string name = 2;
+  // default_operations 页面默认接口（如列表查询），随页面授权自动生效。
+  repeated Operation default_operations = 3;
+  // elements 页面内的功能元素清单。
+  repeated CatalogElement elements = 4;
+}
+
+// ListPermissionCatalogResponse 查询权限目录响应。
+message ListPermissionCatalogResponse {
+  // menus 权限目录：菜单→页面元素→接口三级结构，按菜单码字典序。
+  repeated CatalogMenu menus = 1;
+}

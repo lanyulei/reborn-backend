@@ -1,0 +1,18 @@
+# golangci-lint v2 配置：默认规则集（errcheck/govet/ineffassign/staticcheck/unused）
+# 叠加安全与拼写检查；格式化统一走 gofumpt（AGENTS.md §3）。
+version: "2"
+
+formatters:
+  enable:
+    - gofumpt
+
+linters:
+  enable:
+    - gosec
+    - misspell
+    - copyloopvar
+    - nolintlint
+
+issues:
+  # nolint 指令必须写明理由与豁免范围（AGENTS.md §9）。
+  exclusions: []

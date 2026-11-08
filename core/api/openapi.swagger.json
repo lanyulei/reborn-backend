@@ -1,0 +1,1654 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "monitor core API",
+    "description": "system 域用户/角色管理 + 认证接口。由 proto + google.api.http 注解自动生成，proto 为唯一事实来源，勿手改。",
+    "version": "v1"
+  },
+  "tags": [
+    {
+      "name": "RoleService",
+      "description": "RoleService 角色管理服务。"
+    },
+    {
+      "name": "UserService",
+      "description": "UserService 用户管理服务：用户 CRUD、状态、密码重置与角色绑定。"
+    },
+    {
+      "name": "AuthService",
+      "description": "AuthService 认证服务：登录签发双令牌、刷新轮换、登出吊销与当前登录者信息。\n登录类路由独立于 /api/v1/system/ 域前缀（跨域入口）；除 Login/RefreshToken\n外的全部接口（含本服务的 Logout/GetLoginProfile）均要求 Bearer access token。"
+    },
+    {
+      "name": "SystemConfigService",
+      "description": "SystemConfigService 系统配置服务：全局展示配置（系统标题/子标题/logo/\n页脚文案）的单例读写。GetSystemConfig 匿名可读（登录页需在登录前拉取\n标题与 logo），UpdateSystemConfig 需登录且按接口授权判定（仅 admin 或\n被授权角色可调）。"
+    }
+  ],
+  "consumes": [
+    "application/json"
+  ],
+  "produces": [
+    "application/json"
+  ],
+  "paths": {
+    "/api/v1/login": {
+      "post": {
+        "summary": "Login 登录：校验用户名密码，签发 access + refresh 双令牌。\n用户不存在与密码错误统一返回 INVALID_CREDENTIALS，不区分口径以防枚举。",
+        "operationId": "AuthService_Login",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/LoginResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/LoginRequest"
+            }
+          }
+        ],
+        "tags": [
+          "AuthService"
+        ]
+      }
+    },
+    "/api/v1/logout": {
+      "post": {
+        "summary": "Logout 登出：吊销当前用户全部刷新令牌；用户身份取自 Bearer token。",
+        "operationId": "AuthService_Logout",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/LogoutResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/LogoutRequest"
+            }
+          }
+        ],
+        "tags": [
+          "AuthService"
+        ]
+      }
+    },
+    "/api/v1/me": {
+      "get": {
+        "summary": "GetLoginProfile 查询当前登录用户信息与角色；用户身份取自 Bearer token。",
+        "operationId": "AuthService_GetLoginProfile",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetLoginProfileResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "tags": [
+          "AuthService"
+        ]
+      }
+    },
+    "/api/v1/system/config": {
+      "get": {
+        "summary": "GetSystemConfig 查询系统配置（未配置过的字段返回空串，前端兜底默认值）。",
+        "operationId": "SystemConfigService_GetSystemConfig",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetSystemConfigResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "tags": [
+          "SystemConfigService"
+        ]
+      },
+      "put": {
+        "summary": "UpdateSystemConfig 全量覆盖系统配置（四个字段同时提交，空串表示清空该项）。",
+        "operationId": "SystemConfigService_UpdateSystemConfig",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UpdateSystemConfigResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UpdateSystemConfigRequest"
+            }
+          }
+        ],
+        "tags": [
+          "SystemConfigService"
+        ]
+      }
+    },
+    "/api/v1/system/config/logo": {
+      "get": {
+        "summary": "GetSystemLogo 以原始字节流返回当前 logo 图片（HttpBody），供 \u003cimg\u003e 直载；\n匿名可读（登录页使用）。从未上传过返回 LOGO_NOT_FOUND。",
+        "operationId": "SystemConfigService_GetSystemLogo",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/HttpBody"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "tags": [
+          "SystemConfigService"
+        ]
+      },
+      "post": {
+        "summary": "UploadSystemLogo 上传本地 logo 图片（覆盖式单文件），返回带内容指纹的\nURL；前端将其填入配置的 logo 字段随 UpdateSystemConfig 落库。",
+        "operationId": "SystemConfigService_UploadSystemLogo",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UploadSystemLogoResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UploadSystemLogoRequest"
+            }
+          }
+        ],
+        "tags": [
+          "SystemConfigService"
+        ]
+      }
+    },
+    "/api/v1/system/operations": {
+      "get": {
+        "summary": "ListOperations 枚举全部可授权的接口操作（proto full method），供前端勾选树；\n路由避开 /role/{id} 参数段歧义，独立挂在 /api/v1/system/operations。",
+        "operationId": "RoleService_ListOperations",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListOperationsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "tags": [
+          "RoleService"
+        ]
+      }
+    },
+    "/api/v1/system/permission-catalog": {
+      "get": {
+        "summary": "ListPermissionCatalog 查询权限目录（菜单→页面元素→接口的级联结构），\n供授权页渲染；目录为后端内置注册表，随代码版本演进。",
+        "operationId": "RoleService_ListPermissionCatalog",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListPermissionCatalogResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "tags": [
+          "RoleService"
+        ]
+      }
+    },
+    "/api/v1/system/role": {
+      "get": {
+        "summary": "ListRoles 分页查询角色，page_size 上限 100。",
+        "operationId": "RoleService_ListRoles",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListRolesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "page",
+            "description": "page 页码，从 1 开始。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "page_size 每页数量，1-100。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "keyword",
+            "description": "keyword 关键字，可选；模糊匹配角色名/标识。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "status",
+            "description": "status 状态过滤，可选：1=启用 0=禁用。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "RoleService"
+        ]
+      },
+      "post": {
+        "summary": "CreateRole 创建角色；code 在未删除行内唯一且创建后不可改。",
+        "operationId": "RoleService_CreateRole",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/CreateRoleResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/CreateRoleRequest"
+            }
+          }
+        ],
+        "tags": [
+          "RoleService"
+        ]
+      }
+    },
+    "/api/v1/system/role/{id}": {
+      "get": {
+        "summary": "GetRole 查询角色详情。",
+        "operationId": "RoleService_GetRole",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetRoleResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 角色唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "RoleService"
+        ]
+      },
+      "delete": {
+        "summary": "DeleteRole 删除角色（软删），并物理删除其全部用户绑定。",
+        "operationId": "RoleService_DeleteRole",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/DeleteRoleResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 角色唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "RoleService"
+        ]
+      },
+      "put": {
+        "summary": "UpdateRole 更新角色（name / status）；code 不可改。",
+        "operationId": "RoleService_UpdateRole",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UpdateRoleResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 角色唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UpdateRoleBody"
+            }
+          }
+        ],
+        "tags": [
+          "RoleService"
+        ]
+      }
+    },
+    "/api/v1/system/role/{id}/permission": {
+      "get": {
+        "summary": "GetRolePermissions 查询角色被授权的菜单/页面元素/接口三类直接授权。",
+        "operationId": "RoleService_GetRolePermissions",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetRolePermissionsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 角色唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "RoleService"
+        ]
+      },
+      "put": {
+        "summary": "SetRolePermissions 全量覆盖角色直接授权（菜单/页面元素/接口三类）；\n菜单/页面元素仅控制前端可见性，不产生接口授权；接口权限只来自 apis\n直接授权（物化为判定策略）。全空表示清空。",
+        "operationId": "RoleService_SetRolePermissions",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/SetRolePermissionsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 角色唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/SetRolePermissionsBody"
+            }
+          }
+        ],
+        "tags": [
+          "RoleService"
+        ]
+      }
+    },
+    "/api/v1/system/user": {
+      "get": {
+        "summary": "ListUsers 分页查询用户，page_size 上限 100。",
+        "operationId": "UserService_ListUsers",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListUsersResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "page",
+            "description": "page 页码，从 1 开始。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "page_size 每页数量，1-100。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "keyword",
+            "description": "keyword 关键字，可选；模糊匹配用户名/昵称/邮箱/手机号。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "status",
+            "description": "status 状态过滤，可选：1=可用 2=停用 3=暂停 4=离职。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "UserService"
+        ]
+      },
+      "post": {
+        "summary": "CreateUser 创建用户；username/email/phone 在未删除行内唯一。",
+        "operationId": "UserService_CreateUser",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/CreateUserResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/CreateUserRequest"
+            }
+          }
+        ],
+        "tags": [
+          "UserService"
+        ]
+      }
+    },
+    "/api/v1/system/user/{id}": {
+      "get": {
+        "summary": "GetUser 查询用户详情，绝不返回密码。",
+        "operationId": "UserService_GetUser",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetUserResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 用户唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "UserService"
+        ]
+      },
+      "delete": {
+        "summary": "DeleteUser 删除用户（软删），并物理删除其全部角色绑定。",
+        "operationId": "UserService_DeleteUser",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/DeleteUserResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 用户唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "UserService"
+        ]
+      },
+      "put": {
+        "summary": "UpdateUser 更新用户资料（可选字段，传哪个改哪个）；username 不可改。",
+        "operationId": "UserService_UpdateUser",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UpdateUserResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 用户唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UpdateUserBody"
+            }
+          }
+        ],
+        "tags": [
+          "UserService"
+        ]
+      }
+    },
+    "/api/v1/system/user/{id}/password": {
+      "post": {
+        "summary": "ResetUserPassword 管理员重置用户密码。",
+        "operationId": "UserService_ResetUserPassword",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ResetUserPasswordResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 用户唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/ResetUserPasswordBody"
+            }
+          }
+        ],
+        "tags": [
+          "UserService"
+        ]
+      }
+    },
+    "/api/v1/system/user/{id}/role": {
+      "get": {
+        "summary": "ListUserRoles 查询用户已绑定的角色列表。",
+        "operationId": "UserService_ListUserRoles",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListUserRolesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 用户唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "UserService"
+        ]
+      },
+      "put": {
+        "summary": "BindUserRoles 全量覆盖用户的角色绑定（先清空再写入，一个用户可绑多个角色）。",
+        "operationId": "UserService_BindUserRoles",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/BindUserRolesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 用户唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/BindUserRolesBody"
+            }
+          }
+        ],
+        "tags": [
+          "UserService"
+        ]
+      }
+    },
+    "/api/v1/system/user/{id}/status": {
+      "post": {
+        "summary": "UpdateUserStatus 变更用户状态（可用/停用/暂停/离职）。",
+        "operationId": "UserService_UpdateUserStatus",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UpdateUserStatusResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 用户唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UpdateUserStatusBody"
+            }
+          }
+        ],
+        "tags": [
+          "UserService"
+        ]
+      }
+    },
+    "/api/v1/token/refresh": {
+      "post": {
+        "summary": "RefreshToken 用刷新令牌换发新双令牌；旧刷新令牌即刻失效（轮换）。",
+        "operationId": "AuthService_RefreshToken",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/RefreshTokenResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/RefreshTokenRequest"
+            }
+          }
+        ],
+        "tags": [
+          "AuthService"
+        ]
+      }
+    }
+  },
+  "definitions": {
+    "Any": {
+      "type": "object",
+      "properties": {
+        "@type": {
+          "type": "string",
+          "description": "Identifies the type of the serialized Protobuf message with a URI reference\nconsisting of a prefix ending in a slash and the fully-qualified type name.\n\nExample: type.googleapis.com/google.protobuf.StringValue\n\nThis string must contain at least one `/` character, and the content after\nthe last `/` must be the fully-qualified name of the type in canonical\nform, without a leading dot. Do not write a scheme on these URI references\nso that clients do not attempt to contact them.\n\nThe prefix is arbitrary and Protobuf implementations are expected to\nsimply strip off everything up to and including the last `/` to identify\nthe type. `type.googleapis.com/` is a common default prefix that some\nlegacy implementations require. This prefix does not indicate the origin of\nthe type, and URIs containing it are not expected to respond to any\nrequests.\n\nAll type URL strings must be legal URI references with the additional\nrestriction (for the text format) that the content of the reference\nmust consist only of alphanumeric characters, percent-encoded escapes, and\ncharacters in the following set (not including the outer backticks):\n`/-.~_!$\u0026()*+,;=`. Despite our allowing percent encodings, implementations\nshould not unescape them to prevent confusion with existing parsers. For\nexample, `type.googleapis.com%2FFoo` should be rejected.\n\nIn the original design of `Any`, the possibility of launching a type\nresolution service at these type URLs was considered but Protobuf never\nimplemented one and considers contacting these URLs to be problematic and\na potential security issue. Do not attempt to contact type URLs."
+        }
+      },
+      "additionalProperties": true,
+      "description": "`Any` contains an arbitrary serialized protocol buffer message along with a\nURL that describes the type of the serialized message.\n\nIn its binary encoding, an `Any` is an ordinary message; but in other wire\nforms like JSON, it has a special encoding. The format of the type URL is\ndescribed on the `type_url` field.\n\nProtobuf APIs provide utilities to interact with `Any` values:\n\n- A 'pack' operation accepts a message and constructs a generic `Any` wrapper\n  around it.\n- An 'unpack' operation reads the content of an `Any` message, either into an\n  existing message or a new one. Unpack operations must check the type of the\n  value they unpack against the declared `type_url`.\n- An 'is' operation decides whether an `Any` contains a message of the given\n  type, i.e. whether it can 'unpack' that type.\n\nThe JSON format representation of an `Any` follows one of these cases:\n\n- For types without special-cased JSON encodings, the JSON format\n  representation of the `Any` is the same as that of the message, with an\n  additional `@type` field which contains the type URL.\n- For types with special-cased JSON encodings (typically called 'well-known'\n  types, listed in https://protobuf.dev/programming-guides/json/#any), the\n  JSON format representation has a key `@type` which contains the type URL\n  and a key `value` which contains the JSON-serialized value.\n\nThe text format representation of an `Any` is like a message with one field\nwhose name is the type URL in brackets. For example, an `Any` containing a\n`foo.Bar` message may be written `[type.googleapis.com/foo.Bar] { a: 2 }`."
+    },
+    "BindUserRolesBody": {
+      "type": "object",
+      "properties": {
+        "roleIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "role_ids 目标角色 ID 全集，去重、最多 100 个；空数组清空绑定。"
+        }
+      },
+      "title": "BindUserRolesRequest 全量覆盖角色绑定请求；role_ids 为空表示清空绑定。"
+    },
+    "BindUserRolesResponse": {
+      "type": "object",
+      "title": "BindUserRolesResponse 绑定角色响应。"
+    },
+    "CatalogElement": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "title": "code 页面元素码，如 system.user.create（以所属菜单码为前缀）。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 中文展示名。"
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1.Operation"
+          },
+          "title": "operations 该元素绑定的接口操作（含 name/code/title）。"
+        }
+      },
+      "title": "CatalogElement 目录页面元素：页面内的一个功能标签（如「新建用户」按钮）\n及其从属的接口（仅描述页面结构，供授权页展示；授权不级联）。"
+    },
+    "CatalogMenu": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "title": "code 菜单码，如 system.user（与前端路由对齐）。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 中文展示名。"
+        },
+        "defaultOperations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1.Operation"
+          },
+          "title": "default_operations 页面默认接口（如列表查询），随页面授权自动生效。"
+        },
+        "elements": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/CatalogElement"
+          },
+          "title": "elements 页面内的功能元素清单。"
+        }
+      },
+      "title": "CatalogMenu 目录菜单（页面）：页面默认接口（进页面即调用，不归属于任何\n元素）+ 页面元素及其接口；仅描述页面结构，供授权页展示，授权不级联。"
+    },
+    "CreateRoleRequest": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "name 角色展示名，1-64 位。"
+        },
+        "code": {
+          "type": "string",
+          "title": "code 角色业务标识，2-64 位小写字母/数字/下划线，创建后不可改。"
+        },
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 初始状态，可选；未指定默认启用（1）。"
+        }
+      },
+      "title": "CreateRoleRequest 创建角色请求。"
+    },
+    "CreateRoleResponse": {
+      "type": "object",
+      "properties": {
+        "role": {
+          "$ref": "#/definitions/Role",
+          "title": "role 已创建的角色实体。"
+        }
+      },
+      "title": "CreateRoleResponse 创建角色响应。"
+    },
+    "CreateUserRequest": {
+      "type": "object",
+      "properties": {
+        "username": {
+          "type": "string",
+          "title": "username 登录名，3-64 位字母/数字/下划线/中划线。"
+        },
+        "password": {
+          "type": "string",
+          "title": "password 密码：允许 b64$ 前缀的 Base64 编码值（前端统一编码）或明文，\n服务端解码后断言明文 8-64 位；Argon2id 哈希后落库。"
+        },
+        "nickname": {
+          "type": "string",
+          "title": "nickname 昵称，1-64 位。"
+        },
+        "email": {
+          "type": "string",
+          "title": "email 邮箱，可选，未填写时跳过校验。"
+        },
+        "phone": {
+          "type": "string",
+          "title": "phone 手机号，可选，未填写时跳过校验。"
+        },
+        "gender": {
+          "type": "string",
+          "title": "gender 性别，必填：male / female / unknown。"
+        },
+        "isAdmin": {
+          "type": "boolean",
+          "title": "is_admin 是否超级管理员。"
+        },
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 初始状态，可选；未指定默认可用（1）。取值：1=可用 2=停用 3=暂停 4=离职。"
+        }
+      },
+      "title": "CreateUserRequest 创建用户请求。"
+    },
+    "CreateUserResponse": {
+      "type": "object",
+      "properties": {
+        "user": {
+          "$ref": "#/definitions/User",
+          "title": "user 已创建的用户实体。"
+        }
+      },
+      "title": "CreateUserResponse 创建用户响应。"
+    },
+    "DeleteRoleResponse": {
+      "type": "object",
+      "title": "DeleteRoleResponse 删除角色响应。"
+    },
+    "DeleteUserResponse": {
+      "type": "object",
+      "title": "DeleteUserResponse 删除用户响应。"
+    },
+    "GetLoginProfileResponse": {
+      "type": "object",
+      "properties": {
+        "user": {
+          "$ref": "#/definitions/User",
+          "title": "user 当前登录用户实体（不含密码）。"
+        },
+        "roles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/Role"
+          },
+          "title": "roles 当前登录用户已绑定的角色列表。"
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "permissions 当前登录用户全部启用角色（status=1）授权操作 code（32 位小写\nmd5 hex）的并集，字典序；is_admin 超管返回空——前端按 is_admin 全量放行，\n无需枚举。与 authz 中间件判定同口径，供前端菜单/路由可见性使用。"
+        },
+        "menus": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "menus 当前登录用户全部启用角色直接授权的菜单（页面）码并集，字典序；\nis_admin 超管返回空（前端按 is_admin 放行）。"
+        },
+        "elements": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "elements 当前登录用户全部启用角色直接授权的页面元素码并集，字典序；\nis_admin 超管返回空。"
+        }
+      },
+      "title": "GetLoginProfileResponse 当前登录者信息响应。"
+    },
+    "GetRolePermissionsResponse": {
+      "type": "object",
+      "properties": {
+        "menus": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "menus 已授权的菜单（页面）码列表，如 system.user；未授权为空。"
+        },
+        "elements": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "elements 已授权的页面元素码列表，如 system.user.create；未授权为空。"
+        },
+        "apis": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "apis 已授权的接口操作 code（32 位小写 md5 hex）直接绑定列表，即角色\n接口授权的全部来源（菜单/元素不级联产生接口授权）。"
+        }
+      },
+      "title": "GetRolePermissionsResponse 查询角色权限响应：三类直接授权的全量集合，\n与 SetRolePermissions 传入值同口径往返（保存时已归一化去重排序）。"
+    },
+    "GetRoleResponse": {
+      "type": "object",
+      "properties": {
+        "role": {
+          "$ref": "#/definitions/Role",
+          "title": "role 角色实体。"
+        }
+      },
+      "title": "GetRoleResponse 查询角色响应。"
+    },
+    "GetSystemConfigResponse": {
+      "type": "object",
+      "properties": {
+        "config": {
+          "$ref": "#/definitions/SystemConfig",
+          "title": "config 当前系统配置；从未配置过时各字段为空串。"
+        }
+      },
+      "title": "GetSystemConfigResponse 查询系统配置响应。"
+    },
+    "GetUserResponse": {
+      "type": "object",
+      "properties": {
+        "user": {
+          "$ref": "#/definitions/User",
+          "title": "user 用户实体。"
+        }
+      },
+      "title": "GetUserResponse 查询用户响应。"
+    },
+    "HttpBody": {
+      "type": "object",
+      "properties": {
+        "contentType": {
+          "type": "string",
+          "description": "The HTTP Content-Type header value specifying the content type of the body."
+        },
+        "data": {
+          "type": "string",
+          "format": "byte",
+          "description": "The HTTP request/response body as raw binary."
+        },
+        "extensions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/Any"
+          },
+          "description": "Application specific response metadata. Must be set in the first response\nfor streaming APIs."
+        }
+      },
+      "description": "Message that represents an arbitrary HTTP body. It should only be used for\npayload formats that can't be represented as JSON, such as raw binary or\nan HTML page.\n\n\nThis message can be used both in streaming and non-streaming API methods in\nthe request as well as the response.\n\nIt can be used as a top-level request field, which is convenient if one\nwants to extract parameters from either the URL or HTTP template into the\nrequest fields and also want access to the raw HTTP body.\n\nExample:\n\n    message GetResourceRequest {\n      // A unique request id.\n      string request_id = 1;\n\n      // The raw HTTP body is bound to this field.\n      google.api.HttpBody http_body = 2;\n\n    }\n\n    service ResourceService {\n      rpc GetResource(GetResourceRequest)\n        returns (google.api.HttpBody);\n      rpc UpdateResource(google.api.HttpBody)\n        returns (google.protobuf.Empty);\n\n    }\n\nExample with streaming methods:\n\n    service CaldavService {\n      rpc GetCalendar(stream google.api.HttpBody)\n        returns (stream google.api.HttpBody);\n      rpc UpdateCalendar(stream google.api.HttpBody)\n        returns (stream google.api.HttpBody);\n\n    }\n\nUse of this type only changes how the request and response bodies are\nhandled, all other features will continue to work unchanged."
+    },
+    "ListOperationsResponse": {
+      "type": "object",
+      "properties": {
+        "operations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1.Operation"
+          },
+          "title": "operations 全部可授权接口操作，按 name 字典序；前端按 \"/\" 切分服务分组。"
+        }
+      },
+      "title": "ListOperationsResponse 枚举接口操作响应。"
+    },
+    "ListPermissionCatalogResponse": {
+      "type": "object",
+      "properties": {
+        "menus": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/CatalogMenu"
+          },
+          "title": "menus 权限目录：菜单→页面元素→接口三级结构，按菜单码字典序。"
+        }
+      },
+      "title": "ListPermissionCatalogResponse 查询权限目录响应。"
+    },
+    "ListRolesResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/Role"
+          },
+          "title": "items 当前页数据。"
+        },
+        "total": {
+          "type": "string",
+          "format": "int64",
+          "title": "total 总数。"
+        }
+      },
+      "title": "ListRolesResponse 分页查询角色响应。"
+    },
+    "ListUserRolesResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/Role"
+          },
+          "title": "items 用户已绑定的角色列表。"
+        }
+      },
+      "title": "ListUserRolesResponse 查询用户角色响应。"
+    },
+    "ListUsersResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/User"
+          },
+          "title": "items 当前页数据。"
+        },
+        "total": {
+          "type": "string",
+          "format": "int64",
+          "title": "total 总数。"
+        }
+      },
+      "title": "ListUsersResponse 分页查询用户响应。"
+    },
+    "LoginRequest": {
+      "type": "object",
+      "properties": {
+        "username": {
+          "type": "string",
+          "title": "username 登录名，3-64 位字母/数字/下划线/中划线（与创建用户同规则）。"
+        },
+        "password": {
+          "type": "string",
+          "title": "password 密码：允许 b64$ 前缀的 Base64 编码值（前端统一编码）或明文，\n服务端解码后断言明文 8-64 位；以 Argon2id 校验，绝不落日志。"
+        }
+      },
+      "title": "LoginRequest 登录请求。"
+    },
+    "LoginResponse": {
+      "type": "object",
+      "properties": {
+        "accessToken": {
+          "type": "string",
+          "title": "access_token 短效访问令牌（JWT/HS256），置于 Authorization: Bearer 头使用。"
+        },
+        "expiresIn": {
+          "type": "string",
+          "format": "int64",
+          "title": "expires_in access_token 有效期，单位秒。"
+        },
+        "refreshToken": {
+          "type": "string",
+          "title": "refresh_token 刷新令牌原文，仅本次响应返回一次；服务端只存 SHA-256 哈希。"
+        },
+        "user": {
+          "$ref": "#/definitions/User",
+          "title": "user 登录用户实体（不含密码）。"
+        }
+      },
+      "title": "LoginResponse 登录响应：双令牌 + 用户信息（前端免二次拉取）。"
+    },
+    "LogoutRequest": {
+      "type": "object",
+      "title": "LogoutRequest 登出请求（用户身份取自 Bearer token）。"
+    },
+    "LogoutResponse": {
+      "type": "object",
+      "title": "LogoutResponse 登出响应。"
+    },
+    "RefreshTokenRequest": {
+      "type": "object",
+      "properties": {
+        "refreshToken": {
+          "type": "string",
+          "title": "refresh_token 登录/上次刷新时下发的刷新令牌原文；对客户端不透明，\n边界校验从宽（1-128 位）以保留服务端版本化空间。"
+        }
+      },
+      "title": "RefreshTokenRequest 刷新令牌请求。"
+    },
+    "RefreshTokenResponse": {
+      "type": "object",
+      "properties": {
+        "accessToken": {
+          "type": "string",
+          "title": "access_token 新访问令牌（JWT/HS256）。"
+        },
+        "expiresIn": {
+          "type": "string",
+          "format": "int64",
+          "title": "expires_in 新 access_token 有效期，单位秒。"
+        },
+        "refreshToken": {
+          "type": "string",
+          "title": "refresh_token 新刷新令牌原文，仅本次响应返回一次。"
+        }
+      },
+      "title": "RefreshTokenResponse 刷新令牌响应：新双令牌（旧刷新令牌已失效）。"
+    },
+    "ResetUserPasswordBody": {
+      "type": "object",
+      "properties": {
+        "password": {
+          "type": "string",
+          "title": "password 新密码：允许 b64$ 前缀的 Base64 编码值（前端统一编码）或明文，\n服务端解码后断言明文 8-64 位；Argon2id 哈希后落库。"
+        }
+      },
+      "title": "ResetUserPasswordRequest 重置用户密码请求。"
+    },
+    "ResetUserPasswordResponse": {
+      "type": "object",
+      "title": "ResetUserPasswordResponse 重置用户密码响应。"
+    },
+    "Role": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 角色唯一标识（UUIDv7）。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 角色展示名。"
+        },
+        "code": {
+          "type": "string",
+          "title": "code 角色业务标识，创建后不可改。"
+        },
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 状态：1=启用 0=禁用。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 创建时间。"
+        },
+        "updateTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "update_time 更新时间。"
+        }
+      },
+      "title": "Role 角色实体（出参）。"
+    },
+    "SetRolePermissionsBody": {
+      "type": "object",
+      "properties": {
+        "menus": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "menus 授权的菜单（页面）码全量集合，上限 64 条；须登记在权限目录内\n（service 层校验）。仅控制前端菜单可见性，不产生接口授权。"
+        },
+        "elements": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "elements 授权的页面元素码全量集合，上限 128 条；须登记在权限目录内。\n仅控制前端页面元素（按钮等）可见性，不产生接口授权。"
+        },
+        "apis": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "apis 接口操作 code（32 位小写 md5 hex，取自 ListOperations）直接授权\n全量集合，上限 256 条；元素须在 ListOperations 枚举范围内（service 层\n校验）。统一用 code 而非 name 定位接口，规避字符集兼容问题。"
+        }
+      },
+      "title": "SetRolePermissionsRequest 全量覆盖角色权限请求；三类均传空表示清空授权。"
+    },
+    "SetRolePermissionsResponse": {
+      "type": "object",
+      "title": "SetRolePermissionsResponse 全量覆盖角色权限响应。"
+    },
+    "Status": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string"
+        },
+        "details": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/Any"
+          }
+        }
+      }
+    },
+    "SystemConfig": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "title": "title 系统标题（主布局顶栏 + 浏览器标签页 + 登录页），空串表示未配置。"
+        },
+        "subTitle": {
+          "type": "string",
+          "title": "sub_title 系统子标题（标题旁的补充小字），空串表示未配置。"
+        },
+        "logo": {
+          "type": "string",
+          "title": "logo 系统 logo 的图片 URL，空串表示未配置（前端回退默认 logo）。"
+        },
+        "footer": {
+          "type": "string",
+          "title": "footer 页脚文案（版权/描述文字），空串表示未配置。"
+        }
+      },
+      "title": "SystemConfig 系统配置实体（出参）。"
+    },
+    "UpdateRoleBody": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "name 新角色展示名。"
+        },
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 新状态：1=启用 0=禁用。"
+        }
+      },
+      "title": "UpdateRoleRequest 更新角色请求，可选字段传哪个改哪个，至少传一个。"
+    },
+    "UpdateRoleResponse": {
+      "type": "object",
+      "title": "UpdateRoleResponse 更新角色响应。"
+    },
+    "UpdateSystemConfigRequest": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "title": "title 系统标题，0-50 位，空串表示清空（前端回退默认标题）。"
+        },
+        "subTitle": {
+          "type": "string",
+          "title": "sub_title 系统子标题，0-100 位。"
+        },
+        "logo": {
+          "type": "string",
+          "title": "logo 系统 logo 图片 URL，0-500 位。"
+        },
+        "footer": {
+          "type": "string",
+          "title": "footer 页脚文案，0-200 位。"
+        }
+      },
+      "title": "UpdateSystemConfigRequest 全量覆盖系统配置请求。"
+    },
+    "UpdateSystemConfigResponse": {
+      "type": "object",
+      "title": "UpdateSystemConfigResponse 全量覆盖系统配置响应。"
+    },
+    "UpdateUserBody": {
+      "type": "object",
+      "properties": {
+        "nickname": {
+          "type": "string",
+          "title": "nickname 新昵称。"
+        },
+        "email": {
+          "type": "string",
+          "title": "email 新邮箱。"
+        },
+        "phone": {
+          "type": "string",
+          "title": "phone 新手机号。"
+        },
+        "gender": {
+          "type": "string",
+          "title": "gender 新性别。"
+        },
+        "isAdmin": {
+          "type": "boolean",
+          "title": "is_admin 是否超级管理员。"
+        }
+      },
+      "title": "UpdateUserRequest 更新用户请求，可选字段传哪个改哪个，至少传一个。"
+    },
+    "UpdateUserResponse": {
+      "type": "object",
+      "title": "UpdateUserResponse 更新用户响应。"
+    },
+    "UpdateUserStatusBody": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 目标状态：1=可用 2=停用 3=暂停 4=离职。"
+        }
+      },
+      "title": "UpdateUserStatusRequest 变更用户状态请求。"
+    },
+    "UpdateUserStatusResponse": {
+      "type": "object",
+      "title": "UpdateUserStatusResponse 变更用户状态响应。"
+    },
+    "UploadSystemLogoRequest": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "string",
+          "format": "byte",
+          "title": "data 图片二进制内容，1B-2MB。"
+        },
+        "mime": {
+          "type": "string",
+          "title": "mime 图片 MIME 类型，白名单五种。"
+        }
+      },
+      "title": "UploadSystemLogoRequest 上传 logo 请求：data 为图片二进制（protojson 以\nbase64 字符串传输），mime 限定浏览器可直载的位图/矢量格式。"
+    },
+    "UploadSystemLogoResponse": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "title": "url 带内容指纹的 logo 访问地址（内容变化即变化，天然防缓存）。"
+        }
+      },
+      "title": "UploadSystemLogoResponse 上传 logo 响应。"
+    },
+    "User": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 用户唯一标识（UUIDv7）。"
+        },
+        "username": {
+          "type": "string",
+          "title": "username 登录名。"
+        },
+        "nickname": {
+          "type": "string",
+          "title": "nickname 昵称。"
+        },
+        "email": {
+          "type": "string",
+          "title": "email 邮箱，未填写为空。"
+        },
+        "phone": {
+          "type": "string",
+          "title": "phone 手机号，未填写为空。"
+        },
+        "gender": {
+          "type": "string",
+          "title": "gender 性别：male / female / unknown。"
+        },
+        "isAdmin": {
+          "type": "boolean",
+          "title": "is_admin 是否超级管理员。"
+        },
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 状态：1=可用 2=停用 3=暂停 4=离职。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 创建时间。"
+        },
+        "updateTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "update_time 更新时间。"
+        }
+      },
+      "title": "User 用户实体（出参，不含密码）。"
+    },
+    "v1.Operation": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "name 操作的 proto full method（如 /system.v1.UserService/CreateUser），\n仅供展示与排查；跨系统定位接口一律用 code。"
+        },
+        "code": {
+          "type": "string",
+          "title": "code 操作的稳定标识 = md5(name) 的 32 位小写 hex。授权存储、authz\n判定、前端回传统一使用此值；纯字符集（hex）无兼容问题，name 不变则\ncode 永不变。"
+        },
+        "title": {
+          "type": "string",
+          "title": "title 中文显示名（取自 rpc 上的 system.v1.title 注解），\n仅供界面展示。"
+        },
+        "path": {
+          "type": "string",
+          "title": "path HTTP 接口地址（取自 rpc 的 google.api.http 注解，如\n/api/v1/system/user）；多重绑定（additional_bindings）不拆分，仅取\n主绑定；未标注注解为空串。"
+        },
+        "method": {
+          "type": "string",
+          "title": "method HTTP 接口方法（GET/POST/PUT/DELETE/PATCH；custom 绑定为自定义\n方法名）；未标注注解为空串。"
+        }
+      },
+      "title": "Operation 可授权接口操作条目。"
+    }
+  }
+}

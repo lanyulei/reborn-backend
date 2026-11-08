@@ -1,0 +1,28 @@
+version: v2
+inputs:
+  - directory: api
+plugins:
+  - local: ["go", "tool", "protoc-gen-go"]
+    out: api
+    opt: paths=source_relative
+  - local: ["go", "tool", "protoc-gen-go-grpc"]
+    out: api
+    opt: paths=source_relative
+  - local: ["go", "tool", "protoc-gen-go-http"]
+    out: api
+    opt: paths=source_relative
+  - local: ["go", "tool", "protoc-gen-go-errors"]
+    out: api
+    opt: paths=source_relative
+  # OpenAPI 2.0（Swagger）规格：proto + google.api.http 注解为唯一事实来源，
+  # 供 Apifox / Swagger UI 导入；protovalidate 规则不进规格（校验以 proto 为准）。
+  # strategy:all + allow_merge：全部 proto 合并产出单一规格文件（跨文件定义如
+  # Role 只出现一次；error_reason 等无 service 文件不再产生独立空壳）。
+  # 合并文件的 title/version 在 error_reason.proto 的 openapiv2_swagger 文件级注解里。
+  - local: ["go", "tool", "protoc-gen-openapiv2"]
+    out: api
+    strategy: all
+    opt:
+      - openapi_naming_strategy=simple
+      - allow_merge=true
+      - merge_file_name=openapi
