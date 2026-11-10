@@ -7,7 +7,7 @@ import "buf/validate/validate.proto";
 import "system/v1/role.proto";
 import "system/v1/user.proto";
 
-option go_package = "github.com/lanyulei/monitor/backend/core/api/system/v1;v1";
+option go_package = "github.com/lanyulei/reborn/backend/core/api/system/v1;v1";
 
 // AuthService 认证服务：登录签发双令牌、刷新轮换、登出吊销与当前登录者信息。
 // 登录类路由独立于 /api/v1/system/ 域前缀（跨域入口）；除 Login/RefreshToken
@@ -114,4 +114,8 @@ message GetLoginProfileResponse {
   // elements 当前登录用户全部启用角色直接授权的页面元素码并集，字典序；
   // is_admin 超管返回空。
   repeated string elements = 5;
+  // biz_scope 当前用户可管理的通知 biz 并集（字典序）；biz_unrestricted=true 时为空。
+  repeated string biz_scope = 6;
+  // biz_unrestricted 通知 biz 不受限（超管或任一启用角色 scope 为空）。
+  bool biz_unrestricted = 7;
 }

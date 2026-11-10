@@ -5,7 +5,7 @@ package system.v1;
 import "google/protobuf/descriptor.proto";
 import "protoc-gen-openapiv2/options/annotations.proto";
 
-option go_package = "github.com/lanyulei/monitor/backend/core/api/system/v1;v1";
+option go_package = "github.com/lanyulei/reborn/backend/core/api/system/v1;v1";
 
 // 合并 OpenAPI 规格的全局元信息挂在字母序首个输入文件上（allow_merge 的
 // title 取首个文件的 info）；annotations 按字母序先于 auth，故挂在本文件。

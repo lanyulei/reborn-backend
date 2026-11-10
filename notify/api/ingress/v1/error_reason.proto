@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package notify.ingress.v1;
+
+import "errors/errors.proto";
+import "protoc-gen-openapiv2/options/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/notify/api/ingress/v1;v1";
+
+// 合并 OpenAPI 规格的全局元信息挂在字母序首个输入文件上（allow_merge 的
+// title 取首个文件的 info）。
+option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {
+  info: {
+    title: "notify pipeline ingress API";
+    version: "v1";
+    description: "通知管道数据面接入接口（HMAC 鉴权）。由 proto + google.api.http 注解自动生成，proto 为唯一事实来源，勿手改。";
+  };
+};
+
+// ErrorReason 是 ingress 数据面的业务错误码枚举，由 protoc-gen-go-errors
+// 生成带 code 的错误构造器。枚举值沿用 Kratos 错误码惯例（域前缀）。
+enum ErrorReason {
+  option (errors.default_code) = 500;
+  // INGRESS_UNSPECIFIED 未指定的接入错误。
+  INGRESS_UNSPECIFIED = 0;
+  // INGRESS_UNAUTHORIZED 鉴权失败：Authorization 缺失/格式错误/签名不匹配/
+  // 时间窗越界/生产者不存在、已停用或已过期，映射 HTTP 401（统一口径防枚举）。
+  INGRESS_UNAUTHORIZED = 1 [(errors.code) = 401];
+  // INGRESS_FORBIDDEN 生产者 token scope 不允许：biz_id 不一致或事件类型不在
+  // 白名单内，映射 HTTP 403。
+  INGRESS_FORBIDDEN = 2 [(errors.code) = 403];
+  // INGRESS_EVENT_INVALID 事件参数不合法（protovalidate 之外的 biz 校验：
+  // payload 非合法 JSON 等），映射 HTTP 400。
+  INGRESS_EVENT_INVALID = 3 [(errors.code) = 400];
+  // INGRESS_QUOTA_EXCEEDED 生产者配额超限（每秒 / 每日上限由 core 生产者管理配置），
+  // 映射 HTTP 429；整批未落库，生产者应退避后重试。
+  INGRESS_QUOTA_EXCEEDED = 4 [(errors.code) = 429];
+}

@@ -64,6 +64,9 @@ const (
 	ErrorReason_GRANT_INVALID ErrorReason = 15
 	// LOGO_NOT_FOUND 系统 logo 从未上传过（未配置语义，非错误状态），映射 HTTP 404。
 	ErrorReason_LOGO_NOT_FOUND ErrorReason = 16
+	// USER_SELF_OPERATION 不允许对当前登录账号自身执行的管理操作（停用/删除/
+	// 变更超管标记），映射 HTTP 400；防止操作者把自己锁在系统之外。
+	ErrorReason_USER_SELF_OPERATION ErrorReason = 17
 )
 
 // Enum value maps for ErrorReason.
@@ -86,6 +89,7 @@ var (
 		14: "OPERATION_INVALID",
 		15: "GRANT_INVALID",
 		16: "LOGO_NOT_FOUND",
+		17: "USER_SELF_OPERATION",
 	}
 	ErrorReason_value = map[string]int32{
 		"USER_UNSPECIFIED":    0,
@@ -105,6 +109,7 @@ var (
 		"OPERATION_INVALID":   14,
 		"GRANT_INVALID":       15,
 		"LOGO_NOT_FOUND":      16,
+		"USER_SELF_OPERATION": 17,
 	}
 )
 
@@ -139,7 +144,7 @@ var File_system_v1_error_reason_proto protoreflect.FileDescriptor
 
 const file_system_v1_error_reason_proto_rawDesc = "" +
 	"\n" +
-	"\x1csystem/v1/error_reason.proto\x12\tsystem.v1\x1a\x13errors/errors.proto*\xd0\x03\n" +
+	"\x1csystem/v1/error_reason.proto\x12\tsystem.v1\x1a\x13errors/errors.proto*\xef\x03\n" +
 	"\vErrorReason\x12\x14\n" +
 	"\x10USER_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x0eUSER_NOT_FOUND\x10\x01\x1a\x04\xa8E\x94\x03\x12\x15\n" +
@@ -158,7 +163,8 @@ const file_system_v1_error_reason_proto_rawDesc = "" +
 	"\x11PERMISSION_DENIED\x10\r\x1a\x04\xa8E\x93\x03\x12\x1b\n" +
 	"\x11OPERATION_INVALID\x10\x0e\x1a\x04\xa8E\x90\x03\x12\x17\n" +
 	"\rGRANT_INVALID\x10\x0f\x1a\x04\xa8E\x90\x03\x12\x18\n" +
-	"\x0eLOGO_NOT_FOUND\x10\x10\x1a\x04\xa8E\x94\x03\x1a\x04\xa0E\xf4\x03B;Z9github.com/lanyulei/monitor/backend/core/api/system/v1;v1b\x06proto3"
+	"\x0eLOGO_NOT_FOUND\x10\x10\x1a\x04\xa8E\x94\x03\x12\x1d\n" +
+	"\x13USER_SELF_OPERATION\x10\x11\x1a\x04\xa8E\x90\x03\x1a\x04\xa0E\xf4\x03B:Z8github.com/lanyulei/reborn/backend/core/api/system/v1;v1b\x06proto3"
 
 var (
 	file_system_v1_error_reason_proto_rawDescOnce sync.Once

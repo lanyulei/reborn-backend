@@ -252,3 +252,19 @@ func IsLogoNotFound(err error) bool {
 func ErrorLogoNotFound(format string, args ...interface{}) *errors.Error {
 	return errors.New(404, ErrorReason_LOGO_NOT_FOUND.String(), fmt.Sprintf(format, args...))
 }
+
+// USER_SELF_OPERATION 不允许对当前登录账号自身执行的管理操作（停用/删除/
+// 变更超管标记），映射 HTTP 400；防止操作者把自己锁在系统之外。
+func IsUserSelfOperation(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := errors.FromError(err)
+	return e.Reason == ErrorReason_USER_SELF_OPERATION.String() && e.Code == 400
+}
+
+// USER_SELF_OPERATION 不允许对当前登录账号自身执行的管理操作（停用/删除/
+// 变更超管标记），映射 HTTP 400；防止操作者把自己锁在系统之外。
+func ErrorUserSelfOperation(format string, args ...interface{}) *errors.Error {
+	return errors.New(400, ErrorReason_USER_SELF_OPERATION.String(), fmt.Sprintf(format, args...))
+}

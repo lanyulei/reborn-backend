@@ -1,4 +1,4 @@
-module github.com/lanyulei/monitor/backend/core
+module github.com/lanyulei/reborn/backend/core
 
 go 1.26.0
 

@@ -1,0 +1,244 @@
+syntax = "proto3";
+
+package notify.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "buf/validate/validate.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/notify/v1;v1";
+
+// NotifyRouteService 通知路由管理服务：路由决定事件如何变成通知任务——
+// event_pattern（精确/前缀通配/'*'）+ severity 下限 + 标签匹配筛选事件，
+// 命中后对 channel_ids 内每个启用渠道实例并发生成 dispatch（互不影响），
+// 收件策略 fixed 先行、订阅者追加。多条路由可重叠，priority 决胜（1 最高）。
+// 更新语义：规则字段（pattern/severity/标签/优先级/渠道/收件/聚合参数）互为
+// 整体决策，经 spec 整组替换；enabled 独立启停。
+service NotifyRouteService {
+  // CreateRoute 创建路由；channel_ids 须为同 biz 未删除渠道。
+  rpc CreateRoute(CreateRouteRequest) returns (CreateRouteResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/notify/route"
+      body: "*"
+    };
+    option (system.v1.title) = "创建通知路由";
+  }
+  // UpdateRoute 更新路由：spec 整组替换规则字段，enabled 独立启停，至少传其一；
+  // biz_id 不可改，channel_ids 仍须同 biz 存在。
+  rpc UpdateRoute(UpdateRouteRequest) returns (UpdateRouteResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/notify/route/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "更新通知路由";
+  }
+  // DeleteRoute 删除路由（软删）；在途 dispatch 照常完成。
+  rpc DeleteRoute(DeleteRouteRequest) returns (DeleteRouteResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/notify/route/{id}"
+    };
+    option (system.v1.title) = "删除通知路由";
+  }
+  // GetRoute 查询路由详情。
+  rpc GetRoute(GetRouteRequest) returns (GetRouteResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/notify/route/{id}"
+    };
+    option (system.v1.title) = "查询通知路由";
+  }
+  // ListRoutes 分页查询路由，page_size 上限 100。
+  rpc ListRoutes(ListRoutesRequest) returns (ListRoutesResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/notify/route"
+    };
+    option (system.v1.title) = "查询通知路由列表";
+  }
+}
+
+// RouteRecipient 收件策略：fixed 与 subscription 可并存——fixed 先生成、
+// 订阅者按渠道偏好追加，同 (channel, recipient) 去重。仅地址类渠道（email）
+// 依赖本策略解析收件人，故 channel_ids 含 email 渠道时须至少启用其一（core
+// 按渠道类型校验）；webhook 以实例 URL 为隐含收件、群机器人缺省投递到实例
+// 绑定的群，二者可整组留空。
+message RouteRecipient {
+  // fixed 固定收件人列表（email 地址/群标识；机器人与 webhook 实例自身隐含收件）。
+  repeated string fixed = 1 [(buf.validate.field).repeated = {
+    min_items: 0
+    max_items: 100
+    items: {string: {min_len: 1, max_len: 255}}
+  }];
+  // subscription 是否追加订阅者（按用户 channel_prefs 与路由实例类型交集解析）。
+  bool subscription = 2;
+}
+
+// RouteSpec 路由规则载荷：一组互为整体的匹配与分发决策（创建/更新共用）；
+// 数值调优项可选，缺省 severity_min=1、priority=5、aggregate_window_s=0
+// （不聚合）、suppress_threshold=500、suppress_duration_m=30。
+message RouteSpec {
+  // event_pattern 事件匹配模式：精确 / 前缀通配（'monitor.alert.*'）/ 全匹配（'*'）。
+  string event_pattern = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+    pattern: "^(\\*|[a-z0-9][a-z0-9._-]{0,127}|[a-z0-9][a-z0-9._-]{0,125}\\.\\*)$"
+  }];
+  // severity_min 严重级下限（1 info / 2 warning / 3 critical / 4 fatal），可选。
+  optional int32 severity_min = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 4
+  }];
+  // tag_match payload 标签匹配条件（可选）：扁平键值全部相等才命中（AND）；
+  // 传空 map 表示无条件。
+  map<string, string> tag_match = 3 [(buf.validate.field).map = {
+    min_pairs: 0
+    max_pairs: 16
+    keys: {string: {min_len: 1, max_len: 64}}
+    values: {string: {min_len: 1, max_len: 255}}
+  }];
+  // priority 优先级，可选；未指定默认 5。
+  optional int32 priority = 4 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 9
+  }];
+  // channel_ids 命中的渠道实例集合（同 biz 未删除行），至少 1 个，整组替换。
+  repeated string channel_ids = 5 [(buf.validate.field).repeated = {
+    min_items: 1
+    max_items: 50
+    unique: true
+    items: {string: {uuid: true}}
+  }];
+  // recipient 收件策略。
+  RouteRecipient recipient = 6;
+  // aggregate_window_s 聚合窗口秒数，可选；未指定默认 0（不聚合），>0 须 30-300。
+  optional int32 aggregate_window_s = 7 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 300
+  }];
+  // suppress_threshold 聚合抑制阈值，可选；未指定默认 500。
+  optional int32 suppress_threshold = 8 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100000
+  }];
+  // suppress_duration_m 抑制时长分钟，可选；未指定默认 30。
+  optional int32 suppress_duration_m = 9 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 1440
+  }];
+}
+
+// NotifyRoute 路由实体。
+message NotifyRoute {
+  // id 路由唯一标识（UUIDv7）。
+  string id = 1;
+  // biz_id 业务租户标识；路由匹配与渠道绑定按 biz 隔离。
+  string biz_id = 2;
+  // event_pattern 事件匹配模式：精确 / 前缀通配（'monitor.alert.*'）/ 全匹配（'*'）。
+  string event_pattern = 3;
+  // severity_min 严重级下限（1 info / 2 warning / 3 critical / 4 fatal）。
+  int32 severity_min = 4;
+  // tag_match payload 标签匹配条件；未设置表示无条件。
+  map<string, string> tag_match = 5;
+  // priority 优先级 1-9，1 最高；多条路由命中时取最高优先级。
+  int32 priority = 6;
+  // channel_ids 命中的渠道实例集合，并发分发互不影响。
+  repeated string channel_ids = 7;
+  // recipient 收件策略。
+  RouteRecipient recipient = 8;
+  // aggregate_window_s 聚合窗口秒数；0=不聚合，>0 且事件带 group_key 时聚合微批。
+  int32 aggregate_window_s = 9;
+  // suppress_threshold 聚合抑制阈值：分组计数超过后汇总转摘要模式。
+  int32 suppress_threshold = 10;
+  // suppress_duration_m 抑制时长（分钟）：超阈值后同 group_key 静默窗口。
+  int32 suppress_duration_m = 11;
+  // enabled 启用状态；停用后不参与匹配（≤10s 生效）。
+  bool enabled = 12;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 13;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 14;
+}
+
+// CreateRouteRequest 创建路由请求。
+message CreateRouteRequest {
+  // biz_id 业务租户标识，可选；未指定默认 default。
+  optional string biz_id = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+    pattern: "^[a-z0-9_-]{1,64}$"
+  }];
+  // spec 路由规则。
+  RouteSpec spec = 2;
+  // enabled 初始启用状态，可选；未指定默认启用。
+  optional bool enabled = 3;
+}
+
+// CreateRouteResponse 创建路由响应。
+message CreateRouteResponse {
+  // route 已创建的路由实体。
+  NotifyRoute route = 1;
+}
+
+// UpdateRouteRequest 更新路由请求：spec 与 enabled 至少传其一。
+message UpdateRouteRequest {
+  option (buf.validate.message).cel = {
+    id: "notify.route.update.non_empty"
+    message: "at least one of spec or enabled must be provided"
+    expression: "has(this.spec) || has(this.enabled)"
+  };
+
+  // id 路由唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // spec 新路由规则，整组替换规则字段。
+  optional RouteSpec spec = 2;
+  // enabled 新启用状态。
+  optional bool enabled = 3;
+}
+
+// UpdateRouteResponse 更新路由响应。
+message UpdateRouteResponse {}
+
+// DeleteRouteRequest 删除路由请求。
+message DeleteRouteRequest {
+  // id 路由唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteRouteResponse 删除路由响应。
+message DeleteRouteResponse {}
+
+// GetRouteRequest 查询路由请求。
+message GetRouteRequest {
+  // id 路由唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetRouteResponse 查询路由响应。
+message GetRouteResponse {
+  // route 路由实体。
+  NotifyRoute route = 1;
+}
+
+// ListRoutesRequest 分页查询路由请求。
+message ListRoutesRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // keyword 关键字，可选；模糊匹配 event_pattern。
+  optional string keyword = 3 [(buf.validate.field).string.max_len = 64];
+  // enabled 启用状态过滤，可选。
+  optional bool enabled = 4;
+  // biz_id 业务命名空间过滤，可选；biz 受限用户必填（NOTIFY_BIZ_REQUIRED）。
+  optional string biz_id = 5 [(buf.validate.field).string = {pattern: "^[a-z0-9_-]{1,64}$"}];
+}
+
+// ListRoutesResponse 分页查询路由响应。
+message ListRoutesResponse {
+  // items 当前页数据。
+  repeated NotifyRoute items = 1;
+  // total 总数。
+  int64 total = 2;
+}

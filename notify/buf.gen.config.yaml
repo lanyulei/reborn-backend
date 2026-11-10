@@ -1,0 +1,7 @@
+version: v2
+inputs:
+  - directory: internal
+plugins:
+  - local: ["go", "tool", "protoc-gen-go"]
+    out: internal
+    opt: paths=source_relative

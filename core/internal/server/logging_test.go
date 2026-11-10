@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lanyulei/monitor/backend/core/internal/conf"
+	"github.com/lanyulei/reborn/backend/core/internal/conf"
 )
 
 // TestMaskSensitiveAttr 锁定打码契约：仅顶层 args 键的字符串值按内容打码，
@@ -40,6 +40,16 @@ func TestMaskSensitiveAttr(t *testing.T) {
 			name: "case insensitive field name",
 			attr: slog.String("args", `Password:"x"`),
 			want: `Password:"***"`,
+		},
+		{
+			name: "webhook credential headers masked, benign header kept",
+			attr: slog.String("args", `name:"hook" config:{webhook:{url:"https://h" headers:{key:"Authorization" value:"Bearer abc"} headers:{key:"X-Trace" value:"t-1"}}}`),
+			want: `name:"hook" config:{webhook:{url:"https://h" headers:{key:"Authorization" value:"***"} headers:{key:"X-Trace" value:"t-1"}}}`,
+		},
+		{
+			name: "generic token field masked",
+			attr: slog.String("args", `token:"npt_abc" id:"x"`),
+			want: `token:"***" id:"x"`,
 		},
 		{
 			name: "no sensitive field untouched",
@@ -77,7 +87,7 @@ func TestHTTPServer_LoginLogNoPlaintextPassword(t *testing.T) {
 	}))
 	svc := newTestServices(t)
 	signer := svc.signer
-	srv := NewHTTPServer(&conf.Server{Http: &conf.Server_HTTP{}}, logger, svc.user, svc.role, svc.auth, svc.syscfg, svc.signer, svc.authz)
+	srv := NewHTTPServer(&conf.Server{Http: &conf.Server_HTTP{}}, logger, svc.user, svc.role, svc.auth, svc.syscfg, svc.loginLog, svc.notify, svc.template, svc.route, svc.silence, svc.subscription, svc.producer, svc.event, svc.dispatch, svc.deliveryLog, svc.deadLetter, svc.signer, svc.authz)
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
 

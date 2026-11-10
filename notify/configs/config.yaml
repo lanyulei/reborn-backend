@@ -1,0 +1,54 @@
+# 管道服务启动配置；密钥类字段从环境变量注入，禁止在本文件写入明文口令。
+server:
+  http:
+    # 8010 为 core；管道走 8020。HTTP 恒启动（/healthz /metrics），ingress 接口
+    # 仅 api 角色注册；数据面只暴露 HTTP（HMAC 签名绑定请求体）。
+    addr: 0.0.0.0:8020
+    timeout: 5s
+data:
+  database:
+    # 与 core 同库（配置表只读、运行表读写）；生产环境经 KRATOS_DATA_DATABASE_SOURCE
+    # 注入，并使用 notify_pipe_role 成员账号（见 core/migrations/0021）。
+    source: "host=127.0.0.1 user=postgres password=ekgGZebuZgCmyzv2WW5V dbname=reborn port=5432 sslmode=disable TimeZone=Asia/Shanghai"
+    max_conns: 32
+    min_conns: 4
+    max_conn_idle_time: 1800s
+pipeline:
+  # roles 为空 = 全部角色；部署时用 SERVER_ROLES=api,router 等覆盖。
+  roles: []
+  backbone: pg
+  router:
+    poll_interval: 0.2s
+    batch_size: 500
+    config_poll: 10s
+    sweep_interval: 1s
+    max_aggregate_window: 300s
+    max_route_attempts: 5
+  sender:
+    poll_interval: 0.2s
+    batch_size: 100
+    concurrency: 16
+    lease: 300s
+    send_timeout: 3s
+    render_timeout: 0.1s
+    reap_interval: 30s
+    max_attempts: 6
+  dlq:
+    poll_interval: 5s
+    batch_size: 100
+  maintenance:
+    interval: 3600s
+    partitions_ahead: 2
+    retention:
+      event: 15552000s        # 180d
+      dispatch: 15552000s     # 180d
+      delivery_log: 7776000s  # 90d
+      dlq: 15552000s          # 180d
+      dedup: 86400s           # 24h
+      agg_group: 604800s      # 7d
+  ingress:
+    clock_skew: 300s
+notify:
+  master:
+    # 与 core 同一主密钥：export KRATOS_NOTIFY_MASTER_KEY=...
+    key: ${NOTIFY_MASTER_KEY}

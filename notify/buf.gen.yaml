@@ -1,0 +1,24 @@
+version: v2
+inputs:
+  - directory: api
+plugins:
+  - local: ["go", "tool", "protoc-gen-go"]
+    out: api
+    opt: paths=source_relative
+  - local: ["go", "tool", "protoc-gen-go-grpc"]
+    out: api
+    opt: paths=source_relative
+  - local: ["go", "tool", "protoc-gen-go-http"]
+    out: api
+    opt: paths=source_relative
+  - local: ["go", "tool", "protoc-gen-go-errors"]
+    out: api
+    opt: paths=source_relative
+  # OpenAPI 2.0 规格：数据面 ingress 契约，供生产者接入（与 core 同样 proto 为唯一事实源）。
+  - local: ["go", "tool", "protoc-gen-openapiv2"]
+    out: api
+    strategy: all
+    opt:
+      - openapi_naming_strategy=simple
+      - allow_merge=true
+      - merge_file_name=openapi

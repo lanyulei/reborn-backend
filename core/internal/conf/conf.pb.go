@@ -30,7 +30,9 @@ type Bootstrap struct {
 	// data 数据层资源配置。
 	Data *Data `protobuf:"bytes,2,opt,name=data,proto3" json:"data,omitempty"`
 	// security 安全相关配置（密码哈希等）。
-	Security      *Security `protobuf:"bytes,3,opt,name=security,proto3" json:"security,omitempty"`
+	Security *Security `protobuf:"bytes,3,opt,name=security,proto3" json:"security,omitempty"`
+	// notify 通知域配置（渠道凭据加密等）。
+	Notify        *Notify `protobuf:"bytes,4,opt,name=notify,proto3" json:"notify,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -82,6 +84,13 @@ func (x *Bootstrap) GetData() *Data {
 func (x *Bootstrap) GetSecurity() *Security {
 	if x != nil {
 		return x.Security
+	}
+	return nil
+}
+
+func (x *Bootstrap) GetNotify() *Notify {
+	if x != nil {
+		return x.Notify
 	}
 	return nil
 }
@@ -260,6 +269,62 @@ func (x *Security) GetAuthz() *Security_Authz {
 	return nil
 }
 
+// Notify 是通知域配置。
+type Notify struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// master 渠道凭据加密主密钥。
+	Master *Notify_Master `protobuf:"bytes,1,opt,name=master,proto3" json:"master,omitempty"`
+	// dedup_ttl 业务直插（NotificationWriter）去重门闩有效期；未设置缺省 24h。
+	// 与管道 ingress 同一 notify_dedup 表、同一语义（事件带 dedup_key 时生效）。
+	DedupTtl      *durationpb.Duration `protobuf:"bytes,2,opt,name=dedup_ttl,json=dedupTtl,proto3" json:"dedup_ttl,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Notify) Reset() {
+	*x = Notify{}
+	mi := &file_conf_conf_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Notify) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Notify) ProtoMessage() {}
+
+func (x *Notify) ProtoReflect() protoreflect.Message {
+	mi := &file_conf_conf_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Notify.ProtoReflect.Descriptor instead.
+func (*Notify) Descriptor() ([]byte, []int) {
+	return file_conf_conf_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *Notify) GetMaster() *Notify_Master {
+	if x != nil {
+		return x.Master
+	}
+	return nil
+}
+
+func (x *Notify) GetDedupTtl() *durationpb.Duration {
+	if x != nil {
+		return x.DedupTtl
+	}
+	return nil
+}
+
 // HTTP 是 HTTP 服务器配置。
 type Server_HTTP struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -275,7 +340,7 @@ type Server_HTTP struct {
 
 func (x *Server_HTTP) Reset() {
 	*x = Server_HTTP{}
-	mi := &file_conf_conf_proto_msgTypes[4]
+	mi := &file_conf_conf_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -287,7 +352,7 @@ func (x *Server_HTTP) String() string {
 func (*Server_HTTP) ProtoMessage() {}
 
 func (x *Server_HTTP) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[4]
+	mi := &file_conf_conf_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -339,7 +404,7 @@ type Server_GRPC struct {
 
 func (x *Server_GRPC) Reset() {
 	*x = Server_GRPC{}
-	mi := &file_conf_conf_proto_msgTypes[5]
+	mi := &file_conf_conf_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -351,7 +416,7 @@ func (x *Server_GRPC) String() string {
 func (*Server_GRPC) ProtoMessage() {}
 
 func (x *Server_GRPC) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[5]
+	mi := &file_conf_conf_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -405,7 +470,7 @@ type Data_Database struct {
 
 func (x *Data_Database) Reset() {
 	*x = Data_Database{}
-	mi := &file_conf_conf_proto_msgTypes[6]
+	mi := &file_conf_conf_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -417,7 +482,7 @@ func (x *Data_Database) String() string {
 func (*Data_Database) ProtoMessage() {}
 
 func (x *Data_Database) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[6]
+	mi := &file_conf_conf_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -473,7 +538,7 @@ type Data_Upload struct {
 
 func (x *Data_Upload) Reset() {
 	*x = Data_Upload{}
-	mi := &file_conf_conf_proto_msgTypes[7]
+	mi := &file_conf_conf_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -485,7 +550,7 @@ func (x *Data_Upload) String() string {
 func (*Data_Upload) ProtoMessage() {}
 
 func (x *Data_Upload) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[7]
+	mi := &file_conf_conf_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -520,7 +585,7 @@ type Security_Authz struct {
 
 func (x *Security_Authz) Reset() {
 	*x = Security_Authz{}
-	mi := &file_conf_conf_proto_msgTypes[8]
+	mi := &file_conf_conf_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -532,7 +597,7 @@ func (x *Security_Authz) String() string {
 func (*Security_Authz) ProtoMessage() {}
 
 func (x *Security_Authz) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[8]
+	mi := &file_conf_conf_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -570,7 +635,7 @@ type Security_Password struct {
 
 func (x *Security_Password) Reset() {
 	*x = Security_Password{}
-	mi := &file_conf_conf_proto_msgTypes[9]
+	mi := &file_conf_conf_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -582,7 +647,7 @@ func (x *Security_Password) String() string {
 func (*Security_Password) ProtoMessage() {}
 
 func (x *Security_Password) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[9]
+	mi := &file_conf_conf_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -637,7 +702,7 @@ type Security_Jwt struct {
 
 func (x *Security_Jwt) Reset() {
 	*x = Security_Jwt{}
-	mi := &file_conf_conf_proto_msgTypes[10]
+	mi := &file_conf_conf_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -649,7 +714,7 @@ func (x *Security_Jwt) String() string {
 func (*Security_Jwt) ProtoMessage() {}
 
 func (x *Security_Jwt) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[10]
+	mi := &file_conf_conf_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -693,16 +758,66 @@ func (x *Security_Jwt) GetIssuer() string {
 	return ""
 }
 
+// Master 是渠道凭据加密主密钥配置。
+type Notify_Master struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// key AES-256-GCM 主密钥（任意非空字节串，内部 SHA-256 派生 32 字节密钥）；
+	// 一律经 KRATOS_NOTIFY_MASTER_KEY 环境变量注入（占位符 ${NOTIFY_MASTER_KEY}），
+	// 禁止写入配置文件。为空时：无 secret 渠道不受影响，写入带 secret 的渠道
+	// 报 NOTIFY_SECRET_UNAVAILABLE（快速失败，绝不静默落明文）。
+	Key           string `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Notify_Master) Reset() {
+	*x = Notify_Master{}
+	mi := &file_conf_conf_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Notify_Master) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Notify_Master) ProtoMessage() {}
+
+func (x *Notify_Master) ProtoReflect() protoreflect.Message {
+	mi := &file_conf_conf_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Notify_Master.ProtoReflect.Descriptor instead.
+func (*Notify_Master) Descriptor() ([]byte, []int) {
+	return file_conf_conf_proto_rawDescGZIP(), []int{4, 0}
+}
+
+func (x *Notify_Master) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
 var File_conf_conf_proto protoreflect.FileDescriptor
 
 const file_conf_conf_proto_rawDesc = "" +
 	"\n" +
-	"\x0fconf/conf.proto\x12\x04conf\x1a\x1egoogle/protobuf/duration.proto\"}\n" +
+	"\x0fconf/conf.proto\x12\x04conf\x1a\x1egoogle/protobuf/duration.proto\"\xa3\x01\n" +
 	"\tBootstrap\x12$\n" +
 	"\x06server\x18\x01 \x01(\v2\f.conf.ServerR\x06server\x12\x1e\n" +
 	"\x04data\x18\x02 \x01(\v2\n" +
 	".conf.DataR\x04data\x12*\n" +
-	"\bsecurity\x18\x03 \x01(\v2\x0e.conf.SecurityR\bsecurity\"\xac\x02\n" +
+	"\bsecurity\x18\x03 \x01(\v2\x0e.conf.SecurityR\bsecurity\x12$\n" +
+	"\x06notify\x18\x04 \x01(\v2\f.conf.NotifyR\x06notify\"\xac\x02\n" +
 	"\x06Server\x12%\n" +
 	"\x04http\x18\x01 \x01(\v2\x11.conf.Server.HTTPR\x04http\x12%\n" +
 	"\x04grpc\x18\x02 \x01(\v2\x11.conf.Server.GRPCR\x04grpc\x1ai\n" +
@@ -743,7 +858,12 @@ const file_conf_conf_proto_rawDesc = "" +
 	"access_ttl\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\taccessTtl\x12:\n" +
 	"\vrefresh_ttl\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\n" +
 	"refreshTtl\x12\x16\n" +
-	"\x06issuer\x18\x04 \x01(\tR\x06issuerB=Z;github.com/lanyulei/monitor/backend/core/internal/conf;confb\x06proto3"
+	"\x06issuer\x18\x04 \x01(\tR\x06issuer\"\x89\x01\n" +
+	"\x06Notify\x12+\n" +
+	"\x06master\x18\x01 \x01(\v2\x13.conf.Notify.MasterR\x06master\x126\n" +
+	"\tdedup_ttl\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\bdedupTtl\x1a\x1a\n" +
+	"\x06Master\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03keyB<Z:github.com/lanyulei/reborn/backend/core/internal/conf;confb\x06proto3"
 
 var (
 	file_conf_conf_proto_rawDescOnce sync.Once
@@ -757,43 +877,48 @@ func file_conf_conf_proto_rawDescGZIP() []byte {
 	return file_conf_conf_proto_rawDescData
 }
 
-var file_conf_conf_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_conf_conf_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_conf_conf_proto_goTypes = []any{
 	(*Bootstrap)(nil),           // 0: conf.Bootstrap
 	(*Server)(nil),              // 1: conf.Server
 	(*Data)(nil),                // 2: conf.Data
 	(*Security)(nil),            // 3: conf.Security
-	(*Server_HTTP)(nil),         // 4: conf.Server.HTTP
-	(*Server_GRPC)(nil),         // 5: conf.Server.GRPC
-	(*Data_Database)(nil),       // 6: conf.Data.Database
-	(*Data_Upload)(nil),         // 7: conf.Data.Upload
-	(*Security_Authz)(nil),      // 8: conf.Security.Authz
-	(*Security_Password)(nil),   // 9: conf.Security.Password
-	(*Security_Jwt)(nil),        // 10: conf.Security.Jwt
-	(*durationpb.Duration)(nil), // 11: google.protobuf.Duration
+	(*Notify)(nil),              // 4: conf.Notify
+	(*Server_HTTP)(nil),         // 5: conf.Server.HTTP
+	(*Server_GRPC)(nil),         // 6: conf.Server.GRPC
+	(*Data_Database)(nil),       // 7: conf.Data.Database
+	(*Data_Upload)(nil),         // 8: conf.Data.Upload
+	(*Security_Authz)(nil),      // 9: conf.Security.Authz
+	(*Security_Password)(nil),   // 10: conf.Security.Password
+	(*Security_Jwt)(nil),        // 11: conf.Security.Jwt
+	(*Notify_Master)(nil),       // 12: conf.Notify.Master
+	(*durationpb.Duration)(nil), // 13: google.protobuf.Duration
 }
 var file_conf_conf_proto_depIdxs = []int32{
 	1,  // 0: conf.Bootstrap.server:type_name -> conf.Server
 	2,  // 1: conf.Bootstrap.data:type_name -> conf.Data
 	3,  // 2: conf.Bootstrap.security:type_name -> conf.Security
-	4,  // 3: conf.Server.http:type_name -> conf.Server.HTTP
-	5,  // 4: conf.Server.grpc:type_name -> conf.Server.GRPC
-	6,  // 5: conf.Data.database:type_name -> conf.Data.Database
-	7,  // 6: conf.Data.upload:type_name -> conf.Data.Upload
-	9,  // 7: conf.Security.password:type_name -> conf.Security.Password
-	10, // 8: conf.Security.jwt:type_name -> conf.Security.Jwt
-	8,  // 9: conf.Security.authz:type_name -> conf.Security.Authz
-	11, // 10: conf.Server.HTTP.timeout:type_name -> google.protobuf.Duration
-	11, // 11: conf.Server.GRPC.timeout:type_name -> google.protobuf.Duration
-	11, // 12: conf.Data.Database.max_conn_idle_time:type_name -> google.protobuf.Duration
-	11, // 13: conf.Security.Authz.policy_ttl:type_name -> google.protobuf.Duration
-	11, // 14: conf.Security.Jwt.access_ttl:type_name -> google.protobuf.Duration
-	11, // 15: conf.Security.Jwt.refresh_ttl:type_name -> google.protobuf.Duration
-	16, // [16:16] is the sub-list for method output_type
-	16, // [16:16] is the sub-list for method input_type
-	16, // [16:16] is the sub-list for extension type_name
-	16, // [16:16] is the sub-list for extension extendee
-	0,  // [0:16] is the sub-list for field type_name
+	4,  // 3: conf.Bootstrap.notify:type_name -> conf.Notify
+	5,  // 4: conf.Server.http:type_name -> conf.Server.HTTP
+	6,  // 5: conf.Server.grpc:type_name -> conf.Server.GRPC
+	7,  // 6: conf.Data.database:type_name -> conf.Data.Database
+	8,  // 7: conf.Data.upload:type_name -> conf.Data.Upload
+	10, // 8: conf.Security.password:type_name -> conf.Security.Password
+	11, // 9: conf.Security.jwt:type_name -> conf.Security.Jwt
+	9,  // 10: conf.Security.authz:type_name -> conf.Security.Authz
+	12, // 11: conf.Notify.master:type_name -> conf.Notify.Master
+	13, // 12: conf.Notify.dedup_ttl:type_name -> google.protobuf.Duration
+	13, // 13: conf.Server.HTTP.timeout:type_name -> google.protobuf.Duration
+	13, // 14: conf.Server.GRPC.timeout:type_name -> google.protobuf.Duration
+	13, // 15: conf.Data.Database.max_conn_idle_time:type_name -> google.protobuf.Duration
+	13, // 16: conf.Security.Authz.policy_ttl:type_name -> google.protobuf.Duration
+	13, // 17: conf.Security.Jwt.access_ttl:type_name -> google.protobuf.Duration
+	13, // 18: conf.Security.Jwt.refresh_ttl:type_name -> google.protobuf.Duration
+	19, // [19:19] is the sub-list for method output_type
+	19, // [19:19] is the sub-list for method input_type
+	19, // [19:19] is the sub-list for extension type_name
+	19, // [19:19] is the sub-list for extension extendee
+	0,  // [0:19] is the sub-list for field type_name
 }
 
 func init() { file_conf_conf_proto_init() }
@@ -807,7 +932,7 @@ func file_conf_conf_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_conf_conf_proto_rawDesc), len(file_conf_conf_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   11,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

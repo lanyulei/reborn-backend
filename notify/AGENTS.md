@@ -292,3 +292,61 @@ type ruleCache[T any] struct{ v T }
 - 依赖升级、框架大版本迁移、目录结构调整、删除公共工具函数：一律先提问确认，不要直接动手。
 - 任何与本文件冲突的既往代码：先报告冲突点，由维护者裁决以哪边为准。
 
+
+## 13. 管道服务（backend/notify）P1 实现契约
+
+本章随 P1 骨架落地新增（2026-11），是 §1-§12 通用契约在管道服务上的具体化；设计依据
+`backend/docs/notify-design.md`（§12 工程规范、§14 多实例影响说明）。core 的 Makefile /
+.golangci.yml / README 引用的 `../notify/AGENTS.md §x` 仍指本文件 §0-§12。
+
+### 13.1 分层与依赖方向
+
+Kratos 四层：`api → service → biz → data`（非 DDD 四层）。
+- `biz` 定义领域模型、仓储/骨干接口与用例；禁止 import `data`/`service`/`server`/
+  `kratos/transport`/`pgx`（depguard 构建期强制）。
+- `data` 是唯一允许 import 数据库驱动与出站 I/O 的层：PG 仓储、渠道适配器
+  （`internal/data/channel`）、advisory lock。
+- `service` 只做 proto ↔ 领域模型转换与错误透传；鉴权在 `server` 中间件。
+- `worker` 把 biz 用例包成 kratos `transport.Server` 循环；角色门控在 `server.NewServers`。
+- 与 core **不跨模块 import**：共享的只有数据库 schema 与 jsonb 编码契约
+  （`internal/biz/config.go` 的 json 标签与 core `internal/biz/notify` 完全一致）。
+
+### 13.2 多实例强制（设计 §14）
+
+- 无进程内共享状态作为正确性依赖：熔断器与「渠道跳过至」缓存是优化（N 副本 = N 组），
+  正确性由 PG 保证。
+- 所有状态流转为**原子条件更新**，禁止 check-then-act：
+  - router：`FOR UPDATE SKIP LOCKED` 声明一批事件，匹配/聚合/生成任务与事件终态
+    **同一事务**提交；崩溃即回滚、事件仍 pending。
+  - sender：声明 = `status→2, attempts+1, next_retry_time=now()+lease`；所有后续写
+    以 `(id, create_time, status=2, attempts=声明值)` 围栏；租约过期由回收器转重试。
+  - 聚合：批内按 `group_key` 排序后 upsert（确定锁序）；sweeper `UPDATE…RETURNING`
+    为汇总唯一数据源。
+  - dedup：单语句 `INSERT … ON CONFLICT DO UPDATE … RETURNING`。
+  - dlq 重放：`UPDATE…RETURNING` + 新 dispatch 同事务。
+- 选主：PG advisory lock 绑定 `Hijack` 的专用连接；连接断即失主；leader-only SQL 自身幂等。
+- 时间列以数据库 `now()` 写入，与到期判定同一时钟源（应用/DB 时钟偏差不影响可见性）。
+
+### 13.3 可靠性口径（设计 §7）
+
+- 先落库后应答；at-least-once + `send_key` 幂等键（同一 dispatch 重试同键，重放新键）。
+- 退避 `30s→2m→8m→30m→2h` + 0~20% jitter，首发 + 5 次重试；`retryable=false` 立即死信。
+- 每次尝试都写 `notify_delivery_log`（含租约回收与死信那次）。
+- 限流/熔断/渠道停用/secret 不可用 → 放回 pending 且**不计尝试**。
+
+### 13.4 代码规范补充
+
+- 无裸 goroutine：并发用 `errgroup`；后台任务 ctx 用 `context.WithoutCancel`。
+- 出站超时 ≤3s（渠道 `timeout_s` 不得超过）；渲染 100ms、输出 64KB。
+- 日志 slog JSON，`password/token/secret/authorization/signature` 字段打码；webhook
+  凭据类请求头由 core 写入校验拒绝。
+- 工具版本锁定（Makefile），`make check` 全绿后提交；`nolint` 必须写明理由。
+- 迁移在 `backend/core/migrations` 统一编号（单库单一 schema 事实源）。
+
+### 13.5 测试
+
+- 单测：biz 用例经接口桩；适配器经 httptest / 进程内 SMTP 桩。
+- 集成（`-tags=integration`，`TEST_DATABASE_SOURCE` 库名须含 `test`，会 TRUNCATE）：
+  真实 PG 验证声明/围栏/回滚/聚合/门闩/重放/分区维护，以及端到端
+  「事件 → router → sender → webhook 收到签名请求」与 1 万事件对账。
+- 与 core 的集成测试共用 `reborn_test`，两个模块的集成测试不要并行运行。

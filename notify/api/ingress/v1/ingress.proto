@@ -1,0 +1,79 @@
+syntax = "proto3";
+
+package notify.ingress.v1;
+
+import "google/api/annotations.proto";
+import "buf/validate/validate.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/notify/api/ingress/v1;v1";
+
+// NotifyIngressService 通知管道数据面接入服务（设计 §6.2）：外部生产者经
+// HMAC 鉴权（Authorization: HMAC <producer_id>:<sig>:<ts>，±5min 防重放，
+// 签名绑定请求体）投递事件；先落库后应答——200 即「此刻起消息绝不丢」
+// （§7.1 第一道防线）。dedup_key 门闩幂等：重复事件返回首次落库的 event_id
+// 与 deduplicated=true。数据面只暴露 HTTP（签名绑定请求体，gRPC 无法等价绑定）。
+service NotifyIngressService {
+  // SendEvent 投递单条事件。
+  rpc SendEvent(SendEventRequest) returns (SendEventResponse) {
+    option (google.api.http) = {
+      post: "/ingress/v1/events"
+      body: "*"
+    };
+  }
+  // BatchSend 批量投递（≤500 条，同一事务落库：全部成功或全部失败）。
+  rpc BatchSend(BatchSendRequest) returns (BatchSendResponse) {
+    option (google.api.http) = {
+      post: "/ingress/v1/events:batch"
+      body: "*"
+    };
+  }
+}
+
+// IngressEvent 是生产者投递的事件载荷（与 notify_event 运行表字段对齐）。
+message IngressEvent {
+  // biz_id 业务命名空间；须与生产者 token 绑定的 biz 一致（scope 校验）。
+  string biz_id = 1 [(buf.validate.field).string = {min_len: 1, max_len: 64}];
+  // event_type 事件类型：小写点分事件名（如 monitor.alert.firing），非路由模式。
+  string event_type = 2 [(buf.validate.field).string = {pattern: "^[a-z0-9][a-z0-9._-]{0,127}$"}];
+  // severity 严重级：1 info / 2 warning / 3 critical / 4 fatal。
+  int32 severity = 3 [(buf.validate.field).int32 = {gte: 1, lte: 4}];
+  // title 事件标题，1-255 字符。
+  string title = 4 [(buf.validate.field).string = {min_len: 1, max_len: 255}];
+  // payload 事件载荷：合法 JSON 文本，≤32KB（对象形态便于模板按字段引用）。
+  bytes payload = 5 [(buf.validate.field).bytes = {max_len: 32768}];
+  // dedup_key 重复指纹（可选）：(biz_id, dedup_key) 在门闩有效期内幂等。
+  string dedup_key = 6 [(buf.validate.field).string = {max_len: 128}];
+  // group_key 聚合分组键（可选）：命中聚合路由时同键事件微批合并。
+  string group_key = 7 [(buf.validate.field).string = {max_len: 128}];
+  // recipients 显式收件（可选，≤20）：email 渠道以此替代路由收件策略。
+  repeated string recipients = 8 [(buf.validate.field).repeated = {
+    max_items: 20,
+    items: {string: {min_len: 1, max_len: 255}}
+  }];
+}
+
+// SendEventRequest 单条投递请求。
+message SendEventRequest {
+  // event 事件载荷。
+  IngressEvent event = 1 [(buf.validate.field).required = true];
+}
+
+// SendEventResponse 单条投递响应。
+message SendEventResponse {
+  // event_id 落库事件标识（dedup 命中时为首次落库的事件）。
+  string event_id = 1;
+  // deduplicated 是否命中 dedup 门闩（true=未新建事件）。
+  bool deduplicated = 2;
+}
+
+// BatchSendRequest 批量投递请求。
+message BatchSendRequest {
+  // events 事件列表，1-500 条。
+  repeated IngressEvent events = 1 [(buf.validate.field).repeated = {min_items: 1, max_items: 500}];
+}
+
+// BatchSendResponse 批量投递响应：results 与请求 events 一一对应。
+message BatchSendResponse {
+  // results 逐条结果。
+  repeated SendEventResponse results = 1;
+}

@@ -390,9 +390,13 @@ type GetLoginProfileResponse struct {
 	Menus []string `protobuf:"bytes,4,rep,name=menus,proto3" json:"menus,omitempty"`
 	// elements 当前登录用户全部启用角色直接授权的页面元素码并集，字典序；
 	// is_admin 超管返回空。
-	Elements      []string `protobuf:"bytes,5,rep,name=elements,proto3" json:"elements,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Elements []string `protobuf:"bytes,5,rep,name=elements,proto3" json:"elements,omitempty"`
+	// biz_scope 当前用户可管理的通知 biz 并集（字典序）；biz_unrestricted=true 时为空。
+	BizScope []string `protobuf:"bytes,6,rep,name=biz_scope,json=bizScope,proto3" json:"biz_scope,omitempty"`
+	// biz_unrestricted 通知 biz 不受限（超管或任一启用角色 scope 为空）。
+	BizUnrestricted bool `protobuf:"varint,7,opt,name=biz_unrestricted,json=bizUnrestricted,proto3" json:"biz_unrestricted,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *GetLoginProfileResponse) Reset() {
@@ -460,6 +464,20 @@ func (x *GetLoginProfileResponse) GetElements() []string {
 	return nil
 }
 
+func (x *GetLoginProfileResponse) GetBizScope() []string {
+	if x != nil {
+		return x.BizScope
+	}
+	return nil
+}
+
+func (x *GetLoginProfileResponse) GetBizUnrestricted() bool {
+	if x != nil {
+		return x.BizUnrestricted
+	}
+	return false
+}
+
 var File_system_v1_auth_proto protoreflect.FileDescriptor
 
 const file_system_v1_auth_proto_rawDesc = "" +
@@ -485,19 +503,21 @@ const file_system_v1_auth_proto_rawDesc = "" +
 	"\rrefresh_token\x18\x03 \x01(\tR\frefreshToken\"\x0f\n" +
 	"\rLogoutRequest\"\x10\n" +
 	"\x0eLogoutResponse\"\x18\n" +
-	"\x16GetLoginProfileRequest\"\xb9\x01\n" +
+	"\x16GetLoginProfileRequest\"\x81\x02\n" +
 	"\x17GetLoginProfileResponse\x12#\n" +
 	"\x04user\x18\x01 \x01(\v2\x0f.system.v1.UserR\x04user\x12%\n" +
 	"\x05roles\x18\x02 \x03(\v2\x0f.system.v1.RoleR\x05roles\x12 \n" +
 	"\vpermissions\x18\x03 \x03(\tR\vpermissions\x12\x14\n" +
 	"\x05menus\x18\x04 \x03(\tR\x05menus\x12\x1a\n" +
-	"\belements\x18\x05 \x03(\tR\belements2\x9e\x03\n" +
+	"\belements\x18\x05 \x03(\tR\belements\x12\x1b\n" +
+	"\tbiz_scope\x18\x06 \x03(\tR\bbizScope\x12)\n" +
+	"\x10biz_unrestricted\x18\a \x01(\bR\x0fbizUnrestricted2\x9e\x03\n" +
 	"\vAuthService\x12T\n" +
 	"\x05Login\x12\x17.system.v1.LoginRequest\x1a\x18.system.v1.LoginResponse\"\x18\x82\xd3\xe4\x93\x02\x12:\x01*\"\r/api/v1/login\x12q\n" +
 	"\fRefreshToken\x12\x1e.system.v1.RefreshTokenRequest\x1a\x1f.system.v1.RefreshTokenResponse\" \x82\xd3\xe4\x93\x02\x1a:\x01*\"\x15/api/v1/token/refresh\x12X\n" +
 	"\x06Logout\x12\x18.system.v1.LogoutRequest\x1a\x19.system.v1.LogoutResponse\"\x19\x82\xd3\xe4\x93\x02\x13:\x01*\"\x0e/api/v1/logout\x12l\n" +
 	"\x0fGetLoginProfile\x12!.system.v1.GetLoginProfileRequest\x1a\".system.v1.GetLoginProfileResponse\"\x12\x82\xd3\xe4\x93\x02\f\x12\n" +
-	"/api/v1/meB;Z9github.com/lanyulei/monitor/backend/core/api/system/v1;v1b\x06proto3"
+	"/api/v1/meB:Z8github.com/lanyulei/reborn/backend/core/api/system/v1;v1b\x06proto3"
 
 var (
 	file_system_v1_auth_proto_rawDescOnce sync.Once

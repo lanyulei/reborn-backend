@@ -7,7 +7,7 @@ import "google/protobuf/timestamp.proto";
 import "buf/validate/validate.proto";
 import "system/v1/annotations.proto";
 
-option go_package = "github.com/lanyulei/monitor/backend/core/api/system/v1;v1";
+option go_package = "github.com/lanyulei/reborn/backend/core/api/system/v1;v1";
 
 // RoleService 角色管理服务。
 service RoleService {
@@ -97,6 +97,19 @@ message Role {
   google.protobuf.Timestamp create_time = 5;
   // update_time 更新时间。
   google.protobuf.Timestamp update_time = 6;
+  // biz_scope 可管理的通知 biz 列表；空 = 不限（现有角色缺省）。用户可管范围
+  // = 启用角色 scope 并集，任一角色不限即不限；超管恒不限。
+  repeated string biz_scope = 7;
+}
+
+// BizScope 通知 biz 范围整组替换载荷（更新时须显式携带，空列表 = 清空 = 不限）。
+message BizScope {
+  // items biz 标识列表，≤64 项、去重。
+  repeated string items = 1 [(buf.validate.field).repeated = {
+    max_items: 64
+    unique: true
+    items: {string: {pattern: "^[a-z0-9_-]{1,64}$"}}
+  }];
 }
 
 // CreateRoleRequest 创建角色请求。
@@ -112,6 +125,12 @@ message CreateRoleRequest {
   }];
   // status 初始状态，可选；未指定默认启用（1）。
   optional int32 status = 3 [(buf.validate.field).int32 = { in: [0, 1] }];
+  // biz_scope 可管理的通知 biz 列表，可选；空 = 不限。
+  repeated string biz_scope = 4 [(buf.validate.field).repeated = {
+    max_items: 64
+    unique: true
+    items: {string: {pattern: "^[a-z0-9_-]{1,64}$"}}
+  }];
 }
 
 // CreateRoleResponse 创建角色响应。
@@ -125,7 +144,7 @@ message UpdateRoleRequest {
   option (buf.validate.message).cel = {
     id: "role.update.non_empty"
     message: "at least one updatable field must be provided"
-    expression: "has(this.name) || has(this.status)"
+    expression: "has(this.name) || has(this.status) || has(this.biz_scope)"
   };
 
   // id 角色唯一标识，取自路径参数。
@@ -137,6 +156,8 @@ message UpdateRoleRequest {
   }];
   // status 新状态：1=启用 0=禁用。
   optional int32 status = 3 [(buf.validate.field).int32 = { in: [0, 1] }];
+  // biz_scope 整组替换可管理 biz 列表（items 为空 = 清空 = 不限）。
+  optional BizScope biz_scope = 4;
 }
 
 // UpdateRoleResponse 更新角色响应。

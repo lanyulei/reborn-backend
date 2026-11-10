@@ -3,10 +3,12 @@ package server
 import (
 	"log/slog"
 
-	v1 "github.com/lanyulei/monitor/backend/core/api/system/v1"
-	"github.com/lanyulei/monitor/backend/core/internal/biz"
-	"github.com/lanyulei/monitor/backend/core/internal/conf"
-	"github.com/lanyulei/monitor/backend/core/internal/service"
+	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
+	v1 "github.com/lanyulei/reborn/backend/core/api/system/v1"
+	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
+	"github.com/lanyulei/reborn/backend/core/internal/conf"
+	notifyservice "github.com/lanyulei/reborn/backend/core/internal/service/notify"
+	service "github.com/lanyulei/reborn/backend/core/internal/service/system"
 
 	"github.com/go-kratos/kratos/contrib/otel/v3/tracing"
 	"github.com/go-kratos/kratos/v3/middleware/logging"
@@ -22,6 +24,15 @@ import (
 // auth 注入的 claims，理由见 http.go）。
 func NewGRPCServer(c *conf.Server, logger *slog.Logger, user *service.UserService,
 	role *service.RoleService, auth *service.AuthService, syscfg *service.SystemConfigService,
+	loginLog *service.LoginLogService, notify *notifyservice.NotifyChannelService,
+	tmpl *notifyservice.NotifyTemplateService, route *notifyservice.NotifyRouteService,
+	silence *notifyservice.NotifySilenceService,
+	subscription *notifyservice.NotifySubscriptionService,
+	producer *notifyservice.NotifyProducerService,
+	event *notifyservice.NotifyEventService,
+	dispatch *notifyservice.NotifyDispatchService,
+	deliveryLog *notifyservice.NotifyDeliveryLogService,
+	deadLetter *notifyservice.NotifyDeadLetterService,
 	signer *biz.TokenSigner, authzUC *biz.AuthzUsecase,
 ) *grpc.Server {
 	opts := []grpc.ServerOption{
@@ -49,5 +60,16 @@ func NewGRPCServer(c *conf.Server, logger *slog.Logger, user *service.UserServic
 	v1.RegisterRoleServiceServer(srv, role)
 	v1.RegisterAuthServiceServer(srv, auth)
 	v1.RegisterSystemConfigServiceServer(srv, syscfg)
+	v1.RegisterLoginLogServiceServer(srv, loginLog)
+	notifyv1.RegisterNotifyChannelServiceServer(srv, notify)
+	notifyv1.RegisterNotifyTemplateServiceServer(srv, tmpl)
+	notifyv1.RegisterNotifyRouteServiceServer(srv, route)
+	notifyv1.RegisterNotifySilenceServiceServer(srv, silence)
+	notifyv1.RegisterNotifySubscriptionServiceServer(srv, subscription)
+	notifyv1.RegisterNotifyProducerServiceServer(srv, producer)
+	notifyv1.RegisterNotifyEventServiceServer(srv, event)
+	notifyv1.RegisterNotifyDispatchServiceServer(srv, dispatch)
+	notifyv1.RegisterNotifyDeliveryLogServiceServer(srv, deliveryLog)
+	notifyv1.RegisterNotifyDeadLetterServiceServer(srv, deadLetter)
 	return srv
 }

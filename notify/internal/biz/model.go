@@ -1,0 +1,184 @@
+package biz
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"time"
+)
+
+// 事件来源与状态常量（与 notify_event 列注释、core biz 常量对齐）。
+const (
+	EventSourceAPI      = "api"
+	EventSourceInternal = "internal"
+
+	EventStatusReceived   int32 = 1
+	EventStatusRouted     int32 = 2
+	EventStatusSuppressed int32 = 3
+	EventStatusFailed     int32 = 4
+
+	// PublishPending/PublishPublished：publish_state。PG 骨干下 published 语义
+	// = 已交付 router 处理（与事件终态同事务翻转）。
+	PublishPending   int32 = 0
+	PublishPublished int32 = 1
+)
+
+// 发送任务状态（notify_dispatch.status）。
+const (
+	DispatchPending int32 = 1
+	DispatchSending int32 = 2
+	DispatchSent    int32 = 3
+	DispatchFailed  int32 = 4
+	DispatchDead    int32 = 5
+)
+
+// 死信重放状态（notify_dlq.replay_state）。
+const (
+	ReplayNone     int32 = 1
+	ReplayPending  int32 = 2
+	ReplayReplayed int32 = 3
+)
+
+// 聚合组状态（notify_agg_group.status）。
+const (
+	AggOpen   int32 = 1
+	AggClosed int32 = 2
+)
+
+// Event 事件领域模型（notify_event 一行）。Payload 为原始 JSON 字节
+// （nil=无载荷），Recipients 空=交路由解析。
+type Event struct {
+	ID              string
+	BizID           string
+	EventType       string
+	Severity        int32
+	Title           string
+	Payload         []byte
+	DedupKey        string
+	GroupKey        string
+	Recipients      []string
+	Source          string
+	Status          int32
+	PublishState    int32
+	PublishAttempts int32
+	NextPublishTime time.Time
+	CreateTime      time.Time
+}
+
+// PayloadObject 把 payload 解码为对象；非对象/非法 JSON 返回 nil。
+func (e *Event) PayloadObject() map[string]any {
+	if len(e.Payload) == 0 {
+		return nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal(e.Payload, &m); err != nil {
+		return nil
+	}
+	return m
+}
+
+// PayloadValue 把 payload 解码为任意 JSON 值（模板 .Payload 注入）；非法返回原文字符串。
+func (e *Event) PayloadValue() any {
+	if len(e.Payload) == 0 {
+		return nil
+	}
+	var v any
+	if err := json.Unmarshal(e.Payload, &v); err != nil {
+		return string(e.Payload)
+	}
+	return v
+}
+
+// Dispatch 发送任务领域模型（notify_dispatch 一行）。TemplateID 空 = NULL；
+// Content 为 jsonb 快照（DispatchContent 编码），nil = 未渲染。
+type Dispatch struct {
+	ID            string
+	EventID       string
+	ChannelID     string
+	Recipient     string
+	TemplateID    string
+	Content       []byte
+	Status        int32
+	Attempts      int32
+	NextRetryTime time.Time
+	LastError     string
+	SendKey       string
+	CreateTime    time.Time
+}
+
+// DispatchContent 是 dispatch.content 的结构：渲染前仅含聚合上下文（Agg），
+// 首次尝试渲染后补 Subject/Body/Template*，重试复用快照不重渲染。
+type DispatchContent struct {
+	Subject         string      `json:"subject,omitempty"`
+	Body            string      `json:"body,omitempty"`
+	TemplateID      string      `json:"template_id,omitempty"`
+	TemplateVersion int32       `json:"template_version,omitempty"`
+	Agg             *AggContext `json:"agg,omitempty"`
+}
+
+// Rendered 报告快照是否已含渲染结果。
+func (c *DispatchContent) Rendered() bool {
+	return c != nil && (c.Subject != "" || c.Body != "")
+}
+
+// AggContext 聚合汇总上下文（sweeper 关闭窗口时写入汇总 dispatch）：
+// Digest=true 为超阈值摘要模式（不列明细）。
+type AggContext struct {
+	Count   int         `json:"count"`
+	Samples []AggSample `json:"samples,omitempty"`
+	Digest  bool        `json:"digest,omitempty"`
+}
+
+// AggSample 聚合样本（仅标量字段，控制 jsonb 体积）。
+type AggSample struct {
+	EventID    string    `json:"event_id"`
+	Title      string    `json:"title"`
+	Severity   int32     `json:"severity"`
+	CreateTime time.Time `json:"create_time"`
+}
+
+// DeliveryLog 投递明细（notify_delivery_log 一行，append-only）。
+type DeliveryLog struct {
+	ID            string
+	DispatchID    string
+	ChannelID     string
+	Attempt       int32
+	OK            bool
+	LatencyMs     int32
+	ProviderMsgID string
+	Error         string
+	CreateTime    time.Time
+}
+
+// DeadLetter 死信（notify_dlq 一行）。
+type DeadLetter struct {
+	ID          string
+	DispatchID  string
+	EventID     string
+	ChannelID   string
+	Recipient   string
+	LastError   string
+	Attempts    int32
+	ReplayState int32
+	CreateTime  time.Time
+	UpdateTime  time.Time
+}
+
+// SendKey 对外幂等键：hex(sha256(event|channel|recipient|dispatch))[:32]。
+// 同一 dispatch 崩溃双发同键（接收端去重）；重放 = 新 dispatch = 新键（刻意再投）。
+func SendKey(eventID, channelID, recipient, dispatchID string) string {
+	sum := sha256.Sum256([]byte(eventID + "|" + channelID + "|" + recipient + "|" + dispatchID))
+	return hex.EncodeToString(sum[:16])
+}
+
+// Truncate 把错误文案截到落库列宽（varchar(512)），按 rune 边界。
+func Truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	return string(runes[:max])
+}

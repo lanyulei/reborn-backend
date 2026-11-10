@@ -7,23 +7,37 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lanyulei/monitor/backend/core/internal/biz"
-	"github.com/lanyulei/monitor/backend/core/internal/conf"
-	"github.com/lanyulei/monitor/backend/core/internal/service"
-	"github.com/lanyulei/monitor/backend/core/internal/testfake"
+	biznotify "github.com/lanyulei/reborn/backend/core/internal/biz/notify"
+	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
+	"github.com/lanyulei/reborn/backend/core/internal/conf"
+	notifyservice "github.com/lanyulei/reborn/backend/core/internal/service/notify"
+	service "github.com/lanyulei/reborn/backend/core/internal/service/system"
+	"github.com/lanyulei/reborn/backend/core/internal/testfake"
 
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
-// testServices 是 e2e 测试装配产物：三个 service、授权用例与测试签发器
+// testServices 是 e2e 测试装配产物：十一个 service、授权用例与测试签发器
 // （authSvc 供路由注册，signer 供测试直接签发访问令牌）。
 type testServices struct {
-	user   *service.UserService
-	role   *service.RoleService
-	auth   *service.AuthService
-	syscfg *service.SystemConfigService
-	authz  *biz.AuthzUsecase
-	signer *biz.TokenSigner
+	user         *service.UserService
+	role         *service.RoleService
+	auth         *service.AuthService
+	syscfg       *service.SystemConfigService
+	loginLog     *service.LoginLogService
+	notify       *notifyservice.NotifyChannelService
+	template     *notifyservice.NotifyTemplateService
+	route        *notifyservice.NotifyRouteService
+	silence      *notifyservice.NotifySilenceService
+	subscription *notifyservice.NotifySubscriptionService
+	producer     *notifyservice.NotifyProducerService
+	event        *notifyservice.NotifyEventService
+	dispatch     *notifyservice.NotifyDispatchService
+	deliveryLog  *notifyservice.NotifyDeliveryLogService
+	deadLetter   *notifyservice.NotifyDeadLetterService
+	store        *testfake.Store
+	authz        *biz.AuthzUsecase
+	signer       *biz.TokenSigner
 }
 
 // newTestServices 组装真实依赖链（biz 用例 + 内存仓储）下的 service 与签发器。
@@ -54,16 +68,36 @@ func newTestServices(t *testing.T) testServices {
 	if err := store.CreateUser(context.Background(), actor); err != nil {
 		t.Fatalf("seed e2e actor: %v", err)
 	}
-	authUC, err := biz.NewAuthUsecase(store, store, store, store, hasher, signer)
+	authUC, err := biz.NewAuthUsecase(store, store, store, store, hasher, signer,
+		store, testLogger())
 	if err != nil {
 		t.Fatalf("biz.NewAuthUsecase() error = %v", err)
 	}
+	userUC := biz.NewUserUsecase(store, store, store, store, hasher, store)
+	authzUC := biz.NewAuthzUsecase(store, store, store, authorizer)
+	channelUC := biznotify.NewChannelUsecase(store, store, store)
 	return testServices{
-		user:   service.NewUserService(biz.NewUserUsecase(store, store, store, store, hasher)),
-		role:   service.NewRoleService(biz.NewRoleUsecase(store, store, authorizer), biz.NewPermissionUsecase(store, store, authorizer)),
-		auth:   service.NewAuthService(authUC, biz.NewAuthzUsecase(store, store, store, authorizer)),
-		syscfg: service.NewSystemConfigService(biz.NewSystemConfigUsecase(store)),
-		authz:  biz.NewAuthzUsecase(store, store, store, authorizer),
+		user:     service.NewUserService(userUC),
+		role:     service.NewRoleService(biz.NewRoleUsecase(store, store, authorizer), biz.NewPermissionUsecase(store, store, authorizer, biznotify.NewNotificationUsecase(store, nil), testfake.NewTxManager())),
+		auth:     service.NewAuthService(authUC, authzUC),
+		syscfg:   service.NewSystemConfigService(biz.NewSystemConfigUsecase(store)),
+		loginLog: service.NewLoginLogService(biz.NewLoginLogUsecase(store)),
+		notify:   notifyservice.NewNotifyChannelService(channelUC, authzUC),
+		template: notifyservice.NewNotifyTemplateService(biznotify.NewTemplateUsecase(store), authzUC),
+		route:    notifyservice.NewNotifyRouteService(biznotify.NewRouteUsecase(store, store), authzUC),
+		silence:  notifyservice.NewNotifySilenceService(biznotify.NewSilenceUsecase(store), authzUC),
+		// 订阅代管校验复用 system 用户用例（is_admin 直查 store）。
+		subscription: notifyservice.NewNotifySubscriptionService(
+			biznotify.NewSubscriptionUsecase(store), userUC),
+		producer: notifyservice.NewNotifyProducerService(biznotify.NewProducerUsecase(store), authzUC),
+		event:    notifyservice.NewNotifyEventService(biznotify.NewEventUsecase(store), authzUC),
+		dispatch: notifyservice.NewNotifyDispatchService(biznotify.NewDispatchUsecase(store), channelUC, authzUC),
+		deliveryLog: notifyservice.NewNotifyDeliveryLogService(
+			biznotify.NewDeliveryLogUsecase(store), channelUC, authzUC),
+		deadLetter: notifyservice.NewNotifyDeadLetterService(
+			biznotify.NewDeadLetterUsecase(store), channelUC, authzUC),
+		store:  store, // 事件/任务/明细/死信等运行数据用例经 Seed* 预置
+		authz:  authzUC,
 		signer: signer,
 	}
 }
@@ -87,6 +121,17 @@ func TestNewGRPCServer(t *testing.T) {
 		svc.role,
 		svc.auth,
 		svc.syscfg,
+		svc.loginLog,
+		svc.notify,
+		svc.template,
+		svc.route,
+		svc.silence,
+		svc.subscription,
+		svc.producer,
+		svc.event,
+		svc.dispatch,
+		svc.deliveryLog,
+		svc.deadLetter,
 		svc.signer,
 		svc.authz,
 	)
@@ -113,6 +158,17 @@ func TestNewHTTPServerWithOptions(t *testing.T) {
 		svc.role,
 		svc.auth,
 		svc.syscfg,
+		svc.loginLog,
+		svc.notify,
+		svc.template,
+		svc.route,
+		svc.silence,
+		svc.subscription,
+		svc.producer,
+		svc.event,
+		svc.dispatch,
+		svc.deliveryLog,
+		svc.deadLetter,
 		svc.signer,
 		svc.authz,
 	)

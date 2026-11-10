@@ -4,7 +4,7 @@ package conf;
 
 import "google/protobuf/duration.proto";
 
-option go_package = "github.com/lanyulei/monitor/backend/core/internal/conf;conf";
+option go_package = "github.com/lanyulei/reborn/backend/core/internal/conf;conf";
 
 // Bootstrap 是服务启动配置的根结构，对应 configs/*.yaml。
 message Bootstrap {
@@ -14,6 +14,8 @@ message Bootstrap {
   Data data = 2;
   // security 安全相关配置（密码哈希等）。
   Security security = 3;
+  // notify 通知域配置（渠道凭据加密等）。
+  Notify notify = 4;
 }
 
 // Server 是 HTTP/gRPC 服务器配置。
@@ -102,4 +104,21 @@ message Security {
   Jwt jwt = 2;
   // authz 接口授权参数。
   Authz authz = 3;
+}
+
+// Notify 是通知域配置。
+message Notify {
+  // Master 是渠道凭据加密主密钥配置。
+  message Master {
+    // key AES-256-GCM 主密钥（任意非空字节串，内部 SHA-256 派生 32 字节密钥）；
+    // 一律经 KRATOS_NOTIFY_MASTER_KEY 环境变量注入（占位符 ${NOTIFY_MASTER_KEY}），
+    // 禁止写入配置文件。为空时：无 secret 渠道不受影响，写入带 secret 的渠道
+    // 报 NOTIFY_SECRET_UNAVAILABLE（快速失败，绝不静默落明文）。
+    string key = 1;
+  }
+  // master 渠道凭据加密主密钥。
+  Master master = 1;
+  // dedup_ttl 业务直插（NotificationWriter）去重门闩有效期；未设置缺省 24h。
+  // 与管道 ingress 同一 notify_dedup 表、同一语义（事件带 dedup_key 时生效）。
+  google.protobuf.Duration dedup_ttl = 2;
 }

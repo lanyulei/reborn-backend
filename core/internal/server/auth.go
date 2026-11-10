@@ -3,8 +3,8 @@ package server
 import (
 	"context"
 
-	v1 "github.com/lanyulei/monitor/backend/core/api/system/v1"
-	"github.com/lanyulei/monitor/backend/core/internal/biz"
+	v1 "github.com/lanyulei/reborn/backend/core/api/system/v1"
+	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
 
 	jwtx "github.com/go-kratos/kratos/contrib/middleware/jwt/v3"
 	"github.com/go-kratos/kratos/v3/errors"

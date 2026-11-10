@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	v1 "github.com/lanyulei/monitor/backend/core/api/system/v1"
-	"github.com/lanyulei/monitor/backend/core/internal/biz"
+	v1 "github.com/lanyulei/reborn/backend/core/api/system/v1"
+	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
 )
 
 // permissionJSON 是权限接口响应的断言子集（protojson camelCase）。

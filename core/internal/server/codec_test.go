@@ -8,9 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	v1 "github.com/lanyulei/monitor/backend/core/api/system/v1"
+	v1 "github.com/lanyulei/reborn/backend/core/api/system/v1"
 
 	"github.com/go-kratos/kratos/v3/errors"
+	"google.golang.org/genproto/googleapis/api/httpbody"
 )
 
 // 核心回归：标准库 json 对 proto.Message 的非导出字段会序列化为空对象，
@@ -150,4 +151,41 @@ func errorCode(err error) int32 {
 		return se.Code
 	}
 	return 0
+}
+
+// TestLimitRequestBody body 超过上限：解码返回 413 REQUEST_TOO_LARGE；
+// 上限内请求不受影响。
+func TestLimitRequestBody(t *testing.T) {
+	t.Parallel()
+	var decodeErr error
+	h := limitRequestBody(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		decodeErr = decodeRequest(r, &v1.CreateUserRequest{})
+	}))
+
+	big := `{"username":"` + strings.Repeat("a", int(maxRequestBodyBytes)+1) + `"}`
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/system/user", strings.NewReader(big))
+	r.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(httptest.NewRecorder(), r)
+	if code := errorCode(decodeErr); code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized body: error = %v (code %d), want 413", decodeErr, code)
+	}
+
+	r = httptest.NewRequest(http.MethodPost, "/api/v1/system/user", strings.NewReader(`{"username":"alice"}`))
+	r.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(httptest.NewRecorder(), r)
+	if decodeErr != nil {
+		t.Fatalf("small body: error = %v, want nil", decodeErr)
+	}
+
+	// HttpBody（原始字节）路径走默认解码器，超限同样 413。
+	var body httpbody.HttpBody
+	h = limitRequestBody(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		decodeErr = decodeRequest(r, &body)
+	}))
+	r = httptest.NewRequest(http.MethodPost, "/upload", bytes.NewReader(make([]byte, maxRequestBodyBytes+1)))
+	r.Header.Set("Content-Type", "application/octet-stream")
+	h.ServeHTTP(httptest.NewRecorder(), r)
+	if code := errorCode(decodeErr); code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized raw body: error = %v (code %d), want 413", decodeErr, code)
+	}
 }

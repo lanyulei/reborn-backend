@@ -1,5 +1,7 @@
 # golangci-lint v2 配置：默认规则集（errcheck/govet/ineffassign/staticcheck/unused）
-# 叠加安全与拼写检查；格式化统一走 gofumpt（AGENTS.md §3）。
+# 叠加安全与拼写检查；格式化统一走 gofumpt。
+# 分层/分域契约（AGENTS.md §1，工作区共享于 ../notify/AGENTS.md）由 depguard
+# 在构建期强制：依赖方向只允许 api → service → biz → data，域间禁止横向 import。
 version: "2"
 
 formatters:
@@ -12,7 +14,59 @@ linters:
     - misspell
     - copyloopvar
     - nolintlint
+    - depguard
+  settings:
+    depguard:
+      rules:
+        # biz 是业务核心：禁止 import 任何外层与驱动（依赖倒置——biz 定义
+        # Repo 接口，data 实现；transport 消费在 service/server）。
+        biz:
+          files:
+            - "**/internal/biz/**"
+          deny:
+            - pkg: "github.com/lanyulei/reborn/backend/core/internal/data"
+              desc: "biz 禁止 import data：仓储接口在 biz 定义，实现在 data 绑定"
+            - pkg: "github.com/lanyulei/reborn/backend/core/internal/service"
+              desc: "biz 禁止 import service：依赖方向只允许 service → biz"
+            - pkg: "github.com/lanyulei/reborn/backend/core/internal/server"
+              desc: "biz 禁止 import server：传输层消费在 service/server"
+            - pkg: "github.com/go-kratos/kratos/v3/transport"
+              desc: "biz 禁止 import 传输层：transport 上下文提取一律在 service 层"
+            - pkg: "github.com/jackc/pgx"
+              desc: "biz 禁止 import 数据库驱动：data 是唯一允许驱动的层"
+        # service 只做编排与转换：禁止触碰驱动与 data 实现。
+        service:
+          files:
+            - "**/internal/service/**"
+          deny:
+            - pkg: "github.com/lanyulei/reborn/backend/core/internal/data"
+              desc: "service 禁止 import data：仓储经 biz 接口访问"
+            - pkg: "github.com/jackc/pgx"
+              desc: "service 禁止 import 数据库驱动：data 是唯一允许驱动的层"
+        # data 实现仓储：禁止反向依赖上层。
+        data:
+          files:
+            - "**/internal/data/**"
+          deny:
+            - pkg: "github.com/lanyulei/reborn/backend/core/internal/service"
+              desc: "data 禁止 import service：依赖方向只允许 service → biz → data"
+            - pkg: "github.com/lanyulei/reborn/backend/core/internal/server"
+              desc: "data 禁止 import server：传输层与仓储互不感知"
+        # server 是传输装配层：不触碰仓储实现。
+        server:
+          files:
+            - "**/internal/server/**"
+          deny:
+            - pkg: "github.com/lanyulei/reborn/backend/core/internal/data"
+              desc: "server 禁止 import data：经 service/biz 接口间接消费"
+        # api 是对外契约（生成代码）：禁止反向依赖 internal。
+        api:
+          files:
+            - "**/api/**"
+          deny:
+            - pkg: "github.com/lanyulei/reborn/backend/core/internal"
+              desc: "api 是契约层叶子：禁止 import internal（proto 是唯一事实来源）"
 
 issues:
-  # nolint 指令必须写明理由与豁免范围（AGENTS.md §9）。
+  # nolint 指令必须写明理由与豁免范围（AGENTS.md §9，契约见 ../notify/AGENTS.md）。
   exclusions: []

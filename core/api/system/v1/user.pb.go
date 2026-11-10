@@ -1207,7 +1207,7 @@ const file_system_v1_user_proto_rawDesc = "" +
 	"\aGetUser\x12\x19.system.v1.GetUserRequest\x1a\x1a.system.v1.GetUserResponse\"6\xc2\xf3\x18\x12查询用户详情\x82\xd3\xe4\x93\x02\x1a\x12\x18/api/v1/system/user/{id}\x12y\n" +
 	"\tListUsers\x12\x1b.system.v1.ListUsersRequest\x1a\x1c.system.v1.ListUsersResponse\"1\xc2\xf3\x18\x12查询用户列表\x82\xd3\xe4\x93\x02\x15\x12\x13/api/v1/system/user\x12\x92\x01\n" +
 	"\rBindUserRoles\x12\x1f.system.v1.BindUserRolesRequest\x1a .system.v1.BindUserRolesResponse\">\xc2\xf3\x18\x12设置用户角色\x82\xd3\xe4\x93\x02\":\x01*\x1a\x1d/api/v1/system/user/{id}/role\x12\x8f\x01\n" +
-	"\rListUserRoles\x12\x1f.system.v1.ListUserRolesRequest\x1a .system.v1.ListUserRolesResponse\";\xc2\xf3\x18\x12查询用户角色\x82\xd3\xe4\x93\x02\x1f\x12\x1d/api/v1/system/user/{id}/roleB;Z9github.com/lanyulei/monitor/backend/core/api/system/v1;v1b\x06proto3"
+	"\rListUserRoles\x12\x1f.system.v1.ListUserRolesRequest\x1a .system.v1.ListUserRolesResponse\";\xc2\xf3\x18\x12查询用户角色\x82\xd3\xe4\x93\x02\x1f\x12\x1d/api/v1/system/user/{id}/roleB:Z8github.com/lanyulei/reborn/backend/core/api/system/v1;v1b\x06proto3"
 
 var (
 	file_system_v1_user_proto_rawDescOnce sync.Once

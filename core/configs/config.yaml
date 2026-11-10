@@ -37,3 +37,12 @@ security:
     # 策略快照惰性刷新 TTL：超出后首个请求触发重载（stale-serve 兜底），
     # 取值过小会放大数据库读放大，过大则跨实例生效延迟变长；界 1s~10m。
     policy_ttl: 30s
+notify:
+  master:
+    # 通知渠道凭据（SMTP 密码/机器人 token/HMAC 密钥）AES-256-GCM 加密主密钥：
+    # 占位符由 config resolver 从环境变量填充（env.NewSource("KRATOS") 去掉
+    # KRATOS_ 前缀后注入为 NOTIFY_MASTER_KEY 键）：
+    #   export KRATOS_NOTIFY_MASTER_KEY=$(openssl rand -hex 32)
+    # 未设置时解析为空串：不带 secret 的渠道不受影响；创建/轮换带 secret 的
+    # 渠道返回 NOTIFY_SECRET_UNAVAILABLE，绝不静默落明文。
+    key: ${NOTIFY_MASTER_KEY}

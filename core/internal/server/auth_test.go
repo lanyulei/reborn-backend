@@ -220,3 +220,56 @@ func TestHTTPServer_B64PasswordFlow(t *testing.T) {
 		t.Fatalf("login with old password after reset: status = %d body = %q", code, body)
 	}
 }
+
+// TestHTTPServer_LoginLogAudited 登录审计端到端：登录尝试（成功/密码错误/用户
+// 不存在）经完整中间件链落日志；管理端检索接口返回细分结果与客户端信息
+// （e2e 走真实 HTTP，RemoteAddr/User-Agent 由 transport 提取）。
+func TestHTTPServer_LoginLogAudited(t *testing.T) {
+	t.Parallel()
+	ts, signer := newTestHTTPServer(t)
+	bearer := testBearer(t, signer, e2eActorID)
+	createUser(t, ts, bearer, "auditor")
+
+	for _, attempt := range []struct {
+		username, password, ua string
+	}{
+		{"auditor", "plain-secret", "e2e-agent/1.0"},
+		{"auditor", "wrong-password", "e2e-agent/1.0"},
+		{"ghost", "plain-secret", "e2e-agent/1.0"},
+	} {
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/login",
+			strings.NewReader(`{"username":"`+attempt.username+`","password":"`+attempt.password+`"}`))
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("User-Agent", attempt.ua)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("login %s: %v", attempt.username, err)
+		}
+		_ = resp.Body.Close()
+	}
+
+	code, body := doRequestWithToken(t, http.MethodGet, ts.URL+"/api/v1/system/login-log?page=1&page_size=10",
+		bearer, "")
+	if code != http.StatusOK {
+		t.Fatalf("list login logs: status = %d body = %q", code, body)
+	}
+	for _, want := range []string{
+		`"username":"auditor"`,
+		`"username":"ghost"`,
+		`"userAgent":"e2e-agent/1.0"`,
+		`"ip":"127.0.0.1"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("login log response missing %s: %s", want, body)
+		}
+	}
+	// 结果过滤：仅取成功记录，total 收敛为 1。
+	code, body = doRequestWithToken(t, http.MethodGet,
+		ts.URL+"/api/v1/system/login-log?page=1&page_size=10&result=1", bearer, "")
+	if code != http.StatusOK || !strings.Contains(body, `"total":"1"`) {
+		t.Fatalf("filter result=1: status = %d body = %q", code, body)
+	}
+}

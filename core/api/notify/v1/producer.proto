@@ -1,0 +1,216 @@
+syntax = "proto3";
+
+package notify.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "buf/validate/validate.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/notify/v1;v1";
+
+// NotifyProducerService 通知生产者管理服务：一行 = 一个事件生产者（如监控
+// 引擎）的接入凭据。token 明文仅在创建/轮换响应中出现一次，落库只存
+// SHA-256，任何读接口不回显；数据面 HMAC 鉴权由管道 ingress 执行
+// （设计 §9：Authorization: HMAC <id>:<sig>:<ts>，±5min 防重放）。
+// 更新语义：spec（名称/白名单/过期时间）整组替换，enabled 独立启停
+// （停用即拒绝接入，≤10s 生效）；biz_id 绑定 token scope，创建后不可改。
+service NotifyProducerService {
+  // CreateProducer 创建生产者并签发 token；token 明文仅本次响应返回一次。
+  rpc CreateProducer(CreateProducerRequest) returns (CreateProducerResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/notify/producer"
+      body: "*"
+    };
+    option (system.v1.title) = "创建通知生产者";
+  }
+  // UpdateProducer 更新生产者：spec 整组替换（不传 expire_time 即清除），
+  // enabled 独立启停，至少传其一。
+  rpc UpdateProducer(UpdateProducerRequest) returns (UpdateProducerResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/notify/producer/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "更新通知生产者";
+  }
+  // RotateProducerToken 轮换 token：旧 token 立即失效（≤10s 生效），
+  // 新 token 明文仅本次响应返回一次。
+  rpc RotateProducerToken(RotateProducerTokenRequest) returns (RotateProducerTokenResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/notify/producer/{id}/token:rotate"
+      body: "*"
+    };
+    option (system.v1.title) = "轮换生产者令牌";
+  }
+  // DeleteProducer 删除生产者（软删，token 随之作废；名称可复用）。
+  rpc DeleteProducer(DeleteProducerRequest) returns (DeleteProducerResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/notify/producer/{id}"
+    };
+    option (system.v1.title) = "删除通知生产者";
+  }
+  // GetProducer 查询生产者详情（不含 token 与哈希）。
+  rpc GetProducer(GetProducerRequest) returns (GetProducerResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/notify/producer/{id}"
+    };
+    option (system.v1.title) = "查询通知生产者";
+  }
+  // ListProducers 分页查询生产者，page_size 上限 100。
+  rpc ListProducers(ListProducersRequest) returns (ListProducersResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/notify/producer"
+    };
+    option (system.v1.title) = "查询通知生产者列表";
+  }
+}
+
+// ProducerSpec 生产者配置载荷：名称 / 事件白名单 / 过期时间（创建与整组
+// 替换更新共用）。event_whitelist 为空 = 不限事件类型（token scope 仍限定
+// biz）；条目为事件模式：精确 / 前缀通配（'monitor.alert.*'）/ 全匹配（'*'）。
+message ProducerSpec {
+  // name 生产者名称；同 biz 未删除行内唯一。
+  string name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // event_whitelist 事件类型白名单，空 = 不限；条目为事件模式（与路由同式）。
+  repeated string event_whitelist = 2 [(buf.validate.field).repeated = {
+    min_items: 0
+    max_items: 32
+    unique: true
+    items: {string: {min_len: 1, max_len: 128, pattern: "^(\\*|[a-z0-9][a-z0-9._-]{0,127}|[a-z0-9][a-z0-9._-]{0,125}\\.\\*)$"}}
+  }];
+  // expire_time 过期时间，可选；未指定 = 永不过期（整组替换时不传即清除）。
+  optional google.protobuf.Timestamp expire_time = 3;
+  // qps_limit 每秒接入事件上限，0 = 不限；管道 ingress 按生产者计数，超限 429。
+  int32 qps_limit = 4 [(buf.validate.field).int32 = { gte: 0, lte: 1000000 }];
+  // daily_limit 每日（UTC）接入事件上限，0 = 不限。
+  int32 daily_limit = 5 [(buf.validate.field).int32 = { gte: 0, lte: 1000000000 }];
+}
+
+// NotifyProducer 生产者实体（任何接口不回显 token 与哈希）。
+message NotifyProducer {
+  // id 生产者唯一标识（UUIDv7）。
+  string id = 1;
+  // name 生产者名称；同 biz 未删除行内唯一。
+  string name = 2;
+  // biz_id 业务租户标识；token scope 限定 biz，创建后不可改。
+  string biz_id = 3;
+  // event_whitelist 事件类型白名单；空 = 不限。
+  repeated string event_whitelist = 4;
+  // expire_time 过期时间；未设置 = 永不过期。
+  optional google.protobuf.Timestamp expire_time = 5;
+  // enabled 启用状态；停用后 ingress 拒绝接入（≤10s 生效）。
+  bool enabled = 6;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 7;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 8;
+  // qps_limit 每秒接入上限（0=不限）。
+  int32 qps_limit = 9;
+  // daily_limit 每日接入上限（0=不限）。
+  int32 daily_limit = 10;
+}
+
+// CreateProducerRequest 创建生产者请求。
+message CreateProducerRequest {
+  // biz_id 业务租户标识，可选；未指定默认 default，创建后不可改。
+  optional string biz_id = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+    pattern: "^[a-z0-9_-]{1,64}$"
+  }];
+  // spec 生产者配置。
+  ProducerSpec spec = 2;
+  // enabled 初始启用状态，可选；未指定默认启用。
+  optional bool enabled = 3;
+}
+
+// CreateProducerResponse 创建生产者响应。
+message CreateProducerResponse {
+  // producer 已创建的生产者实体。
+  NotifyProducer producer = 1;
+  // token 接入令牌明文：仅本响应返回一次，落库只存 SHA-256；请立即妥善
+  // 保存（丢失只能轮换重发）。
+  string token = 2;
+}
+
+// UpdateProducerRequest 更新生产者请求：spec 与 enabled 至少传其一。
+message UpdateProducerRequest {
+  option (buf.validate.message).cel = {
+    id: "notify.producer.update.non_empty"
+    message: "at least one of spec or enabled must be provided"
+    expression: "has(this.spec) || has(this.enabled)"
+  };
+
+  // id 生产者唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // spec 新生产者配置，整组替换（不传 expire_time 即清除过期时间）。
+  optional ProducerSpec spec = 2;
+  // enabled 新启用状态。
+  optional bool enabled = 3;
+}
+
+// UpdateProducerResponse 更新生产者响应。
+message UpdateProducerResponse {}
+
+// RotateProducerTokenRequest 轮换令牌请求。
+message RotateProducerTokenRequest {
+  // id 生产者唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// RotateProducerTokenResponse 轮换令牌响应。
+message RotateProducerTokenResponse {
+  // producer 轮换后的生产者实体（update_time 已刷新）。
+  NotifyProducer producer = 1;
+  // token 新接入令牌明文：仅本响应返回一次，旧 token 立即失效（≤10s 生效）。
+  string token = 2;
+}
+
+// DeleteProducerRequest 删除生产者请求。
+message DeleteProducerRequest {
+  // id 生产者唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteProducerResponse 删除生产者响应。
+message DeleteProducerResponse {}
+
+// GetProducerRequest 查询生产者请求。
+message GetProducerRequest {
+  // id 生产者唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetProducerResponse 查询生产者响应。
+message GetProducerResponse {
+  // producer 生产者实体。
+  NotifyProducer producer = 1;
+}
+
+// ListProducersRequest 分页查询生产者请求。
+message ListProducersRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // keyword 关键字，可选；模糊匹配名称。
+  optional string keyword = 3 [(buf.validate.field).string.max_len = 64];
+  // enabled 启用状态过滤，可选。
+  optional bool enabled = 4;
+  // biz_id 业务命名空间过滤，可选；biz 受限用户必填（NOTIFY_BIZ_REQUIRED）。
+  optional string biz_id = 5 [(buf.validate.field).string = {pattern: "^[a-z0-9_-]{1,64}$"}];
+}
+
+// ListProducersResponse 分页查询生产者响应。
+message ListProducersResponse {
+  // items 当前页数据。
+  repeated NotifyProducer items = 1;
+  // total 总数。
+  int64 total = 2;
+}

@@ -8,7 +8,7 @@ import "buf/validate/validate.proto";
 import "system/v1/annotations.proto";
 import "system/v1/role.proto";
 
-option go_package = "github.com/lanyulei/monitor/backend/core/api/system/v1;v1";
+option go_package = "github.com/lanyulei/reborn/backend/core/api/system/v1;v1";
 
 // UserService 用户管理服务：用户 CRUD、状态、密码重置与角色绑定。
 service UserService {

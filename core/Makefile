@@ -1,5 +1,5 @@
 GOFLAGS?=
-# 工具版本锁定：禁止 @latest（AGENTS.md §7 依赖治理）。
+# 工具版本锁定：禁止 @latest（依赖治理，契约见 ../notify/AGENTS.md）。
 GOLANGCI_LINT_VERSION:=v2.15.0
 GOVULNCHECK_VERSION:=v1.9.0
 GOFUMPT_VERSION:=v0.12.0
@@ -27,7 +27,7 @@ dep:
 	buf dep update
 
 .PHONY: run
-# run 本地运行（必须用 kratos CLI，见 AGENTS.md §2）。
+# run 本地运行（必须用 kratos CLI）。
 run:
 	kratos run
 

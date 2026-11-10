@@ -4,9 +4,9 @@ import (
 	"context"
 	"log/slog"
 
-	v1 "github.com/lanyulei/monitor/backend/core/api/system/v1"
-	"github.com/lanyulei/monitor/backend/core/internal/biz"
-	"github.com/lanyulei/monitor/backend/core/internal/service"
+	v1 "github.com/lanyulei/reborn/backend/core/api/system/v1"
+	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
+	service "github.com/lanyulei/reborn/backend/core/internal/service/system"
 
 	"github.com/go-kratos/kratos/v3/middleware"
 	"github.com/go-kratos/kratos/v3/middleware/selector"

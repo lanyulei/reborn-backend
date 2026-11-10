@@ -1,0 +1,109 @@
+syntax = "proto3";
+
+package notify.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "buf/validate/validate.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/notify/v1;v1";
+
+// NotifyDeadLetterService 死信重放服务（设计 §4.7/§5.2）：查询运行表
+// notify_dlq（sender 在 dispatch 重试超限后写入），并标记重放。
+// 重放是控制台唯一的写动作：replay_state 仅允许 none → pending（条件
+// UPDATE 保证状态机）；dlq worker（管道 P1）轮询 pending 行重新生成
+// dispatch 后置 replayed。core 不改错误详情、不删除行（§5.3 列级授权）。
+service NotifyDeadLetterService {
+  // ListDeadLetters 分页查询死信，page_size 上限 100；按转入时间倒序。
+  rpc ListDeadLetters(ListDeadLettersRequest) returns (ListDeadLettersResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/notify/dead-letter"
+    };
+    option (system.v1.title) = "查询通知死信列表";
+  }
+  // ReplayDeadLetter 标记死信待重放（replay_state: none → pending），返回
+  // 更新后的行；仅 replay_state=none 的行可标记（409 NOTIFY_DLQ_INVALID_STATE）。
+  rpc ReplayDeadLetter(ReplayDeadLetterRequest) returns (ReplayDeadLetterResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/notify/dead-letter/{id}:replay"
+      body: "*"
+    };
+    option (system.v1.title) = "标记死信重放";
+  }
+}
+
+// NotifyDeadLetter 死信实体（notify_dlq 一行的排障视图）。
+message NotifyDeadLetter {
+  // id 死信行标识（= 转死信的 dispatch id）。
+  string id = 1;
+  // dispatch_id 死信来源发送任务标识（notify_dispatch.id）。
+  string dispatch_id = 2;
+  // event_id 源事件标识（重放时 dlq worker 引用它生成新 dispatch）。
+  string event_id = 3;
+  // channel_id 投递渠道实例标识（notify_channel.id）。
+  string channel_id = 4;
+  // recipient 收件目标：邮箱/群标识/webhook url/用户ID。
+  string recipient = 5;
+  // last_error 转死信时的最近失败原因；未设置表示无。
+  string last_error = 6;
+  // attempts 累计尝试次数（重试上限 5 次后转入）。
+  int32 attempts = 7;
+  // replay_state 重放状态：1 none / 2 pending（已标记待重放）/ 3 replayed（已重放）。
+  int32 replay_state = 8;
+  // create_time 转入死信时间。
+  google.protobuf.Timestamp create_time = 9;
+  // update_time 最近状态变更时间。
+  google.protobuf.Timestamp update_time = 10;
+}
+
+// ListDeadLettersRequest 分页查询死信请求：事件下钻/渠道/重放状态/时间
+// 四维过滤（设计 §6.1）。
+message ListDeadLettersRequest {
+  option (buf.validate.message).cel = {
+    id: "notify.deadletter.list.time_range"
+    message: "createTimeStart must be <= createTimeEnd"
+    expression: "!has(this.create_time_start) || !has(this.create_time_end) || this.create_time_start <= this.create_time_end"
+  };
+
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // event_id 源事件过滤，可选；精确匹配（事件 → 死信下钻）。
+  optional string event_id = 3 [(buf.validate.field).string.uuid = true];
+  // channel_id 投递渠道过滤，可选；精确匹配。
+  optional string channel_id = 4 [(buf.validate.field).string.uuid = true];
+  // replay_state 重放状态过滤，可选：1 none / 2 pending / 3 replayed。
+  optional int32 replay_state = 5 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 3
+  }];
+  // create_time_start 转入时间下界（含），可选。
+  optional google.protobuf.Timestamp create_time_start = 6;
+  // create_time_end 转入时间上界（含），可选。
+  optional google.protobuf.Timestamp create_time_end = 7;
+}
+
+// ListDeadLettersResponse 分页查询死信响应。
+message ListDeadLettersResponse {
+  // items 当前页数据。
+  repeated NotifyDeadLetter items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// ReplayDeadLetterRequest 标记死信待重放请求。
+message ReplayDeadLetterRequest {
+  // id 目标死信标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// ReplayDeadLetterResponse 标记死信待重放响应（更新后的行）。
+message ReplayDeadLetterResponse {
+  // dead_letter 更新后的死信行（replay_state=pending）。
+  NotifyDeadLetter dead_letter = 1;
+}

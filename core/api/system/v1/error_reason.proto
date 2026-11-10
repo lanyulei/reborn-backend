@@ -4,7 +4,7 @@ package system.v1;
 
 import "errors/errors.proto";
 
-option go_package = "github.com/lanyulei/monitor/backend/core/api/system/v1;v1";
+option go_package = "github.com/lanyulei/reborn/backend/core/api/system/v1;v1";
 
 // 合并 OpenAPI 规格的全局元信息（openapiv2_swagger）挂在字母序首个输入文件上，
 // 现为 annotations.proto，勿在本文件重复声明（两处声明会互相覆盖）。
@@ -50,4 +50,7 @@ enum ErrorReason {
   GRANT_INVALID = 15 [(errors.code) = 400];
   // LOGO_NOT_FOUND 系统 logo 从未上传过（未配置语义，非错误状态），映射 HTTP 404。
   LOGO_NOT_FOUND = 16 [(errors.code) = 404];
+  // USER_SELF_OPERATION 不允许对当前登录账号自身执行的管理操作（停用/删除/
+  // 变更超管标记），映射 HTTP 400；防止操作者把自己锁在系统之外。
+  USER_SELF_OPERATION = 17 [(errors.code) = 400];
 }

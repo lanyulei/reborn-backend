@@ -1,0 +1,218 @@
+syntax = "proto3";
+
+package notify.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "buf/validate/validate.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/notify/v1;v1";
+
+// NotifyTemplateService 通知模板管理服务：模板按 biz × event_type × channel_type
+// 三维覆盖（'*' 通配），渲染解析链 (biz,event,channel) > (biz,event,*) >
+// (biz,*,channel) > (biz,*,*) > 内置默认模板。subject/body 为 Go template，
+// 写入前经语法解析与渲染变量白名单校验（变量：Title/Payload/Severity/Count/
+// Samples/BizID/EventTime；零函数注册）；更新即 version+1，历史通知可复现。
+service NotifyTemplateService {
+  // CreateTemplate 创建模板；同 biz 内 (event_type, channel_type) 组合唯一。
+  rpc CreateTemplate(CreateTemplateRequest) returns (CreateTemplateResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/notify/template"
+      body: "*"
+    };
+    option (system.v1.title) = "创建通知模板";
+  }
+  // UpdateTemplate 部分更新模板；spec（event_type/channel_type）可改但组合仍须
+  // 唯一；任何更新 version+1。
+  rpc UpdateTemplate(UpdateTemplateRequest) returns (UpdateTemplateResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/notify/template/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "更新通知模板";
+  }
+  // DeleteTemplate 删除模板（软删，三维组合可复用）；历史投递记录不受影响。
+  rpc DeleteTemplate(DeleteTemplateRequest) returns (DeleteTemplateResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/notify/template/{id}"
+    };
+    option (system.v1.title) = "删除通知模板";
+  }
+  // GetTemplate 查询模板详情。
+  rpc GetTemplate(GetTemplateRequest) returns (GetTemplateResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/notify/template/{id}"
+    };
+    option (system.v1.title) = "查询通知模板";
+  }
+  // ListTemplates 分页查询模板，page_size 上限 100。
+  rpc ListTemplates(ListTemplatesRequest) returns (ListTemplatesResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/notify/template"
+    };
+    option (system.v1.title) = "查询通知模板列表";
+  }
+}
+
+// NotifyTemplate 模板实体。
+message NotifyTemplate {
+  // id 模板唯一标识（UUIDv7）。
+  string id = 1;
+  // biz_id 业务租户标识；渲染解析链按 biz 隔离。
+  string biz_id = 2;
+  // event_type 事件类型精确匹配或 '*' 通配。
+  string event_type = 3;
+  // channel_type 渠道类型（email/webhook/dingtalk/wecom/feishu）或 '*' 通配。
+  string channel_type = 4;
+  // subject 标题模板（邮件主题/机器人标题）。
+  string subject = 5;
+  // body 正文模板。
+  string body = 6;
+  // version 模板版本号，创建为 1，每次更新 +1。
+  int32 version = 7;
+  // enabled 启用状态；停用后解析链跳过（≤10s 生效）。
+  bool enabled = 8;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 9;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 10;
+}
+
+// CreateTemplateRequest 创建模板请求。
+message CreateTemplateRequest {
+  // biz_id 业务租户标识，可选；未指定默认 default。
+  optional string biz_id = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+    pattern: "^[a-z0-9_-]{1,64}$"
+  }];
+  // event_type 事件类型或 '*'；'*' 之外的值须为小写字母/数字开头的点分串。
+  string event_type = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+    pattern: "^(\\*|[a-z0-9][a-z0-9._-]{0,127})$"
+  }];
+  // channel_type 渠道类型或 '*' 通配。
+  string channel_type = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 32
+    pattern: "^(\\*|email|webhook|dingtalk|wecom|feishu)$"
+  }];
+  // subject 标题模板（Go template）。
+  string subject = 4 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 255
+  }];
+  // body 正文模板（Go template）。
+  string body = 5 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 32768
+  }];
+  // enabled 初始启用状态，可选；未指定默认启用。
+  optional bool enabled = 6;
+}
+
+// CreateTemplateResponse 创建模板响应。
+message CreateTemplateResponse {
+  // template 已创建的模板实体。
+  NotifyTemplate template = 1;
+}
+
+// UpdateTemplateRequest 更新模板请求，可选字段传哪个改哪个，至少传一个；
+// spec 可改但 (event_type, channel_type) 组合在同 biz 内仍须唯一。
+message UpdateTemplateRequest {
+  option (buf.validate.message).cel = {
+    id: "notify.template.update.non_empty"
+    message: "at least one updatable field must be provided"
+    expression: "has(this.event_type) || has(this.channel_type) || has(this.subject) || has(this.body) || has(this.enabled)"
+  };
+
+  // id 模板唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // event_type 新事件类型。
+  optional string event_type = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+    pattern: "^(\\*|[a-z0-9][a-z0-9._-]{0,127})$"
+  }];
+  // channel_type 新渠道类型。
+  optional string channel_type = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 32
+    pattern: "^(\\*|email|webhook|dingtalk|wecom|feishu)$"
+  }];
+  // subject 新标题模板。
+  optional string subject = 4 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 255
+  }];
+  // body 新正文模板。
+  optional string body = 5 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 32768
+  }];
+  // enabled 新启用状态。
+  optional bool enabled = 6;
+}
+
+// UpdateTemplateResponse 更新模板响应。
+message UpdateTemplateResponse {}
+
+// DeleteTemplateRequest 删除模板请求。
+message DeleteTemplateRequest {
+  // id 模板唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteTemplateResponse 删除模板响应。
+message DeleteTemplateResponse {}
+
+// GetTemplateRequest 查询模板请求。
+message GetTemplateRequest {
+  // id 模板唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetTemplateResponse 查询模板响应。
+message GetTemplateResponse {
+  // template 模板实体。
+  NotifyTemplate template = 1;
+}
+
+// ListTemplatesRequest 分页查询模板请求。
+message ListTemplatesRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // keyword 关键字，可选；模糊匹配 event_type/channel_type/subject。
+  optional string keyword = 3 [(buf.validate.field).string.max_len = 64];
+  // event_type 事件类型精确过滤，可选（含 '*'）。
+  optional string event_type = 4 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+    pattern: "^(\\*|[a-z0-9][a-z0-9._-]{0,127})$"
+  }];
+  // channel_type 渠道类型精确过滤，可选（含 '*'）。
+  optional string channel_type = 5 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 32
+    pattern: "^(\\*|email|webhook|dingtalk|wecom|feishu)$"
+  }];
+  // enabled 启用状态过滤，可选。
+  optional bool enabled = 6;
+  // biz_id 业务命名空间过滤，可选；biz 受限用户必填（NOTIFY_BIZ_REQUIRED）。
+  optional string biz_id = 7 [(buf.validate.field).string = {pattern: "^[a-z0-9_-]{1,64}$"}];
+}
+
+// ListTemplatesResponse 分页查询模板响应。
+message ListTemplatesResponse {
+  // items 当前页数据。
+  repeated NotifyTemplate items = 1;
+  // total 总数。
+  int64 total = 2;
+}

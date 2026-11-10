@@ -1,0 +1,365 @@
+syntax = "proto3";
+
+package notify.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "buf/validate/validate.proto";
+import "notify/v1/event.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/notify/v1;v1";
+
+// NotifyChannelService 通知渠道管理服务：一行渠道 = 一个可独立发送/限流/启停的
+// 端点实例（邮件服务器 / webhook 目标 / 群机器人），type 只决定管道侧适配器；
+// 多套邮件、多个 webhook 即多行记录。secret 只写不读：任何响应恒不返回。
+service NotifyChannelService {
+  // CreateChannel 创建渠道；type 与 config 结构必须匹配，email/群机器人必须
+  // 携带 secret（SMTP 密码/机器人 token），webhook 的 HMAC 密钥可选。
+  rpc CreateChannel(CreateChannelRequest) returns (CreateChannelResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/notify/channel"
+      body: "*"
+    };
+    option (system.v1.title) = "创建通知渠道";
+  }
+  // UpdateChannel 部分更新渠道；secret 不传=保留旧密文，传新值=轮换；
+  // type 创建后不可改（换适配器须新建渠道）。
+  rpc UpdateChannel(UpdateChannelRequest) returns (UpdateChannelResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/notify/channel/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "更新通知渠道";
+  }
+  // DeleteChannel 删除渠道（软删，名称可复用）；历史投递记录不受影响。
+  rpc DeleteChannel(DeleteChannelRequest) returns (DeleteChannelResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/notify/channel/{id}"
+    };
+    option (system.v1.title) = "删除通知渠道";
+  }
+  // GetChannel 查询渠道详情（不含 secret）。
+  rpc GetChannel(GetChannelRequest) returns (GetChannelResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/notify/channel/{id}"
+    };
+    option (system.v1.title) = "查询通知渠道";
+  }
+  // ListChannels 分页查询渠道，page_size 上限 100。
+  rpc ListChannels(ListChannelsRequest) returns (ListChannelsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/notify/channel"
+    };
+    option (system.v1.title) = "查询通知渠道列表";
+  }
+  // SendTestEvent 按渠道实例发送测试事件（设计 §5.1.1 连通性测试）：向
+  // notify_event 直插一条 source=internal 的测试事件（core 对该表仅
+  // INSERT，§5.3），走与生产事件完全相同的链路——relay 发布 → 路由匹配 →
+  // 模板渲染 → 渠道发送（管道 P1 消费 pending 事件）。投递结果异步可查：
+  // ListEvents / ListDispatches / ListDeliveryLogs 按返回的 event_id 跟踪。
+  // 渠道须存在且启用；停用实例被路由跳过，测试无意义，直接拒绝。
+  rpc SendTestEvent(SendTestEventRequest) returns (SendTestEventResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/notify/channel/{id}:test"
+      body: "*"
+    };
+    option (system.v1.title) = "发送渠道测试事件";
+  }
+}
+
+// NotifyChannelType 渠道类型，决定管道侧适配器与 config 结构。
+enum NotifyChannelType {
+  // NOTIFY_CHANNEL_TYPE_UNSPECIFIED 未指定（拒绝）。
+  NOTIFY_CHANNEL_TYPE_UNSPECIFIED = 0;
+  // NOTIFY_CHANNEL_TYPE_EMAIL 邮件（SMTP）。
+  NOTIFY_CHANNEL_TYPE_EMAIL = 1;
+  // NOTIFY_CHANNEL_TYPE_WEBHOOK 通用 Webhook（仅 HTTPS）。
+  NOTIFY_CHANNEL_TYPE_WEBHOOK = 2;
+  // NOTIFY_CHANNEL_TYPE_DINGTALK 钉钉群机器人。
+  NOTIFY_CHANNEL_TYPE_DINGTALK = 3;
+  // NOTIFY_CHANNEL_TYPE_WECOM 企业微信群机器人。
+  NOTIFY_CHANNEL_TYPE_WECOM = 4;
+  // NOTIFY_CHANNEL_TYPE_FEISHU 飞书群机器人。
+  NOTIFY_CHANNEL_TYPE_FEISHU = 5;
+}
+
+// NotifyRateLimit 令牌桶限流参数；qps=0 表示不限（适配器层仍受通道默认配额约束，
+// 如钉钉 20/min/机器人）。多实例渠道各自独立限流。
+message NotifyRateLimit {
+  // qps 每秒补充令牌速率，0 表示不限。
+  int64 qps = 1 [(buf.validate.field).int64.gte = 0];
+  // burst 令牌桶容量（突发上限），0 表示不限。
+  int64 burst = 2 [(buf.validate.field).int64.gte = 0];
+}
+
+// EmailChannelConfig 邮件渠道配置（type=EMAIL）；secret 为 SMTP 密码（必传）。
+message EmailChannelConfig {
+  // host SMTP 服务器地址。
+  string host = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 253
+  }];
+  // port SMTP 端口（25/465/587 等）。
+  uint32 port = 2 [(buf.validate.field).uint32 = {
+    gte: 1
+    lte: 65535
+  }];
+  // username SMTP 认证用户名。
+  string username = 3 [(buf.validate.field).string.max_len = 64];
+  // from_addr 发件人地址。
+  string from_addr = 4 [(buf.validate.field).string = {
+    min_len: 3
+    max_len: 254
+    email: true
+  }];
+  // starttls 是否使用 STARTTLS。
+  bool starttls = 5;
+}
+
+// WebhookChannelConfig Webhook 渠道配置（type=WEBHOOK）；仅允许 HTTPS，
+// secret 为出站 HMAC-SHA256 签名密钥（可选，未配置则不签名）。
+message WebhookChannelConfig {
+  // url 目标地址，必须以 https:// 开头。
+  string url = 1 [(buf.validate.field).string = {
+    min_len: 12
+    max_len: 2048
+    pattern: "^https://"
+  }];
+  // method 请求方法，v1 仅支持 POST。
+  string method = 2 [(buf.validate.field).string = {in: ["POST"]}];
+  // headers 附加请求头（如鉴权头）。
+  map<string, string> headers = 3 [(buf.validate.field).map.max_pairs = 16];
+  // timeout_s 出站超时秒数，1-10；可选，未指定默认 5（core 落库时补齐，
+  // 管道按该值设置请求超时）。
+  optional int32 timeout_s = 4 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 10
+  }];
+}
+
+// RobotChannelConfig 群机器人渠道配置（type=DINGTALK/WECOM/FEISHU）；
+// secret 为机器人 access_token/webhook 密钥（必传）。
+message RobotChannelConfig {
+  // at_mobiles 需要 @ 提醒的手机号列表，可选。
+  repeated string at_mobiles = 1 [(buf.validate.field).repeated = {
+    max_items: 20
+    items: {
+      string: {
+        min_len: 5
+        max_len: 32
+      }
+    }
+  }];
+}
+
+// NotifyChannel 渠道实体（出参；secret 永不返回）。
+message NotifyChannel {
+  // id 渠道唯一标识（UUIDv7）。
+  string id = 1;
+  // biz_id 业务租户标识；路由与配额按 biz 隔离。
+  string biz_id = 2;
+  // type 渠道类型，创建后不可改。
+  NotifyChannelType type = 3;
+  // name 渠道展示名，同 biz 未删除行内唯一。
+  string name = 4;
+  // detail 与 type 匹配的类型化配置（读写均按 type 定型）。
+  oneof detail {
+    // email 邮件配置（type=EMAIL 时返回）。
+    EmailChannelConfig email = 5;
+    // webhook Webhook 配置（type=WEBHOOK 时返回）。
+    WebhookChannelConfig webhook = 6;
+    // robot 群机器人配置（type=DINGTALK/WECOM/FEISHU 时返回）。
+    RobotChannelConfig robot = 7;
+  }
+  // rate_limit 令牌桶限流参数。
+  NotifyRateLimit rate_limit = 8;
+  // enabled 启用状态；停用后管道路由匹配跳过（≤10s 生效）。
+  bool enabled = 9;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 10;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 11;
+}
+
+// CreateChannelRequest 创建渠道请求。
+message CreateChannelRequest {
+  option (buf.validate.message).cel = {
+    id: "notify.channel.create.detail"
+    message: "exactly one channel config (email/webhook/robot) is required"
+    expression: "has(this.email) || has(this.webhook) || has(this.robot)"
+  };
+
+  // biz_id 业务租户标识，可选；未指定默认 default。
+  optional string biz_id = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+    pattern: "^[a-z0-9_-]{1,64}$"
+  }];
+  // type 渠道类型，创建后不可改。
+  NotifyChannelType type = 2 [(buf.validate.field).enum = {
+    in: [1, 2, 3, 4, 5]
+  }];
+  // name 渠道展示名，1-128 位。
+  string name = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+  // detail 与 type 匹配的类型化配置，恰好一种。
+  oneof detail {
+    // email 邮件配置。
+    EmailChannelConfig email = 4;
+    // webhook Webhook 配置。
+    WebhookChannelConfig webhook = 5;
+    // robot 群机器人配置。
+    RobotChannelConfig robot = 6;
+  }
+  // rate_limit 令牌桶限流，可选；未指定默认不限（qps=0/burst=0）。
+  optional NotifyRateLimit rate_limit = 7;
+  // enabled 初始启用状态，可选；未指定默认启用。
+  optional bool enabled = 8;
+  // secret 渠道凭据明文（仅入参，AES-256-GCM 加密落库，任何响应不返回）；
+  // email/群机器人必传，webhook 可选；1-512 位。
+  optional string secret = 9 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 512
+  }];
+  // sign_secret 机器人签名密钥（钉钉加签 / 飞书签名校验），可选、只写不读；
+  // 仅 dingtalk/feishu 类型接受。
+  optional string sign_secret = 10 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 512
+  }];
+}
+
+// CreateChannelResponse 创建渠道响应。
+message CreateChannelResponse {
+  // channel 已创建的渠道实体（不含 secret）。
+  NotifyChannel channel = 1;
+}
+
+// UpdateChannelRequest 更新渠道请求，可选字段传哪个改哪个，至少传一个；
+// config 按类型整体替换（不可部分更新）。
+message UpdateChannelRequest {
+  option (buf.validate.message).cel = {
+    id: "notify.channel.update.non_empty"
+    message: "at least one updatable field must be provided"
+    expression: "has(this.name) || has(this.email) || has(this.webhook) || has(this.robot) || has(this.rate_limit) || has(this.enabled) || has(this.secret) || has(this.sign_secret)"
+  };
+
+  // id 渠道唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // name 新渠道展示名。
+  optional string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+  // detail 与 type 匹配的新配置（整体替换）；type 不可改。
+  oneof detail {
+    // email 邮件配置。
+    EmailChannelConfig email = 3;
+    // webhook Webhook 配置。
+    WebhookChannelConfig webhook = 4;
+    // robot 群机器人配置。
+    RobotChannelConfig robot = 5;
+  }
+  // rate_limit 新令牌桶限流参数。
+  optional NotifyRateLimit rate_limit = 6;
+  // enabled 新启用状态。
+  optional bool enabled = 7;
+  // secret 新渠道凭据：不传=保留旧密文，传新值=轮换（旧凭据即刻作废）。
+  optional string secret = 8 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 512
+  }];
+  // sign_secret 机器人签名密钥：不传 = 保留；传非空 = 轮换；传空串 = 清除（停用签名）。
+  optional string sign_secret = 9 [(buf.validate.field).string.max_len = 512];
+}
+
+// UpdateChannelResponse 更新渠道响应。
+message UpdateChannelResponse {}
+
+// DeleteChannelRequest 删除渠道请求。
+message DeleteChannelRequest {
+  // id 渠道唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteChannelResponse 删除渠道响应。
+message DeleteChannelResponse {}
+
+// GetChannelRequest 查询渠道请求。
+message GetChannelRequest {
+  // id 渠道唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetChannelResponse 查询渠道响应。
+message GetChannelResponse {
+  // channel 渠道实体（不含 secret）。
+  NotifyChannel channel = 1;
+}
+
+// ListChannelsRequest 分页查询渠道请求。
+message ListChannelsRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // keyword 关键字，可选；模糊匹配渠道名。
+  optional string keyword = 3 [(buf.validate.field).string.max_len = 64];
+  // type 渠道类型过滤，可选。
+  optional NotifyChannelType type = 4 [(buf.validate.field).enum = {
+    in: [1, 2, 3, 4, 5]
+  }];
+  // enabled 启用状态过滤，可选。
+  optional bool enabled = 5;
+  // biz_id 业务命名空间过滤，可选；biz 受限用户必填（NOTIFY_BIZ_REQUIRED）。
+  optional string biz_id = 6 [(buf.validate.field).string = {pattern: "^[a-z0-9_-]{1,64}$"}];
+}
+
+// ListChannelsResponse 分页查询渠道响应。
+message ListChannelsResponse {
+  // items 当前页数据。
+  repeated NotifyChannel items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// SendTestEventRequest 发送渠道测试事件请求：事件类型/标题/收件人/载荷可
+// 覆盖缺省值；recipients 为空 = 交路由按 recipient_policy 解析（与生产事件
+// 同链路，测试收件解析本身）。
+message SendTestEventRequest {
+  // id 目标渠道实例标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // event_type 测试事件类型，可选；缺省 notify.test（需有路由
+  // event_pattern 覆盖该类型且 channel_ids 含目标实例才会实际投递）。
+  optional string event_type = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+    pattern: "^[a-z0-9][a-z0-9._-]{0,127}$"
+  }];
+  // title 测试事件标题，可选；缺省「通知渠道连通性测试」。
+  optional string title = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 255
+  }];
+  // recipients 显式测试收件列表，可选；空 = 交路由解析。
+  repeated string recipients = 4 [(buf.validate.field).repeated = {
+    max_items: 20
+    items: {string: {min_len: 1, max_len: 255}}
+  }];
+  // payload 附加测试载荷（合并进事件 payload 的 test 上下文），可选。
+  google.protobuf.Struct payload = 5;
+}
+
+// SendTestEventResponse 发送渠道测试事件响应：返回已落库的事件（异步
+// 链路结果经事件/任务/明细查询接口跟踪）。
+message SendTestEventResponse {
+  // event 已落库的测试事件（source=internal，publish_state=pending）。
+  NotifyEvent event = 1;
+}

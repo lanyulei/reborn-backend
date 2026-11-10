@@ -7,8 +7,8 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/lanyulei/monitor/backend/core/internal/conf"
-	"github.com/lanyulei/monitor/backend/core/internal/server"
+	"github.com/lanyulei/reborn/backend/core/internal/conf"
+	"github.com/lanyulei/reborn/backend/core/internal/server"
 
 	"github.com/go-kratos/kratos/contrib/otel/v3/tracing"
 	"github.com/go-kratos/kratos/v3"
@@ -97,7 +97,7 @@ func main() {
 		panic(err)
 	}
 
-	app, cleanup, err := wireApp(bc.Server, bc.Data, bc.Security, logger)
+	app, cleanup, err := wireApp(bc.Server, bc.Data, bc.Security, bc.Notify, logger)
 	if err != nil {
 		panic(err)
 	}

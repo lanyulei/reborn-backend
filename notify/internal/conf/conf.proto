@@ -1,0 +1,157 @@
+syntax = "proto3";
+
+package conf;
+
+import "google/protobuf/duration.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/notify/internal/conf;conf";
+
+// Bootstrap 是管道服务启动配置的根结构，对应 configs/*.yaml。
+message Bootstrap {
+  // server 传输层服务器配置（HTTP 恒启动：/healthz /metrics；ingress 仅 api 角色）。
+  Server server = 1;
+  // data 数据层资源配置（与 core 同库，不同 DB 角色）。
+  Data data = 2;
+  // pipeline 管道各组件参数。
+  Pipeline pipeline = 3;
+  // notify 渠道凭据解密主密钥（与 core 同一密钥）。
+  Notify notify = 4;
+}
+
+// Server 是 HTTP 服务器配置（数据面只暴露 HTTP：HMAC 签名绑定请求体；
+// /healthz /metrics 同端口）。
+message Server {
+  // HTTP 是 HTTP 服务器配置。
+  message HTTP {
+    // network 监听网络类型，如 tcp；留空使用默认值。
+    string network = 1;
+    // addr 监听地址。
+    string addr = 2;
+    // timeout 请求处理超时。
+    google.protobuf.Duration timeout = 3;
+  }
+  // http HTTP 配置。
+  HTTP http = 1;
+}
+
+// Data 是数据层资源配置；密钥类字段一律从环境变量注入。
+message Data {
+  // Database 是 PostgreSQL 连接池配置（pgx）。
+  message Database {
+    // source 数据源 DSN；生产环境通过环境变量注入（KRATOS_DATA_DATABASE_SOURCE）。
+    string source = 1;
+    // max_conns 最大连接数；0 使用驱动默认值。
+    int32 max_conns = 2;
+    // min_conns 最小空闲连接数；0 使用驱动默认值。
+    int32 min_conns = 3;
+    // max_conn_idle_time 连接最大空闲时长；未设置使用驱动默认值。
+    google.protobuf.Duration max_conn_idle_time = 4;
+  }
+  // database 数据库配置。
+  Database database = 1;
+}
+
+// Pipeline 是管道组件参数。全部 Duration 采用 protojson 秒格式（如 0.2s）。
+message Pipeline {
+  // Router 路由 worker 参数。
+  message Router {
+    // poll_interval 待处理事件轮询周期（有活跃工作时连续处理；空闲回退），缺省 200ms。
+    google.protobuf.Duration poll_interval = 1;
+    // batch_size 单事务声明的事件上限，缺省 500。
+    int32 batch_size = 2;
+    // config_poll 配置版本轮询周期（notify_cfg_version 比对失效），缺省 10s。
+    google.protobuf.Duration config_poll = 3;
+    // sweep_interval 聚合窗口关闭扫描周期，缺省 1s。
+    google.protobuf.Duration sweep_interval = 4;
+    // max_aggregate_window 滑动聚合窗口自首事件起的封顶时长（持续风暴也能出汇总），缺省 5m。
+    google.protobuf.Duration max_aggregate_window = 5;
+    // max_route_attempts 单事件瞬时错误（如用户表查询超时）的路由重试上限，超出置 failed，缺省 5。
+    int32 max_route_attempts = 6;
+  }
+  // Sender 发送 worker 参数。
+  message Sender {
+    // poll_interval 待发送任务轮询周期，缺省 200ms。
+    google.protobuf.Duration poll_interval = 1;
+    // batch_size 单次声明的任务上限，缺省 100。
+    int32 batch_size = 2;
+    // concurrency 单实例并发发送数，缺省 16。
+    int32 concurrency = 3;
+    // lease 声明租约（status=sending 的最长占有时间；超时由回收器转重试），缺省 5m。
+    google.protobuf.Duration lease = 4;
+    // send_timeout 单次渠道发送超时（AGENTS：出站 ≤3s），缺省 3s。
+    google.protobuf.Duration send_timeout = 5;
+    // render_timeout 模板渲染超时，缺省 100ms。
+    google.protobuf.Duration render_timeout = 6;
+    // reap_interval 租约过期回收扫描周期，缺省 30s。
+    google.protobuf.Duration reap_interval = 7;
+    // max_attempts 最大尝试次数（首发 + 5 次重试 = 6），超出转死信，缺省 6。
+    int32 max_attempts = 8;
+  }
+  // Dlq 死信重放 worker 参数。
+  message Dlq {
+    // poll_interval 待重放死信轮询周期，缺省 5s。
+    google.protobuf.Duration poll_interval = 1;
+    // batch_size 单事务重放上限，缺省 100。
+    int32 batch_size = 2;
+  }
+  // Retention 运行数据保留期（分区按月 DROP；小表按行 DELETE）。
+  message Retention {
+    // event 事件保留期，缺省 180d。
+    google.protobuf.Duration event = 1;
+    // dispatch 发送任务保留期，缺省 180d。
+    google.protobuf.Duration dispatch = 2;
+    // delivery_log 投递日志保留期，缺省 90d。
+    google.protobuf.Duration delivery_log = 3;
+    // dlq 死信保留期，缺省 180d。
+    google.protobuf.Duration dlq = 4;
+    // dedup 去重门闩有效期（同时是 ingress 写入的 expire_time），缺省 24h。
+    google.protobuf.Duration dedup = 5;
+    // agg_group 已关闭聚合组保留期，缺省 7d。
+    google.protobuf.Duration agg_group = 6;
+  }
+  // Maintenance 分区维护与清理 job 参数（advisory lock 选主单执行）。
+  message Maintenance {
+    // interval 执行周期，缺省 1h（启动即先跑一轮）。
+    google.protobuf.Duration interval = 1;
+    // partitions_ahead 预建未来分区月数，缺省 2。
+    int32 partitions_ahead = 2;
+    // retention 保留期。
+    Retention retention = 3;
+  }
+  // Ingress 接入参数。
+  message Ingress {
+    // clock_skew HMAC 时间戳允许偏差（防重放窗口），缺省 5m。
+    google.protobuf.Duration clock_skew = 1;
+  }
+  // roles 启用的组件角色：api / router / sender / dlqworker / maintenance
+  // （relay 保留给 NATS 骨干）；环境变量 SERVER_ROLES（逗号分隔）优先于本项；
+  // 两者皆空 = 全部角色。
+  repeated string roles = 1;
+  // backbone 消息骨干：pg（缺省，事件/任务经 PostgreSQL SKIP LOCKED 流转）；
+  // nats 保留给后续实现。
+  string backbone = 2;
+  // router 路由参数。
+  Router router = 3;
+  // sender 发送参数。
+  Sender sender = 4;
+  // dlq 死信重放参数。
+  Dlq dlq = 5;
+  // maintenance 维护 job 参数。
+  Maintenance maintenance = 6;
+  // ingress 接入参数。
+  Ingress ingress = 7;
+}
+
+// Notify 是渠道凭据解密配置。
+message Notify {
+  // Master 是渠道凭据加密主密钥配置（与 core 完全一致）。
+  message Master {
+    // key AES-256-GCM 主密钥（任意非空字节串，内部 SHA-256 派生 32 字节密钥）；
+    // 经 KRATOS_NOTIFY_MASTER_KEY 环境变量注入（占位符 ${NOTIFY_MASTER_KEY}）。
+    // 为空时：带 secret 的渠道解密失败→标记不健康（发送转不可重试死信），
+    // 无 secret 渠道不受影响。
+    string key = 1;
+  }
+  // master 渠道凭据加密主密钥。
+  Master master = 1;
+}

@@ -7,7 +7,7 @@ import "google/api/httpbody.proto";
 import "buf/validate/validate.proto";
 import "system/v1/annotations.proto";
 
-option go_package = "github.com/lanyulei/monitor/backend/core/api/system/v1;v1";
+option go_package = "github.com/lanyulei/reborn/backend/core/api/system/v1;v1";
 
 // SystemConfigService 系统配置服务：全局展示配置（系统标题/子标题/logo/
 // 页脚文案）的单例读写。GetSystemConfig 匿名可读（登录页需在登录前拉取

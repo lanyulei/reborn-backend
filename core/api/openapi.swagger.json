@@ -7,6 +7,46 @@
   },
   "tags": [
     {
+      "name": "NotifyEventService",
+      "description": "NotifyEventService 通知事件查询服务：只读运行表 notify_event（管道写 /\ncore 读，设计 §5.2）。事件是 append-only 运行数据——先落库后应答（§7.1\n不丢闭环），无管理写路径；本服务仅提供控制台排障检索。"
+    },
+    {
+      "name": "NotifyChannelService",
+      "description": "NotifyChannelService 通知渠道管理服务：一行渠道 = 一个可独立发送/限流/启停的\n端点实例（邮件服务器 / webhook 目标 / 群机器人），type 只决定管道侧适配器；\n多套邮件、多个 webhook 即多行记录。secret 只写不读：任何响应恒不返回。"
+    },
+    {
+      "name": "NotifyDeadLetterService",
+      "description": "NotifyDeadLetterService 死信重放服务（设计 §4.7/§5.2）：查询运行表\nnotify_dlq（sender 在 dispatch 重试超限后写入），并标记重放。\n重放是控制台唯一的写动作：replay_state 仅允许 none → pending（条件\nUPDATE 保证状态机）；dlq worker（管道 P1）轮询 pending 行重新生成\ndispatch 后置 replayed。core 不改错误详情、不删除行（§5.3 列级授权）。"
+    },
+    {
+      "name": "NotifyDeliveryLogService",
+      "description": "NotifyDeliveryLogService 投递明细查询服务：只读运行表 notify_delivery_log\n（管道写 / core 读，设计 §5.2）。一行 = 发送任务的一次投递尝试结果\n（append-only，sender 每次尝试后追加，含成功/失败、耗时与渠道侧消息\n标识）；本服务仅提供控制台排障检索，无写路径。"
+    },
+    {
+      "name": "NotifyDispatchService",
+      "description": "NotifyDispatchService 通知发送任务查询服务：只读运行表 notify_dispatch\n（管道写 / core 读，设计 §5.2）。一行 = 路由命中后生成的一个发送任务\n（事件 × 渠道 × 收件人），状态机由管道 sender 推进（含退避重试与死信\n转移）；本服务仅提供控制台排障检索，无写路径。"
+    },
+    {
+      "name": "NotifyProducerService",
+      "description": "NotifyProducerService 通知生产者管理服务：一行 = 一个事件生产者（如监控\n引擎）的接入凭据。token 明文仅在创建/轮换响应中出现一次，落库只存\nSHA-256，任何读接口不回显；数据面 HMAC 鉴权由管道 ingress 执行\n（设计 §9：Authorization: HMAC \u003cid\u003e:\u003csig\u003e:\u003cts\u003e，±5min 防重放）。\n更新语义：spec（名称/白名单/过期时间）整组替换，enabled 独立启停\n（停用即拒绝接入，≤10s 生效）；biz_id 绑定 token scope，创建后不可改。"
+    },
+    {
+      "name": "NotifyRouteService",
+      "description": "NotifyRouteService 通知路由管理服务：路由决定事件如何变成通知任务——\nevent_pattern（精确/前缀通配/'*'）+ severity 下限 + 标签匹配筛选事件，\n命中后对 channel_ids 内每个启用渠道实例并发生成 dispatch（互不影响），\n收件策略 fixed 先行、订阅者追加。多条路由可重叠，priority 决胜（1 最高）。\n更新语义：规则字段（pattern/severity/标签/优先级/渠道/收件/聚合参数）互为\n整体决策，经 spec 整组替换；enabled 独立启停。"
+    },
+    {
+      "name": "NotifySilenceService",
+      "description": "NotifySilenceService 通知静默（免打扰）管理服务：router 处理事件的第 2 步——\n事件命中任一启用静默规则（event_pattern 匹配 + severity ≤ severity_max +\n当前时间落时间窗，无窗即全程）即置 suppressed，不再生成通知任务。\n多条静默规则可重叠，任一命中即抑制。更新语义与路由一致：规则字段经 spec\n整组替换，enabled 独立启停。"
+    },
+    {
+      "name": "NotifySubscriptionService",
+      "description": "NotifySubscriptionService 用户订阅管理服务（订阅中心）：本人或 admin 代管。\n一行 = 某用户在某 biz 对某事件模式的渠道偏好；自然键\n(user_id, biz_id, event_pattern) 未删除行内唯一，保存为 Upsert 语义\n（存在即整组替换偏好与启停，不存在即新建）。路由收件策略 subscription\n开启时，管道按用户 channel_prefs 与路由实例类型的交集解析订阅者。"
+    },
+    {
+      "name": "NotifyTemplateService",
+      "description": "NotifyTemplateService 通知模板管理服务：模板按 biz × event_type × channel_type\n三维覆盖（'*' 通配），渲染解析链 (biz,event,channel) \u003e (biz,event,*) \u003e\n(biz,*,channel) \u003e (biz,*,*) \u003e 内置默认模板。subject/body 为 Go template，\n写入前经语法解析与渲染变量白名单校验（变量：Title/Payload/Severity/Count/\nSamples/BizID/EventTime；零函数注册）；更新即 version+1，历史通知可复现。"
+    },
+    {
       "name": "RoleService",
       "description": "RoleService 角色管理服务。"
     },
@@ -17,6 +57,10 @@
     {
       "name": "AuthService",
       "description": "AuthService 认证服务：登录签发双令牌、刷新轮换、登出吊销与当前登录者信息。\n登录类路由独立于 /api/v1/system/ 域前缀（跨域入口）；除 Login/RefreshToken\n外的全部接口（含本服务的 Logout/GetLoginProfile）均要求 Bearer access token。"
+    },
+    {
+      "name": "LoginLogService",
+      "description": "LoginLogService 登录日志服务：审计查询，append-only 无写接口。\n日志由登录链路（AuthService/Login）自动落库，本服务仅供管理端检索。"
     },
     {
       "name": "SystemConfigService",
@@ -116,6 +160,1561 @@
         },
         "tags": [
           "AuthService"
+        ]
+      }
+    },
+    "/api/v1/notify/channel": {
+      "get": {
+        "summary": "ListChannels 分页查询渠道，page_size 上限 100。",
+        "operationId": "NotifyChannelService_ListChannels",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListChannelsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "page",
+            "description": "page 页码，从 1 开始。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "page_size 每页数量，1-100。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "keyword",
+            "description": "keyword 关键字，可选；模糊匹配渠道名。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "type",
+            "description": "type 渠道类型过滤，可选。\n\n - NOTIFY_CHANNEL_TYPE_UNSPECIFIED: NOTIFY_CHANNEL_TYPE_UNSPECIFIED 未指定（拒绝）。\n - NOTIFY_CHANNEL_TYPE_EMAIL: NOTIFY_CHANNEL_TYPE_EMAIL 邮件（SMTP）。\n - NOTIFY_CHANNEL_TYPE_WEBHOOK: NOTIFY_CHANNEL_TYPE_WEBHOOK 通用 Webhook（仅 HTTPS）。\n - NOTIFY_CHANNEL_TYPE_DINGTALK: NOTIFY_CHANNEL_TYPE_DINGTALK 钉钉群机器人。\n - NOTIFY_CHANNEL_TYPE_WECOM: NOTIFY_CHANNEL_TYPE_WECOM 企业微信群机器人。\n - NOTIFY_CHANNEL_TYPE_FEISHU: NOTIFY_CHANNEL_TYPE_FEISHU 飞书群机器人。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "enum": [
+              "NOTIFY_CHANNEL_TYPE_UNSPECIFIED",
+              "NOTIFY_CHANNEL_TYPE_EMAIL",
+              "NOTIFY_CHANNEL_TYPE_WEBHOOK",
+              "NOTIFY_CHANNEL_TYPE_DINGTALK",
+              "NOTIFY_CHANNEL_TYPE_WECOM",
+              "NOTIFY_CHANNEL_TYPE_FEISHU"
+            ],
+            "default": "NOTIFY_CHANNEL_TYPE_UNSPECIFIED"
+          },
+          {
+            "name": "enabled",
+            "description": "enabled 启用状态过滤，可选。",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "bizId",
+            "description": "biz_id 业务命名空间过滤，可选；biz 受限用户必填（NOTIFY_BIZ_REQUIRED）。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "NotifyChannelService"
+        ]
+      },
+      "post": {
+        "summary": "CreateChannel 创建渠道；type 与 config 结构必须匹配，email/群机器人必须\n携带 secret（SMTP 密码/机器人 token），webhook 的 HMAC 密钥可选。",
+        "operationId": "NotifyChannelService_CreateChannel",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/CreateChannelResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/CreateChannelRequest"
+            }
+          }
+        ],
+        "tags": [
+          "NotifyChannelService"
+        ]
+      }
+    },
+    "/api/v1/notify/channel/{id}": {
+      "get": {
+        "summary": "GetChannel 查询渠道详情（不含 secret）。",
+        "operationId": "NotifyChannelService_GetChannel",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetChannelResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 渠道唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "NotifyChannelService"
+        ]
+      },
+      "delete": {
+        "summary": "DeleteChannel 删除渠道（软删，名称可复用）；历史投递记录不受影响。",
+        "operationId": "NotifyChannelService_DeleteChannel",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/DeleteChannelResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 渠道唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "NotifyChannelService"
+        ]
+      },
+      "put": {
+        "summary": "UpdateChannel 部分更新渠道；secret 不传=保留旧密文，传新值=轮换；\ntype 创建后不可改（换适配器须新建渠道）。",
+        "operationId": "NotifyChannelService_UpdateChannel",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UpdateChannelResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 渠道唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UpdateChannelBody"
+            }
+          }
+        ],
+        "tags": [
+          "NotifyChannelService"
+        ]
+      }
+    },
+    "/api/v1/notify/channel/{id}:test": {
+      "post": {
+        "summary": "SendTestEvent 按渠道实例发送测试事件（设计 §5.1.1 连通性测试）：向\nnotify_event 直插一条 source=internal 的测试事件（core 对该表仅\nINSERT，§5.3），走与生产事件完全相同的链路——relay 发布 → 路由匹配 →\n模板渲染 → 渠道发送（管道 P1 消费 pending 事件）。投递结果异步可查：\nListEvents / ListDispatches / ListDeliveryLogs 按返回的 event_id 跟踪。\n渠道须存在且启用；停用实例被路由跳过，测试无意义，直接拒绝。",
+        "operationId": "NotifyChannelService_SendTestEvent",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/SendTestEventResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 目标渠道实例标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/SendTestEventBody"
+            }
+          }
+        ],
+        "tags": [
+          "NotifyChannelService"
+        ]
+      }
+    },
+    "/api/v1/notify/dead-letter": {
+      "get": {
+        "summary": "ListDeadLetters 分页查询死信，page_size 上限 100；按转入时间倒序。",
+        "operationId": "NotifyDeadLetterService_ListDeadLetters",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListDeadLettersResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "page",
+            "description": "page 页码，从 1 开始。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "page_size 每页数量，1-100。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "eventId",
+            "description": "event_id 源事件过滤，可选；精确匹配（事件 → 死信下钻）。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "channelId",
+            "description": "channel_id 投递渠道过滤，可选；精确匹配。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "replayState",
+            "description": "replay_state 重放状态过滤，可选：1 none / 2 pending / 3 replayed。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "createTimeStart",
+            "description": "create_time_start 转入时间下界（含），可选。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          },
+          {
+            "name": "createTimeEnd",
+            "description": "create_time_end 转入时间上界（含），可选。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          }
+        ],
+        "tags": [
+          "NotifyDeadLetterService"
+        ]
+      }
+    },
+    "/api/v1/notify/dead-letter/{id}:replay": {
+      "post": {
+        "summary": "ReplayDeadLetter 标记死信待重放（replay_state: none → pending），返回\n更新后的行；仅 replay_state=none 的行可标记（409 NOTIFY_DLQ_INVALID_STATE）。",
+        "operationId": "NotifyDeadLetterService_ReplayDeadLetter",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ReplayDeadLetterResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 目标死信标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/ReplayDeadLetterBody"
+            }
+          }
+        ],
+        "tags": [
+          "NotifyDeadLetterService"
+        ]
+      }
+    },
+    "/api/v1/notify/delivery-log": {
+      "get": {
+        "summary": "ListDeliveryLogs 分页查询投递明细，page_size 上限 100；按落库时间倒序。",
+        "operationId": "NotifyDeliveryLogService_ListDeliveryLogs",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListDeliveryLogsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "page",
+            "description": "page 页码，从 1 开始。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "page_size 每页数量，1-100。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "dispatchId",
+            "description": "dispatch_id 所属发送任务过滤，可选；精确匹配（任务 → 逐次尝试明细下钻主路径）。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "channelId",
+            "description": "channel_id 投递渠道过滤，可选；精确匹配。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "ok",
+            "description": "ok 投递结果过滤，可选：true 仅成功 / false 仅失败。",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "createTimeStart",
+            "description": "create_time_start 落库时间下界（含），可选。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          },
+          {
+            "name": "createTimeEnd",
+            "description": "create_time_end 落库时间上界（含），可选。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          }
+        ],
+        "tags": [
+          "NotifyDeliveryLogService"
+        ]
+      }
+    },
+    "/api/v1/notify/dispatch": {
+      "get": {
+        "summary": "ListDispatches 分页查询发送任务，page_size 上限 100；按生成时间倒序。",
+        "operationId": "NotifyDispatchService_ListDispatches",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListDispatchesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "page",
+            "description": "page 页码，从 1 开始。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "page_size 每页数量，1-100。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "eventId",
+            "description": "event_id 源事件过滤，可选；精确匹配（事件 → 投递任务下钻主路径）。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "channelId",
+            "description": "channel_id 目标渠道过滤，可选；精确匹配。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "status",
+            "description": "status 任务状态过滤，可选：1 pending / 2 sending / 3 sent / 4 failed / 5 dead。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "createTimeStart",
+            "description": "create_time_start 生成时间下界（含），可选。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          },
+          {
+            "name": "createTimeEnd",
+            "description": "create_time_end 生成时间上界（含），可选。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          }
+        ],
+        "tags": [
+          "NotifyDispatchService"
+        ]
+      }
+    },
+    "/api/v1/notify/event": {
+      "get": {
+        "summary": "ListEvents 分页查询事件，page_size 上限 100；按落库时间倒序。",
+        "operationId": "NotifyEventService_ListEvents",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListEventsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "page",
+            "description": "page 页码，从 1 开始。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "page_size 每页数量，1-100。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "bizId",
+            "description": "biz_id 业务租户标识过滤，可选；精确匹配。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "eventType",
+            "description": "event_type 事件类型过滤，可选；精确匹配。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "status",
+            "description": "status 路由状态过滤，可选：1 received / 2 routed / 3 suppressed / 4 failed。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "createTimeStart",
+            "description": "create_time_start 落库时间下界（含），可选。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          },
+          {
+            "name": "createTimeEnd",
+            "description": "create_time_end 落库时间上界（含），可选。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          }
+        ],
+        "tags": [
+          "NotifyEventService"
+        ]
+      }
+    },
+    "/api/v1/notify/producer": {
+      "get": {
+        "summary": "ListProducers 分页查询生产者，page_size 上限 100。",
+        "operationId": "NotifyProducerService_ListProducers",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListProducersResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "page",
+            "description": "page 页码，从 1 开始。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "page_size 每页数量，1-100。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "keyword",
+            "description": "keyword 关键字，可选；模糊匹配名称。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "enabled",
+            "description": "enabled 启用状态过滤，可选。",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "bizId",
+            "description": "biz_id 业务命名空间过滤，可选；biz 受限用户必填（NOTIFY_BIZ_REQUIRED）。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "NotifyProducerService"
+        ]
+      },
+      "post": {
+        "summary": "CreateProducer 创建生产者并签发 token；token 明文仅本次响应返回一次。",
+        "operationId": "NotifyProducerService_CreateProducer",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/CreateProducerResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/CreateProducerRequest"
+            }
+          }
+        ],
+        "tags": [
+          "NotifyProducerService"
+        ]
+      }
+    },
+    "/api/v1/notify/producer/{id}": {
+      "get": {
+        "summary": "GetProducer 查询生产者详情（不含 token 与哈希）。",
+        "operationId": "NotifyProducerService_GetProducer",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetProducerResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 生产者唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "NotifyProducerService"
+        ]
+      },
+      "delete": {
+        "summary": "DeleteProducer 删除生产者（软删，token 随之作废；名称可复用）。",
+        "operationId": "NotifyProducerService_DeleteProducer",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/DeleteProducerResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 生产者唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "NotifyProducerService"
+        ]
+      },
+      "put": {
+        "summary": "UpdateProducer 更新生产者：spec 整组替换（不传 expire_time 即清除），\nenabled 独立启停，至少传其一。",
+        "operationId": "NotifyProducerService_UpdateProducer",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UpdateProducerResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 生产者唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UpdateProducerBody"
+            }
+          }
+        ],
+        "tags": [
+          "NotifyProducerService"
+        ]
+      }
+    },
+    "/api/v1/notify/producer/{id}/token:rotate": {
+      "post": {
+        "summary": "RotateProducerToken 轮换 token：旧 token 立即失效（≤10s 生效），\n新 token 明文仅本次响应返回一次。",
+        "operationId": "NotifyProducerService_RotateProducerToken",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/RotateProducerTokenResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 生产者唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/RotateProducerTokenBody"
+            }
+          }
+        ],
+        "tags": [
+          "NotifyProducerService"
+        ]
+      }
+    },
+    "/api/v1/notify/route": {
+      "get": {
+        "summary": "ListRoutes 分页查询路由，page_size 上限 100。",
+        "operationId": "NotifyRouteService_ListRoutes",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListRoutesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "page",
+            "description": "page 页码，从 1 开始。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "page_size 每页数量，1-100。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "keyword",
+            "description": "keyword 关键字，可选；模糊匹配 event_pattern。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "enabled",
+            "description": "enabled 启用状态过滤，可选。",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "bizId",
+            "description": "biz_id 业务命名空间过滤，可选；biz 受限用户必填（NOTIFY_BIZ_REQUIRED）。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "NotifyRouteService"
+        ]
+      },
+      "post": {
+        "summary": "CreateRoute 创建路由；channel_ids 须为同 biz 未删除渠道。",
+        "operationId": "NotifyRouteService_CreateRoute",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/CreateRouteResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/CreateRouteRequest"
+            }
+          }
+        ],
+        "tags": [
+          "NotifyRouteService"
+        ]
+      }
+    },
+    "/api/v1/notify/route/{id}": {
+      "get": {
+        "summary": "GetRoute 查询路由详情。",
+        "operationId": "NotifyRouteService_GetRoute",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetRouteResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 路由唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "NotifyRouteService"
+        ]
+      },
+      "delete": {
+        "summary": "DeleteRoute 删除路由（软删）；在途 dispatch 照常完成。",
+        "operationId": "NotifyRouteService_DeleteRoute",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/DeleteRouteResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 路由唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "NotifyRouteService"
+        ]
+      },
+      "put": {
+        "summary": "UpdateRoute 更新路由：spec 整组替换规则字段，enabled 独立启停，至少传其一；\nbiz_id 不可改，channel_ids 仍须同 biz 存在。",
+        "operationId": "NotifyRouteService_UpdateRoute",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UpdateRouteResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 路由唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UpdateRouteBody"
+            }
+          }
+        ],
+        "tags": [
+          "NotifyRouteService"
+        ]
+      }
+    },
+    "/api/v1/notify/silence": {
+      "get": {
+        "summary": "ListSilences 分页查询静默规则，page_size 上限 100。",
+        "operationId": "NotifySilenceService_ListSilences",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListSilencesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "page",
+            "description": "page 页码，从 1 开始。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "page_size 每页数量，1-100。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "keyword",
+            "description": "keyword 关键字，可选；模糊匹配 event_pattern。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "enabled",
+            "description": "enabled 启用状态过滤，可选。",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "bizId",
+            "description": "biz_id 业务命名空间过滤，可选；biz 受限用户必填（NOTIFY_BIZ_REQUIRED）。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "NotifySilenceService"
+        ]
+      },
+      "post": {
+        "summary": "CreateSilence 创建静默规则。",
+        "operationId": "NotifySilenceService_CreateSilence",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/CreateSilenceResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/CreateSilenceRequest"
+            }
+          }
+        ],
+        "tags": [
+          "NotifySilenceService"
+        ]
+      }
+    },
+    "/api/v1/notify/silence/{id}": {
+      "get": {
+        "summary": "GetSilence 查询静默规则详情。",
+        "operationId": "NotifySilenceService_GetSilence",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetSilenceResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 静默规则唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "NotifySilenceService"
+        ]
+      },
+      "delete": {
+        "summary": "DeleteSilence 删除静默规则（软删）。",
+        "operationId": "NotifySilenceService_DeleteSilence",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/DeleteSilenceResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 静默规则唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "NotifySilenceService"
+        ]
+      },
+      "put": {
+        "summary": "UpdateSilence 更新静默规则：spec 整组替换规则字段，enabled 独立启停，\n至少传其一；biz_id 不可改。",
+        "operationId": "NotifySilenceService_UpdateSilence",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UpdateSilenceResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 静默规则唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UpdateSilenceBody"
+            }
+          }
+        ],
+        "tags": [
+          "NotifySilenceService"
+        ]
+      }
+    },
+    "/api/v1/notify/subscription": {
+      "get": {
+        "summary": "ListSubscriptions 分页查询订阅：user_id 缺省=本人，指定他人须 admin；\npage_size 上限 100。",
+        "operationId": "NotifySubscriptionService_ListSubscriptions",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListSubscriptionsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "userId",
+            "description": "user_id 目标用户，可选；缺省=操作者本人，指定他人须 admin（代管）。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "page",
+            "description": "page 页码，从 1 开始。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "page_size 每页数量，1-100。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "keyword",
+            "description": "keyword 关键字，可选；模糊匹配 event_pattern。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "enabled",
+            "description": "enabled 启用状态过滤，可选。",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          }
+        ],
+        "tags": [
+          "NotifySubscriptionService"
+        ]
+      },
+      "post": {
+        "summary": "UpsertSubscription 保存订阅：user_id 缺省=操作者本人，指定他人须 admin\n（代管）；同自然键重复保存=替换渠道偏好与启停。",
+        "operationId": "NotifySubscriptionService_UpsertSubscription",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UpsertSubscriptionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UpsertSubscriptionRequest"
+            }
+          }
+        ],
+        "tags": [
+          "NotifySubscriptionService"
+        ]
+      }
+    },
+    "/api/v1/notify/subscription/{id}": {
+      "delete": {
+        "summary": "DeleteSubscription 删除订阅（软删，同键可重建）；仅订阅本人或 admin。",
+        "operationId": "NotifySubscriptionService_DeleteSubscription",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/DeleteSubscriptionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 订阅唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "NotifySubscriptionService"
+        ]
+      }
+    },
+    "/api/v1/notify/template": {
+      "get": {
+        "summary": "ListTemplates 分页查询模板，page_size 上限 100。",
+        "operationId": "NotifyTemplateService_ListTemplates",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListTemplatesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "page",
+            "description": "page 页码，从 1 开始。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "page_size 每页数量，1-100。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "keyword",
+            "description": "keyword 关键字，可选；模糊匹配 event_type/channel_type/subject。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "eventType",
+            "description": "event_type 事件类型精确过滤，可选（含 '*'）。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "channelType",
+            "description": "channel_type 渠道类型精确过滤，可选（含 '*'）。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "enabled",
+            "description": "enabled 启用状态过滤，可选。",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "bizId",
+            "description": "biz_id 业务命名空间过滤，可选；biz 受限用户必填（NOTIFY_BIZ_REQUIRED）。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "NotifyTemplateService"
+        ]
+      },
+      "post": {
+        "summary": "CreateTemplate 创建模板；同 biz 内 (event_type, channel_type) 组合唯一。",
+        "operationId": "NotifyTemplateService_CreateTemplate",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/CreateTemplateResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/CreateTemplateRequest"
+            }
+          }
+        ],
+        "tags": [
+          "NotifyTemplateService"
+        ]
+      }
+    },
+    "/api/v1/notify/template/{id}": {
+      "get": {
+        "summary": "GetTemplate 查询模板详情。",
+        "operationId": "NotifyTemplateService_GetTemplate",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetTemplateResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 模板唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "NotifyTemplateService"
+        ]
+      },
+      "delete": {
+        "summary": "DeleteTemplate 删除模板（软删，三维组合可复用）；历史投递记录不受影响。",
+        "operationId": "NotifyTemplateService_DeleteTemplate",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/DeleteTemplateResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 模板唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "NotifyTemplateService"
+        ]
+      },
+      "put": {
+        "summary": "UpdateTemplate 部分更新模板；spec（event_type/channel_type）可改但组合仍须\n唯一；任何更新 version+1。",
+        "operationId": "NotifyTemplateService_UpdateTemplate",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UpdateTemplateResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 模板唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UpdateTemplateBody"
+            }
+          }
+        ],
+        "tags": [
+          "NotifyTemplateService"
         ]
       }
     },
@@ -224,6 +1823,78 @@
         ],
         "tags": [
           "SystemConfigService"
+        ]
+      }
+    },
+    "/api/v1/system/login-log": {
+      "get": {
+        "summary": "ListLoginLogs 分页查询登录日志，page_size 上限 100。",
+        "operationId": "LoginLogService_ListLoginLogs",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListLoginLogsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "page",
+            "description": "page 页码，从 1 开始。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "page_size 每页数量，1-100。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "username",
+            "description": "username 登录名，可选；模糊匹配。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "result",
+            "description": "result 登录结果过滤，可选：1=成功 2=用户不存在 3=密码错误 4=账号禁用 5=签发令牌失败。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "startTime",
+            "description": "start_time 起始时间（含），可选；RFC3339 格式。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          },
+          {
+            "name": "endTime",
+            "description": "end_time 截止时间（含），可选；RFC3339 格式。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          }
+        ],
+        "tags": [
+          "LoginLogService"
         ]
       }
     },
@@ -930,6 +2601,19 @@
       "type": "object",
       "title": "BindUserRolesResponse 绑定角色响应。"
     },
+    "BizScope": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "items biz 标识列表，≤64 项、去重。"
+        }
+      },
+      "title": "BizScope 通知 biz 范围整组替换载荷（更新时须显式携带，空列表 = 清空 = 不限）。"
+    },
     "CatalogElement": {
       "type": "object",
       "properties": {
@@ -982,6 +2666,94 @@
       },
       "title": "CatalogMenu 目录菜单（页面）：页面默认接口（进页面即调用，不归属于任何\n元素）+ 页面元素及其接口；仅描述页面结构，供授权页展示，授权不级联。"
     },
+    "CreateChannelRequest": {
+      "type": "object",
+      "properties": {
+        "bizId": {
+          "type": "string",
+          "title": "biz_id 业务租户标识，可选；未指定默认 default。"
+        },
+        "type": {
+          "$ref": "#/definitions/NotifyChannelType",
+          "title": "type 渠道类型，创建后不可改。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 渠道展示名，1-128 位。"
+        },
+        "email": {
+          "$ref": "#/definitions/EmailChannelConfig",
+          "title": "email 邮件配置。"
+        },
+        "webhook": {
+          "$ref": "#/definitions/WebhookChannelConfig",
+          "title": "webhook Webhook 配置。"
+        },
+        "robot": {
+          "$ref": "#/definitions/RobotChannelConfig",
+          "title": "robot 群机器人配置。"
+        },
+        "rateLimit": {
+          "$ref": "#/definitions/NotifyRateLimit",
+          "title": "rate_limit 令牌桶限流，可选；未指定默认不限（qps=0/burst=0）。"
+        },
+        "enabled": {
+          "type": "boolean",
+          "title": "enabled 初始启用状态，可选；未指定默认启用。"
+        },
+        "secret": {
+          "type": "string",
+          "title": "secret 渠道凭据明文（仅入参，AES-256-GCM 加密落库，任何响应不返回）；\nemail/群机器人必传，webhook 可选；1-512 位。"
+        },
+        "signSecret": {
+          "type": "string",
+          "title": "sign_secret 机器人签名密钥（钉钉加签 / 飞书签名校验），可选、只写不读；\n仅 dingtalk/feishu 类型接受。"
+        }
+      },
+      "title": "CreateChannelRequest 创建渠道请求。"
+    },
+    "CreateChannelResponse": {
+      "type": "object",
+      "properties": {
+        "channel": {
+          "$ref": "#/definitions/NotifyChannel",
+          "title": "channel 已创建的渠道实体（不含 secret）。"
+        }
+      },
+      "title": "CreateChannelResponse 创建渠道响应。"
+    },
+    "CreateProducerRequest": {
+      "type": "object",
+      "properties": {
+        "bizId": {
+          "type": "string",
+          "title": "biz_id 业务租户标识，可选；未指定默认 default，创建后不可改。"
+        },
+        "spec": {
+          "$ref": "#/definitions/ProducerSpec",
+          "title": "spec 生产者配置。"
+        },
+        "enabled": {
+          "type": "boolean",
+          "title": "enabled 初始启用状态，可选；未指定默认启用。"
+        }
+      },
+      "title": "CreateProducerRequest 创建生产者请求。"
+    },
+    "CreateProducerResponse": {
+      "type": "object",
+      "properties": {
+        "producer": {
+          "$ref": "#/definitions/NotifyProducer",
+          "title": "producer 已创建的生产者实体。"
+        },
+        "token": {
+          "type": "string",
+          "title": "token 接入令牌明文：仅本响应返回一次，落库只存 SHA-256；请立即妥善\n保存（丢失只能轮换重发）。"
+        }
+      },
+      "title": "CreateProducerResponse 创建生产者响应。"
+    },
     "CreateRoleRequest": {
       "type": "object",
       "properties": {
@@ -997,6 +2769,13 @@
           "type": "integer",
           "format": "int32",
           "title": "status 初始状态，可选；未指定默认启用（1）。"
+        },
+        "bizScope": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "biz_scope 可管理的通知 biz 列表，可选；空 = 不限。"
         }
       },
       "title": "CreateRoleRequest 创建角色请求。"
@@ -1010,6 +2789,102 @@
         }
       },
       "title": "CreateRoleResponse 创建角色响应。"
+    },
+    "CreateRouteRequest": {
+      "type": "object",
+      "properties": {
+        "bizId": {
+          "type": "string",
+          "title": "biz_id 业务租户标识，可选；未指定默认 default。"
+        },
+        "spec": {
+          "$ref": "#/definitions/RouteSpec",
+          "title": "spec 路由规则。"
+        },
+        "enabled": {
+          "type": "boolean",
+          "title": "enabled 初始启用状态，可选；未指定默认启用。"
+        }
+      },
+      "title": "CreateRouteRequest 创建路由请求。"
+    },
+    "CreateRouteResponse": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "#/definitions/NotifyRoute",
+          "title": "route 已创建的路由实体。"
+        }
+      },
+      "title": "CreateRouteResponse 创建路由响应。"
+    },
+    "CreateSilenceRequest": {
+      "type": "object",
+      "properties": {
+        "bizId": {
+          "type": "string",
+          "title": "biz_id 业务租户标识，可选；未指定默认 default。"
+        },
+        "spec": {
+          "$ref": "#/definitions/SilenceSpec",
+          "title": "spec 静默规则。"
+        },
+        "enabled": {
+          "type": "boolean",
+          "title": "enabled 初始启用状态，可选；未指定默认启用。"
+        }
+      },
+      "title": "CreateSilenceRequest 创建静默规则请求。"
+    },
+    "CreateSilenceResponse": {
+      "type": "object",
+      "properties": {
+        "silence": {
+          "$ref": "#/definitions/NotifySilence",
+          "title": "silence 已创建的静默规则实体。"
+        }
+      },
+      "title": "CreateSilenceResponse 创建静默规则响应。"
+    },
+    "CreateTemplateRequest": {
+      "type": "object",
+      "properties": {
+        "bizId": {
+          "type": "string",
+          "title": "biz_id 业务租户标识，可选；未指定默认 default。"
+        },
+        "eventType": {
+          "type": "string",
+          "title": "event_type 事件类型或 '*'；'*' 之外的值须为小写字母/数字开头的点分串。"
+        },
+        "channelType": {
+          "type": "string",
+          "title": "channel_type 渠道类型或 '*' 通配。"
+        },
+        "subject": {
+          "type": "string",
+          "title": "subject 标题模板（Go template）。"
+        },
+        "body": {
+          "type": "string",
+          "title": "body 正文模板（Go template）。"
+        },
+        "enabled": {
+          "type": "boolean",
+          "title": "enabled 初始启用状态，可选；未指定默认启用。"
+        }
+      },
+      "title": "CreateTemplateRequest 创建模板请求。"
+    },
+    "CreateTemplateResponse": {
+      "type": "object",
+      "properties": {
+        "template": {
+          "$ref": "#/definitions/NotifyTemplate",
+          "title": "template 已创建的模板实体。"
+        }
+      },
+      "title": "CreateTemplateResponse 创建模板响应。"
     },
     "CreateUserRequest": {
       "type": "object",
@@ -1060,13 +2935,74 @@
       },
       "title": "CreateUserResponse 创建用户响应。"
     },
+    "DeleteChannelResponse": {
+      "type": "object",
+      "title": "DeleteChannelResponse 删除渠道响应。"
+    },
+    "DeleteProducerResponse": {
+      "type": "object",
+      "title": "DeleteProducerResponse 删除生产者响应。"
+    },
     "DeleteRoleResponse": {
       "type": "object",
       "title": "DeleteRoleResponse 删除角色响应。"
     },
+    "DeleteRouteResponse": {
+      "type": "object",
+      "title": "DeleteRouteResponse 删除路由响应。"
+    },
+    "DeleteSilenceResponse": {
+      "type": "object",
+      "title": "DeleteSilenceResponse 删除静默规则响应。"
+    },
+    "DeleteSubscriptionResponse": {
+      "type": "object",
+      "title": "DeleteSubscriptionResponse 删除订阅响应。"
+    },
+    "DeleteTemplateResponse": {
+      "type": "object",
+      "title": "DeleteTemplateResponse 删除模板响应。"
+    },
     "DeleteUserResponse": {
       "type": "object",
       "title": "DeleteUserResponse 删除用户响应。"
+    },
+    "EmailChannelConfig": {
+      "type": "object",
+      "properties": {
+        "host": {
+          "type": "string",
+          "title": "host SMTP 服务器地址。"
+        },
+        "port": {
+          "type": "integer",
+          "format": "int64",
+          "title": "port SMTP 端口（25/465/587 等）。"
+        },
+        "username": {
+          "type": "string",
+          "title": "username SMTP 认证用户名。"
+        },
+        "fromAddr": {
+          "type": "string",
+          "title": "from_addr 发件人地址。"
+        },
+        "starttls": {
+          "type": "boolean",
+          "title": "starttls 是否使用 STARTTLS。"
+        }
+      },
+      "title": "EmailChannelConfig 邮件渠道配置（type=EMAIL）；secret 为 SMTP 密码（必传）。"
+    },
+    "GetChannelResponse": {
+      "type": "object",
+      "properties": {
+        "channel": {
+          "$ref": "#/definitions/NotifyChannel",
+          "title": "channel 渠道实体（不含 secret）。"
+        }
+      },
+      "title": "GetChannelResponse 查询渠道响应。"
     },
     "GetLoginProfileResponse": {
       "type": "object",
@@ -1103,9 +3039,30 @@
             "type": "string"
           },
           "title": "elements 当前登录用户全部启用角色直接授权的页面元素码并集，字典序；\nis_admin 超管返回空。"
+        },
+        "bizScope": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "biz_scope 当前用户可管理的通知 biz 并集（字典序）；biz_unrestricted=true 时为空。"
+        },
+        "bizUnrestricted": {
+          "type": "boolean",
+          "title": "biz_unrestricted 通知 biz 不受限（超管或任一启用角色 scope 为空）。"
         }
       },
       "title": "GetLoginProfileResponse 当前登录者信息响应。"
+    },
+    "GetProducerResponse": {
+      "type": "object",
+      "properties": {
+        "producer": {
+          "$ref": "#/definitions/NotifyProducer",
+          "title": "producer 生产者实体。"
+        }
+      },
+      "title": "GetProducerResponse 查询生产者响应。"
     },
     "GetRolePermissionsResponse": {
       "type": "object",
@@ -1144,6 +3101,26 @@
       },
       "title": "GetRoleResponse 查询角色响应。"
     },
+    "GetRouteResponse": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "#/definitions/NotifyRoute",
+          "title": "route 路由实体。"
+        }
+      },
+      "title": "GetRouteResponse 查询路由响应。"
+    },
+    "GetSilenceResponse": {
+      "type": "object",
+      "properties": {
+        "silence": {
+          "$ref": "#/definitions/NotifySilence",
+          "title": "silence 静默规则实体。"
+        }
+      },
+      "title": "GetSilenceResponse 查询静默规则响应。"
+    },
     "GetSystemConfigResponse": {
       "type": "object",
       "properties": {
@@ -1153,6 +3130,16 @@
         }
       },
       "title": "GetSystemConfigResponse 查询系统配置响应。"
+    },
+    "GetTemplateResponse": {
+      "type": "object",
+      "properties": {
+        "template": {
+          "$ref": "#/definitions/NotifyTemplate",
+          "title": "template 模板实体。"
+        }
+      },
+      "title": "GetTemplateResponse 查询模板响应。"
     },
     "GetUserResponse": {
       "type": "object",
@@ -1187,6 +3174,120 @@
       },
       "description": "Message that represents an arbitrary HTTP body. It should only be used for\npayload formats that can't be represented as JSON, such as raw binary or\nan HTML page.\n\n\nThis message can be used both in streaming and non-streaming API methods in\nthe request as well as the response.\n\nIt can be used as a top-level request field, which is convenient if one\nwants to extract parameters from either the URL or HTTP template into the\nrequest fields and also want access to the raw HTTP body.\n\nExample:\n\n    message GetResourceRequest {\n      // A unique request id.\n      string request_id = 1;\n\n      // The raw HTTP body is bound to this field.\n      google.api.HttpBody http_body = 2;\n\n    }\n\n    service ResourceService {\n      rpc GetResource(GetResourceRequest)\n        returns (google.api.HttpBody);\n      rpc UpdateResource(google.api.HttpBody)\n        returns (google.protobuf.Empty);\n\n    }\n\nExample with streaming methods:\n\n    service CaldavService {\n      rpc GetCalendar(stream google.api.HttpBody)\n        returns (stream google.api.HttpBody);\n      rpc UpdateCalendar(stream google.api.HttpBody)\n        returns (stream google.api.HttpBody);\n\n    }\n\nUse of this type only changes how the request and response bodies are\nhandled, all other features will continue to work unchanged."
     },
+    "ListChannelsResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/NotifyChannel"
+          },
+          "title": "items 当前页数据。"
+        },
+        "total": {
+          "type": "string",
+          "format": "int64",
+          "title": "total 总数。"
+        }
+      },
+      "title": "ListChannelsResponse 分页查询渠道响应。"
+    },
+    "ListDeadLettersResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/NotifyDeadLetter"
+          },
+          "title": "items 当前页数据。"
+        },
+        "total": {
+          "type": "string",
+          "format": "int64",
+          "title": "total 总数。"
+        }
+      },
+      "title": "ListDeadLettersResponse 分页查询死信响应。"
+    },
+    "ListDeliveryLogsResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/NotifyDeliveryLog"
+          },
+          "title": "items 当前页数据。"
+        },
+        "total": {
+          "type": "string",
+          "format": "int64",
+          "title": "total 总数。"
+        }
+      },
+      "title": "ListDeliveryLogsResponse 分页查询投递明细响应。"
+    },
+    "ListDispatchesResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/NotifyDispatch"
+          },
+          "title": "items 当前页数据。"
+        },
+        "total": {
+          "type": "string",
+          "format": "int64",
+          "title": "total 总数。"
+        }
+      },
+      "title": "ListDispatchesResponse 分页查询发送任务响应。"
+    },
+    "ListEventsResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/NotifyEvent"
+          },
+          "title": "items 当前页数据。"
+        },
+        "total": {
+          "type": "string",
+          "format": "int64",
+          "title": "total 总数。"
+        }
+      },
+      "title": "ListEventsResponse 分页查询事件响应。"
+    },
+    "ListLoginLogsResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/LoginLog"
+          },
+          "title": "items 当前页数据。"
+        },
+        "total": {
+          "type": "string",
+          "format": "int64",
+          "title": "total 总数。"
+        }
+      },
+      "title": "ListLoginLogsResponse 分页查询登录日志响应。"
+    },
     "ListOperationsResponse": {
       "type": "object",
       "properties": {
@@ -1215,6 +3316,25 @@
       },
       "title": "ListPermissionCatalogResponse 查询权限目录响应。"
     },
+    "ListProducersResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/NotifyProducer"
+          },
+          "title": "items 当前页数据。"
+        },
+        "total": {
+          "type": "string",
+          "format": "int64",
+          "title": "total 总数。"
+        }
+      },
+      "title": "ListProducersResponse 分页查询生产者响应。"
+    },
     "ListRolesResponse": {
       "type": "object",
       "properties": {
@@ -1233,6 +3353,82 @@
         }
       },
       "title": "ListRolesResponse 分页查询角色响应。"
+    },
+    "ListRoutesResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/NotifyRoute"
+          },
+          "title": "items 当前页数据。"
+        },
+        "total": {
+          "type": "string",
+          "format": "int64",
+          "title": "total 总数。"
+        }
+      },
+      "title": "ListRoutesResponse 分页查询路由响应。"
+    },
+    "ListSilencesResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/NotifySilence"
+          },
+          "title": "items 当前页数据。"
+        },
+        "total": {
+          "type": "string",
+          "format": "int64",
+          "title": "total 总数。"
+        }
+      },
+      "title": "ListSilencesResponse 分页查询静默规则响应。"
+    },
+    "ListSubscriptionsResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/NotifySubscription"
+          },
+          "title": "items 当前页数据。"
+        },
+        "total": {
+          "type": "string",
+          "format": "int64",
+          "title": "total 总数。"
+        }
+      },
+      "title": "ListSubscriptionsResponse 分页查询订阅响应。"
+    },
+    "ListTemplatesResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/NotifyTemplate"
+          },
+          "title": "items 当前页数据。"
+        },
+        "total": {
+          "type": "string",
+          "format": "int64",
+          "title": "total 总数。"
+        }
+      },
+      "title": "ListTemplatesResponse 分页查询模板响应。"
     },
     "ListUserRolesResponse": {
       "type": "object",
@@ -1266,6 +3462,42 @@
         }
       },
       "title": "ListUsersResponse 分页查询用户响应。"
+    },
+    "LoginLog": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 日志唯一标识（UUIDv7，应用侧生成）。"
+        },
+        "userId": {
+          "type": "string",
+          "title": "user_id 用户 ID；用户不存在的失败尝试为空。"
+        },
+        "username": {
+          "type": "string",
+          "title": "username 尝试的登录名原文。"
+        },
+        "result": {
+          "type": "integer",
+          "format": "int32",
+          "title": "result 登录结果：1=成功 2=用户不存在 3=密码错误 4=账号禁用 5=签发令牌失败。\n对外登录接口 2/3 统一口径防枚举，细分值仅供审计检索。"
+        },
+        "ip": {
+          "type": "string",
+          "title": "ip 客户端 IP，未取到为空。"
+        },
+        "userAgent": {
+          "type": "string",
+          "title": "user_agent 客户端 User-Agent，未取到为空。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 登录尝试时间。"
+        }
+      },
+      "title": "LoginLog 登录日志实体。"
     },
     "LoginRequest": {
       "type": "object",
@@ -1312,6 +3544,618 @@
       "type": "object",
       "title": "LogoutResponse 登出响应。"
     },
+    "NotifyChannel": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 渠道唯一标识（UUIDv7）。"
+        },
+        "bizId": {
+          "type": "string",
+          "title": "biz_id 业务租户标识；路由与配额按 biz 隔离。"
+        },
+        "type": {
+          "$ref": "#/definitions/NotifyChannelType",
+          "title": "type 渠道类型，创建后不可改。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 渠道展示名，同 biz 未删除行内唯一。"
+        },
+        "email": {
+          "$ref": "#/definitions/EmailChannelConfig",
+          "title": "email 邮件配置（type=EMAIL 时返回）。"
+        },
+        "webhook": {
+          "$ref": "#/definitions/WebhookChannelConfig",
+          "title": "webhook Webhook 配置（type=WEBHOOK 时返回）。"
+        },
+        "robot": {
+          "$ref": "#/definitions/RobotChannelConfig",
+          "title": "robot 群机器人配置（type=DINGTALK/WECOM/FEISHU 时返回）。"
+        },
+        "rateLimit": {
+          "$ref": "#/definitions/NotifyRateLimit",
+          "title": "rate_limit 令牌桶限流参数。"
+        },
+        "enabled": {
+          "type": "boolean",
+          "title": "enabled 启用状态；停用后管道路由匹配跳过（≤10s 生效）。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 创建时间。"
+        },
+        "updateTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "update_time 更新时间。"
+        }
+      },
+      "title": "NotifyChannel 渠道实体（出参；secret 永不返回）。"
+    },
+    "NotifyChannelType": {
+      "type": "string",
+      "enum": [
+        "NOTIFY_CHANNEL_TYPE_UNSPECIFIED",
+        "NOTIFY_CHANNEL_TYPE_EMAIL",
+        "NOTIFY_CHANNEL_TYPE_WEBHOOK",
+        "NOTIFY_CHANNEL_TYPE_DINGTALK",
+        "NOTIFY_CHANNEL_TYPE_WECOM",
+        "NOTIFY_CHANNEL_TYPE_FEISHU"
+      ],
+      "default": "NOTIFY_CHANNEL_TYPE_UNSPECIFIED",
+      "description": "- NOTIFY_CHANNEL_TYPE_UNSPECIFIED: NOTIFY_CHANNEL_TYPE_UNSPECIFIED 未指定（拒绝）。\n - NOTIFY_CHANNEL_TYPE_EMAIL: NOTIFY_CHANNEL_TYPE_EMAIL 邮件（SMTP）。\n - NOTIFY_CHANNEL_TYPE_WEBHOOK: NOTIFY_CHANNEL_TYPE_WEBHOOK 通用 Webhook（仅 HTTPS）。\n - NOTIFY_CHANNEL_TYPE_DINGTALK: NOTIFY_CHANNEL_TYPE_DINGTALK 钉钉群机器人。\n - NOTIFY_CHANNEL_TYPE_WECOM: NOTIFY_CHANNEL_TYPE_WECOM 企业微信群机器人。\n - NOTIFY_CHANNEL_TYPE_FEISHU: NOTIFY_CHANNEL_TYPE_FEISHU 飞书群机器人。",
+      "title": "NotifyChannelType 渠道类型，决定管道侧适配器与 config 结构。"
+    },
+    "NotifyDeadLetter": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 死信行标识（= 转死信的 dispatch id）。"
+        },
+        "dispatchId": {
+          "type": "string",
+          "title": "dispatch_id 死信来源发送任务标识（notify_dispatch.id）。"
+        },
+        "eventId": {
+          "type": "string",
+          "title": "event_id 源事件标识（重放时 dlq worker 引用它生成新 dispatch）。"
+        },
+        "channelId": {
+          "type": "string",
+          "title": "channel_id 投递渠道实例标识（notify_channel.id）。"
+        },
+        "recipient": {
+          "type": "string",
+          "title": "recipient 收件目标：邮箱/群标识/webhook url/用户ID。"
+        },
+        "lastError": {
+          "type": "string",
+          "title": "last_error 转死信时的最近失败原因；未设置表示无。"
+        },
+        "attempts": {
+          "type": "integer",
+          "format": "int32",
+          "title": "attempts 累计尝试次数（重试上限 5 次后转入）。"
+        },
+        "replayState": {
+          "type": "integer",
+          "format": "int32",
+          "title": "replay_state 重放状态：1 none / 2 pending（已标记待重放）/ 3 replayed（已重放）。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 转入死信时间。"
+        },
+        "updateTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "update_time 最近状态变更时间。"
+        }
+      },
+      "title": "NotifyDeadLetter 死信实体（notify_dlq 一行的排障视图）。"
+    },
+    "NotifyDeliveryLog": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 日志唯一标识（UUIDv7）。"
+        },
+        "dispatchId": {
+          "type": "string",
+          "title": "dispatch_id 所属发送任务标识（notify_dispatch.id，下钻维度）。"
+        },
+        "channelId": {
+          "type": "string",
+          "title": "channel_id 投递渠道实例标识（notify_channel.id）。"
+        },
+        "attempt": {
+          "type": "integer",
+          "format": "int32",
+          "title": "attempt 第几次尝试（从 1 起，与发送任务 attempts 对齐）。"
+        },
+        "ok": {
+          "type": "boolean",
+          "title": "ok 本次尝试是否成功。"
+        },
+        "latencyMs": {
+          "type": "integer",
+          "format": "int32",
+          "title": "latency_ms 本次投递耗时（毫秒）。"
+        },
+        "providerMsgId": {
+          "type": "string",
+          "title": "provider_msg_id 渠道侧消息标识；未设置表示渠道未返回。"
+        },
+        "error": {
+          "type": "string",
+          "title": "error 本次失败原因；未设置表示成功。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 落库时间（分区键）。"
+        }
+      },
+      "title": "NotifyDeliveryLog 投递明细实体（notify_delivery_log 一行的排障视图）。"
+    },
+    "NotifyDispatch": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 任务唯一标识（UUIDv7）。"
+        },
+        "eventId": {
+          "type": "string",
+          "title": "event_id 源事件标识（notify_event.id，下钻维度）。"
+        },
+        "channelId": {
+          "type": "string",
+          "title": "channel_id 目标渠道实例标识（notify_channel.id）。"
+        },
+        "recipient": {
+          "type": "string",
+          "title": "recipient 收件目标：邮箱/群标识/webhook url/用户ID。"
+        },
+        "templateId": {
+          "type": "string",
+          "title": "template_id 渲染用模板版本；未设置表示无模板（纯文本通知）。"
+        },
+        "content": {
+          "type": "object",
+          "title": "content 渲染快照（排障复现用）；未设置表示无快照。"
+        },
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 任务状态：1 pending / 2 sending / 3 sent / 4 failed（重试中）/ 5 dead（死信）。"
+        },
+        "attempts": {
+          "type": "integer",
+          "format": "int32",
+          "title": "attempts 已尝试次数（失败重试累加）。"
+        },
+        "nextRetryTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "next_retry_time 下次重试时间（指数退避后）；未设置表示无待重试。"
+        },
+        "lastError": {
+          "type": "string",
+          "title": "last_error 最近一次失败原因；未设置表示未失败。"
+        },
+        "sendKey": {
+          "type": "string",
+          "title": "send_key 对外幂等键 sha256(event|channel|recipient) 截断；接收端去重用。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 生成时间（分区键）。"
+        }
+      },
+      "title": "NotifyDispatch 发送任务实体（notify_dispatch 一行的排障视图）。"
+    },
+    "NotifyEvent": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 事件唯一标识（UUIDv7）。"
+        },
+        "bizId": {
+          "type": "string",
+          "title": "biz_id 业务租户标识。"
+        },
+        "eventType": {
+          "type": "string",
+          "title": "event_type 事件类型：如 monitor.alert.firing / permission.change。"
+        },
+        "severity": {
+          "type": "integer",
+          "format": "int32",
+          "title": "severity 严重级：1 info / 2 warning / 3 critical / 4 fatal。"
+        },
+        "title": {
+          "type": "string",
+          "title": "title 事件标题。"
+        },
+        "payload": {
+          "type": "object",
+          "title": "payload JSON 载荷；未设置表示无载荷。"
+        },
+        "dedupKey": {
+          "type": "string",
+          "title": "dedup_key 重复指纹（幂等去重用）；未设置表示无。"
+        },
+        "groupKey": {
+          "type": "string",
+          "title": "group_key 聚合分组键；未设置表示不聚合。"
+        },
+        "recipients": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "recipients 显式收件列表；空=走路由解析。"
+        },
+        "source": {
+          "type": "string",
+          "title": "source 事件来源：api（生产者经 ingress）/ internal（core 同事务直插）。"
+        },
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 路由状态：1 received / 2 routed / 3 suppressed（静默命中）/ 4 failed（无匹配路由）。"
+        },
+        "publishState": {
+          "type": "integer",
+          "format": "int32",
+          "title": "publish_state 交付状态：0 pending（待 router 领取）/ 1 published（已交付路由\n处理，与事件终态同事务翻转；NATS 骨干下为已发布）。"
+        },
+        "publishAttempts": {
+          "type": "integer",
+          "format": "int32",
+          "title": "publish_attempts 路由瞬时错误重试次数（如订阅者查询超时；失败退避累加）。"
+        },
+        "nextPublishTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "next_publish_time 下次领取/发布时间（退避后）。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 落库时间（分区键）。"
+        }
+      },
+      "title": "NotifyEvent 事件实体（notify_event 一行的排障视图）。"
+    },
+    "NotifyProducer": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 生产者唯一标识（UUIDv7）。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 生产者名称；同 biz 未删除行内唯一。"
+        },
+        "bizId": {
+          "type": "string",
+          "title": "biz_id 业务租户标识；token scope 限定 biz，创建后不可改。"
+        },
+        "eventWhitelist": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "event_whitelist 事件类型白名单；空 = 不限。"
+        },
+        "expireTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "expire_time 过期时间；未设置 = 永不过期。"
+        },
+        "enabled": {
+          "type": "boolean",
+          "title": "enabled 启用状态；停用后 ingress 拒绝接入（≤10s 生效）。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 创建时间。"
+        },
+        "updateTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "update_time 更新时间。"
+        },
+        "qpsLimit": {
+          "type": "integer",
+          "format": "int32",
+          "title": "qps_limit 每秒接入上限（0=不限）。"
+        },
+        "dailyLimit": {
+          "type": "integer",
+          "format": "int32",
+          "title": "daily_limit 每日接入上限（0=不限）。"
+        }
+      },
+      "title": "NotifyProducer 生产者实体（任何接口不回显 token 与哈希）。"
+    },
+    "NotifyRateLimit": {
+      "type": "object",
+      "properties": {
+        "qps": {
+          "type": "string",
+          "format": "int64",
+          "title": "qps 每秒补充令牌速率，0 表示不限。"
+        },
+        "burst": {
+          "type": "string",
+          "format": "int64",
+          "title": "burst 令牌桶容量（突发上限），0 表示不限。"
+        }
+      },
+      "title": "NotifyRateLimit 令牌桶限流参数；qps=0 表示不限（适配器层仍受通道默认配额约束，\n如钉钉 20/min/机器人）。多实例渠道各自独立限流。"
+    },
+    "NotifyRoute": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 路由唯一标识（UUIDv7）。"
+        },
+        "bizId": {
+          "type": "string",
+          "title": "biz_id 业务租户标识；路由匹配与渠道绑定按 biz 隔离。"
+        },
+        "eventPattern": {
+          "type": "string",
+          "title": "event_pattern 事件匹配模式：精确 / 前缀通配（'monitor.alert.*'）/ 全匹配（'*'）。"
+        },
+        "severityMin": {
+          "type": "integer",
+          "format": "int32",
+          "title": "severity_min 严重级下限（1 info / 2 warning / 3 critical / 4 fatal）。"
+        },
+        "tagMatch": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "tag_match payload 标签匹配条件；未设置表示无条件。"
+        },
+        "priority": {
+          "type": "integer",
+          "format": "int32",
+          "title": "priority 优先级 1-9，1 最高；多条路由命中时取最高优先级。"
+        },
+        "channelIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "channel_ids 命中的渠道实例集合，并发分发互不影响。"
+        },
+        "recipient": {
+          "$ref": "#/definitions/RouteRecipient",
+          "title": "recipient 收件策略。"
+        },
+        "aggregateWindowS": {
+          "type": "integer",
+          "format": "int32",
+          "title": "aggregate_window_s 聚合窗口秒数；0=不聚合，\u003e0 且事件带 group_key 时聚合微批。"
+        },
+        "suppressThreshold": {
+          "type": "integer",
+          "format": "int32",
+          "title": "suppress_threshold 聚合抑制阈值：分组计数超过后汇总转摘要模式。"
+        },
+        "suppressDurationM": {
+          "type": "integer",
+          "format": "int32",
+          "title": "suppress_duration_m 抑制时长（分钟）：超阈值后同 group_key 静默窗口。"
+        },
+        "enabled": {
+          "type": "boolean",
+          "title": "enabled 启用状态；停用后不参与匹配（≤10s 生效）。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 创建时间。"
+        },
+        "updateTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "update_time 更新时间。"
+        }
+      },
+      "title": "NotifyRoute 路由实体。"
+    },
+    "NotifySilence": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 静默规则唯一标识（UUIDv7）。"
+        },
+        "bizId": {
+          "type": "string",
+          "title": "biz_id 业务租户标识；静默匹配按 biz 隔离。"
+        },
+        "eventPattern": {
+          "type": "string",
+          "title": "event_pattern 事件匹配模式。"
+        },
+        "severityMax": {
+          "type": "integer",
+          "format": "int32",
+          "title": "severity_max 严重级上限，该级及以下的事件才可被静默。"
+        },
+        "timeWindow": {
+          "$ref": "#/definitions/SilenceWindow",
+          "title": "time_window 免打扰时间窗；未设置表示全程静默。"
+        },
+        "enabled": {
+          "type": "boolean",
+          "title": "enabled 启用状态；停用后不参与匹配（≤10s 生效）。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 创建时间。"
+        },
+        "updateTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "update_time 更新时间。"
+        }
+      },
+      "title": "NotifySilence 静默规则实体。"
+    },
+    "NotifySubscription": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 订阅唯一标识（UUIDv7）。"
+        },
+        "userId": {
+          "type": "string",
+          "title": "user_id 订阅人用户 ID。"
+        },
+        "bizId": {
+          "type": "string",
+          "title": "biz_id 业务租户标识；订阅匹配按 biz 隔离。"
+        },
+        "eventPattern": {
+          "type": "string",
+          "title": "event_pattern 事件匹配模式：精确 / 前缀通配（'monitor.alert.*'）/ 全匹配（'*'）。"
+        },
+        "channelPrefs": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/SubscriptionPref"
+          },
+          "title": "channel_prefs 渠道偏好：key 为可订阅渠道类型（email/dingtalk/wecom/feishu）。"
+        },
+        "enabled": {
+          "type": "boolean",
+          "title": "enabled 启用状态；停用后订阅者解析跳过。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 创建时间。"
+        },
+        "updateTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "update_time 更新时间（Upsert 替换时刷新）。"
+        }
+      },
+      "title": "NotifySubscription 订阅实体。"
+    },
+    "NotifyTemplate": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 模板唯一标识（UUIDv7）。"
+        },
+        "bizId": {
+          "type": "string",
+          "title": "biz_id 业务租户标识；渲染解析链按 biz 隔离。"
+        },
+        "eventType": {
+          "type": "string",
+          "title": "event_type 事件类型精确匹配或 '*' 通配。"
+        },
+        "channelType": {
+          "type": "string",
+          "title": "channel_type 渠道类型（email/webhook/dingtalk/wecom/feishu）或 '*' 通配。"
+        },
+        "subject": {
+          "type": "string",
+          "title": "subject 标题模板（邮件主题/机器人标题）。"
+        },
+        "body": {
+          "type": "string",
+          "title": "body 正文模板。"
+        },
+        "version": {
+          "type": "integer",
+          "format": "int32",
+          "title": "version 模板版本号，创建为 1，每次更新 +1。"
+        },
+        "enabled": {
+          "type": "boolean",
+          "title": "enabled 启用状态；停用后解析链跳过（≤10s 生效）。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 创建时间。"
+        },
+        "updateTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "update_time 更新时间。"
+        }
+      },
+      "title": "NotifyTemplate 模板实体。"
+    },
+    "NullValue": {
+      "type": "string",
+      "enum": [
+        "NULL_VALUE"
+      ],
+      "default": "NULL_VALUE",
+      "description": "Represents a JSON `null`.\n\n`NullValue` is a sentinel, using an enum with only one value to represent\nthe null value for the `Value` type union.\n\nA field of type `NullValue` with any value other than `0` is considered\ninvalid. Most ProtoJSON serializers will emit a `Value` with a `null_value`\nset as a JSON `null` regardless of the integer value, and so will round trip\nto a `0` value.\n\n - NULL_VALUE: Null value."
+    },
+    "ProducerSpec": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "name 生产者名称；同 biz 未删除行内唯一。"
+        },
+        "eventWhitelist": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "event_whitelist 事件类型白名单，空 = 不限；条目为事件模式（与路由同式）。"
+        },
+        "expireTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "expire_time 过期时间，可选；未指定 = 永不过期（整组替换时不传即清除）。"
+        },
+        "qpsLimit": {
+          "type": "integer",
+          "format": "int32",
+          "title": "qps_limit 每秒接入事件上限，0 = 不限；管道 ingress 按生产者计数，超限 429。"
+        },
+        "dailyLimit": {
+          "type": "integer",
+          "format": "int32",
+          "title": "daily_limit 每日（UTC）接入事件上限，0 = 不限。"
+        }
+      },
+      "title": "ProducerSpec 生产者配置载荷：名称 / 事件白名单 / 过期时间（创建与整组\n替换更新共用）。event_whitelist 为空 = 不限事件类型（token scope 仍限定\nbiz）；条目为事件模式：精确 / 前缀通配（'monitor.alert.*'）/ 全匹配（'*'）。"
+    },
     "RefreshTokenRequest": {
       "type": "object",
       "properties": {
@@ -1341,6 +4185,20 @@
       },
       "title": "RefreshTokenResponse 刷新令牌响应：新双令牌（旧刷新令牌已失效）。"
     },
+    "ReplayDeadLetterBody": {
+      "type": "object",
+      "title": "ReplayDeadLetterRequest 标记死信待重放请求。"
+    },
+    "ReplayDeadLetterResponse": {
+      "type": "object",
+      "properties": {
+        "deadLetter": {
+          "$ref": "#/definitions/NotifyDeadLetter",
+          "title": "dead_letter 更新后的死信行（replay_state=pending）。"
+        }
+      },
+      "title": "ReplayDeadLetterResponse 标记死信待重放响应（更新后的行）。"
+    },
     "ResetUserPasswordBody": {
       "type": "object",
       "properties": {
@@ -1354,6 +4212,19 @@
     "ResetUserPasswordResponse": {
       "type": "object",
       "title": "ResetUserPasswordResponse 重置用户密码响应。"
+    },
+    "RobotChannelConfig": {
+      "type": "object",
+      "properties": {
+        "atMobiles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "at_mobiles 需要 @ 提醒的手机号列表，可选。"
+        }
+      },
+      "title": "RobotChannelConfig 群机器人渠道配置（type=DINGTALK/WECOM/FEISHU）；\nsecret 为机器人 access_token/webhook 密钥（必传）。"
     },
     "Role": {
       "type": "object",
@@ -1384,9 +4255,139 @@
           "type": "string",
           "format": "date-time",
           "title": "update_time 更新时间。"
+        },
+        "bizScope": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "biz_scope 可管理的通知 biz 列表；空 = 不限（现有角色缺省）。用户可管范围\n= 启用角色 scope 并集，任一角色不限即不限；超管恒不限。"
         }
       },
       "title": "Role 角色实体（出参）。"
+    },
+    "RotateProducerTokenBody": {
+      "type": "object",
+      "title": "RotateProducerTokenRequest 轮换令牌请求。"
+    },
+    "RotateProducerTokenResponse": {
+      "type": "object",
+      "properties": {
+        "producer": {
+          "$ref": "#/definitions/NotifyProducer",
+          "title": "producer 轮换后的生产者实体（update_time 已刷新）。"
+        },
+        "token": {
+          "type": "string",
+          "title": "token 新接入令牌明文：仅本响应返回一次，旧 token 立即失效（≤10s 生效）。"
+        }
+      },
+      "title": "RotateProducerTokenResponse 轮换令牌响应。"
+    },
+    "RouteRecipient": {
+      "type": "object",
+      "properties": {
+        "fixed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "fixed 固定收件人列表（email 地址/群标识；机器人与 webhook 实例自身隐含收件）。"
+        },
+        "subscription": {
+          "type": "boolean",
+          "title": "subscription 是否追加订阅者（按用户 channel_prefs 与路由实例类型交集解析）。"
+        }
+      },
+      "title": "RouteRecipient 收件策略：fixed 与 subscription 可并存——fixed 先生成、\n订阅者按渠道偏好追加，同 (channel, recipient) 去重。仅地址类渠道（email）\n依赖本策略解析收件人，故 channel_ids 含 email 渠道时须至少启用其一（core\n按渠道类型校验）；webhook 以实例 URL 为隐含收件、群机器人缺省投递到实例\n绑定的群，二者可整组留空。"
+    },
+    "RouteSpec": {
+      "type": "object",
+      "properties": {
+        "eventPattern": {
+          "type": "string",
+          "title": "event_pattern 事件匹配模式：精确 / 前缀通配（'monitor.alert.*'）/ 全匹配（'*'）。"
+        },
+        "severityMin": {
+          "type": "integer",
+          "format": "int32",
+          "title": "severity_min 严重级下限（1 info / 2 warning / 3 critical / 4 fatal），可选。"
+        },
+        "tagMatch": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "tag_match payload 标签匹配条件（可选）：扁平键值全部相等才命中（AND）；\n传空 map 表示无条件。"
+        },
+        "priority": {
+          "type": "integer",
+          "format": "int32",
+          "title": "priority 优先级，可选；未指定默认 5。"
+        },
+        "channelIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "channel_ids 命中的渠道实例集合（同 biz 未删除行），至少 1 个，整组替换。"
+        },
+        "recipient": {
+          "$ref": "#/definitions/RouteRecipient",
+          "title": "recipient 收件策略。"
+        },
+        "aggregateWindowS": {
+          "type": "integer",
+          "format": "int32",
+          "title": "aggregate_window_s 聚合窗口秒数，可选；未指定默认 0（不聚合），\u003e0 须 30-300。"
+        },
+        "suppressThreshold": {
+          "type": "integer",
+          "format": "int32",
+          "title": "suppress_threshold 聚合抑制阈值，可选；未指定默认 500。"
+        },
+        "suppressDurationM": {
+          "type": "integer",
+          "format": "int32",
+          "title": "suppress_duration_m 抑制时长分钟，可选；未指定默认 30。"
+        }
+      },
+      "title": "RouteSpec 路由规则载荷：一组互为整体的匹配与分发决策（创建/更新共用）；\n数值调优项可选，缺省 severity_min=1、priority=5、aggregate_window_s=0\n（不聚合）、suppress_threshold=500、suppress_duration_m=30。"
+    },
+    "SendTestEventBody": {
+      "type": "object",
+      "properties": {
+        "eventType": {
+          "type": "string",
+          "title": "event_type 测试事件类型，可选；缺省 notify.test（需有路由\nevent_pattern 覆盖该类型且 channel_ids 含目标实例才会实际投递）。"
+        },
+        "title": {
+          "type": "string",
+          "title": "title 测试事件标题，可选；缺省「通知渠道连通性测试」。"
+        },
+        "recipients": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "recipients 显式测试收件列表，可选；空 = 交路由解析。"
+        },
+        "payload": {
+          "type": "object",
+          "title": "payload 附加测试载荷（合并进事件 payload 的 test 上下文），可选。"
+        }
+      },
+      "title": "SendTestEventRequest 发送渠道测试事件请求：事件类型/标题/收件人/载荷可\n覆盖缺省值；recipients 为空 = 交路由按 recipient_policy 解析（与生产事件\n同链路，测试收件解析本身）。"
+    },
+    "SendTestEventResponse": {
+      "type": "object",
+      "properties": {
+        "event": {
+          "$ref": "#/definitions/NotifyEvent",
+          "title": "event 已落库的测试事件（source=internal，publish_state=pending）。"
+        }
+      },
+      "title": "SendTestEventResponse 发送渠道测试事件响应：返回已落库的事件（异步\n链路结果经事件/任务/明细查询接口跟踪）。"
     },
     "SetRolePermissionsBody": {
       "type": "object",
@@ -1419,6 +4420,43 @@
       "type": "object",
       "title": "SetRolePermissionsResponse 全量覆盖角色权限响应。"
     },
+    "SilenceSpec": {
+      "type": "object",
+      "properties": {
+        "eventPattern": {
+          "type": "string",
+          "title": "event_pattern 事件匹配模式：精确 / 前缀通配（'monitor.alert.*'）/ 全匹配（'*'），\n与路由同式。"
+        },
+        "severityMax": {
+          "type": "integer",
+          "format": "int32",
+          "title": "severity_max 严重级上限（1 info / 2 warning / 3 critical / 4 fatal），可选。"
+        },
+        "timeWindow": {
+          "$ref": "#/definitions/SilenceWindow",
+          "title": "time_window 免打扰时间窗，可选；缺省全程静默（更新时整组替换语义下\n不传即清除窗口）。"
+        }
+      },
+      "title": "SilenceSpec 静默规则载荷：一组互为整体的匹配决策（创建/更新共用）；\nseverity_max 可选，缺省 2（warning 及以下）；time_window 可选，缺省全程。"
+    },
+    "SilenceWindow": {
+      "type": "object",
+      "properties": {
+        "start": {
+          "type": "string",
+          "title": "start 窗口起点，24 小时制 HH:MM。"
+        },
+        "end": {
+          "type": "string",
+          "title": "end 窗口终点，24 小时制 HH:MM；与 start 相同表示零长窗口，非法。"
+        },
+        "tz": {
+          "type": "string",
+          "title": "tz IANA 时区名（如 Asia/Shanghai），可选；缺省 UTC，由 core 校验有效性。"
+        }
+      },
+      "title": "SilenceWindow 免打扰时间窗：支持跨午夜（如 22:00→08:00 覆盖夜间）；\n时区缺省 UTC。"
+    },
     "Status": {
       "type": "object",
       "properties": {
@@ -1437,6 +4475,20 @@
           }
         }
       }
+    },
+    "SubscriptionPref": {
+      "type": "object",
+      "properties": {
+        "subscribed": {
+          "type": "boolean",
+          "title": "subscribed 订阅开关；false 无意义（不订阅直接省略该渠道键）。"
+        },
+        "target": {
+          "type": "string",
+          "title": "target 机器人目标群标识（如 '$group:ops'）；地址类渠道不用。"
+        }
+      },
+      "title": "SubscriptionPref 单渠道订阅偏好值：恰设其一——地址类渠道（email）用\nsubscribed（true=订阅，收件地址取用户资料）；机器人渠道（钉钉/企微/飞书）\n可用 target 指定目标群（'$group:ops' 约定），或 subscribed=true 走默认绑定。"
     },
     "SystemConfig": {
       "type": "object",
@@ -1460,6 +4512,66 @@
       },
       "title": "SystemConfig 系统配置实体（出参）。"
     },
+    "UpdateChannelBody": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "name 新渠道展示名。"
+        },
+        "email": {
+          "$ref": "#/definitions/EmailChannelConfig",
+          "title": "email 邮件配置。"
+        },
+        "webhook": {
+          "$ref": "#/definitions/WebhookChannelConfig",
+          "title": "webhook Webhook 配置。"
+        },
+        "robot": {
+          "$ref": "#/definitions/RobotChannelConfig",
+          "title": "robot 群机器人配置。"
+        },
+        "rateLimit": {
+          "$ref": "#/definitions/NotifyRateLimit",
+          "title": "rate_limit 新令牌桶限流参数。"
+        },
+        "enabled": {
+          "type": "boolean",
+          "title": "enabled 新启用状态。"
+        },
+        "secret": {
+          "type": "string",
+          "title": "secret 新渠道凭据：不传=保留旧密文，传新值=轮换（旧凭据即刻作废）。"
+        },
+        "signSecret": {
+          "type": "string",
+          "title": "sign_secret 机器人签名密钥：不传 = 保留；传非空 = 轮换；传空串 = 清除（停用签名）。"
+        }
+      },
+      "title": "UpdateChannelRequest 更新渠道请求，可选字段传哪个改哪个，至少传一个；\nconfig 按类型整体替换（不可部分更新）。"
+    },
+    "UpdateChannelResponse": {
+      "type": "object",
+      "title": "UpdateChannelResponse 更新渠道响应。"
+    },
+    "UpdateProducerBody": {
+      "type": "object",
+      "properties": {
+        "spec": {
+          "$ref": "#/definitions/ProducerSpec",
+          "title": "spec 新生产者配置，整组替换（不传 expire_time 即清除过期时间）。"
+        },
+        "enabled": {
+          "type": "boolean",
+          "title": "enabled 新启用状态。"
+        }
+      },
+      "title": "UpdateProducerRequest 更新生产者请求：spec 与 enabled 至少传其一。"
+    },
+    "UpdateProducerResponse": {
+      "type": "object",
+      "title": "UpdateProducerResponse 更新生产者响应。"
+    },
     "UpdateRoleBody": {
       "type": "object",
       "properties": {
@@ -1471,6 +4583,10 @@
           "type": "integer",
           "format": "int32",
           "title": "status 新状态：1=启用 0=禁用。"
+        },
+        "bizScope": {
+          "$ref": "#/definitions/BizScope",
+          "title": "biz_scope 整组替换可管理 biz 列表（items 为空 = 清空 = 不限）。"
         }
       },
       "title": "UpdateRoleRequest 更新角色请求，可选字段传哪个改哪个，至少传一个。"
@@ -1478,6 +4594,42 @@
     "UpdateRoleResponse": {
       "type": "object",
       "title": "UpdateRoleResponse 更新角色响应。"
+    },
+    "UpdateRouteBody": {
+      "type": "object",
+      "properties": {
+        "spec": {
+          "$ref": "#/definitions/RouteSpec",
+          "title": "spec 新路由规则，整组替换规则字段。"
+        },
+        "enabled": {
+          "type": "boolean",
+          "title": "enabled 新启用状态。"
+        }
+      },
+      "title": "UpdateRouteRequest 更新路由请求：spec 与 enabled 至少传其一。"
+    },
+    "UpdateRouteResponse": {
+      "type": "object",
+      "title": "UpdateRouteResponse 更新路由响应。"
+    },
+    "UpdateSilenceBody": {
+      "type": "object",
+      "properties": {
+        "spec": {
+          "$ref": "#/definitions/SilenceSpec",
+          "title": "spec 新静默规则，整组替换规则字段。"
+        },
+        "enabled": {
+          "type": "boolean",
+          "title": "enabled 新启用状态。"
+        }
+      },
+      "title": "UpdateSilenceRequest 更新静默规则请求：spec 与 enabled 至少传其一。"
+    },
+    "UpdateSilenceResponse": {
+      "type": "object",
+      "title": "UpdateSilenceResponse 更新静默规则响应。"
     },
     "UpdateSystemConfigRequest": {
       "type": "object",
@@ -1504,6 +4656,36 @@
     "UpdateSystemConfigResponse": {
       "type": "object",
       "title": "UpdateSystemConfigResponse 全量覆盖系统配置响应。"
+    },
+    "UpdateTemplateBody": {
+      "type": "object",
+      "properties": {
+        "eventType": {
+          "type": "string",
+          "title": "event_type 新事件类型。"
+        },
+        "channelType": {
+          "type": "string",
+          "title": "channel_type 新渠道类型。"
+        },
+        "subject": {
+          "type": "string",
+          "title": "subject 新标题模板。"
+        },
+        "body": {
+          "type": "string",
+          "title": "body 新正文模板。"
+        },
+        "enabled": {
+          "type": "boolean",
+          "title": "enabled 新启用状态。"
+        }
+      },
+      "title": "UpdateTemplateRequest 更新模板请求，可选字段传哪个改哪个，至少传一个；\nspec 可改但 (event_type, channel_type) 组合在同 biz 内仍须唯一。"
+    },
+    "UpdateTemplateResponse": {
+      "type": "object",
+      "title": "UpdateTemplateResponse 更新模板响应。"
     },
     "UpdateUserBody": {
       "type": "object",
@@ -1575,6 +4757,45 @@
       },
       "title": "UploadSystemLogoResponse 上传 logo 响应。"
     },
+    "UpsertSubscriptionRequest": {
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "title": "user_id 目标用户，可选；缺省=操作者本人，指定他人须 admin（代管）。"
+        },
+        "bizId": {
+          "type": "string",
+          "title": "biz_id 业务租户标识，可选；未指定默认 default。"
+        },
+        "eventPattern": {
+          "type": "string",
+          "title": "event_pattern 事件匹配模式，与路由同式。"
+        },
+        "channelPrefs": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/SubscriptionPref"
+          },
+          "title": "channel_prefs 渠道偏好，至少 1 项；key 限可订阅渠道类型\n（email/dingtalk/wecom/feishu，webhook 为系统目标非用户可达）。"
+        },
+        "enabled": {
+          "type": "boolean",
+          "title": "enabled 启用状态，可选；未指定默认启用。"
+        }
+      },
+      "title": "UpsertSubscriptionRequest 保存订阅请求。"
+    },
+    "UpsertSubscriptionResponse": {
+      "type": "object",
+      "properties": {
+        "subscription": {
+          "$ref": "#/definitions/NotifySubscription",
+          "title": "subscription 落库后的订阅实体（含权威 id 与时间戳）。"
+        }
+      },
+      "title": "UpsertSubscriptionResponse 保存订阅响应。"
+    },
     "User": {
       "type": "object",
       "properties": {
@@ -1623,6 +4844,32 @@
         }
       },
       "title": "User 用户实体（出参，不含密码）。"
+    },
+    "WebhookChannelConfig": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "title": "url 目标地址，必须以 https:// 开头。"
+        },
+        "method": {
+          "type": "string",
+          "title": "method 请求方法，v1 仅支持 POST。"
+        },
+        "headers": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "headers 附加请求头（如鉴权头）。"
+        },
+        "timeoutS": {
+          "type": "integer",
+          "format": "int32",
+          "title": "timeout_s 出站超时秒数，1-10；可选，未指定默认 5（core 落库时补齐，\n管道按该值设置请求超时）。"
+        }
+      },
+      "title": "WebhookChannelConfig Webhook 渠道配置（type=WEBHOOK）；仅允许 HTTPS，\nsecret 为出站 HMAC-SHA256 签名密钥（可选，未配置则不签名）。"
     },
     "v1.Operation": {
       "type": "object",

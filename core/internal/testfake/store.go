@@ -11,8 +11,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lanyulei/monitor/backend/core/internal/biz"
-	"github.com/lanyulei/monitor/backend/core/internal/conf"
+	biznotify "github.com/lanyulei/reborn/backend/core/internal/biz/notify"
+	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
+	"github.com/lanyulei/reborn/backend/core/internal/conf"
+	"github.com/lanyulei/reborn/backend/core/internal/pkg/txrun"
 
 	"google.golang.org/protobuf/types/known/durationpb"
 )
@@ -30,6 +32,20 @@ var (
 	_ biz.PermissionAdminRepo    = (*Store)(nil)
 	_ biz.PermissionGrantReader  = (*Store)(nil)
 	_ biz.SystemConfigRepo       = (*Store)(nil)
+	_ biz.LoginLogWriter         = (*Store)(nil)
+	_ biz.LoginLogReader         = (*Store)(nil)
+	_ biznotify.ChannelRepo      = (*Store)(nil)
+	_ biznotify.TemplateRepo     = (*Store)(nil)
+	_ biznotify.RouteRepo        = (*Store)(nil)
+	_ biznotify.SilenceRepo      = (*Store)(nil)
+	_ biznotify.SubscriptionRepo = (*Store)(nil)
+	_ biznotify.ProducerRepo     = (*Store)(nil)
+	_ biznotify.EventRepo        = (*Store)(nil)
+	_ biznotify.EventWriter      = (*Store)(nil)
+	_ biznotify.EventTxRepo      = (*Store)(nil)
+	_ biznotify.DispatchRepo     = (*Store)(nil)
+	_ biznotify.DeliveryLogRepo  = (*Store)(nil)
+	_ biznotify.DeadLetterRepo   = (*Store)(nil)
 )
 
 // Store 是全部仓储接口的内存实现；并发安全（读路径快照后迭代，临界区无调用方逻辑）。
@@ -41,9 +57,21 @@ type Store struct {
 	refreshTokens map[string]*biz.RefreshToken   // tokenHash -> token
 	permissions   map[string]map[string]struct{} // roleID -> operation 集合（物化策略）
 	grants        map[string]biz.GrantSet        // roleID -> 直接授权（Store 持有所有权）
-	systemConfig  *biz.SystemConfig               // 单例配置行（nil = 未配置）
-	logoFile      []byte                          // logo 文件内容（nil = 未上传）
-	logoMime      string                          // logo 文件 MIME
+	loginLogs     []*biz.LoginLog                // 追加即序（append-only，无删除）
+	channels      map[string]*channelEntry       // channelID -> 渠道条目（含软删标记）
+	templates     map[string]*templateEntry      // templateID -> 模板条目（含软删标记）
+	routes        map[string]*routeEntry         // routeID -> 路由条目（含软删标记）
+	silences      map[string]*silenceEntry       // silenceID -> 静默条目（含软删标记）
+	subscriptions map[string]*subscriptionEntry  // subscriptionID -> 订阅条目（含软删标记）
+	producers     map[string]*producerEntry      // producerID -> 生产者条目（含软删标记）
+	events        []*biznotify.Event             // 事件运行数据（append-only，经 SeedEvent 预置）
+	dispatches    []*biznotify.Dispatch          // 发送任务运行数据（append-only，经 SeedDispatch 预置）
+	deliveryLogs  []*biznotify.DeliveryLog       // 投递明细运行数据（append-only，经 SeedDeliveryLog 预置）
+	deadLetters   []*biznotify.DeadLetter        // 死信运行数据（sender 写入，经 SeedDeadLetter 预置）
+	dedup         map[string]dedupEntry          // 直插去重门闩（biz|dedup_key → 首次事件）
+	systemConfig  *biz.SystemConfig              // 单例配置行（nil = 未配置）
+	logoFile      []byte                         // logo 文件内容（nil = 未上传）
+	logoMime      string                         // logo 文件 MIME
 }
 
 // NewStore new a Store.
@@ -55,6 +83,12 @@ func NewStore() *Store {
 		refreshTokens: make(map[string]*biz.RefreshToken),
 		permissions:   make(map[string]map[string]struct{}),
 		grants:        make(map[string]biz.GrantSet),
+		channels:      make(map[string]*channelEntry),
+		templates:     make(map[string]*templateEntry),
+		routes:        make(map[string]*routeEntry),
+		silences:      make(map[string]*silenceEntry),
+		subscriptions: make(map[string]*subscriptionEntry),
+		producers:     make(map[string]*producerEntry),
 	}
 }
 
@@ -324,6 +358,9 @@ func (s *Store) UpdateRole(_ context.Context, id string, upd biz.RoleUpdate) err
 	if upd.Status != nil {
 		r.Status = *upd.Status
 	}
+	if upd.BizScope != nil {
+		r.BizScope = slices.Clone(*upd.BizScope)
+	}
 	r.UpdateTime = time.Now()
 	return nil
 }
@@ -461,9 +498,40 @@ func (s *Store) ListGrantsByRole(_ context.Context, roleID string) (biz.GrantSet
 	return cloneGrants(s.grants[roleID]), nil
 }
 
+// ListGrantsByRoles implements biz.PermissionGrantReader：多角色直接授权
+// 并集（三类各自去重、字典序），对齐 data 层 DISTINCT + ORDER BY 口径。
+func (s *Store) ListGrantsByRoles(_ context.Context, roleIDs []string) (biz.GrantSet, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var union biz.GrantSet
+	for _, id := range roleIDs {
+		g := s.grants[id]
+		union.Menus = append(union.Menus, g.Menus...)
+		union.Elements = append(union.Elements, g.Elements...)
+		union.Apis = append(union.Apis, g.Apis...)
+	}
+	return biz.GrantSet{
+		Menus:    sortedUnique(union.Menus),
+		Elements: sortedUnique(union.Elements),
+		Apis:     sortedUnique(union.Apis),
+	}, nil
+}
+
+// sortedUnique 返回去重后的字典序副本（nil 输入返回 nil，对齐 data 层无行
+// 时的 nil 切片）。
+func sortedUnique(codes []string) []string {
+	if len(codes) == 0 {
+		return nil
+	}
+	out := slices.Clone(codes)
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
 // ReplaceForRole implements biz.PermissionAdminRepo：同一临界区内全量覆盖
-// 直接授权与物化策略（模拟 data 层单事务两表原子一致）。
-func (s *Store) ReplaceForRole(_ context.Context, roleID string, grants biz.GrantSet, operations []string) error {
+// 直接授权与物化策略（模拟 data 层同事务两表原子一致；事务句柄由用例层
+// 传入，内存桩无事务语义，直接生效）。
+func (s *Store) ReplaceForRole(_ context.Context, _ txrun.Tx, roleID string, grants biz.GrantSet, operations []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.grants[roleID] = cloneGrants(grants)
@@ -523,4 +591,58 @@ func (s *Store) ReadLogoFile(_ context.Context) ([]byte, string, error) {
 		return nil, "", biz.ErrLogoNotFound
 	}
 	return append([]byte(nil), s.logoFile...), s.logoMime, nil
+}
+
+// Create implements biz.LoginLogWriter：clone 后追加（append-only，无删除/更新）。
+func (s *Store) Create(_ context.Context, log *biz.LoginLog) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cp := *log
+	if cp.CreateTime.IsZero() {
+		cp.CreateTime = time.Now().UTC()
+	}
+	s.loginLogs = append(s.loginLogs, &cp)
+	return nil
+}
+
+// ListLoginLogs implements biz.LoginLogReader：快照后过滤 + 排序 + 切片分页，
+// 语义对齐 data 层（ILIKE ≈ 忽略大小写包含匹配，时间范围含端点）。
+func (s *Store) ListLoginLogs(_ context.Context, filter biz.LoginLogFilter, page, pageSize int64) ([]*biz.LoginLog, int64, error) {
+	s.mu.RLock()
+	logs := make([]*biz.LoginLog, 0, len(s.loginLogs))
+	logs = append(logs, s.loginLogs...)
+	s.mu.RUnlock()
+
+	username := strings.ToLower(filter.Username)
+	matched := make([]*biz.LoginLog, 0, len(logs))
+	for _, l := range logs {
+		if filter.Result != nil && l.Result != *filter.Result {
+			continue
+		}
+		if username != "" && !strings.Contains(strings.ToLower(l.Username), username) {
+			continue
+		}
+		if filter.StartTime != nil && l.CreateTime.Before(*filter.StartTime) {
+			continue
+		}
+		if filter.EndTime != nil && l.CreateTime.After(*filter.EndTime) {
+			continue
+		}
+		cp := *l
+		matched = append(matched, &cp)
+	}
+	slices.SortFunc(matched, func(a, b *biz.LoginLog) int {
+		if c := b.CreateTime.Compare(a.CreateTime); c != 0 {
+			return c
+		}
+		return strings.Compare(b.ID, a.ID)
+	})
+
+	total := int64(len(matched))
+	start := (page - 1) * pageSize
+	if start >= total {
+		return nil, total, nil
+	}
+	end := min(start+pageSize, total)
+	return matched[start:end], total, nil
 }

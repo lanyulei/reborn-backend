@@ -2,11 +2,13 @@ package server
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
 
 	"github.com/go-kratos/kratos/v3/encoding"
+	kerrors "github.com/go-kratos/kratos/v3/errors"
 	kchttp "github.com/go-kratos/kratos/v3/transport/http"
 
 	// 显式注册 v3 的两类 JSON 编解码器：encoding/json 负责普通 Go 值（标准库语义），
@@ -36,17 +38,45 @@ func encodeResponse(w http.ResponseWriter, r *http.Request, v any) error {
 	return kchttp.DefaultResponseEncoder(w, r, v)
 }
 
+// maxRequestBodyBytes 是 HTTP 请求体上限（8 MiB）：Kratos 默认不限制 body
+// 大小且解码器整包 io.ReadAll，protovalidate 的字段级长度规则（如 logo
+// bytes ≤2 MiB）在整包读入后才生效——无上限则任意匿名连接可用超大 body
+// 耗尽内存。上限取最大合法请求（2 MiB 二进制经 JSON base64 膨胀 ≈2.7 MiB）
+// 的约 3 倍，正常请求零感知；gRPC 侧由其默认 4 MiB 接收上限兜底。
+const maxRequestBodyBytes int64 = 8 << 20
+
+// limitRequestBody 是 kratos HTTP Filter：在进入路由前把 body 包成
+// MaxBytesReader，超限读到即报 *http.MaxBytesError 并由 net/http 关闭连接。
+func limitRequestBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil && r.Body != http.NoBody {
+			r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// errRequestTooLarge 是 body 超限的结构化错误（413）。
+func errRequestTooLarge(err error) error {
+	return kerrors.New(http.StatusRequestEntityTooLarge, "REQUEST_TOO_LARGE", err.Error())
+}
+
 // decodeRequest 请求解码：proto.Message 且 Content-Type 为 JSON（或未指定）时
 // 改走 protojson，保证 proto 的非导出字段能被正确填充；
 // HttpBody（原始字节）与其它 Content-Type 一律交回默认解码器。
+// body 超过 maxRequestBodyBytes 返回 413（limitRequestBody 已包裹 body）。
 func decodeRequest(r *http.Request, v any) error {
 	switch v.(type) {
 	case *httpbody.HttpBody, **httpbody.HttpBody:
-		return kchttp.DefaultRequestDecoder(r, v)
+		return translateBodyLimit(kchttp.DefaultRequestDecoder(r, v))
 	}
 	if msg, ok := v.(proto.Message); ok && isJSONType(r.Header.Get("Content-Type")) {
 		data, err := io.ReadAll(r.Body)
 		if err != nil {
+			var tooLarge *http.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				return errRequestTooLarge(err)
+			}
 			return errBadRequest(err)
 		}
 		// 重置 body，保证后续读取（如中间件）看到一致内容。
@@ -59,7 +89,20 @@ func decodeRequest(r *http.Request, v any) error {
 		}
 		return nil
 	}
-	return kchttp.DefaultRequestDecoder(r, v)
+	return translateBodyLimit(kchttp.DefaultRequestDecoder(r, v))
+}
+
+// translateBodyLimit 把默认解码器因 body 超限产生的 400 翻译为 413：默认
+// 解码器将 io.ReadAll 错误文案包进 BadRequest，无法 errors.As 到
+// *http.MaxBytesError，只能按 net/http 固定文案识别。
+func translateBodyLimit(err error) error {
+	if err == nil {
+		return nil
+	}
+	if ke := kerrors.FromError(err); ke != nil && strings.Contains(ke.Message, "http: request body too large") {
+		return errRequestTooLarge(errors.New(ke.Message))
+	}
+	return err
 }
 
 // writeProtoJSON 用 protojson 编码 proto.Message 并写出为 application/json 响应。

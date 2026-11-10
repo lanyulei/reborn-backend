@@ -46,8 +46,8 @@ var File_system_v1_annotations_proto protoreflect.FileDescriptor
 const file_system_v1_annotations_proto_rawDesc = "" +
 	"\n" +
 	"\x1bsystem/v1/annotations.proto\x12\tsystem.v1\x1a google/protobuf/descriptor.proto\x1a.protoc-gen-openapiv2/options/annotations.proto:6\n" +
-	"\x05title\x12\x1e.google.protobuf.MethodOptions\x18\xb8\x8e\x03 \x01(\tR\x05titleB\xe5\x01\x92A\xa6\x01\x12\xa3\x01\n" +
-	"\x10monitor core API\x12\x8a\x01system 域用户/角色管理 + 认证接口。由 proto + google.api.http 注解自动生成，proto 为唯一事实来源，勿手改。2\x02v1Z9github.com/lanyulei/monitor/backend/core/api/system/v1;v1b\x06proto3"
+	"\x05title\x12\x1e.google.protobuf.MethodOptions\x18\xb8\x8e\x03 \x01(\tR\x05titleB\xe4\x01\x92A\xa6\x01\x12\xa3\x01\n" +
+	"\x10monitor core API\x12\x8a\x01system 域用户/角色管理 + 认证接口。由 proto + google.api.http 注解自动生成，proto 为唯一事实来源，勿手改。2\x02v1Z8github.com/lanyulei/reborn/backend/core/api/system/v1;v1b\x06proto3"
 
 var file_system_v1_annotations_proto_goTypes = []any{
 	(*descriptorpb.MethodOptions)(nil), // 0: google.protobuf.MethodOptions

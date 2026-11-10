@@ -8,11 +8,15 @@ package main
 
 import (
 	"github.com/go-kratos/kratos/v3"
-	"github.com/lanyulei/monitor/backend/core/internal/biz"
-	"github.com/lanyulei/monitor/backend/core/internal/conf"
-	"github.com/lanyulei/monitor/backend/core/internal/data"
-	"github.com/lanyulei/monitor/backend/core/internal/server"
-	"github.com/lanyulei/monitor/backend/core/internal/service"
+	biz2 "github.com/lanyulei/reborn/backend/core/internal/biz/notify"
+	"github.com/lanyulei/reborn/backend/core/internal/biz/system"
+	"github.com/lanyulei/reborn/backend/core/internal/conf"
+	"github.com/lanyulei/reborn/backend/core/internal/data"
+	data3 "github.com/lanyulei/reborn/backend/core/internal/data/notify"
+	data2 "github.com/lanyulei/reborn/backend/core/internal/data/system"
+	"github.com/lanyulei/reborn/backend/core/internal/server"
+	service2 "github.com/lanyulei/reborn/backend/core/internal/service/notify"
+	"github.com/lanyulei/reborn/backend/core/internal/service/system"
 	"log/slog"
 )
 
@@ -23,48 +27,90 @@ import (
 // Injectors from wire.go:
 
 // wireApp init kratos application.
-func wireApp(confServer *conf.Server, confData *conf.Data, security *conf.Security, logger *slog.Logger) (*kratos.App, func(), error) {
+// data 层因共享 Data 类型不能在顶层聚合各域（避免 import 环），
+// 各域 data ProviderSet 在此显式列出；biz/service 顶层已聚合。
+func wireApp(confServer *conf.Server, confData *conf.Data, security *conf.Security, notify *conf.Notify, logger *slog.Logger) (*kratos.App, func(), error) {
 	dataData, cleanup, err := data.NewData(confData)
 	if err != nil {
 		return nil, nil, err
 	}
-	userRepo := data.NewUserRepo(dataData)
-	userRoleRepo := data.NewUserRoleRepo(dataData)
-	roleRepo := data.NewRoleRepo(dataData)
+	userRepo := data2.NewUserRepo(dataData)
+	userRoleRepo := data2.NewUserRoleRepo(dataData)
+	roleRepo := data2.NewRoleRepo(dataData)
 	passwordHasher, err := biz.NewPasswordHasher(security)
 	if err != nil {
 		cleanup()
 		return nil, nil, err
 	}
-	userUsecase := biz.NewUserUsecase(userRepo, userRepo, userRoleRepo, roleRepo, passwordHasher)
+	refreshTokenRepo := data2.NewRefreshTokenRepo(dataData)
+	userUsecase := biz.NewUserUsecase(userRepo, userRepo, userRoleRepo, roleRepo, passwordHasher, refreshTokenRepo)
 	userService := service.NewUserService(userUsecase)
-	permissionRepo := data.NewPermissionRepo(dataData)
+	permissionRepo := data2.NewPermissionRepo(dataData)
 	authorizer, err := biz.NewAuthorizer(permissionRepo, security, logger)
 	if err != nil {
 		cleanup()
 		return nil, nil, err
 	}
 	roleUsecase := biz.NewRoleUsecase(roleRepo, roleRepo, authorizer)
-	permissionUsecase := biz.NewPermissionUsecase(roleRepo, permissionRepo, authorizer)
+	eventRepo := data3.NewEventRepo(dataData)
+	notificationUsecase := biz2.NewNotificationUsecase(eventRepo, notify)
+	txManager := data.NewTxManager(dataData)
+	permissionUsecase := biz.NewPermissionUsecase(roleRepo, permissionRepo, authorizer, notificationUsecase, txManager)
 	roleService := service.NewRoleService(roleUsecase, permissionUsecase)
-	refreshTokenRepo := data.NewRefreshTokenRepo(dataData)
 	tokenSigner, err := biz.NewTokenSigner(security)
 	if err != nil {
 		cleanup()
 		return nil, nil, err
 	}
-	authUsecase, err := biz.NewAuthUsecase(userRepo, userRoleRepo, refreshTokenRepo, refreshTokenRepo, passwordHasher, tokenSigner)
+	loginLogRepo := data2.NewLoginLogRepo(dataData)
+	authUsecase, err := biz.NewAuthUsecase(userRepo, userRoleRepo, refreshTokenRepo, refreshTokenRepo, passwordHasher, tokenSigner, loginLogRepo, logger)
 	if err != nil {
 		cleanup()
 		return nil, nil, err
 	}
 	authzUsecase := biz.NewAuthzUsecase(userRepo, userRoleRepo, permissionRepo, authorizer)
 	authService := service.NewAuthService(authUsecase, authzUsecase)
-	systemConfigRepo := data.NewSystemConfigRepo(dataData)
+	systemConfigRepo := data2.NewSystemConfigRepo(dataData)
 	systemConfigUsecase := biz.NewSystemConfigUsecase(systemConfigRepo)
 	systemConfigService := service.NewSystemConfigService(systemConfigUsecase)
-	grpcServer := server.NewGRPCServer(confServer, logger, userService, roleService, authService, systemConfigService, tokenSigner, authzUsecase)
-	httpServer := server.NewHTTPServer(confServer, logger, userService, roleService, authService, systemConfigService, tokenSigner, authzUsecase)
+	loginLogUsecase := biz.NewLoginLogUsecase(loginLogRepo)
+	loginLogService := service.NewLoginLogService(loginLogUsecase)
+	secretBox, err := data3.NewSecretBox(notify)
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	channelRepo := data3.NewChannelRepo(dataData, secretBox)
+	routeRepo := data3.NewRouteRepo(dataData)
+	channelUsecase := biz2.NewChannelUsecase(channelRepo, eventRepo, routeRepo)
+	notifyChannelService := service2.NewNotifyChannelService(channelUsecase, authzUsecase)
+	templateRepo := data3.NewTemplateRepo(dataData)
+	templateUsecase := biz2.NewTemplateUsecase(templateRepo)
+	notifyTemplateService := service2.NewNotifyTemplateService(templateUsecase, authzUsecase)
+	routeUsecase := biz2.NewRouteUsecase(routeRepo, channelRepo)
+	notifyRouteService := service2.NewNotifyRouteService(routeUsecase, authzUsecase)
+	silenceRepo := data3.NewSilenceRepo(dataData)
+	silenceUsecase := biz2.NewSilenceUsecase(silenceRepo)
+	notifySilenceService := service2.NewNotifySilenceService(silenceUsecase, authzUsecase)
+	subscriptionRepo := data3.NewSubscriptionRepo(dataData)
+	subscriptionUsecase := biz2.NewSubscriptionUsecase(subscriptionRepo)
+	notifySubscriptionService := service2.NewNotifySubscriptionService(subscriptionUsecase, userUsecase)
+	producerRepo := data3.NewProducerRepo(dataData)
+	producerUsecase := biz2.NewProducerUsecase(producerRepo)
+	notifyProducerService := service2.NewNotifyProducerService(producerUsecase, authzUsecase)
+	eventUsecase := biz2.NewEventUsecase(eventRepo)
+	notifyEventService := service2.NewNotifyEventService(eventUsecase, authzUsecase)
+	dispatchRepo := data3.NewDispatchRepo(dataData)
+	dispatchUsecase := biz2.NewDispatchUsecase(dispatchRepo)
+	notifyDispatchService := service2.NewNotifyDispatchService(dispatchUsecase, channelUsecase, authzUsecase)
+	deliveryLogRepo := data3.NewDeliveryLogRepo(dataData)
+	deliveryLogUsecase := biz2.NewDeliveryLogUsecase(deliveryLogRepo)
+	notifyDeliveryLogService := service2.NewNotifyDeliveryLogService(deliveryLogUsecase, channelUsecase, authzUsecase)
+	deadLetterRepo := data3.NewDeadLetterRepo(dataData)
+	deadLetterUsecase := biz2.NewDeadLetterUsecase(deadLetterRepo)
+	notifyDeadLetterService := service2.NewNotifyDeadLetterService(deadLetterUsecase, channelUsecase, authzUsecase)
+	grpcServer := server.NewGRPCServer(confServer, logger, userService, roleService, authService, systemConfigService, loginLogService, notifyChannelService, notifyTemplateService, notifyRouteService, notifySilenceService, notifySubscriptionService, notifyProducerService, notifyEventService, notifyDispatchService, notifyDeliveryLogService, notifyDeadLetterService, tokenSigner, authzUsecase)
+	httpServer := server.NewHTTPServer(confServer, logger, userService, roleService, authService, systemConfigService, loginLogService, notifyChannelService, notifyTemplateService, notifyRouteService, notifySilenceService, notifySubscriptionService, notifyProducerService, notifyEventService, notifyDispatchService, notifyDeliveryLogService, notifyDeadLetterService, tokenSigner, authzUsecase)
 	app := newApp(logger, grpcServer, httpServer)
 	return app, func() {
 		cleanup()

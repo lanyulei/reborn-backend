@@ -1,0 +1,144 @@
+syntax = "proto3";
+
+package notify.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "buf/validate/validate.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/notify/v1;v1";
+
+// NotifySubscriptionService 用户订阅管理服务（订阅中心）：本人或 admin 代管。
+// 一行 = 某用户在某 biz 对某事件模式的渠道偏好；自然键
+// (user_id, biz_id, event_pattern) 未删除行内唯一，保存为 Upsert 语义
+// （存在即整组替换偏好与启停，不存在即新建）。路由收件策略 subscription
+// 开启时，管道按用户 channel_prefs 与路由实例类型的交集解析订阅者。
+service NotifySubscriptionService {
+  // UpsertSubscription 保存订阅：user_id 缺省=操作者本人，指定他人须 admin
+  // （代管）；同自然键重复保存=替换渠道偏好与启停。
+  rpc UpsertSubscription(UpsertSubscriptionRequest) returns (UpsertSubscriptionResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/notify/subscription"
+      body: "*"
+    };
+    option (system.v1.title) = "保存订阅";
+  }
+  // DeleteSubscription 删除订阅（软删，同键可重建）；仅订阅本人或 admin。
+  rpc DeleteSubscription(DeleteSubscriptionRequest) returns (DeleteSubscriptionResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/notify/subscription/{id}"
+    };
+    option (system.v1.title) = "删除订阅";
+  }
+  // ListSubscriptions 分页查询订阅：user_id 缺省=本人，指定他人须 admin；
+  // page_size 上限 100。
+  rpc ListSubscriptions(ListSubscriptionsRequest) returns (ListSubscriptionsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/notify/subscription"
+    };
+    option (system.v1.title) = "查询订阅列表";
+  }
+}
+
+// SubscriptionPref 单渠道订阅偏好值：恰设其一——地址类渠道（email）用
+// subscribed（true=订阅，收件地址取用户资料）；机器人渠道（钉钉/企微/飞书）
+// 可用 target 指定目标群（'$group:ops' 约定），或 subscribed=true 走默认绑定。
+message SubscriptionPref {
+  oneof kind {
+    // subscribed 订阅开关；false 无意义（不订阅直接省略该渠道键）。
+    bool subscribed = 1;
+    // target 机器人目标群标识（如 '$group:ops'）；地址类渠道不用。
+    string target = 2 [(buf.validate.field).string = {
+      min_len: 1
+      max_len: 64
+    }];
+  }
+}
+
+// NotifySubscription 订阅实体。
+message NotifySubscription {
+  // id 订阅唯一标识（UUIDv7）。
+  string id = 1;
+  // user_id 订阅人用户 ID。
+  string user_id = 2;
+  // biz_id 业务租户标识；订阅匹配按 biz 隔离。
+  string biz_id = 3;
+  // event_pattern 事件匹配模式：精确 / 前缀通配（'monitor.alert.*'）/ 全匹配（'*'）。
+  string event_pattern = 4;
+  // channel_prefs 渠道偏好：key 为可订阅渠道类型（email/dingtalk/wecom/feishu）。
+  map<string, SubscriptionPref> channel_prefs = 5;
+  // enabled 启用状态；停用后订阅者解析跳过。
+  bool enabled = 6;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 7;
+  // update_time 更新时间（Upsert 替换时刷新）。
+  google.protobuf.Timestamp update_time = 8;
+}
+
+// UpsertSubscriptionRequest 保存订阅请求。
+message UpsertSubscriptionRequest {
+  // user_id 目标用户，可选；缺省=操作者本人，指定他人须 admin（代管）。
+  optional string user_id = 1 [(buf.validate.field).string.uuid = true];
+  // biz_id 业务租户标识，可选；未指定默认 default。
+  optional string biz_id = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+    pattern: "^[a-z0-9_-]{1,64}$"
+  }];
+  // event_pattern 事件匹配模式，与路由同式。
+  string event_pattern = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+    pattern: "^(\\*|[a-z0-9][a-z0-9._-]{0,127}|[a-z0-9][a-z0-9._-]{0,125}\\.\\*)$"
+  }];
+  // channel_prefs 渠道偏好，至少 1 项；key 限可订阅渠道类型
+  // （email/dingtalk/wecom/feishu，webhook 为系统目标非用户可达）。
+  map<string, SubscriptionPref> channel_prefs = 4 [(buf.validate.field).map = {
+    min_pairs: 1
+    max_pairs: 4
+    keys: {string: {pattern: "^(email|dingtalk|wecom|feishu)$"}}
+  }];
+  // enabled 启用状态，可选；未指定默认启用。
+  optional bool enabled = 5;
+}
+
+// UpsertSubscriptionResponse 保存订阅响应。
+message UpsertSubscriptionResponse {
+  // subscription 落库后的订阅实体（含权威 id 与时间戳）。
+  NotifySubscription subscription = 1;
+}
+
+// DeleteSubscriptionRequest 删除订阅请求。
+message DeleteSubscriptionRequest {
+  // id 订阅唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteSubscriptionResponse 删除订阅响应。
+message DeleteSubscriptionResponse {}
+
+// ListSubscriptionsRequest 分页查询订阅请求。
+message ListSubscriptionsRequest {
+  // user_id 目标用户，可选；缺省=操作者本人，指定他人须 admin（代管）。
+  optional string user_id = 1 [(buf.validate.field).string.uuid = true];
+  // page 页码，从 1 开始。
+  int64 page = 2 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 3 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // keyword 关键字，可选；模糊匹配 event_pattern。
+  optional string keyword = 4 [(buf.validate.field).string.max_len = 64];
+  // enabled 启用状态过滤，可选。
+  optional bool enabled = 5;
+}
+
+// ListSubscriptionsResponse 分页查询订阅响应。
+message ListSubscriptionsResponse {
+  // items 当前页数据。
+  repeated NotifySubscription items = 1;
+  // total 总数。
+  int64 total = 2;
+}

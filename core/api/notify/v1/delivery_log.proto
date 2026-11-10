@@ -1,0 +1,82 @@
+syntax = "proto3";
+
+package notify.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "buf/validate/validate.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/notify/v1;v1";
+
+// NotifyDeliveryLogService 投递明细查询服务：只读运行表 notify_delivery_log
+//（管道写 / core 读，设计 §5.2）。一行 = 发送任务的一次投递尝试结果
+//（append-only，sender 每次尝试后追加，含成功/失败、耗时与渠道侧消息
+// 标识）；本服务仅提供控制台排障检索，无写路径。
+service NotifyDeliveryLogService {
+  // ListDeliveryLogs 分页查询投递明细，page_size 上限 100；按落库时间倒序。
+  rpc ListDeliveryLogs(ListDeliveryLogsRequest) returns (ListDeliveryLogsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/notify/delivery-log"
+    };
+    option (system.v1.title) = "查询通知投递明细列表";
+  }
+}
+
+// NotifyDeliveryLog 投递明细实体（notify_delivery_log 一行的排障视图）。
+message NotifyDeliveryLog {
+  // id 日志唯一标识（UUIDv7）。
+  string id = 1;
+  // dispatch_id 所属发送任务标识（notify_dispatch.id，下钻维度）。
+  string dispatch_id = 2;
+  // channel_id 投递渠道实例标识（notify_channel.id）。
+  string channel_id = 3;
+  // attempt 第几次尝试（从 1 起，与发送任务 attempts 对齐）。
+  int32 attempt = 4;
+  // ok 本次尝试是否成功。
+  bool ok = 5;
+  // latency_ms 本次投递耗时（毫秒）。
+  int32 latency_ms = 6;
+  // provider_msg_id 渠道侧消息标识；未设置表示渠道未返回。
+  string provider_msg_id = 7;
+  // error 本次失败原因；未设置表示成功。
+  string error = 8;
+  // create_time 落库时间（分区键）。
+  google.protobuf.Timestamp create_time = 9;
+}
+
+// ListDeliveryLogsRequest 分页查询投递明细请求：任务下钻/渠道/结果/时间
+// 四维过滤（设计 §6.1）。
+message ListDeliveryLogsRequest {
+  option (buf.validate.message).cel = {
+    id: "notify.deliverylog.list.time_range"
+    message: "createTimeStart must be <= createTimeEnd"
+    expression: "!has(this.create_time_start) || !has(this.create_time_end) || this.create_time_start <= this.create_time_end"
+  };
+
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // dispatch_id 所属发送任务过滤，可选；精确匹配（任务 → 逐次尝试明细下钻主路径）。
+  optional string dispatch_id = 3 [(buf.validate.field).string.uuid = true];
+  // channel_id 投递渠道过滤，可选；精确匹配。
+  optional string channel_id = 4 [(buf.validate.field).string.uuid = true];
+  // ok 投递结果过滤，可选：true 仅成功 / false 仅失败。
+  optional bool ok = 5;
+  // create_time_start 落库时间下界（含），可选。
+  optional google.protobuf.Timestamp create_time_start = 6;
+  // create_time_end 落库时间上界（含），可选。
+  optional google.protobuf.Timestamp create_time_end = 7;
+}
+
+// ListDeliveryLogsResponse 分页查询投递明细响应。
+message ListDeliveryLogsResponse {
+  // items 当前页数据。
+  repeated NotifyDeliveryLog items = 1;
+  // total 总数。
+  int64 total = 2;
+}

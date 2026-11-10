@@ -1,0 +1,106 @@
+syntax = "proto3";
+
+package notify.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "buf/validate/validate.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/notify/v1;v1";
+
+// NotifyEventService 通知事件查询服务：只读运行表 notify_event（管道写 /
+// core 读，设计 §5.2）。事件是 append-only 运行数据——先落库后应答（§7.1
+// 不丢闭环），无管理写路径；本服务仅提供控制台排障检索。
+service NotifyEventService {
+  // ListEvents 分页查询事件，page_size 上限 100；按落库时间倒序。
+  rpc ListEvents(ListEventsRequest) returns (ListEventsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/notify/event"
+    };
+    option (system.v1.title) = "查询通知事件列表";
+  }
+}
+
+// NotifyEvent 事件实体（notify_event 一行的排障视图）。
+message NotifyEvent {
+  // id 事件唯一标识（UUIDv7）。
+  string id = 1;
+  // biz_id 业务租户标识。
+  string biz_id = 2;
+  // event_type 事件类型：如 monitor.alert.firing / permission.change。
+  string event_type = 3;
+  // severity 严重级：1 info / 2 warning / 3 critical / 4 fatal。
+  int32 severity = 4;
+  // title 事件标题。
+  string title = 5;
+  // payload JSON 载荷；未设置表示无载荷。
+  google.protobuf.Struct payload = 6;
+  // dedup_key 重复指纹（幂等去重用）；未设置表示无。
+  string dedup_key = 7;
+  // group_key 聚合分组键；未设置表示不聚合。
+  string group_key = 8;
+  // recipients 显式收件列表；空=走路由解析。
+  repeated string recipients = 9;
+  // source 事件来源：api（生产者经 ingress）/ internal（core 同事务直插）。
+  string source = 10;
+  // status 路由状态：1 received / 2 routed / 3 suppressed（静默命中）/ 4 failed（无匹配路由）。
+  int32 status = 11;
+  // publish_state 交付状态：0 pending（待 router 领取）/ 1 published（已交付路由
+  // 处理，与事件终态同事务翻转；NATS 骨干下为已发布）。
+  int32 publish_state = 12;
+  // publish_attempts 路由瞬时错误重试次数（如订阅者查询超时；失败退避累加）。
+  int32 publish_attempts = 13;
+  // next_publish_time 下次领取/发布时间（退避后）。
+  google.protobuf.Timestamp next_publish_time = 14;
+  // create_time 落库时间（分区键）。
+  google.protobuf.Timestamp create_time = 15;
+}
+
+// ListEventsRequest 分页查询事件请求：biz/event_type/时间/状态四维过滤
+//（设计 §6.1），event_type 为精确匹配。
+message ListEventsRequest {
+  option (buf.validate.message).cel = {
+    id: "notify.event.list.time_range"
+    message: "createTimeStart must be <= createTimeEnd"
+    expression: "!has(this.create_time_start) || !has(this.create_time_end) || this.create_time_start <= this.create_time_end"
+  };
+
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // biz_id 业务租户标识过滤，可选；精确匹配。
+  optional string biz_id = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+    pattern: "^[a-z0-9_-]{1,64}$"
+  }];
+  // event_type 事件类型过滤，可选；精确匹配。
+  optional string event_type = 4 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+    pattern: "^[a-z0-9][a-z0-9._-]{0,127}$"
+  }];
+  // status 路由状态过滤，可选：1 received / 2 routed / 3 suppressed / 4 failed。
+  optional int32 status = 5 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 4
+  }];
+  // create_time_start 落库时间下界（含），可选。
+  optional google.protobuf.Timestamp create_time_start = 6;
+  // create_time_end 落库时间上界（含），可选。
+  optional google.protobuf.Timestamp create_time_end = 7;
+}
+
+// ListEventsResponse 分页查询事件响应。
+message ListEventsResponse {
+  // items 当前页数据。
+  repeated NotifyEvent items = 1;
+  // total 总数。
+  int64 total = 2;
+}

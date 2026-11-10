@@ -1,0 +1,68 @@
+syntax = "proto3";
+
+package system.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "buf/validate/validate.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/system/v1;v1";
+
+// LoginLogService 登录日志服务：审计查询，append-only 无写接口。
+// 日志由登录链路（AuthService/Login）自动落库，本服务仅供管理端检索。
+service LoginLogService {
+  // ListLoginLogs 分页查询登录日志，page_size 上限 100。
+  rpc ListLoginLogs(ListLoginLogsRequest) returns (ListLoginLogsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/system/login-log"
+    };
+    option (system.v1.title) = "查询登录日志";
+  }
+}
+
+// LoginLog 登录日志实体。
+message LoginLog {
+  // id 日志唯一标识（UUIDv7，应用侧生成）。
+  string id = 1;
+  // user_id 用户 ID；用户不存在的失败尝试为空。
+  string user_id = 2;
+  // username 尝试的登录名原文。
+  string username = 3;
+  // result 登录结果：1=成功 2=用户不存在 3=密码错误 4=账号禁用 5=签发令牌失败。
+  // 对外登录接口 2/3 统一口径防枚举，细分值仅供审计检索。
+  int32 result = 4;
+  // ip 客户端 IP，未取到为空。
+  string ip = 5;
+  // user_agent 客户端 User-Agent，未取到为空。
+  string user_agent = 6;
+  // create_time 登录尝试时间。
+  google.protobuf.Timestamp create_time = 7;
+}
+
+// ListLoginLogsRequest 分页查询登录日志请求。
+message ListLoginLogsRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // username 登录名，可选；模糊匹配。
+  optional string username = 3 [(buf.validate.field).string.max_len = 64];
+  // result 登录结果过滤，可选：1=成功 2=用户不存在 3=密码错误 4=账号禁用 5=签发令牌失败。
+  optional int32 result = 4 [(buf.validate.field).int32 = { in: [1, 2, 3, 4, 5] }];
+  // start_time 起始时间（含），可选；RFC3339 格式。
+  optional google.protobuf.Timestamp start_time = 5;
+  // end_time 截止时间（含），可选；RFC3339 格式。
+  optional google.protobuf.Timestamp end_time = 6;
+}
+
+// ListLoginLogsResponse 分页查询登录日志响应。
+message ListLoginLogsResponse {
+  // items 当前页数据。
+  repeated LoginLog items = 1;
+  // total 总数。
+  int64 total = 2;
+}

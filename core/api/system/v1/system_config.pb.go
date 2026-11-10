@@ -460,7 +460,7 @@ const file_system_v1_system_config_proto_rawDesc = "" +
 	"\x0fGetSystemConfig\x12!.system.v1.GetSystemConfigRequest\x1a\".system.v1.GetSystemConfigResponse\"3\xc2\xf3\x18\x12查询系统配置\x82\xd3\xe4\x93\x02\x17\x12\x15/api/v1/system/config\x12\x99\x01\n" +
 	"\x12UpdateSystemConfig\x12$.system.v1.UpdateSystemConfigRequest\x1a%.system.v1.UpdateSystemConfigResponse\"6\xc2\xf3\x18\x12更新系统配置\x82\xd3\xe4\x93\x02\x1a:\x01*\x1a\x15/api/v1/system/config\x12\x97\x01\n" +
 	"\x10UploadSystemLogo\x12\".system.v1.UploadSystemLogoRequest\x1a#.system.v1.UploadSystemLogoResponse\":\xc2\xf3\x18\x11上传系统 Logo\x82\xd3\xe4\x93\x02\x1f:\x01*\"\x1a/api/v1/system/config/logo\x12\x7f\n" +
-	"\rGetSystemLogo\x12\x1f.system.v1.GetSystemLogoRequest\x1a\x14.google.api.HttpBody\"7\xc2\xf3\x18\x11查看系统 Logo\x82\xd3\xe4\x93\x02\x1c\x12\x1a/api/v1/system/config/logoB;Z9github.com/lanyulei/monitor/backend/core/api/system/v1;v1b\x06proto3"
+	"\rGetSystemLogo\x12\x1f.system.v1.GetSystemLogoRequest\x1a\x14.google.api.HttpBody\"7\xc2\xf3\x18\x11查看系统 Logo\x82\xd3\xe4\x93\x02\x1c\x12\x1a/api/v1/system/config/logoB:Z8github.com/lanyulei/reborn/backend/core/api/system/v1;v1b\x06proto3"
 
 var (
 	file_system_v1_system_config_proto_rawDescOnce sync.Once

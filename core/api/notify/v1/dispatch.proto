@@ -1,0 +1,92 @@
+syntax = "proto3";
+
+package notify.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "buf/validate/validate.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/notify/v1;v1";
+
+// NotifyDispatchService 通知发送任务查询服务：只读运行表 notify_dispatch
+//（管道写 / core 读，设计 §5.2）。一行 = 路由命中后生成的一个发送任务
+//（事件 × 渠道 × 收件人），状态机由管道 sender 推进（含退避重试与死信
+// 转移）；本服务仅提供控制台排障检索，无写路径。
+service NotifyDispatchService {
+  // ListDispatches 分页查询发送任务，page_size 上限 100；按生成时间倒序。
+  rpc ListDispatches(ListDispatchesRequest) returns (ListDispatchesResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/notify/dispatch"
+    };
+    option (system.v1.title) = "查询通知发送任务列表";
+  }
+}
+
+// NotifyDispatch 发送任务实体（notify_dispatch 一行的排障视图）。
+message NotifyDispatch {
+  // id 任务唯一标识（UUIDv7）。
+  string id = 1;
+  // event_id 源事件标识（notify_event.id，下钻维度）。
+  string event_id = 2;
+  // channel_id 目标渠道实例标识（notify_channel.id）。
+  string channel_id = 3;
+  // recipient 收件目标：邮箱/群标识/webhook url/用户ID。
+  string recipient = 4;
+  // template_id 渲染用模板版本；未设置表示无模板（纯文本通知）。
+  string template_id = 5;
+  // content 渲染快照（排障复现用）；未设置表示无快照。
+  google.protobuf.Struct content = 6;
+  // status 任务状态：1 pending / 2 sending / 3 sent / 4 failed（重试中）/ 5 dead（死信）。
+  int32 status = 7;
+  // attempts 已尝试次数（失败重试累加）。
+  int32 attempts = 8;
+  // next_retry_time 下次重试时间（指数退避后）；未设置表示无待重试。
+  google.protobuf.Timestamp next_retry_time = 9;
+  // last_error 最近一次失败原因；未设置表示未失败。
+  string last_error = 10;
+  // send_key 对外幂等键 sha256(event|channel|recipient) 截断；接收端去重用。
+  string send_key = 11;
+  // create_time 生成时间（分区键）。
+  google.protobuf.Timestamp create_time = 12;
+}
+
+// ListDispatchesRequest 分页查询发送任务请求：事件下钻/渠道/状态/时间
+// 四维过滤（设计 §6.1），状态维覆盖重试（failed）与死信（dead）。
+message ListDispatchesRequest {
+  option (buf.validate.message).cel = {
+    id: "notify.dispatch.list.time_range"
+    message: "createTimeStart must be <= createTimeEnd"
+    expression: "!has(this.create_time_start) || !has(this.create_time_end) || this.create_time_start <= this.create_time_end"
+  };
+
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // event_id 源事件过滤，可选；精确匹配（事件 → 投递任务下钻主路径）。
+  optional string event_id = 3 [(buf.validate.field).string.uuid = true];
+  // channel_id 目标渠道过滤，可选；精确匹配。
+  optional string channel_id = 4 [(buf.validate.field).string.uuid = true];
+  // status 任务状态过滤，可选：1 pending / 2 sending / 3 sent / 4 failed / 5 dead。
+  optional int32 status = 5 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 5
+  }];
+  // create_time_start 生成时间下界（含），可选。
+  optional google.protobuf.Timestamp create_time_start = 6;
+  // create_time_end 生成时间上界（含），可选。
+  optional google.protobuf.Timestamp create_time_end = 7;
+}
+
+// ListDispatchesResponse 分页查询发送任务响应。
+message ListDispatchesResponse {
+  // items 当前页数据。
+  repeated NotifyDispatch items = 1;
+  // total 总数。
+  int64 total = 2;
+}
