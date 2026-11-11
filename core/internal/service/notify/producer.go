@@ -13,8 +13,6 @@ import (
 // token 明文只在创建/轮换响应出现一次（toProtoProducer 恒不携带 token 与
 // 哈希），更新语义与路由/静默一致：spec 整组替换 + enabled 独立启停。
 type NotifyProducerService struct {
-	notifyv1.UnimplementedNotifyProducerServiceServer
-
 	uc    *biz.ProducerUsecase
 	guard bizGuard
 }

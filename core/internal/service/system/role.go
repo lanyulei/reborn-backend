@@ -11,8 +11,6 @@ import (
 
 // RoleService 实现 api/system/v1 生成的 RoleServiceServer。
 type RoleService struct {
-	v1.UnimplementedRoleServiceServer
-
 	uc   *biz.RoleUsecase
 	perm *biz.PermissionUsecase
 }

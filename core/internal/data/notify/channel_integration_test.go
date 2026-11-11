@@ -125,25 +125,33 @@ func TestIntegration_SecretBox(t *testing.T) {
 	if string(ct1) == string(ct2) {
 		t.Fatal("Seal() ciphertexts identical, nonce reuse suspected")
 	}
-	if len(ct1) != box.aead.NonceSize()+len(plaintext)+16 {
-		t.Fatalf("Seal() length = %d, want nonce+plaintext+tag", len(ct1))
-	}
-
-	// 同主密钥可解密回明文（跨实例验证密钥派生一致性）。
-	peer, err := NewSecretBox(&conf.Notify{Master: &conf.Notify_Master{Key: "k1"}})
-	if err != nil {
-		t.Fatalf("NewSecretBox(peer) error = %v", err)
-	}
+	// 独立重建 AES-256-GCM（key = sha256(主密钥)）验证派生一致性与 nonce||ct 布局。
 	key := sha256.Sum256([]byte("k1"))
 	block, _ := aes.NewCipher(key[:])
 	aead, _ := cipher.NewGCM(block)
-	nonce, body := ct1[:peer.aead.NonceSize()], ct1[peer.aead.NonceSize():]
+	if len(ct1) != aead.NonceSize()+len(plaintext)+16 {
+		t.Fatalf("Seal() length = %d, want nonce+plaintext+tag", len(ct1))
+	}
+	nonce, body := ct1[:aead.NonceSize()], ct1[aead.NonceSize():]
 	got, err := aead.Open(nil, nonce, body, nil)
 	if err != nil {
 		t.Fatalf("AES-GCM open: %v", err)
 	}
 	if string(got) != plaintext {
 		t.Fatalf("open = %q, want %q", got, plaintext)
+	}
+
+	// 同主密钥的另一实例（跨进程场景）密文亦可被同一派生密钥解开。
+	peer, err := NewSecretBox(&conf.Notify{Master: &conf.Notify_Master{Key: "k1"}})
+	if err != nil {
+		t.Fatalf("NewSecretBox(peer) error = %v", err)
+	}
+	ct3, err := peer.Seal(plaintext)
+	if err != nil {
+		t.Fatalf("peer.Seal() error = %v", err)
+	}
+	if got, err := aead.Open(nil, ct3[:aead.NonceSize()], ct3[aead.NonceSize():], nil); err != nil || string(got) != plaintext {
+		t.Fatalf("peer ciphertext open = %q, %v", got, err)
 	}
 }
 

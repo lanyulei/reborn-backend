@@ -11,6 +11,7 @@ import (
 
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/notify"
 	basedata "github.com/lanyulei/reborn/backend/core/internal/data"
+	"github.com/lanyulei/reborn/backend/kit/dbx"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -82,7 +83,7 @@ func encodeSilenceWindow(w *biz.SilenceWindow) any {
 
 // CreateSilence implements biz.SilenceRepo：落库并同事务 bump 版本。
 func (r *silenceRepo) CreateSilence(ctx context.Context, silence *biz.Silence) error {
-	return basedata.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO notify_silence
 			     (id, biz_id, event_pattern, severity_max, time_window, enabled, create_time, update_time)
@@ -119,7 +120,7 @@ func (r *silenceRepo) UpdateSilence(ctx context.Context, id string, upd biz.Sile
 	args = append(args, id)
 	query := "UPDATE notify_silence SET " + strings.Join(sets, ", ") +
 		", update_time = now() WHERE id = $" + strconv.Itoa(len(args)) + " AND delete_time IS NULL"
-	return basedata.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, query, args...)
 		if err != nil {
 			return fmt.Errorf("update silence: %w", err)
@@ -133,7 +134,7 @@ func (r *silenceRepo) UpdateSilence(ctx context.Context, id string, upd biz.Sile
 
 // DeleteSilence implements biz.SilenceRepo：软删并同事务 bump 版本。
 func (r *silenceRepo) DeleteSilence(ctx context.Context, id string) error {
-	return basedata.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx,
 			"UPDATE notify_silence SET delete_time = now(), update_time = now()"+
 				" WHERE id = $1 AND delete_time IS NULL", id)
@@ -170,7 +171,7 @@ func (r *silenceRepo) ListSilences(ctx context.Context, filter biz.SilenceFilter
 		where = append(where, "biz_id = $"+strconv.Itoa(len(args)))
 	}
 	if filter.Keyword != "" {
-		args = append(args, basedata.LikeContains(filter.Keyword))
+		args = append(args, dbx.LikeContains(filter.Keyword))
 		where = append(where, "event_pattern ILIKE $"+strconv.Itoa(len(args)))
 	}
 	if filter.Enabled != nil {

@@ -1,0 +1,183 @@
+syntax = "proto3";
+
+package assistant.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "buf/validate/validate.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/assistant/v1;v1";
+
+// AssistantChatService 智能助手对话服务：以当前登录用户身份驱动 Agent 循环，
+// 工具即本服务现有接口（经 HTTP 回环调用，权限由既有 auth/authz 中间件判定）。
+//
+// Chat/Confirm 的响应是 Server-Sent Events 流（text/event-stream），生成代码
+// 不支持流式，故二者的 HTTP 绑定由 internal/server/assistant.go 以原生路由
+// 实现（路径与此处注解一致；本 service 的生成 HTTP 注册函数不被调用）。
+// 在 proto 定义的意义：进入授权枚举（可按角色授权"是否能用助手"）、生成
+// Operation 常量与 swagger、protovalidate 规则在边界生效。
+service AssistantChatService {
+  // Chat 发送一条用户消息并流式返回助手回复；conversation_id 省略则新建会话。
+  // 响应为 SSE 事件流（conversation / thinking_delta / text_delta / tool_call /
+  // tool_result / tool_confirm_required / done / error）。
+  rpc Chat(ChatRequest) returns (ChatResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/assistant/chat"
+      body: "*"
+    };
+    option (system.v1.title) = "智能助手对话";
+  }
+  // Confirm 对助手提出的写操作做出确认或拒绝，并流式返回后续回复。
+  rpc Confirm(ConfirmRequest) returns (ConfirmResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/assistant/confirm"
+      body: "*"
+    };
+    option (system.v1.title) = "确认智能助手操作";
+  }
+}
+
+// AssistantService 智能助手会话管理：会话列表、历史消息、删除；仅限本人会话。
+service AssistantService {
+  // ListConversations 分页查询当前用户的会话，按最近更新倒序；page_size 上限 100。
+  rpc ListConversations(ListConversationsRequest) returns (ListConversationsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/assistant/conversation"
+    };
+    option (system.v1.title) = "查询助手会话列表";
+  }
+  // ListMessages 查询一个会话的全部历史（按轮次聚合：用户消息 / 助手消息含工具步骤）。
+  rpc ListMessages(ListMessagesRequest) returns (ListMessagesResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/assistant/conversation/{id}/message"
+    };
+    option (system.v1.title) = "查询助手会话消息";
+  }
+  // DeleteConversation 删除（软删）当前用户的一个会话。
+  rpc DeleteConversation(DeleteConversationRequest) returns (DeleteConversationResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/assistant/conversation/{id}"
+    };
+    option (system.v1.title) = "删除助手会话";
+  }
+}
+
+// ChatRequest 发送用户消息请求。
+message ChatRequest {
+  // conversation_id 会话标识，可选；省略则新建会话。
+  optional string conversation_id = 1 [(buf.validate.field).string.uuid = true];
+  // content 用户消息正文，1-4000 字符。
+  string content = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 4000
+  }];
+}
+
+// ChatResponse 占位：实际响应为 SSE 事件流，本消息不会被序列化返回。
+message ChatResponse {}
+
+// ConfirmResponse 占位：实际响应为 SSE 事件流，本消息不会被序列化返回。
+message ConfirmResponse {}
+
+// ConfirmRequest 确认/拒绝助手提出的写操作。
+message ConfirmRequest {
+  // conversation_id 会话标识。
+  string conversation_id = 1 [(buf.validate.field).string.uuid = true];
+  // tool_call_id 待确认的工具调用标识（tool_confirm_required 事件下发）。
+  string tool_call_id = 2 [(buf.validate.field).string.uuid = true];
+  // approved true 执行，false 拒绝。
+  bool approved = 3;
+}
+
+// AssistantConversation 会话实体。
+message AssistantConversation {
+  // id 会话标识。
+  string id = 1;
+  // title 会话标题（首条用户消息截断）。
+  string title = 2;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 3;
+  // update_time 最近活动时间。
+  google.protobuf.Timestamp update_time = 4;
+}
+
+// AssistantToolCall 一次工具调用（审计视图）。
+message AssistantToolCall {
+  // id 工具调用标识。
+  string id = 1;
+  // tool_name 工具名（<Service>_<Method>）。
+  string tool_name = 2;
+  // title 工具中文名（接口 title 注解）。
+  string title = 3;
+  // status 状态：pending / approved / rejected / denied / succeeded / failed / cancelled。
+  string status = 4;
+  // input 入参 JSON（已脱敏）。
+  string input = 5;
+  // output 出参 JSON（已脱敏；失败时为空）。
+  string output = 6;
+  // error 失败原因；成功为空。
+  string error = 7;
+  // duration_ms 执行耗时（毫秒）。
+  int64 duration_ms = 8;
+  // write 是否写操作（需用户确认）。
+  bool write = 9;
+  // create_time 发起时间。
+  google.protobuf.Timestamp create_time = 10;
+}
+
+// AssistantMessage 展示用消息：user 为用户消息；assistant 为一轮回复（文本 + 工具步骤聚合）。
+message AssistantMessage {
+  // id 消息标识（assistant 轮次取该轮最后一条消息的 id）。
+  string id = 1;
+  // role user / assistant。
+  string role = 2;
+  // content 文本正文。
+  string content = 3;
+  // reasoning 模型思考文本（模型支持时）。
+  string reasoning = 4;
+  // tool_calls 本轮工具步骤，按发生顺序。
+  repeated AssistantToolCall tool_calls = 5;
+  // create_time 消息时间。
+  google.protobuf.Timestamp create_time = 6;
+}
+
+// ListConversationsRequest 分页查询会话请求。
+message ListConversationsRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+}
+
+// ListConversationsResponse 分页查询会话响应。
+message ListConversationsResponse {
+  // items 当前页数据。
+  repeated AssistantConversation items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// ListMessagesRequest 查询会话消息请求。
+message ListMessagesRequest {
+  // id 会话标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// ListMessagesResponse 查询会话消息响应。
+message ListMessagesResponse {
+  // items 按时间正序的展示消息。
+  repeated AssistantMessage items = 1;
+}
+
+// DeleteConversationRequest 删除会话请求。
+message DeleteConversationRequest {
+  // id 会话标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteConversationResponse 删除会话响应。
+message DeleteConversationResponse {}

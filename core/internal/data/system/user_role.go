@@ -6,6 +6,8 @@ import (
 
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
 	basedata "github.com/lanyulei/reborn/backend/core/internal/data"
+	"github.com/lanyulei/reborn/backend/kit/dbx"
+	"github.com/lanyulei/reborn/backend/kit/idgen"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -27,14 +29,14 @@ func NewUserRoleRepo(data *basedata.Data) *userRoleRepo {
 // BindUserRoles implements biz.UserRoleRepo：事务内全量覆盖（先物理删除旧绑定，
 // 再批量插入新绑定）；批量插入经 pgx.Batch 单次往返，无逐行 N+1。
 func (r *userRoleRepo) BindUserRoles(ctx context.Context, userID string, roleIDs []string) error {
-	return basedata.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, "DELETE FROM system_user_role WHERE user_id = $1", userID); err != nil {
 			return fmt.Errorf("clear user role bindings: %w", err)
 		}
 		if len(roleIDs) > 0 {
 			batch := &pgx.Batch{}
 			for _, roleID := range roleIDs {
-				id, err := basedata.NewID()
+				id, err := idgen.NewID()
 				if err != nil {
 					return fmt.Errorf("generate binding id: %w", err)
 				}

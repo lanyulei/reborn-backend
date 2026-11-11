@@ -10,6 +10,7 @@ import (
 
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
 	basedata "github.com/lanyulei/reborn/backend/core/internal/data"
+	"github.com/lanyulei/reborn/backend/kit/dbx"
 
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
@@ -143,7 +144,7 @@ func (r *userRepo) ListUsers(ctx context.Context, filter biz.UserFilter, page, p
 	where := []string{"delete_time IS NULL"}
 	args := make([]any, 0, 4)
 	if filter.Keyword != "" {
-		args = append(args, basedata.LikeContains(filter.Keyword))
+		args = append(args, dbx.LikeContains(filter.Keyword))
 		n := strconv.Itoa(len(args))
 		where = append(where, "(username ILIKE $"+n+" OR nickname ILIKE $"+n+" OR email ILIKE $"+n+" OR phone ILIKE $"+n+")")
 	}
@@ -197,14 +198,6 @@ func (r *userRepo) CreateUser(ctx context.Context, user *biz.User) error {
 	return nil
 }
 
-// nilIfEmpty 将空串归一为 SQL NULL（清空邮箱/手机号的语义）。
-func nilIfEmpty(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
 // UpdateUser implements biz.UserWriter：动态 SET 只允许静态列名白名单，值全部参数化；
 // 无可更新字段时幂等 no-op。
 func (r *userRepo) UpdateUser(ctx context.Context, id string, upd biz.UserUpdate) error {
@@ -218,10 +211,10 @@ func (r *userRepo) UpdateUser(ctx context.Context, id string, upd biz.UserUpdate
 		add("nickname", *upd.Nickname)
 	}
 	if upd.Email != nil {
-		add("email", nilIfEmpty(*upd.Email))
+		add("email", dbx.NilIfEmpty(*upd.Email))
 	}
 	if upd.Phone != nil {
-		add("phone", nilIfEmpty(*upd.Phone))
+		add("phone", dbx.NilIfEmpty(*upd.Phone))
 	}
 	if upd.Gender != nil {
 		add("gender", *upd.Gender)

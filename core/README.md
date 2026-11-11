@@ -12,7 +12,7 @@
 | 项 | 选型 |
 | --- | --- |
 | 语言/运行时 | Go 1.26 |
-| 框架 | Kratos v3（gRPC + HTTP 双协议、Wire DI、OTel 可观测） |
+| 框架 | Kratos v3（HTTP、Wire DI、OTel 可观测；gRPC 已停用，proto 保留可随时生成） |
 | IDL | Protobuf + Buf v2（`buf.yaml` / `buf.gen.yaml`） |
 | DI | google/wire（编译期注入，禁止运行时 DI） |
 | 数据库 | PostgreSQL（pgx v5 连接池，手写参数化 SQL，无 ORM） |
@@ -27,14 +27,14 @@
 .
 ├── api/system/v1            # Protobuf 契约（system 域：User/Role/Auth/SystemConfig/LoginLog 五个 Service + ErrorReason）
 ├── buf.yaml                 # Buf v2 工作区：api + internal + third_party
-├── buf.gen.yaml             # api 生成配置（go / go-grpc / go-http / go-errors）
+├── buf.gen.yaml             # api 生成配置（go / go-http / go-errors / openapiv2；gRPC 插件已停用）
 ├── buf.gen.config.yaml      # internal/conf 生成配置
 ├── cmd/server               # 入口：main.go + wire（仅装配，无业务）
 ├── configs/config.yaml      # 配置文件（密钥一律环境变量注入）
 ├── migrations/              # SQL 迁移脚本（手动执行）
 └── internal/
     ├── conf/                # 配置结构（conf.proto → conf.pb.go）
-    ├── server/              # HTTP/gRPC Server 构造、中间件、编解码（跨域共享）
+    ├── server/              # HTTP Server 构造、中间件、编解码（跨域共享）
     ├── service/
     │   ├── service.go       # service 层聚合 ProviderSet（各域在此追加）
     │   └── system/          # system 域 proto 接口实现（参数编排 + 模型转换）
@@ -97,6 +97,14 @@ psql -h 127.0.0.1 -U postgres -d reborn -f migrations/0021_notify_pipeline.up.sq
 psql -h 127.0.0.1 -U postgres -d reborn -f migrations/0022_notify_pipeline_comments.up.sql  # 运行表列注释对齐 PG 骨干语义
 psql -h 127.0.0.1 -U postgres -d reborn -f migrations/0023_notify_tenancy.up.sql  # 角色 biz_scope / 生产者配额 / 机器人签名密钥 / 配额与健康表
 # 0001 内置超级管理员：admin / Admin123!（生产环境部署后应立即改密或停用）
+# 推荐用 make 目标代替逐个 psql（golang-migrate，脚本随二进制 embed，DSN 读 configs/config.yaml，
+# 版本记录在 schema_migrations 表，执行期 pg_advisory_lock 互斥，可重复运行）：
+make migrate                     # 应用全部未执行版本
+make migrate-version             # 当前版本与 dirty 状态
+make migrate-down                # 回退最近一个版本
+# 已手工执行到 0023 的旧库先设基线（只写版本号不执行 SQL），之后 make migrate 只跑新增脚本（如 0024）
+make migrate-force VERSION=23
+# 某个脚本执行失败会把版本标为 dirty：修复数据库后 make migrate-force VERSION=<失败前的版本> 再重跑
 
 # 3. 生成代码（修改 .proto 或 provider 后必须执行）
 make gen
@@ -132,7 +140,7 @@ go test ./...               -race -shuffle=on
   **留空时服务照常启动**，仅在写入带 secret 的渠道处报 `NOTIFY_SECRET_UNAVAILABLE`
   （不阻断未启用通知能力的部署），webhook 等无 secret 渠道不受影响。
 
-## API 概览（HTTP + gRPC 双协议）
+## API 概览（HTTP）
 
 ```
 用户：
@@ -282,15 +290,18 @@ api/openapi.swagger.json   # 62 个接口（auth 4 + system 23 + notify 35），
 
 1. **proto**：`api/<domain>/v1/` 新建 `.proto`（service + 消息 + validate 注解 + 该域自己的 ErrorReason），`make gen`。proto 包名一经发布不可改（操作码 = md5(proto full method) 已入库）。
 2. **biz**：`internal/biz/<domain>/` 领域模型 + Repo 接口（≤3 方法）+ 用例 + 域 ProviderSet；错误用带 code 的 Kratos 哨兵错误；在 `internal/biz/biz.go` 聚合处追加一行。
-3. **data**：`internal/data/<domain>/` 实现 Repo（PO/DO 显式转换；驱动只允许在本层 import；引用共享 `*basedata.Data`，事务/ID 用 `basedata.WithTx`/`basedata.NewID`）+ 域 ProviderSet（含 wire.Bind）；**在 `cmd/server/wire.go` 的 wire.Build 显式追加**（data 顶层不聚合，防 import 环）。
+3. **data**：`internal/data/<domain>/` 实现 Repo（PO/DO 显式转换；驱动只允许在本层 import；引用共享 `*basedata.Data`，事务/ID 用 `kit/dbx.WithTx`/`kit/idgen.NewID`）+ 域 ProviderSet（含 wire.Bind）；**在 `cmd/server/wire.go` 的 wire.Build 显式追加**（data 顶层不聚合，防 import 环）。
 4. **service**：`internal/service/<domain>/` 实现生成的 Server 接口（只做编排与转换）+ 域 ProviderSet；在 `internal/service/service.go` 聚合处追加一行。
 5. **RBAC 登记**：在 `internal/service/system/operations.go` 的 `operationFiles` 追加新域 proto descriptor——不登记则 `validateOperations` 拒绝该域操作入库、任何角色都无权调用；前端页面权限同时登记 `internal/biz/system/catalog.go`（system 域是平台域，中心登记制）。
-6. **路由注册**：`internal/server/http.go` + `grpc.go` 各加构造参数与一行 Register（Kratos 显式注册惯例）；中间件顺序固定 recovery → tracing → logging → validate → rate-limit → auth → authz，无需改动。
+6. **路由注册**：`internal/server/http.go` 加构造参数与一行 Register（Kratos 显式注册惯例）；中间件顺序固定 recovery → tracing → logging → validate → rate-limit → auth → authz，无需改动。
 7. **豁免清单（仅匿名接口需要）**：`internal/server/auth.go` 的 `authExempt`（免认证）与 `internal/service/system/operations.go` 的 `authzExemptOperations`（免授权）两处同步——守护测试 `TestAuthExemptWithinAuthzExempt` 强制前者 ⊆ 后者。
 8. **收尾**：`make gen` 重生成 wire → `make check`（format + lint + vuln + test）全绿后提交。
 
 ### 共享工具提取规则
 
-- 第二个域要用某工具时才提取，不预先抽象。提取时注意：**顶层 `internal/biz` 聚合包不能承载共享代码**（域子包反向 import 顶层 biz 会与聚合成环，与 data 同理）；**顶层 `internal/data` 可以**（域子包本就 import basedata，事务 `WithTx`/`NewID`/`nilIfEmpty` 已落位于此）；biz/service 层的跨域工具需独立中性包（如 `internal/pkg/<name>`）。
+- 第二个使用方出现时才提取，不预先抽象。两级落位：
+  - **core 内跨域**：顶层 `internal/biz` 聚合包不能承载共享代码（域子包反向 import 顶层 biz 会与聚合成环，与 data 同理）；顶层 `internal/data` 可以（域子包本就 import basedata，`TxManager`/txrun 适配在此）；biz/service 层的跨域中性工具放 `internal/pkg/<name>`（如 `txrun`）。
+  - **core 与 notify 两模块共用**：放同仓的 `backend/kit` 模块（`go.mod` 以 `replace ../kit` 引用，不发版本号；本地可建 `backend/go.work`，已 gitignore）。现有包：`httpx`（protojson 编解码 / 8MiB body / protovalidate / 日志掩码 / 服务器加固 / slog 装配，仅 server/cmd）、`dbx`（pgxpool / `WithTx` / `LikeContains` / `NilIfEmpty` / advisory lock，**仅 data**，depguard 禁 biz/service）、`secretbox`（AES-256-GCM，core 只 Seal）、`idgen`、`paging`（缺省 20 / 上限 100）、`notifycontract`（与管道共享的数据契约：jsonb 结构、状态常量、事件正则与匹配、`notify_event` INSERT 与 dedup 门闩 SQL）。
+  - **契约变更**（jsonb 字段、状态字面量、事件正则、共享 SQL）只改 `kit/notifycontract`，两模块同时发布；proto 里重复的正则字面量由 `internal/biz/notify/contract_guard_test.go` 与契约常量比对。
 - 身份提取统一走 system 域 `service.UserIDFromContext`（平台域能力，禁止复制副本）；传输上下文提取（clientIP/userAgent 等）目前为 system 域私有，域 #2 需要时一并提取。
 - 分层与分域 import 边界由 `.golangci.yml` 的 depguard 在构建期强制（biz 禁 transport/驱动/下层，service 禁 data/驱动，data 禁 service/server，api 禁 internal）。

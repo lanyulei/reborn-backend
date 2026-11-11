@@ -12,8 +12,6 @@ import (
 // NotifyDeliveryLogService 实现 api/notify/v1 生成的
 // NotifyDeliveryLogServiceServer：只读查询运行表（管道写 / core 读），无写路径。
 type NotifyDeliveryLogService struct {
-	notifyv1.UnimplementedNotifyDeliveryLogServiceServer
-
 	uc       *biz.DeliveryLogUsecase
 	guard    bizGuard
 	channels *biz.ChannelUsecase

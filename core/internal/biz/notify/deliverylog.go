@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/lanyulei/reborn/backend/core/internal/pkg/paging"
+	"github.com/lanyulei/reborn/backend/kit/paging"
 )
 
 // DeliveryLog 投递明细领域模型（DO）：notify_delivery_log 运行表一行的排障

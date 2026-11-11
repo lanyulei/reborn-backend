@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lanyulei/reborn/backend/kit/notifycontract"
+
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/notify"
 	basedata "github.com/lanyulei/reborn/backend/core/internal/data"
 	"github.com/lanyulei/reborn/backend/core/internal/pkg/txrun"
@@ -140,15 +142,11 @@ func (r *eventRepo) ListEvents(ctx context.Context, filter biz.EventFilter, page
 	return events, total, rows.Err()
 }
 
-// insertEventPlan 生成事件 INSERT 的语句与实参：可空列空值落 NULL
-// （dedup_key/group_key 空串、payload 空集、recipients 空集），与管道
-// ingress 写入口径一致（NULL=交路由解析）。池连接直插（EventWriter）与
+// insertEventPlan 生成事件 INSERT 的语句（kit/notifycontract.InsertEventSQL，与管道
+// ingress 同一语句；时间列取 DB now()）与实参：可空列空值落 NULL（dedup_key/group_key
+// 空串、payload/recipients 空集）。池连接直插（EventWriter）与
 // 调用方事务直插（EventTxRepo）共用本计划。
 func insertEventPlan(event *biz.Event) (string, []any, error) {
-	const insertEvent = `INSERT INTO notify_event (id, biz_id, event_type, severity, title, payload,
-		dedup_key, group_key, recipients, source, status, publish_state, publish_attempts,
-		next_publish_time, create_time)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`
 	var dedupKey, groupKey, payload any
 	if event.DedupKey != "" {
 		dedupKey = event.DedupKey
@@ -167,10 +165,10 @@ func insertEventPlan(event *biz.Event) (string, []any, error) {
 		}
 		recipients = raw
 	}
-	return insertEvent, []any{
+	return notifycontract.InsertEventSQL, []any{
 		event.ID, event.BizID, event.EventType, event.Severity, event.Title, payload,
 		dedupKey, groupKey, recipients, event.Source, event.Status, event.PublishState,
-		event.PublishAttempts, event.NextPublishTime, event.CreateTime,
+		event.PublishAttempts,
 	}, nil
 }
 
@@ -192,12 +190,7 @@ func (r *eventRepo) InsertEvent(ctx context.Context, event *biz.Event) error {
 // 挡住并发清理。
 func (r *eventRepo) GateDedupTx(ctx context.Context, tx txrun.Tx, bizID, dedupKey, eventID string, ttl time.Duration) (string, error) {
 	var winner string
-	if err := tx.QueryRow(ctx,
-		`INSERT INTO notify_dedup (biz_id, dedup_key, event_id, expire_time) VALUES ($1, $2, $3, now() + $4)
-		 ON CONFLICT (biz_id, dedup_key) DO UPDATE SET
-		   event_id = CASE WHEN notify_dedup.expire_time < now() THEN EXCLUDED.event_id ELSE notify_dedup.event_id END,
-		   expire_time = CASE WHEN notify_dedup.expire_time < now() THEN EXCLUDED.expire_time ELSE notify_dedup.expire_time END
-		 RETURNING event_id::text`,
+	if err := tx.QueryRow(ctx, notifycontract.DedupGateSQL,
 		bizID, dedupKey, eventID, ttl).Scan(&winner); err != nil {
 		return "", fmt.Errorf("dedup gate: %w", err)
 	}

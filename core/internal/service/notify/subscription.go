@@ -16,8 +16,6 @@ import (
 // （订阅中心）：目标用户缺省=操作者本人（claims），指定他人须 admin（代管），
 // 属主校验在本层强制；proto 与领域模型显式转换。
 type NotifySubscriptionService struct {
-	notifyv1.UnimplementedNotifySubscriptionServiceServer
-
 	uc    *biz.SubscriptionUsecase
 	admin biz.SubscriptionAdminResolver
 }

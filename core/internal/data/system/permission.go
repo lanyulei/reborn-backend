@@ -7,6 +7,7 @@ import (
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
 	basedata "github.com/lanyulei/reborn/backend/core/internal/data"
 	"github.com/lanyulei/reborn/backend/core/internal/pkg/txrun"
+	"github.com/lanyulei/reborn/backend/kit/idgen"
 )
 
 // 编译期断言锁住 biz 契约。
@@ -138,7 +139,7 @@ func (r *permissionRepo) ReplaceForRole(ctx context.Context, tx txrun.Tx, roleID
 
 	insert := func(kind string, codes []string) error {
 		for _, code := range codes {
-			id, err := basedata.NewID()
+			id, err := idgen.NewID()
 			if err != nil {
 				return fmt.Errorf("generate grant id: %w", err)
 			}
@@ -160,7 +161,7 @@ func (r *permissionRepo) ReplaceForRole(ctx context.Context, tx txrun.Tx, roleID
 		return err
 	}
 	for _, op := range operations {
-		id, err := basedata.NewID()
+		id, err := idgen.NewID()
 		if err != nil {
 			return fmt.Errorf("generate permission id: %w", err)
 		}

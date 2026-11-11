@@ -18,10 +18,8 @@ var ProviderSet = wire.NewSet(NewIngressService)
 // 反向依赖 server）。
 type ProducerResolver func(ctx context.Context) (*biz.Producer, bool)
 
-// IngressService 实现 NotifyIngressServiceServer。
+// IngressService 实现 NotifyIngressServiceHTTPServer（数据面仅 HTTP）。
 type IngressService struct {
-	ingressv1.UnimplementedNotifyIngressServiceServer
-
 	uc       *biz.IngressUsecase
 	producer ProducerResolver
 }
@@ -31,7 +29,7 @@ func NewIngressService(uc *biz.IngressUsecase, resolver ProducerResolver) *Ingre
 	return &IngressService{uc: uc, producer: resolver}
 }
 
-// SendEvent implements NotifyIngressServiceServer.
+// SendEvent implements NotifyIngressServiceHTTPServer.
 func (s *IngressService) SendEvent(ctx context.Context, req *ingressv1.SendEventRequest) (*ingressv1.SendEventResponse, error) {
 	results, err := s.accept(ctx, []*ingressv1.IngressEvent{req.GetEvent()})
 	if err != nil {
@@ -40,7 +38,7 @@ func (s *IngressService) SendEvent(ctx context.Context, req *ingressv1.SendEvent
 	return results[0], nil
 }
 
-// BatchSend implements NotifyIngressServiceServer.
+// BatchSend implements NotifyIngressServiceHTTPServer.
 func (s *IngressService) BatchSend(ctx context.Context, req *ingressv1.BatchSendRequest) (*ingressv1.BatchSendResponse, error) {
 	results, err := s.accept(ctx, req.GetEvents())
 	if err != nil {

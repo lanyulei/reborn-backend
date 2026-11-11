@@ -4,21 +4,23 @@ import (
 	"context"
 	"time"
 
-	"github.com/lanyulei/reborn/backend/core/internal/pkg/paging"
+	"github.com/lanyulei/reborn/backend/kit/notifycontract"
+
+	"github.com/lanyulei/reborn/backend/kit/paging"
 )
 
 // 任务状态常量（与 notify_dispatch 列注释对齐，管道 sender 状态机的字面量口径）。
 const (
 	// DispatchStatusPending 已生成待发送。
-	DispatchStatusPending int32 = 1
+	DispatchStatusPending = notifycontract.DispatchPending
 	// DispatchStatusSending 发送中（行条件更新占用，防双发）。
-	DispatchStatusSending int32 = 2
+	DispatchStatusSending = notifycontract.DispatchSending
 	// DispatchStatusSent 已送达（终态）。
-	DispatchStatusSent int32 = 3
+	DispatchStatusSent = notifycontract.DispatchSent
 	// DispatchStatusFailed 发送失败，指数退避重试中。
-	DispatchStatusFailed int32 = 4
+	DispatchStatusFailed = notifycontract.DispatchFailed
 	// DispatchStatusDead 重试超限转死信（终态，可重放）。
-	DispatchStatusDead int32 = 5
+	DispatchStatusDead = notifycontract.DispatchDead
 )
 
 // Dispatch 发送任务领域模型（DO）：notify_dispatch 运行表一行的排障视图

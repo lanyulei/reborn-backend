@@ -7,40 +7,26 @@ import (
 	"sort"
 	"sync/atomic"
 	"time"
+
+	"github.com/lanyulei/reborn/backend/kit/notifycontract"
 )
 
-// 渠道类型常量（notify_channel.type）。
+// 渠道类型常量（notify_channel.type；kit/notifycontract 契约）。
 const (
-	ChannelTypeEmail    = "email"
-	ChannelTypeWebhook  = "webhook"
-	ChannelTypeDingtalk = "dingtalk"
-	ChannelTypeWecom    = "wecom"
-	ChannelTypeFeishu   = "feishu"
+	ChannelTypeEmail    = notifycontract.ChannelTypeEmail
+	ChannelTypeWebhook  = notifycontract.ChannelTypeWebhook
+	ChannelTypeDingtalk = notifycontract.ChannelTypeDingtalk
+	ChannelTypeWecom    = notifycontract.ChannelTypeWecom
+	ChannelTypeFeishu   = notifycontract.ChannelTypeFeishu
 )
 
 // EmailConfig / WebhookConfig / RobotConfig / RateLimit：notify_channel.config /
-// rate_limit 的 jsonb 结构，json 标签与 core biz 完全一致（契约）。
+// rate_limit 的 jsonb 结构，与 core 共用 kit/notifycontract 同一类型（json 标签即落库 schema）。
 type (
-	EmailConfig struct {
-		Host     string `json:"host"`
-		Port     uint32 `json:"port"`
-		Username string `json:"username"`
-		FromAddr string `json:"from_addr"`
-		StartTLS bool   `json:"starttls"`
-	}
-	WebhookConfig struct {
-		URL      string            `json:"url"`
-		Method   string            `json:"method"`
-		Headers  map[string]string `json:"headers"`
-		TimeoutS int32             `json:"timeout_s"`
-	}
-	RobotConfig struct {
-		AtMobiles []string `json:"at_mobiles"`
-	}
-	RateLimit struct {
-		QPS   int64 `json:"qps"`
-		Burst int64 `json:"burst"`
-	}
+	EmailConfig   = notifycontract.EmailConfig
+	WebhookConfig = notifycontract.WebhookConfig
+	RobotConfig   = notifycontract.RobotConfig
+	RateLimit     = notifycontract.RateLimit
 )
 
 // Channel 渠道实例快照（含已解密 secret；SecretErr 非 nil = 解密失败，
@@ -60,11 +46,8 @@ type Channel struct {
 	Enabled    bool
 }
 
-// RouteRecipient 收件策略（notify_route.recipient_policy jsonb）。
-type RouteRecipient struct {
-	Fixed        []string `json:"fixed,omitempty"`
-	Subscription bool     `json:"subscription,omitempty"`
-}
+// RouteRecipient 收件策略（notify_route.recipient_policy jsonb；契约类型）。
+type RouteRecipient = notifycontract.RouteRecipient
 
 // Route 路由快照。
 type Route struct {
@@ -83,11 +66,8 @@ type Route struct {
 }
 
 // SilenceWindow 静默时间窗（notify_silence.time_window jsonb；nil=全程）。
-type SilenceWindow struct {
-	Start string `json:"start"`
-	End   string `json:"end"`
-	Tz    string `json:"tz,omitempty"`
-}
+// 以契约结构为底层类型（json 标签随契约），管道侧挂 Contains 判定方法。
+type SilenceWindow notifycontract.SilenceWindow
 
 // Silence 静默规则快照。
 type Silence struct {

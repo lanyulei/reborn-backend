@@ -17,8 +17,8 @@ import (
 // is_admin 超级管理员直通，多个启用角色的策略并集放行。存储或求值器故障
 // 一律 500 fail closed，禁止放行；明确无权限返回 403 PERMISSION_DENIED。
 // 主体（用户 ID）取自鉴权中间件注入的 claims；操作取自 transport 层
-// （HTTP 生成代码 SetOperation 与 gRPC 拦截器 FullMethod 同为 proto full
-// method），经 biz.OperationCode 换算为稳定 code 后判定（与授权存储
+// （HTTP 生成代码 SetOperation 的 proto full method），经 biz.OperationCode
+// 换算为稳定 code 后判定（与授权存储
 // 同口径）。免授权方法集见 service.IsAuthzExempt（与操作枚举共享同一事实源）。
 func authzMiddleware(uc *biz.AuthzUsecase, logger *slog.Logger) middleware.Middleware {
 	return selector.Server(func(handler middleware.Handler) middleware.Handler {

@@ -4,20 +4,22 @@ import (
 	"context"
 	"time"
 
+	"github.com/lanyulei/reborn/backend/kit/notifycontract"
+
 	"github.com/go-kratos/kratos/v3/errors"
 
 	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
-	"github.com/lanyulei/reborn/backend/core/internal/pkg/paging"
+	"github.com/lanyulei/reborn/backend/kit/paging"
 )
 
 // 重放状态常量（与 notify_dlq 列注释对齐，§4.7 重放状态机）。
 const (
 	// ReplayStateNone 未重放（仅此状态可被控制台标记）。
-	ReplayStateNone int32 = 1
+	ReplayStateNone = notifycontract.ReplayNone
 	// ReplayStatePending 已标记待重放（dlq worker 轮询中）。
-	ReplayStatePending int32 = 2
+	ReplayStatePending = notifycontract.ReplayPending
 	// ReplayStateReplayed 已重放（dlq worker 生成新 dispatch 后终态）。
-	ReplayStateReplayed int32 = 3
+	ReplayStateReplayed = notifycontract.ReplayReplayed
 )
 
 // 死信哨兵错误：reason 与 api/notify/v1 的 ErrorReason 枚举对齐。

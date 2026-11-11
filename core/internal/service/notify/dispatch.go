@@ -12,8 +12,6 @@ import (
 // NotifyDispatchService 实现 api/notify/v1 生成的 NotifyDispatchServiceServer：
 // 只读查询运行表（管道写 / core 读），无写路径。
 type NotifyDispatchService struct {
-	notifyv1.UnimplementedNotifyDispatchServiceServer
-
 	uc       *biz.DispatchUsecase
 	guard    bizGuard
 	channels *biz.ChannelUsecase

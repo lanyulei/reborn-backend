@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package assistant.v1;
+
+import "errors/errors.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/assistant/v1;v1";
+
+// ErrorReason 是智能助手域（assistant）的业务错误码枚举，由 protoc-gen-go-errors
+// 生成带 code 的错误构造器。枚举值沿用 Kratos 错误码惯例（域前缀而非枚举名
+// 前缀），故豁免 ENUM_VALUE_PREFIX（见 buf.yaml ignore_only）。
+enum ErrorReason {
+  option (errors.default_code) = 500;
+  // ASSISTANT_UNSPECIFIED 未指定的助手错误。
+  ASSISTANT_UNSPECIFIED = 0;
+  // ASSISTANT_DISABLED 助手未配置（缺少模型 API Key），映射 HTTP 503。
+  ASSISTANT_DISABLED = 1 [(errors.code) = 503];
+  // ASSISTANT_CONVERSATION_NOT_FOUND 会话不存在或不属于当前用户，映射 HTTP 404。
+  ASSISTANT_CONVERSATION_NOT_FOUND = 2 [(errors.code) = 404];
+  // ASSISTANT_RUN_BUSY 该会话已有进行中的回复轮次或服务并发已满，映射 HTTP 409。
+  ASSISTANT_RUN_BUSY = 3 [(errors.code) = 409];
+  // ASSISTANT_CONFIRMATION_NOT_PENDING 待确认的操作不存在或已被处理，映射 HTTP 409。
+  ASSISTANT_CONFIRMATION_NOT_PENDING = 4 [(errors.code) = 409];
+  // ASSISTANT_LLM_UNAVAILABLE 模型服务不可用或返回错误，映射 HTTP 503。
+  ASSISTANT_LLM_UNAVAILABLE = 5 [(errors.code) = 503];
+}

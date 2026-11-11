@@ -3,12 +3,13 @@ package biz
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"time"
 
+	"github.com/lanyulei/reborn/backend/kit/notifycontract"
+
 	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
-	"github.com/lanyulei/reborn/backend/core/internal/pkg/idgen"
-	"github.com/lanyulei/reborn/backend/core/internal/pkg/paging"
+	"github.com/lanyulei/reborn/backend/kit/idgen"
+	"github.com/lanyulei/reborn/backend/kit/paging"
 
 	"github.com/go-kratos/kratos/v3/errors"
 )
@@ -16,7 +17,7 @@ import (
 // eventPatternPattern 事件匹配模式：'*' 全匹配 / 精确点分串 / 前缀通配
 // （'monitor.alert.*' 等价前缀 'monitor.alert.'，仅允许尾部通配；与
 // protovalidate 同式，入口双保险）。路由与静默规则共用同一模式语义。
-var eventPatternPattern = regexp.MustCompile(`^(\*|[a-z0-9][a-z0-9._-]{0,127}|[a-z0-9][a-z0-9._-]{0,125}\.\*)$`)
+var eventPatternPattern = notifycontract.EventPatternPattern
 
 // 路由数值边界（severity 对齐事件分级 1 info/2 warning/3 critical/4 fatal；
 // 聚合窗口 0=不聚合或 30s-5m，见设计文档 §4.5）。
@@ -36,10 +37,7 @@ const (
 // RouteRecipient 收件策略：fixed 与 subscription 可并存——fixed 先行、订阅者
 // 按渠道偏好追加，同 (channel, recipient) 去重（管道侧 §5.1.1 解析）。
 // json 标签即 notify_route.recipient_policy 列的落库结构。
-type RouteRecipient struct {
-	Fixed        []string `json:"fixed,omitempty"`
-	Subscription bool     `json:"subscription,omitempty"`
-}
+type RouteRecipient = notifycontract.RouteRecipient
 
 // RouteRule 路由规则：匹配（pattern/severity/标签）与分发（渠道/收件/聚合）
 // 决策互为整体，创建与整组替换更新共用同一校验。

@@ -4,9 +4,6 @@ server:
     # 8000 被本地前端 dev server 占用，后端固定走 8010（前端代理指到这里）。
     addr: 0.0.0.0:8010
     timeout: 5s
-  grpc:
-    addr: 0.0.0.0:9010
-    timeout: 5s
 data:
   database:
     # 本地开发 DSN；生产环境通过环境变量注入（KRATOS_DATA_DATABASE_SOURCE）。
@@ -46,3 +43,18 @@ notify:
     # 未设置时解析为空串：不带 secret 的渠道不受影响；创建/轮换带 secret 的
     # 渠道返回 NOTIFY_SECRET_UNAVAILABLE，绝不静默落明文。
     key: ${NOTIFY_MASTER_KEY}
+assistant:
+  # OpenAI 兼容模型接入；api_key 由环境变量注入（env.NewSource("KRATOS") 去掉
+  # KRATOS_ 前缀后注入为 ASSISTANT_API_KEY 键）：
+  #   export KRATOS_ASSISTANT_API_KEY=...
+  # 未设置时解析为空串：助手停用（Chat 返回 ASSISTANT_DISABLED），其余功能照常。
+  base_url: https://api.deepseek.com
+  api_key: ${ASSISTANT_API_KEY}
+  model: deepseek-flash
+  # 工具执行回环：以用户身份调用本服务现有接口（权限由既有中间件判定）。
+  loopback_addr: http://127.0.0.1:8010
+  timeout: 300s
+  llm_connect_timeout: 3s
+  tool_timeout: 5s
+  max_steps: 20
+  max_concurrent_runs: 8

@@ -4,6 +4,9 @@ import (
 	"context"
 	"time"
 
+	"github.com/lanyulei/reborn/backend/kit/idgen"
+	"github.com/lanyulei/reborn/backend/kit/paging"
+
 	v1 "github.com/lanyulei/reborn/backend/core/api/system/v1"
 
 	"github.com/go-kratos/kratos/v3/errors"
@@ -85,7 +88,7 @@ func NewRoleUsecase(reader RoleReader, writer RoleWriter, authz *Authorizer) *Ro
 
 // Create 创建角色：生成 ID、填充审计时间后落库；返回完整角色实体。
 func (uc *RoleUsecase) Create(ctx context.Context, role *Role) (*Role, error) {
-	id, err := newID()
+	id, err := idgen.NewID()
 	if err != nil {
 		return nil, err
 	}
@@ -122,6 +125,6 @@ func (uc *RoleUsecase) Get(ctx context.Context, id string) (*Role, error) {
 
 // List 分页查询角色；分页参数先规整再委托仓储。
 func (uc *RoleUsecase) List(ctx context.Context, filter RoleFilter, page, pageSize int64) ([]*Role, int64, error) {
-	page, pageSize = normalizePage(page, pageSize)
+	page, pageSize = paging.Normalize(page, pageSize)
 	return uc.reader.ListRoles(ctx, filter, page, pageSize)
 }

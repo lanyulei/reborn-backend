@@ -13,8 +13,6 @@ import (
 
 // SystemConfigService 实现 api/system/v1 生成的 SystemConfigServiceServer。
 type SystemConfigService struct {
-	v1.UnimplementedSystemConfigServiceServer
-
 	uc *biz.SystemConfigUsecase
 }
 

@@ -8,15 +8,13 @@ import (
 	"os"
 
 	"github.com/lanyulei/reborn/backend/core/internal/conf"
-	"github.com/lanyulei/reborn/backend/core/internal/server"
+	"github.com/lanyulei/reborn/backend/kit/httpx"
 
-	"github.com/go-kratos/kratos/contrib/otel/v3/tracing"
 	"github.com/go-kratos/kratos/v3"
 	"github.com/go-kratos/kratos/v3/config"
 	"github.com/go-kratos/kratos/v3/config/env"
 	"github.com/go-kratos/kratos/v3/config/file"
 	"github.com/go-kratos/kratos/v3/log"
-	"github.com/go-kratos/kratos/v3/transport/grpc"
 	"github.com/go-kratos/kratos/v3/transport/http"
 
 	_ "go.uber.org/automaxprocs"
@@ -38,18 +36,15 @@ func init() {
 	flag.StringVar(&flagconf, "conf", "../../configs", "config path, eg: -conf config.yaml")
 }
 
-// newApp 组装 kratos.App；只做装配。
-func newApp(logger *slog.Logger, gs *grpc.Server, hs *http.Server) *kratos.App {
+// newApp 组装 kratos.App；只做装配（仅 HTTP 服务器）。
+func newApp(logger *slog.Logger, hs *http.Server) *kratos.App {
 	return kratos.New(
 		kratos.ID(id),
 		kratos.Name(Name),
 		kratos.Version(Version),
 		kratos.Metadata(map[string]string{}),
 		kratos.Logger(logger),
-		kratos.Server(
-			gs,
-			hs,
-		),
+		kratos.Server(hs),
 	)
 }
 
@@ -59,21 +54,7 @@ func main() {
 	// 日志：slog JSON handler 经 Kratos 包装；敏感字段在 handler 构建处统一脱敏
 	//（FilterKey 按属性键过滤 + ReplaceAttr 对 args 内嵌凭据按内容打码），
 	// 并附加 trace_id/span_id（由 tracing 中间件写入 ctx 后提取）。
-	logger := log.NewLogger(
-		slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-			AddSource:   true,
-			Level:       slog.LevelInfo,
-			ReplaceAttr: server.MaskSensitiveAttr,
-		}),
-		log.WithFilter(
-			log.FilterKey("password", "token", "secret", "authorization"),
-		),
-		log.WithExtractor(tracing.TraceAttrs),
-	).With(
-		slog.String("service.id", id),
-		slog.String("service.name", Name),
-		slog.String("service.version", Version),
-	)
+	logger := httpx.NewLogger(httpx.JSONHandler(os.Stdout), id, Name, Version)
 	log.SetDefault(logger)
 
 	c := config.New(
@@ -97,7 +78,7 @@ func main() {
 		panic(err)
 	}
 
-	app, cleanup, err := wireApp(bc.Server, bc.Data, bc.Security, bc.Notify, logger)
+	app, cleanup, err := wireApp(bc.Server, bc.Data, bc.Security, bc.Notify, bc.Assistant, logger)
 	if err != nil {
 		panic(err)
 	}

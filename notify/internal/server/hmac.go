@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/lanyulei/reborn/backend/kit/httpx"
 	"github.com/lanyulei/reborn/backend/notify/internal/biz"
 
 	"github.com/go-kratos/kratos/v3/middleware"
@@ -43,7 +44,7 @@ func hmacMiddleware(auth *biz.ProducerAuth) middleware.Middleware {
 			if r.Body != nil && r.Body != http.NoBody {
 				data, err := io.ReadAll(r.Body)
 				if err != nil {
-					return nil, errBadRequest(err)
+					return nil, httpx.ErrBadRequest(err)
 				}
 				body = data
 			}

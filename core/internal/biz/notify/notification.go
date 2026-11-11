@@ -8,8 +8,8 @@ import (
 
 	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
 	"github.com/lanyulei/reborn/backend/core/internal/conf"
-	"github.com/lanyulei/reborn/backend/core/internal/pkg/idgen"
 	"github.com/lanyulei/reborn/backend/core/internal/pkg/txrun"
+	"github.com/lanyulei/reborn/backend/kit/idgen"
 
 	"github.com/go-kratos/kratos/v3/errors"
 )

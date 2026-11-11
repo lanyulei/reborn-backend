@@ -39,7 +39,8 @@ func TestListOperations(t *testing.T) {
 		}
 		// 可授权操作按域分包：新业务域加入 operationFiles 时在此追加前缀，
 		// 防止误挂无关 proto。
-		if !strings.HasPrefix(svc, "system.v1.") && !strings.HasPrefix(svc, "notify.v1.") {
+		if !strings.HasPrefix(svc, "system.v1.") && !strings.HasPrefix(svc, "notify.v1.") &&
+			!strings.HasPrefix(svc, "assistant.v1.") {
 			t.Fatalf("operation %q not in an authorized proto package", op.Name)
 		}
 		if op.Title == "" {

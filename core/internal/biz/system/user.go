@@ -3,13 +3,14 @@ package biz
 import (
 	"context"
 	"fmt"
-	"math"
 	"time"
+
+	"github.com/lanyulei/reborn/backend/kit/idgen"
+	"github.com/lanyulei/reborn/backend/kit/paging"
 
 	v1 "github.com/lanyulei/reborn/backend/core/api/system/v1"
 
 	"github.com/go-kratos/kratos/v3/errors"
-	"github.com/google/uuid"
 )
 
 // 用户状态常量，与库表契约对齐；0 非法（proto3 默认值，防「未设置」歧义）。
@@ -40,15 +41,6 @@ const (
 	GenderFemale = "female"
 	// GenderUnknown 未知。
 	GenderUnknown = "unknown"
-)
-
-// 列表分页约束：必须分页且有界（性能红线，page_size ≤ 100）。
-const (
-	maxPageSize     = 100
-	defaultPageSize = 10
-	// maxPage 页码上限：保证 (page-1)*pageSize 不溢出 int64（溢出为负会被
-	// PG 以 OFFSET must not be negative 拒绝成 500）；超出按上限取空页。
-	maxPage = math.MaxInt64 / maxPageSize
 )
 
 // User 是用户领域模型（DO）；与 proto 实体、data 层 PO 显式转换，禁止跨层直传。
@@ -143,36 +135,10 @@ func NewUserUsecase(reader UserReader, writer UserWriter, roles UserRoleRepo, ro
 	return &UserUsecase{reader: reader, writer: writer, roles: roles, roleReader: roleReader, hasher: hasher, tokens: tokens}
 }
 
-// normalizePage 规整分页参数：page 夹在 [1, maxPage]，pageSize 夹在 [1, 100]。
-func normalizePage(page, pageSize int64) (int64, int64) {
-	switch {
-	case page < 1:
-		page = 1
-	case page > maxPage:
-		page = maxPage
-	}
-	switch {
-	case pageSize < 1:
-		pageSize = defaultPageSize
-	case pageSize > maxPageSize:
-		pageSize = maxPageSize
-	}
-	return page, pageSize
-}
-
-// newID 生成全局唯一 UUIDv7：时间有序（索引局部性好）、跨微服务无需协调。
-func newID() (string, error) {
-	id, err := uuid.NewV7()
-	if err != nil {
-		return "", fmt.Errorf("generate uuid v7: %w", err)
-	}
-	return id.String(), nil
-}
-
 // Create 创建用户：生成 ID、解码密码（b64$/明文）、哈希、填充审计时间后落库；
 // 返回出参不含密码。
 func (uc *UserUsecase) Create(ctx context.Context, user *User) (*User, error) {
-	id, err := newID()
+	id, err := idgen.NewID()
 	if err != nil {
 		return nil, err
 	}
@@ -270,9 +236,19 @@ func (uc *UserUsecase) IsAdminUser(ctx context.Context, id string) (bool, error)
 	return user.IsAdmin, nil
 }
 
+// DescribeActor 返回用户展示信息（跨域窄接口 assistant.ActorDescriber 的实现）：
+// 用户不存在返回错误（fail closed）。
+func (uc *UserUsecase) DescribeActor(ctx context.Context, id string) (username, nickname string, isAdmin bool, err error) {
+	user, err := uc.reader.GetUser(ctx, id)
+	if err != nil {
+		return "", "", false, err
+	}
+	return user.Username, user.Nickname, user.IsAdmin, nil
+}
+
 // List 分页查询用户；分页参数先规整再委托仓储。
 func (uc *UserUsecase) List(ctx context.Context, filter UserFilter, page, pageSize int64) ([]*User, int64, error) {
-	page, pageSize = normalizePage(page, pageSize)
+	page, pageSize = paging.Normalize(page, pageSize)
 	return uc.reader.ListUsers(ctx, filter, page, pageSize)
 }
 

@@ -7,6 +7,8 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/lanyulei/reborn/backend/kit/paging"
+
 	"github.com/lanyulei/reborn/backend/core/internal/conf"
 
 	"github.com/go-kratos/kratos/v3/errors"
@@ -231,9 +233,9 @@ func (s *userStoreStub) ListGrantsByRoles(_ context.Context, roleIDs []string) (
 		union.Apis = append(union.Apis, g.Apis...)
 	}
 	return GrantSet{
-		Menus:    sortedUnique(union.Menus),
-		Elements: sortedUnique(union.Elements),
-		Apis:     sortedUnique(union.Apis),
+		Menus:    SortedUnique(union.Menus),
+		Elements: SortedUnique(union.Elements),
+		Apis:     SortedUnique(union.Apis),
 	}, nil
 }
 
@@ -391,36 +393,18 @@ func TestNormalizePage(t *testing.T) {
 	cases := []struct {
 		page, pageSize, wantPage, wantPageSize int64
 	}{
-		{0, 0, 1, 10},
-		{1, 0, 1, 10},
+		{0, 0, 1, 20},
+		{1, 0, 1, 20},
 		{-1, 5, 1, 5},
 		{2, 200, 2, 100},
 		{3, 50, 3, 50},
 	}
 	for _, tc := range cases {
-		page, pageSize := normalizePage(tc.page, tc.pageSize)
+		page, pageSize := paging.Normalize(tc.page, tc.pageSize)
 		if page != tc.wantPage || pageSize != tc.wantPageSize {
-			t.Errorf("normalizePage(%d, %d) = (%d, %d), want (%d, %d)",
+			t.Errorf("paging.Normalize(%d, %d) = (%d, %d), want (%d, %d)",
 				tc.page, tc.pageSize, page, pageSize, tc.wantPage, tc.wantPageSize)
 		}
-	}
-}
-
-func TestNewID(t *testing.T) {
-	t.Parallel()
-	seen := make(map[string]struct{}, 1000)
-	for range 1000 {
-		id, err := newID()
-		if err != nil {
-			t.Fatalf("newID() error = %v", err)
-		}
-		if !uuidV7Pattern.MatchString(id) {
-			t.Fatalf("newID() = %q, want UUIDv7", id)
-		}
-		if _, ok := seen[id]; ok {
-			t.Fatalf("newID() duplicated id %q", id)
-		}
-		seen[id] = struct{}{}
 	}
 }
 
@@ -499,8 +483,8 @@ func TestUserUsecase_SecurityChangesRevokeSessions(t *testing.T) {
 // TestNormalizePageClamp 超大页码夹到上限，(page-1)*pageSize 不溢出为负。
 func TestNormalizePageClamp(t *testing.T) {
 	t.Parallel()
-	page, size := normalizePage(1<<62, 100)
-	if page != maxPage || size != 100 || (page-1)*size < 0 {
-		t.Fatalf("normalizePage(huge) = (%d, %d), offset %d", page, size, (page-1)*size)
+	page, size := paging.Normalize(1<<62, 100)
+	if page != paging.MaxPage || size != 100 || (page-1)*size < 0 {
+		t.Fatalf("paging.Normalize(huge) = (%d, %d), offset %d", page, size, (page-1)*size)
 	}
 }

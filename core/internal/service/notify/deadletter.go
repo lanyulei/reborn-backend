@@ -13,8 +13,6 @@ import (
 // NotifyDeadLetterServiceServer：死信查询 + 标记重放（唯一写动作，状态机
 // none → pending 由仓储条件 UPDATE 保证）。
 type NotifyDeadLetterService struct {
-	notifyv1.UnimplementedNotifyDeadLetterServiceServer
-
 	uc       *biz.DeadLetterUsecase
 	guard    bizGuard
 	channels *biz.ChannelUsecase

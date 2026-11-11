@@ -16,9 +16,11 @@ message Bootstrap {
   Security security = 3;
   // notify 通知域配置（渠道凭据加密等）。
   Notify notify = 4;
+  // assistant 智能助手域配置（模型接入与 Agent 运行参数）。
+  Assistant assistant = 5;
 }
 
-// Server 是 HTTP/gRPC 服务器配置。
+// Server 是 HTTP 服务器配置（仅 HTTP 协议；gRPC 已停用）。
 message Server {
   // HTTP 是 HTTP 服务器配置。
   message HTTP {
@@ -29,19 +31,8 @@ message Server {
     // timeout 请求处理超时。
     google.protobuf.Duration timeout = 3;
   }
-  // GRPC 是 gRPC 服务器配置。
-  message GRPC {
-    // network 监听网络类型，如 tcp；留空使用默认值。
-    string network = 1;
-    // addr 监听地址。
-    string addr = 2;
-    // timeout 请求处理超时。
-    google.protobuf.Duration timeout = 3;
-  }
   // http HTTP 配置。
   HTTP http = 1;
-  // grpc gRPC 配置。
-  GRPC grpc = 2;
 }
 
 // Data 是数据层资源配置；密钥类字段一律从环境变量注入，禁止明文入库。
@@ -121,4 +112,28 @@ message Notify {
   // dedup_ttl 业务直插（NotificationWriter）去重门闩有效期；未设置缺省 24h。
   // 与管道 ingress 同一 notify_dedup 表、同一语义（事件带 dedup_key 时生效）。
   google.protobuf.Duration dedup_ttl = 2;
+}
+
+// Assistant 是智能助手域配置：OpenAI 兼容模型接入 + Agent 运行参数。
+// api_key 为空表示助手停用（Chat 返回 ASSISTANT_DISABLED），其余功能不受影响。
+message Assistant {
+  // base_url OpenAI 兼容接口根地址（如 https://open.bigmodel.cn/api/paas/v4）。
+  string base_url = 1;
+  // api_key 模型 API Key；一律经 KRATOS_ASSISTANT_API_KEY 环境变量注入
+  //（占位符 ${ASSISTANT_API_KEY}），禁止写入配置文件；为空即停用助手。
+  string api_key = 2;
+  // model 模型名（如 glm-4.5-flash）。
+  string model = 3;
+  // loopback_addr 工具执行回环地址（本服务 HTTP 根，如 http://127.0.0.1:8010）。
+  string loopback_addr = 4;
+  // timeout 单轮 Agent 运行上限（含模型生成与工具调用），也是会话租约 TTL；缺省 5m。
+  google.protobuf.Duration timeout = 5;
+  // llm_connect_timeout 模型连接建立超时；缺省 3s。
+  google.protobuf.Duration llm_connect_timeout = 6;
+  // tool_timeout 单次工具（回环接口）调用超时；缺省 5s。
+  google.protobuf.Duration tool_timeout = 7;
+  // max_steps 单轮最多模型调用次数（防循环）；缺省 20。
+  int32 max_steps = 8;
+  // max_concurrent_runs 单实例并发轮次上限（自我保护）；缺省 8。
+  int32 max_concurrent_runs = 9;
 }

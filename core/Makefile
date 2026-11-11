@@ -53,6 +53,27 @@ test:
 	go test ./internal/data/... -race -count=1
 	go test ./... -race -shuffle=on
 
+.PHONY: migrate
+# migrate 应用全部未执行的 migrations/*.up.sql（golang-migrate；DSN 读 configs/config.yaml，可重复执行）。
+migrate:
+	go run ./cmd/migrate -conf configs up
+
+.PHONY: migrate-down
+# migrate-down 回退最近一个版本（执行其 down.sql）。
+migrate-down:
+	go run ./cmd/migrate -conf configs down
+
+.PHONY: migrate-version
+# migrate-version 显示当前版本与 dirty 状态。
+migrate-version:
+	go run ./cmd/migrate -conf configs version
+
+.PHONY: migrate-force
+# migrate-force 直接写入版本号、不执行 SQL：为手工建库的旧环境设基线或修复 dirty，如 make migrate-force VERSION=23。
+migrate-force:
+	@test -n "$(VERSION)" || { echo "usage: make migrate-force VERSION=23"; exit 1; }
+	go run ./cmd/migrate -conf configs force $(VERSION)
+
 .PHONY: tidy
 # tidy 依赖治理：tidy + verify。
 tidy:

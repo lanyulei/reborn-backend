@@ -11,8 +11,6 @@ import (
 
 // NotifyTemplateService 实现 api/notify/v1 生成的 NotifyTemplateServiceServer。
 type NotifyTemplateService struct {
-	notifyv1.UnimplementedNotifyTemplateServiceServer
-
 	uc    *biz.TemplateUsecase
 	guard bizGuard
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/lanyulei/reborn/backend/core/internal/pkg/txrun"
+	"github.com/lanyulei/reborn/backend/kit/dbx"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -24,7 +25,7 @@ func NewTxManager(data *Data) *TxManager {
 
 // WithinTx implements txrun.Manager：fn 出错回滚并透传，成功提交。
 func (m *TxManager) WithinTx(ctx context.Context, fn func(tx txrun.Tx) error) error {
-	return WithTx(ctx, m.pool, func(tx pgx.Tx) error {
+	return dbx.WithTx(ctx, m.pool, func(tx pgx.Tx) error {
 		return fn(txHandle{tx: tx})
 	})
 }

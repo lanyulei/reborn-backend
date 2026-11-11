@@ -11,6 +11,7 @@ import (
 
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/notify"
 	basedata "github.com/lanyulei/reborn/backend/core/internal/data"
+	"github.com/lanyulei/reborn/backend/kit/dbx"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -158,7 +159,7 @@ func (r *subscriptionRepo) ListSubscriptions(ctx context.Context, filter biz.Sub
 	args := make([]any, 0, 4)
 	args = append(args, filter.UserID)
 	if filter.Keyword != "" {
-		args = append(args, basedata.LikeContains(filter.Keyword))
+		args = append(args, dbx.LikeContains(filter.Keyword))
 		where = append(where, "event_pattern ILIKE $"+strconv.Itoa(len(args)))
 	}
 	if filter.Enabled != nil {

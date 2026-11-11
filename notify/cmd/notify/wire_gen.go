@@ -31,12 +31,12 @@ func wireApp(confServer *conf.Server, confData *conf.Data, pipeline *conf.Pipeli
 	if err != nil {
 		return nil, nil, err
 	}
-	secretBox, err := data.NewSecretBox(notify)
+	v, err := data.NewSecretBox(notify)
 	if err != nil {
 		cleanup()
 		return nil, nil, err
 	}
-	configRepo := data.NewConfigRepo(dataData, secretBox)
+	configRepo := data.NewConfigRepo(dataData, v)
 	rateBucketRepo := data.NewRateBucketRepo(dataData)
 	configCache := biz.NewConfigCache(configRepo, rateBucketRepo, logger)
 	producerAuth := biz.NewProducerAuth(configCache)
@@ -72,8 +72,8 @@ func wireApp(confServer *conf.Server, confData *conf.Data, pipeline *conf.Pipeli
 		cleanup()
 		return nil, nil, err
 	}
-	v := server.NewServers(roles, logger, httpServer, set)
-	app := newApp(logger, v)
+	v2 := server.NewServers(roles, logger, httpServer, set)
+	app := newApp(logger, v2)
 	return app, func() {
 		cleanup2()
 		cleanup()

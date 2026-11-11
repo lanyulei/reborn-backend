@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/lanyulei/reborn/backend/kit/dbx"
+	"github.com/lanyulei/reborn/backend/kit/idgen"
 	"github.com/lanyulei/reborn/backend/notify/internal/biz"
-	"github.com/lanyulei/reborn/backend/notify/internal/pkg/idgen"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -74,7 +75,7 @@ const fence = " WHERE id = $1 AND create_time = $2 AND status = 2 AND attempts =
 // ListDispatches 展示用；版本号在 content.template_version）。
 func (r *dispatchRepo) SaveContent(ctx context.Context, d *biz.ClaimedDispatch, content []byte, templateID string) error {
 	tag, err := r.data.Pool.Exec(ctx, "UPDATE notify_dispatch SET content = $4, template_id = $5"+fence,
-		d.ID, d.CreateTime, d.Attempts, content, nilIfEmpty(templateID))
+		d.ID, d.CreateTime, d.Attempts, content, dbx.NilIfEmpty(templateID))
 	if err != nil {
 		return fmt.Errorf("save dispatch content: %w", err)
 	}
@@ -102,7 +103,7 @@ func (r *dispatchRepo) Release(ctx context.Context, d *biz.ClaimedDispatch, dela
 // Finish implements biz.DispatchRepo：同事务写 delivery_log + 终态；dead 时写 dlq
 // （id = dispatch id，ON CONFLICT DO NOTHING 幂等）。
 func (r *dispatchRepo) Finish(ctx context.Context, d *biz.ClaimedDispatch, res biz.FinishResult, maxAttempts int32) error {
-	return WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		return finishDispatch(ctx, tx, d.ID, d.CreateTime, d.Attempts, d.EventID, d.ChannelID, d.Recipient, res, maxAttempts)
 	})
 }
@@ -118,7 +119,7 @@ func finishDispatch(ctx context.Context, tx pgx.Tx, id string, createTime time.T
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO notify_delivery_log (id, dispatch_id, channel_id, attempt, ok, latency_ms, provider_msg_id, error, create_time)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,now())`,
-		logID, id, channelID, attempts, res.OK, res.LatencyMs, nilIfEmpty(res.ProviderMsgID), nilIfEmpty(res.Error)); err != nil {
+		logID, id, channelID, attempts, res.OK, res.LatencyMs, dbx.NilIfEmpty(res.ProviderMsgID), dbx.NilIfEmpty(res.Error)); err != nil {
 		return fmt.Errorf("insert delivery log: %w", err)
 	}
 	var tag interface{ RowsAffected() int64 }
@@ -127,10 +128,10 @@ func finishDispatch(ctx context.Context, tx pgx.Tx, id string, createTime time.T
 		tag, err = tx.Exec(ctx, "UPDATE notify_dispatch SET status = 3, next_retry_time = NULL, last_error = NULL"+fence, id, createTime, attempts)
 	case res.Retryable && attempts < maxAttempts:
 		tag, err = tx.Exec(ctx, "UPDATE notify_dispatch SET status = 4, next_retry_time = $4, last_error = $5"+fence,
-			id, createTime, attempts, res.NextRetry, nilIfEmpty(res.Error))
+			id, createTime, attempts, res.NextRetry, dbx.NilIfEmpty(res.Error))
 	default:
 		tag, err = tx.Exec(ctx, "UPDATE notify_dispatch SET status = 5, next_retry_time = NULL, last_error = $4"+fence,
-			id, createTime, attempts, nilIfEmpty(res.Error))
+			id, createTime, attempts, dbx.NilIfEmpty(res.Error))
 	}
 	if err != nil {
 		return fmt.Errorf("finish dispatch: %w", err)
@@ -142,7 +143,7 @@ func finishDispatch(ctx context.Context, tx pgx.Tx, id string, createTime time.T
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO notify_dlq (id, dispatch_id, event_id, channel_id, recipient, last_error, attempts, replay_state, create_time, update_time)
 			 VALUES ($1, $1, $2, $3, $4, $5, $6, 1, now(), now()) ON CONFLICT (id) DO NOTHING`,
-			id, eventID, channelID, recipient, nilIfEmpty(res.Error), attempts); err != nil {
+			id, eventID, channelID, recipient, dbx.NilIfEmpty(res.Error), attempts); err != nil {
 			return fmt.Errorf("insert dead letter: %w", err)
 		}
 	}
@@ -153,7 +154,7 @@ func finishDispatch(ctx context.Context, tx pgx.Tx, id string, createTime time.T
 // 记一次失败尝试（attempts 已在声明时计数）并按退避转 failed，超限转 dead。
 func (r *dispatchRepo) ReapExpired(ctx context.Context, limit int, maxAttempts int32, backoff func(int32) time.Duration) (int, error) {
 	n := 0
-	err := WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+	err := dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx,
 			"SELECT "+claimedColumns+" FROM notify_dispatch d WHERE d.status = 2 AND d.next_retry_time < now()"+
 				" ORDER BY d.next_retry_time LIMIT $1 FOR UPDATE SKIP LOCKED", limit)

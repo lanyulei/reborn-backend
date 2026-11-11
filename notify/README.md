@@ -4,6 +4,9 @@ Kratos v3 单二进制，按 `SERVER_ROLES` 启用组件，与 core 共用 Postg
 运行表读写），P1 骨干为 **PG 队列**（`FOR UPDATE SKIP LOCKED` + 条件更新状态机），
 NATS JetStream 作为后续可插拔实现（接口已抽象为 `biz.EventSource` / `biz.DispatchRepo`）。
 行为契约见 [AGENTS.md](AGENTS.md)，设计见 `backend/docs/notify-design.md`。
+与 core 共用的基础代码在同仓 `backend/kit`（`replace ../kit`）：传输装配 `httpx`、数据访问 `dbx`、
+凭据 `secretbox`（管道只 Open）、`idgen`，以及**数据契约** `notifycontract`——jsonb 结构体、状态常量、
+事件类型/模式正则与匹配语义、`notify_event` INSERT 与 dedup 门闩 SQL 两端同源，改契约只改 kit。
 
 ## 接入方必读：语义边界
 
@@ -35,7 +38,7 @@ NATS JetStream 作为后续可插拔实现（接口已抽象为 `biz.EventSource
 
 | 角色 | 组件 | 职责 |
 |---|---|---|
-| `api` | ingress（HTTP 8020 / gRPC 9020） | `POST /ingress/v1/events`、`/ingress/v1/events:batch`；HMAC 鉴权；dedup 门闩；先落库后应答 |
+| `api` | ingress（HTTP 8020） | `POST /ingress/v1/events`、`/ingress/v1/events:batch`；HMAC 鉴权；dedup 门闩；先落库后应答 |
 | `router` | router + sweeper | 声明 pending 事件 → 静默 → 选路 → 收件解析（fixed + 订阅 ⋈ system_user）→ 生成 dispatch 或聚合计数；sweeper（选主）关闭聚合窗口出汇总/摘要 |
 | `sender` | sender + 租约回收 | 声明到期任务 → 渲染快照 → 熔断/令牌桶 → email / webhook / dingtalk / wecom / feishu 适配器 → 投递日志 → 成功/退避/死信 |
 | `dlqworker` | dlq 重放 | 控制台标记的死信 → 新 dispatch |
@@ -68,7 +71,6 @@ canonical = ts + "\n" + METHOD + "\n" + PATH + "\n" + hex(sha256(body))
 sig       = hex(HMAC-SHA256(key, canonical))         # ts 为 Unix 秒，±5min
 ```
 Go 生产者可直接用 `pkg/ingressauth.Header(producerID, token, method, path, body, time.Now())`。
-gRPC 侧 METHOD 固定 `GRPC`、PATH 为 full method、body 哈希为空串的 sha256（仅绑定方法）。
 
 ## Webhook 出站契约
 

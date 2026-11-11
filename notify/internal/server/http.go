@@ -4,8 +4,8 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"time"
 
+	"github.com/lanyulei/reborn/backend/kit/httpx"
 	ingressv1 "github.com/lanyulei/reborn/backend/notify/api/ingress/v1"
 	"github.com/lanyulei/reborn/backend/notify/internal/biz"
 	"github.com/lanyulei/reborn/backend/notify/internal/conf"
@@ -18,11 +18,6 @@ import (
 	"github.com/go-kratos/kratos/v3/middleware/selector"
 	"github.com/go-kratos/kratos/v3/middleware/validate"
 	khttp "github.com/go-kratos/kratos/v3/transport/http"
-)
-
-const (
-	httpReadHeaderTimeout = 10 * time.Second
-	httpIdleTimeout       = 120 * time.Second
 )
 
 // ingressOperations 需 HMAC 鉴权的操作集（proto full method，HTTP/gRPC 同名）。
@@ -41,16 +36,16 @@ func NewHTTPServer(c *conf.Server, roles Roles, logger *slog.Logger, auth *biz.P
 			recovery.Recovery(),
 			tracing.Server(),
 			logging.Server(logger),
-			validate.Validator(protoValidate),
+			validate.Validator(httpx.ProtoValidate),
 			ratelimit.Server(),
 			selector.Server(hmacMiddleware(auth)).Match(func(_ context.Context, operation string) bool {
 				_, ok := ingressOperations[operation]
 				return ok
 			}).Build(),
 		),
-		khttp.Filter(limitRequestBody),
-		khttp.RequestDecoder(decodeRequest),
-		khttp.ResponseEncoder(encodeResponse),
+		khttp.Filter(httpx.LimitRequestBody),
+		khttp.RequestDecoder(httpx.DecodeRequest),
+		khttp.ResponseEncoder(httpx.EncodeResponse),
 	}
 	if c.GetHttp().GetNetwork() != "" {
 		opts = append(opts, khttp.Network(c.GetHttp().GetNetwork()))
@@ -62,8 +57,7 @@ func NewHTTPServer(c *conf.Server, roles Roles, logger *slog.Logger, auth *biz.P
 		opts = append(opts, khttp.Timeout(c.GetHttp().GetTimeout().AsDuration()))
 	}
 	srv := khttp.NewServer(opts...)
-	srv.ReadHeaderTimeout = httpReadHeaderTimeout
-	srv.IdleTimeout = httpIdleTimeout
+	httpx.HardenServer(srv)
 	srv.HandleFunc("/healthz", health.ServeHTTP)
 	srv.Handle("/metrics", metrics.Handler())
 	if roles.Has(RoleAPI) {

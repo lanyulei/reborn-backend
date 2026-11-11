@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/lanyulei/reborn/backend/kit/dbx"
 	"github.com/lanyulei/reborn/backend/notify/internal/biz"
 
 	"github.com/jackc/pgx/v5"
@@ -55,7 +56,7 @@ func scanEvent(scan func(dest ...any) error) (*biz.Event, error) {
 // ProcessPending implements biz.EventSource.
 func (r *eventRepo) ProcessPending(ctx context.Context, limit int, fn func(ctx context.Context, tx biz.RouterTx, events []*biz.Event) error) (int, error) {
 	n := 0
-	err := WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+	err := dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx,
 			"SELECT "+eventColumns+" FROM notify_event WHERE publish_state = 0 AND next_publish_time <= now()"+
 				" ORDER BY next_publish_time LIMIT $1 FOR UPDATE SKIP LOCKED", limit)
@@ -151,8 +152,8 @@ func insertDispatches(ctx context.Context, tx pgx.Tx, dispatches []*biz.Dispatch
 		next_retry_time, last_error, send_key, create_time) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,now(),$9,$10,now())`
 	batch := &pgx.Batch{}
 	for _, d := range dispatches {
-		batch.Queue(q, d.ID, d.EventID, d.ChannelID, d.Recipient, nilIfEmpty(d.TemplateID), nilIfEmptyBytes(d.Content),
-			d.Status, d.Attempts, nilIfEmpty(d.LastError), d.SendKey)
+		batch.Queue(q, d.ID, d.EventID, d.ChannelID, d.Recipient, dbx.NilIfEmpty(d.TemplateID), dbx.NilIfEmptyBytes(d.Content),
+			d.Status, d.Attempts, dbx.NilIfEmpty(d.LastError), d.SendKey)
 	}
 	res := tx.SendBatch(ctx, batch)
 	for range dispatches {

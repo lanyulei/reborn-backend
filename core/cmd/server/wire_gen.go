@@ -8,13 +8,16 @@ package main
 
 import (
 	"github.com/go-kratos/kratos/v3"
+	biz3 "github.com/lanyulei/reborn/backend/core/internal/biz/assistant"
 	biz2 "github.com/lanyulei/reborn/backend/core/internal/biz/notify"
 	"github.com/lanyulei/reborn/backend/core/internal/biz/system"
 	"github.com/lanyulei/reborn/backend/core/internal/conf"
 	"github.com/lanyulei/reborn/backend/core/internal/data"
+	data4 "github.com/lanyulei/reborn/backend/core/internal/data/assistant"
 	data3 "github.com/lanyulei/reborn/backend/core/internal/data/notify"
 	data2 "github.com/lanyulei/reborn/backend/core/internal/data/system"
 	"github.com/lanyulei/reborn/backend/core/internal/server"
+	service3 "github.com/lanyulei/reborn/backend/core/internal/service/assistant"
 	service2 "github.com/lanyulei/reborn/backend/core/internal/service/notify"
 	"github.com/lanyulei/reborn/backend/core/internal/service/system"
 	"log/slog"
@@ -29,7 +32,7 @@ import (
 // wireApp init kratos application.
 // data 层因共享 Data 类型不能在顶层聚合各域（避免 import 环），
 // 各域 data ProviderSet 在此显式列出；biz/service 顶层已聚合。
-func wireApp(confServer *conf.Server, confData *conf.Data, security *conf.Security, notify *conf.Notify, logger *slog.Logger) (*kratos.App, func(), error) {
+func wireApp(confServer *conf.Server, confData *conf.Data, security *conf.Security, notify *conf.Notify, assistant *conf.Assistant, logger *slog.Logger) (*kratos.App, func(), error) {
 	dataData, cleanup, err := data.NewData(confData)
 	if err != nil {
 		return nil, nil, err
@@ -109,9 +112,23 @@ func wireApp(confServer *conf.Server, confData *conf.Data, security *conf.Securi
 	deadLetterRepo := data3.NewDeadLetterRepo(dataData)
 	deadLetterUsecase := biz2.NewDeadLetterUsecase(deadLetterRepo)
 	notifyDeadLetterService := service2.NewNotifyDeadLetterService(deadLetterUsecase, channelUsecase, authzUsecase)
-	grpcServer := server.NewGRPCServer(confServer, logger, userService, roleService, authService, systemConfigService, loginLogService, notifyChannelService, notifyTemplateService, notifyRouteService, notifySilenceService, notifySubscriptionService, notifyProducerService, notifyEventService, notifyDispatchService, notifyDeliveryLogService, notifyDeadLetterService, tokenSigner, authzUsecase)
-	httpServer := server.NewHTTPServer(confServer, logger, userService, roleService, authService, systemConfigService, loginLogService, notifyChannelService, notifyTemplateService, notifyRouteService, notifySilenceService, notifySubscriptionService, notifyProducerService, notifyEventService, notifyDispatchService, notifyDeliveryLogService, notifyDeadLetterService, tokenSigner, authzUsecase)
-	app := newApp(logger, grpcServer, httpServer)
+	conversationRepo := data4.NewConversationRepo(dataData)
+	messageRepo := data4.NewMessageRepo(dataData)
+	toolCallRepo := data4.NewToolCallRepo(dataData)
+	conversationUsecase := biz3.NewConversationUsecase(conversationRepo, messageRepo, toolCallRepo)
+	assistantService := service3.NewAssistantService(conversationUsecase)
+	chatModelClient := data4.NewChatModel(assistant)
+	loopbackInvoker := data4.NewLoopbackInvoker(assistant)
+	toolCatalog, err := service3.NewToolCatalog()
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	agentConfig := biz3.NewAgentConfig(assistant)
+	agentUsecase := biz3.NewAgentUsecase(conversationRepo, messageRepo, toolCallRepo, chatModelClient, loopbackInvoker, authzUsecase, userUsecase, toolCatalog, agentConfig, logger)
+	assistantChatService := service3.NewAssistantChatService(agentUsecase)
+	httpServer := server.NewHTTPServer(confServer, logger, userService, roleService, authService, systemConfigService, loginLogService, notifyChannelService, notifyTemplateService, notifyRouteService, notifySilenceService, notifySubscriptionService, notifyProducerService, notifyEventService, notifyDispatchService, notifyDeliveryLogService, notifyDeadLetterService, assistantService, assistantChatService, tokenSigner, authzUsecase)
+	app := newApp(logger, httpServer)
 	return app, func() {
 		cleanup()
 	}, nil

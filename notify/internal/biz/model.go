@@ -5,44 +5,46 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"time"
+
+	"github.com/lanyulei/reborn/backend/kit/notifycontract"
 )
 
-// 事件来源与状态常量（与 notify_event 列注释、core biz 常量对齐）。
+// 状态/来源常量：全部取自 kit/notifycontract（与 core biz 同一字面量口径）。
 const (
-	EventSourceAPI      = "api"
-	EventSourceInternal = "internal"
+	EventSourceAPI      = notifycontract.EventSourceAPI
+	EventSourceInternal = notifycontract.EventSourceInternal
 
-	EventStatusReceived   int32 = 1
-	EventStatusRouted     int32 = 2
-	EventStatusSuppressed int32 = 3
-	EventStatusFailed     int32 = 4
+	EventStatusReceived   = notifycontract.EventStatusReceived
+	EventStatusRouted     = notifycontract.EventStatusRouted
+	EventStatusSuppressed = notifycontract.EventStatusSuppressed
+	EventStatusFailed     = notifycontract.EventStatusFailed
 
 	// PublishPending/PublishPublished：publish_state。PG 骨干下 published 语义
 	// = 已交付 router 处理（与事件终态同事务翻转）。
-	PublishPending   int32 = 0
-	PublishPublished int32 = 1
+	PublishPending   = notifycontract.PublishPending
+	PublishPublished = notifycontract.PublishPublished
 )
 
 // 发送任务状态（notify_dispatch.status）。
 const (
-	DispatchPending int32 = 1
-	DispatchSending int32 = 2
-	DispatchSent    int32 = 3
-	DispatchFailed  int32 = 4
-	DispatchDead    int32 = 5
+	DispatchPending = notifycontract.DispatchPending
+	DispatchSending = notifycontract.DispatchSending
+	DispatchSent    = notifycontract.DispatchSent
+	DispatchFailed  = notifycontract.DispatchFailed
+	DispatchDead    = notifycontract.DispatchDead
 )
 
 // 死信重放状态（notify_dlq.replay_state）。
 const (
-	ReplayNone     int32 = 1
-	ReplayPending  int32 = 2
-	ReplayReplayed int32 = 3
+	ReplayNone     = notifycontract.ReplayNone
+	ReplayPending  = notifycontract.ReplayPending
+	ReplayReplayed = notifycontract.ReplayReplayed
 )
 
 // 聚合组状态（notify_agg_group.status）。
 const (
-	AggOpen   int32 = 1
-	AggClosed int32 = 2
+	AggOpen   = notifycontract.AggOpen
+	AggClosed = notifycontract.AggClosed
 )
 
 // Event 事件领域模型（notify_event 一行）。Payload 为原始 JSON 字节

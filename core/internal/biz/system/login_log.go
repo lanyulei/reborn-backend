@@ -3,6 +3,8 @@ package biz
 import (
 	"context"
 	"time"
+
+	"github.com/lanyulei/reborn/backend/kit/paging"
 )
 
 // 登录结果常量，与库表 system_login_log.result 契约对齐；0 非法（proto3 默认
@@ -72,6 +74,6 @@ func NewLoginLogUsecase(reader LoginLogReader) *LoginLogUsecase {
 
 // List 分页查询登录日志；分页参数先经 normalizePage 规整再委托仓储。
 func (uc *LoginLogUsecase) List(ctx context.Context, filter LoginLogFilter, page, pageSize int64) ([]*LoginLog, int64, error) {
-	page, pageSize = normalizePage(page, pageSize)
+	page, pageSize = paging.Normalize(page, pageSize)
 	return uc.reader.ListLoginLogs(ctx, filter, page, pageSize)
 }

@@ -8,7 +8,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/lanyulei/reborn/backend/notify/internal/pkg/idgen"
+	"github.com/lanyulei/reborn/backend/kit/idgen"
 )
 
 // RouterTx 是 router 批事务内可用的写原语（data 层以 pgx.Tx 实现）：批内全部

@@ -9,6 +9,7 @@ import (
 
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
 	basedata "github.com/lanyulei/reborn/backend/core/internal/data"
+	"github.com/lanyulei/reborn/backend/kit/dbx"
 )
 
 // 编译期断言锁住 biz 契约：接口签名漂移时在此处立即暴露（AGENTS.md §4.1）。
@@ -80,8 +81,8 @@ func (r *loginLogRepo) Create(ctx context.Context, log *biz.LoginLog) error {
 	_, err := r.data.Pool.Exec(ctx,
 		`INSERT INTO system_login_log (id, user_id, username, result, ip, user_agent, create_time)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		log.ID, nilIfEmpty(log.UserID), log.Username, log.Result,
-		nilIfEmpty(log.IP), nilIfEmpty(log.UserAgent), log.CreateTime)
+		log.ID, dbx.NilIfEmpty(log.UserID), log.Username, log.Result,
+		dbx.NilIfEmpty(log.IP), dbx.NilIfEmpty(log.UserAgent), log.CreateTime)
 	if err != nil {
 		// 审计表无唯一约束与外键，违约面仅基础设施错误，原样包装上抛，
 		// 由调用方（recordLogin）决定降级口径。
@@ -96,7 +97,7 @@ func (r *loginLogRepo) ListLoginLogs(ctx context.Context, filter biz.LoginLogFil
 	where := []string{"true"}
 	args := make([]any, 0, 4)
 	if filter.Username != "" {
-		args = append(args, basedata.LikeContains(filter.Username))
+		args = append(args, dbx.LikeContains(filter.Username))
 		where = append(where, "username ILIKE $"+strconv.Itoa(len(args)))
 	}
 	if filter.Result != nil {

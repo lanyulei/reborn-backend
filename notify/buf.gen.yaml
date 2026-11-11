@@ -5,9 +5,7 @@ plugins:
   - local: ["go", "tool", "protoc-gen-go"]
     out: api
     opt: paths=source_relative
-  - local: ["go", "tool", "protoc-gen-go-grpc"]
-    out: api
-    opt: paths=source_relative
+  # gRPC 已停用（数据面只暴露 HTTP：HMAC 签名绑定请求体）。proto 保留 service 定义。
   - local: ["go", "tool", "protoc-gen-go-http"]
     out: api
     opt: paths=source_relative

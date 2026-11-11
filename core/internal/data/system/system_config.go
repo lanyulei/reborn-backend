@@ -11,6 +11,7 @@ import (
 
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
 	basedata "github.com/lanyulei/reborn/backend/core/internal/data"
+	"github.com/lanyulei/reborn/backend/kit/dbx"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -87,7 +88,7 @@ func (r *systemConfigRepo) SaveConfig(ctx context.Context, cfg *biz.SystemConfig
 		 SET title = $1, sub_title = $2, logo = $3, footer = $4,
 		     update_time = $5, update_user = $6`,
 		cfg.Title, cfg.SubTitle, cfg.Logo, cfg.Footer,
-		cfg.UpdateTime, nilIfEmpty(cfg.UpdateUser))
+		cfg.UpdateTime, dbx.NilIfEmpty(cfg.UpdateUser))
 	if err != nil {
 		return fmt.Errorf("update system config: %w", err)
 	}
@@ -99,7 +100,7 @@ func (r *systemConfigRepo) SaveConfig(ctx context.Context, cfg *biz.SystemConfig
 		 SELECT $1, $2, $3, $4, $5, $6, $7
 		 WHERE NOT EXISTS (SELECT 1 FROM system_config)`,
 		cfg.ID, cfg.Title, cfg.SubTitle, cfg.Logo, cfg.Footer,
-		cfg.UpdateTime, nilIfEmpty(cfg.UpdateUser)); err != nil {
+		cfg.UpdateTime, dbx.NilIfEmpty(cfg.UpdateUser)); err != nil {
 		return fmt.Errorf("insert system config: %w", err)
 	}
 	return nil

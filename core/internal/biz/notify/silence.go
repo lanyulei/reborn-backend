@@ -6,9 +6,11 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/lanyulei/reborn/backend/kit/notifycontract"
+
 	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
-	"github.com/lanyulei/reborn/backend/core/internal/pkg/idgen"
-	"github.com/lanyulei/reborn/backend/core/internal/pkg/paging"
+	"github.com/lanyulei/reborn/backend/kit/idgen"
+	"github.com/lanyulei/reborn/backend/kit/paging"
 
 	"github.com/go-kratos/kratos/v3/errors"
 )
@@ -25,11 +27,7 @@ const (
 // SilenceWindow 免打扰时间窗：支持跨午夜（如 22:00→08:00 覆盖夜间）；
 // json 标签即 notify_silence.time_window 列的落库结构，管道按窗口与时区
 // 判定命中（tz 缺省 UTC）。
-type SilenceWindow struct {
-	Start string `json:"start"`
-	End   string `json:"end"`
-	Tz    string `json:"tz,omitempty"`
-}
+type SilenceWindow = notifycontract.SilenceWindow
 
 // SilenceRule 静默规则：匹配决策（pattern/severity 上限/时间窗）互为整体，
 // 创建与整组替换更新共用同一校验。

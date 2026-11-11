@@ -11,8 +11,6 @@ import (
 
 // LoginLogService 实现 api/system/v1 生成的 LoginLogServiceServer。
 type LoginLogService struct {
-	v1.UnimplementedLoginLogServiceServer
-
 	uc *biz.LoginLogUsecase
 }
 

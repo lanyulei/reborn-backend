@@ -12,9 +12,8 @@ import (
 	"github.com/go-kratos/kratos/v3/middleware/selector"
 )
 
-// authExempt 是免鉴权方法集（proto full method）：HTTP 侧生成代码在进入中间件
-// 链前先 SetOperation，gRPC 侧拦截器以 info.FullMethod 为 operation，两协议的
-// transport operation 同为 proto full method，故共用一份白名单。
+// authExempt 是免鉴权方法集（proto full method）：HTTP 生成代码在进入中间件
+// 链前 SetOperation(proto full method)，白名单按此匹配。
 // 引用生成常量而非手写字符串，签名漂移时在编译期暴露。
 var authExempt = map[string]struct{}{
 	v1.OperationAuthServiceLogin:        {},

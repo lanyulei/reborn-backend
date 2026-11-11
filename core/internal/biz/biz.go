@@ -10,6 +10,7 @@ package biz
 import (
 	"github.com/google/wire"
 
+	bizassistant "github.com/lanyulei/reborn/backend/core/internal/biz/assistant"
 	biznotify "github.com/lanyulei/reborn/backend/core/internal/biz/notify"
 	bizsystem "github.com/lanyulei/reborn/backend/core/internal/biz/system"
 )
@@ -19,6 +20,11 @@ import (
 var ProviderSet = wire.NewSet(
 	bizsystem.ProviderSet,
 	biznotify.ProviderSet,
+	bizassistant.ProviderSet,
+	// 智能助手工具按用户授权过滤：有效操作集由 system 域 AuthzUsecase 解析；
+	// 操作者展示信息由 system 域 UserUsecase 提供（单向依赖 assistant → system）。
+	wire.Bind(new(bizassistant.PermissionSource), new(*bizsystem.AuthzUsecase)),
+	wire.Bind(new(bizassistant.ActorDescriber), new(*bizsystem.UserUsecase)),
 	// 订阅代管校验：notify 定义的 AdminResolver 由 system 用户用例实现。
 	wire.Bind(new(biznotify.SubscriptionAdminResolver), new(*bizsystem.UserUsecase)),
 	// notify 控制面按 biz 隔离：角色 biz_scope 并集由 system 域 AuthzUsecase 解析。

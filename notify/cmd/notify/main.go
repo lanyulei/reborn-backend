@@ -6,10 +6,9 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/lanyulei/reborn/backend/kit/httpx"
 	"github.com/lanyulei/reborn/backend/notify/internal/conf"
-	"github.com/lanyulei/reborn/backend/notify/internal/server"
 
-	"github.com/go-kratos/kratos/contrib/otel/v3/tracing"
 	"github.com/go-kratos/kratos/v3"
 	"github.com/go-kratos/kratos/v3/config"
 	"github.com/go-kratos/kratos/v3/config/env"
@@ -51,19 +50,7 @@ func newApp(logger *slog.Logger, servers []transport.Server) *kratos.App {
 func main() {
 	flag.Parse()
 
-	logger := log.NewLogger(
-		slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-			AddSource:   true,
-			Level:       slog.LevelInfo,
-			ReplaceAttr: server.MaskSensitiveAttr,
-		}),
-		log.WithFilter(log.FilterKey("password", "token", "secret", "authorization")),
-		log.WithExtractor(tracing.TraceAttrs),
-	).With(
-		slog.String("service.id", id),
-		slog.String("service.name", Name),
-		slog.String("service.version", Version),
-	)
+	logger := httpx.NewLogger(httpx.JSONHandler(os.Stdout), id, Name, Version)
 	log.SetDefault(logger)
 
 	c := config.New(config.WithSource(file.NewSource(flagconf), env.NewSource("KRATOS")))

@@ -10,6 +10,7 @@ import (
 
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/notify"
 	basedata "github.com/lanyulei/reborn/backend/core/internal/data"
+	"github.com/lanyulei/reborn/backend/kit/dbx"
 
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
@@ -80,24 +81,15 @@ func scanProducer(scan func(dest ...any) error) (*biz.Producer, error) {
 	}, nil
 }
 
-// whitelistArg 归一化白名单参数：nil slice 会被 pgx 编码为 NULL（撞
-// NOT NULL 约束），归一为空数组 '{}'（空 = 不限）。
-func whitelistArg(list []string) []string {
-	if list == nil {
-		return []string{}
-	}
-	return list
-}
-
 // CreateProducer implements biz.ProducerRepo：落库并同事务 bump 版本。
 func (r *producerRepo) CreateProducer(ctx context.Context, producer *biz.Producer) error {
-	return basedata.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO notify_producer
 			     (id, name, biz_id, event_whitelist, token_hash, expire_time, enabled, create_time, update_time, qps_limit, daily_limit)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
 			producer.ID, producer.Name, producer.BizID,
-			whitelistArg(producer.EventWhitelist), producer.TokenHash, producer.ExpireTime,
+			dbx.TextArray(producer.EventWhitelist), producer.TokenHash, producer.ExpireTime,
 			producer.Enabled, producer.CreateTime, producer.UpdateTime, producer.QPSLimit, producer.DailyLimit); err != nil {
 			return mapProducerUniqueViolation(fmt.Errorf("insert producer: %w", err))
 		}
@@ -116,7 +108,7 @@ func (r *producerRepo) UpdateProducer(ctx context.Context, id string, upd biz.Pr
 	}
 	if upd.Spec != nil {
 		add("name", upd.Spec.Name)
-		add("event_whitelist", whitelistArg(upd.Spec.EventWhitelist))
+		add("event_whitelist", dbx.TextArray(upd.Spec.EventWhitelist))
 		add("expire_time", upd.Spec.ExpireTime)
 		add("qps_limit", upd.Spec.QPSLimit)
 		add("daily_limit", upd.Spec.DailyLimit)
@@ -130,7 +122,7 @@ func (r *producerRepo) UpdateProducer(ctx context.Context, id string, upd biz.Pr
 	args = append(args, id)
 	query := "UPDATE notify_producer SET " + strings.Join(sets, ", ") +
 		", update_time = now() WHERE id = $" + strconv.Itoa(len(args)) + " AND delete_time IS NULL"
-	return basedata.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, query, args...)
 		if err != nil {
 			return mapProducerUniqueViolation(fmt.Errorf("update producer: %w", err))
@@ -146,7 +138,7 @@ func (r *producerRepo) UpdateProducer(ctx context.Context, id string, upd biz.Pr
 // 返回权威行（旧 token 立即失效），同事务 bump 版本。
 func (r *producerRepo) UpdateProducerToken(ctx context.Context, id string, tokenHash []byte) (*biz.Producer, error) {
 	var producer *biz.Producer
-	err := basedata.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+	err := dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		row := tx.QueryRow(ctx,
 			"UPDATE notify_producer SET token_hash = $2, update_time = now()"+
 				" WHERE id = $1 AND delete_time IS NULL RETURNING "+producerSelectColumns,
@@ -169,7 +161,7 @@ func (r *producerRepo) UpdateProducerToken(ctx context.Context, id string, token
 
 // DeleteProducer implements biz.ProducerRepo：软删并同事务 bump 版本。
 func (r *producerRepo) DeleteProducer(ctx context.Context, id string) error {
-	return basedata.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx,
 			"UPDATE notify_producer SET delete_time = now(), update_time = now()"+
 				" WHERE id = $1 AND delete_time IS NULL", id)
@@ -206,7 +198,7 @@ func (r *producerRepo) ListProducers(ctx context.Context, filter biz.ProducerFil
 		where = append(where, "biz_id = $"+strconv.Itoa(len(args)))
 	}
 	if filter.Keyword != "" {
-		args = append(args, basedata.LikeContains(filter.Keyword))
+		args = append(args, dbx.LikeContains(filter.Keyword))
 		where = append(where, "name ILIKE $"+strconv.Itoa(len(args)))
 	}
 	if filter.Enabled != nil {

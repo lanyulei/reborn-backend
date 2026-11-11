@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lanyulei/reborn/backend/notify/internal/pkg/idgen"
+	"github.com/lanyulei/reborn/backend/kit/idgen"
 )
 
 // IngressResult 单条落库结果。

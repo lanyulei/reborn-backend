@@ -7,6 +7,14 @@
   },
   "tags": [
     {
+      "name": "AssistantChatService",
+      "description": "AssistantChatService 智能助手对话服务：以当前登录用户身份驱动 Agent 循环，\n工具即本服务现有接口（经 HTTP 回环调用，权限由既有 auth/authz 中间件判定）。\n\nChat/Confirm 的响应是 Server-Sent Events 流（text/event-stream），生成代码\n不支持流式，故二者的 HTTP 绑定由 internal/server/assistant.go 以原生路由\n实现（路径与此处注解一致；本 service 的生成 HTTP 注册函数不被调用）。\n在 proto 定义的意义：进入授权枚举（可按角色授权\"是否能用助手\"）、生成\nOperation 常量与 swagger、protovalidate 规则在边界生效。"
+    },
+    {
+      "name": "AssistantService",
+      "description": "AssistantService 智能助手会话管理：会话列表、历史消息、删除；仅限本人会话。"
+    },
+    {
       "name": "NotifyEventService",
       "description": "NotifyEventService 通知事件查询服务：只读运行表 notify_event（管道写 /\ncore 读，设计 §5.2）。事件是 append-only 运行数据——先落库后应答（§7.1\n不丢闭环），无管理写路径；本服务仅提供控制台排障检索。"
     },
@@ -74,6 +82,177 @@
     "application/json"
   ],
   "paths": {
+    "/api/v1/assistant/chat": {
+      "post": {
+        "summary": "Chat 发送一条用户消息并流式返回助手回复；conversation_id 省略则新建会话。\n响应为 SSE 事件流（conversation / thinking_delta / text_delta / tool_call /\ntool_result / tool_confirm_required / done / error）。",
+        "operationId": "AssistantChatService_Chat",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ChatResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/ChatRequest"
+            }
+          }
+        ],
+        "tags": [
+          "AssistantChatService"
+        ]
+      }
+    },
+    "/api/v1/assistant/confirm": {
+      "post": {
+        "summary": "Confirm 对助手提出的写操作做出确认或拒绝，并流式返回后续回复。",
+        "operationId": "AssistantChatService_Confirm",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ConfirmResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/ConfirmRequest"
+            }
+          }
+        ],
+        "tags": [
+          "AssistantChatService"
+        ]
+      }
+    },
+    "/api/v1/assistant/conversation": {
+      "get": {
+        "summary": "ListConversations 分页查询当前用户的会话，按最近更新倒序；page_size 上限 100。",
+        "operationId": "AssistantService_ListConversations",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListConversationsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "page",
+            "description": "page 页码，从 1 开始。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "page_size 每页数量，1-100。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "AssistantService"
+        ]
+      }
+    },
+    "/api/v1/assistant/conversation/{id}": {
+      "delete": {
+        "summary": "DeleteConversation 删除（软删）当前用户的一个会话。",
+        "operationId": "AssistantService_DeleteConversation",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/DeleteConversationResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 会话标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "AssistantService"
+        ]
+      }
+    },
+    "/api/v1/assistant/conversation/{id}/message": {
+      "get": {
+        "summary": "ListMessages 查询一个会话的全部历史（按轮次聚合：用户消息 / 助手消息含工具步骤）。",
+        "operationId": "AssistantService_ListMessages",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListMessagesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 会话标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "AssistantService"
+        ]
+      }
+    },
     "/api/v1/login": {
       "post": {
         "summary": "Login 登录：校验用户名密码，签发 access + refresh 双令牌。\n用户不存在与密码错误统一返回 INVALID_CREDENTIALS，不区分口径以防枚举。",
@@ -2584,6 +2763,113 @@
       "additionalProperties": true,
       "description": "`Any` contains an arbitrary serialized protocol buffer message along with a\nURL that describes the type of the serialized message.\n\nIn its binary encoding, an `Any` is an ordinary message; but in other wire\nforms like JSON, it has a special encoding. The format of the type URL is\ndescribed on the `type_url` field.\n\nProtobuf APIs provide utilities to interact with `Any` values:\n\n- A 'pack' operation accepts a message and constructs a generic `Any` wrapper\n  around it.\n- An 'unpack' operation reads the content of an `Any` message, either into an\n  existing message or a new one. Unpack operations must check the type of the\n  value they unpack against the declared `type_url`.\n- An 'is' operation decides whether an `Any` contains a message of the given\n  type, i.e. whether it can 'unpack' that type.\n\nThe JSON format representation of an `Any` follows one of these cases:\n\n- For types without special-cased JSON encodings, the JSON format\n  representation of the `Any` is the same as that of the message, with an\n  additional `@type` field which contains the type URL.\n- For types with special-cased JSON encodings (typically called 'well-known'\n  types, listed in https://protobuf.dev/programming-guides/json/#any), the\n  JSON format representation has a key `@type` which contains the type URL\n  and a key `value` which contains the JSON-serialized value.\n\nThe text format representation of an `Any` is like a message with one field\nwhose name is the type URL in brackets. For example, an `Any` containing a\n`foo.Bar` message may be written `[type.googleapis.com/foo.Bar] { a: 2 }`."
     },
+    "AssistantConversation": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 会话标识。"
+        },
+        "title": {
+          "type": "string",
+          "title": "title 会话标题（首条用户消息截断）。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 创建时间。"
+        },
+        "updateTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "update_time 最近活动时间。"
+        }
+      },
+      "title": "AssistantConversation 会话实体。"
+    },
+    "AssistantMessage": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 消息标识（assistant 轮次取该轮最后一条消息的 id）。"
+        },
+        "role": {
+          "type": "string",
+          "title": "role user / assistant。"
+        },
+        "content": {
+          "type": "string",
+          "title": "content 文本正文。"
+        },
+        "reasoning": {
+          "type": "string",
+          "title": "reasoning 模型思考文本（模型支持时）。"
+        },
+        "toolCalls": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/AssistantToolCall"
+          },
+          "title": "tool_calls 本轮工具步骤，按发生顺序。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 消息时间。"
+        }
+      },
+      "title": "AssistantMessage 展示用消息：user 为用户消息；assistant 为一轮回复（文本 + 工具步骤聚合）。"
+    },
+    "AssistantToolCall": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 工具调用标识。"
+        },
+        "toolName": {
+          "type": "string",
+          "title": "tool_name 工具名（\u003cService\u003e_\u003cMethod\u003e）。"
+        },
+        "title": {
+          "type": "string",
+          "title": "title 工具中文名（接口 title 注解）。"
+        },
+        "status": {
+          "type": "string",
+          "title": "status 状态：pending / approved / rejected / denied / succeeded / failed / cancelled。"
+        },
+        "input": {
+          "type": "string",
+          "title": "input 入参 JSON（已脱敏）。"
+        },
+        "output": {
+          "type": "string",
+          "title": "output 出参 JSON（已脱敏；失败时为空）。"
+        },
+        "error": {
+          "type": "string",
+          "title": "error 失败原因；成功为空。"
+        },
+        "durationMs": {
+          "type": "string",
+          "format": "int64",
+          "title": "duration_ms 执行耗时（毫秒）。"
+        },
+        "write": {
+          "type": "boolean",
+          "title": "write 是否写操作（需用户确认）。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 发起时间。"
+        }
+      },
+      "title": "AssistantToolCall 一次工具调用（审计视图）。"
+    },
     "BindUserRolesBody": {
       "type": "object",
       "properties": {
@@ -2665,6 +2951,46 @@
         }
       },
       "title": "CatalogMenu 目录菜单（页面）：页面默认接口（进页面即调用，不归属于任何\n元素）+ 页面元素及其接口；仅描述页面结构，供授权页展示，授权不级联。"
+    },
+    "ChatRequest": {
+      "type": "object",
+      "properties": {
+        "conversationId": {
+          "type": "string",
+          "title": "conversation_id 会话标识，可选；省略则新建会话。"
+        },
+        "content": {
+          "type": "string",
+          "title": "content 用户消息正文，1-4000 字符。"
+        }
+      },
+      "title": "ChatRequest 发送用户消息请求。"
+    },
+    "ChatResponse": {
+      "type": "object",
+      "title": "ChatResponse 占位：实际响应为 SSE 事件流，本消息不会被序列化返回。"
+    },
+    "ConfirmRequest": {
+      "type": "object",
+      "properties": {
+        "conversationId": {
+          "type": "string",
+          "title": "conversation_id 会话标识。"
+        },
+        "toolCallId": {
+          "type": "string",
+          "title": "tool_call_id 待确认的工具调用标识（tool_confirm_required 事件下发）。"
+        },
+        "approved": {
+          "type": "boolean",
+          "title": "approved true 执行，false 拒绝。"
+        }
+      },
+      "title": "ConfirmRequest 确认/拒绝助手提出的写操作。"
+    },
+    "ConfirmResponse": {
+      "type": "object",
+      "title": "ConfirmResponse 占位：实际响应为 SSE 事件流，本消息不会被序列化返回。"
     },
     "CreateChannelRequest": {
       "type": "object",
@@ -2939,6 +3265,10 @@
       "type": "object",
       "title": "DeleteChannelResponse 删除渠道响应。"
     },
+    "DeleteConversationResponse": {
+      "type": "object",
+      "title": "DeleteConversationResponse 删除会话响应。"
+    },
     "DeleteProducerResponse": {
       "type": "object",
       "title": "DeleteProducerResponse 删除生产者响应。"
@@ -3193,6 +3523,25 @@
       },
       "title": "ListChannelsResponse 分页查询渠道响应。"
     },
+    "ListConversationsResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/AssistantConversation"
+          },
+          "title": "items 当前页数据。"
+        },
+        "total": {
+          "type": "string",
+          "format": "int64",
+          "title": "total 总数。"
+        }
+      },
+      "title": "ListConversationsResponse 分页查询会话响应。"
+    },
     "ListDeadLettersResponse": {
       "type": "object",
       "properties": {
@@ -3287,6 +3636,20 @@
         }
       },
       "title": "ListLoginLogsResponse 分页查询登录日志响应。"
+    },
+    "ListMessagesResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/AssistantMessage"
+          },
+          "title": "items 按时间正序的展示消息。"
+        }
+      },
+      "title": "ListMessagesResponse 查询会话消息响应。"
     },
     "ListOperationsResponse": {
       "type": "object",

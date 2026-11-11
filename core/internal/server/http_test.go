@@ -30,6 +30,14 @@ func newTestHTTPServer(t *testing.T) (*httptest.Server, *biz.TokenSigner) {
 // 只读用例（事件/投递查询）预置运行数据。
 func newTestHTTPServerWithStore(t *testing.T) (*httptest.Server, *biz.TokenSigner, *testfake.Store) {
 	t.Helper()
+	ts, svc := newTestHTTPServerWithServices(t)
+	return ts, svc.signer, svc.store
+}
+
+// newTestHTTPServerWithServices 同上，并返回完整装配产物（助手 e2e 需访问
+// 模型桩与审计内存仓储）。
+func newTestHTTPServerWithServices(t *testing.T) (*httptest.Server, testServices) {
+	t.Helper()
 	svc := newTestServices(t)
 	srv := NewHTTPServer(
 		&conf.Server{Http: &conf.Server_HTTP{}},
@@ -49,12 +57,15 @@ func newTestHTTPServerWithStore(t *testing.T) (*httptest.Server, *biz.TokenSigne
 		svc.dispatch,
 		svc.deliveryLog,
 		svc.deadLetter,
+		svc.assistant,
+		svc.assistantChat,
 		svc.signer,
 		svc.authz,
 	)
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
-	return ts, svc.signer, svc.store
+	svc.loopback.SetURL(ts.URL)
+	return ts, svc
 }
 
 // testBearer 为任意用户 ID 直接签发测试访问令牌：既有 e2e 用例不经登录闭环，

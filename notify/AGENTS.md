@@ -7,7 +7,7 @@
 ## 0. 项目概览
 
 - 语言/运行时：Go 1.26.x（go.mod 中声明 go 1.26，禁止放宽到更低版本）
-- 框架：Kratos github.com/go-kratos/kratos/v3 v3.x（gRPC + HTTP 双协议、Wire DI、OTel 可观测）
+- 框架：Kratos github.com/go-kratos/kratos/v3 v3.x（HTTP 协议、Wire DI、OTel 可观测；gRPC 已停用——无调用方，proto 保留 service 定义，需要时加回 protoc-gen-go-grpc 插件与 server/grpc.go 即可恢复）
 - IDL：Protobuf，通过 Buf v2（buf.yaml / buf.gen.yaml）生成代码
 - DI：github.com/google/wire（编译期依赖注入，禁止引入运行时 DI 库如 dig/fx）
 - 日志：标准库 log/slog，经 Kratos log.NewLogger / log.NewHandler 包装
@@ -24,7 +24,7 @@
     ├── cmd/<server>/main.go    # 极简入口：只组装 wire，禁止业务逻辑
     ├── configs/                # 配置文件（YAML）
     └── internal/
-        ├── server/             # http.go / grpc.go：Server 构造、路由注册、中间件挂载
+        ├── server/             # http.go：Server 构造、路由注册、中间件挂载
         ├── service/            # 实现 proto 生成的接口，只做参数校验+编排，调用 biz
         ├── biz/                # 业务核心：定义 Repo 接口 + Usecase；零框架/驱动 import
         └── data/               # 实现 biz 定义的 Repo 接口；唯一允许 import DB/Redis 驱动
@@ -38,6 +38,7 @@
 - data 层：实现 biz 的 Repo interface。数据模型（PO/DO）与 API 模型（proto 生成）必须显式转换，禁止结构体直接复用跨层传递。
 - main.go / wire：只做装配，禁止出现 if/for 业务分支。
 - 违反依赖方向的一律退回重写。
+- 表命名随域走：数据库表名前缀必须等于其所属 api 域名（`api/system` → `system_*`，`api/notify` → `notify_*`，`api/assistant` → `assistant_*`），分区子表、索引、约束名同样带域前缀；一个域不得把表挂到别的域前缀下（如 assistant 域的表不得命名为 `system_assistant_*`）。新增域即新增前缀。此契约由 `core/migrations/naming_test.go` 扫描全部 `*.up.sql` 的 CREATE TABLE 锁死，前缀清单直接取自 `core/api/` 目录。
 
 ## 2. 构建与常用命令
 
@@ -179,7 +180,7 @@ type ruleCache[T any] struct{ v T }
 - 熔断：v3 默认熔断不再依赖 aegis，默认用法 circuitbreaker.Client()(next) 零改动。仅当注入自定义 breaker 时，显式添加 aegis 依赖并用 circuitbreaker.WithBreakerFactory(func() circuitbreaker.CircuitBreaker { return newBreaker() })。
 - 接口契约：所有对外方法必须先在 api/<domain>/v1/*.proto 定义，再生成代码；禁止手写 HTTP handler 或手写 gRPC 方法签名。
 - 参数校验：统一用 proto 的 validate 规则（[(validate.rules)...]）在边界完成校验；不要在 service 层重复手写 if 校验，也不要引入第三方 binding 包。
-- 中间件：统一挂载在 internal/server/http.go / grpc.go（或 Group 级），顺序：recovery → tracing → logging → validate → rate-limit → 业务。HTTP 与 gRPC 的中间件链相互独立，需分别挂载。日志中间件注入 *slog.Logger。
+- 中间件：统一挂载在 internal/server/http.go（或 Group 级），顺序：recovery → tracing → logging → validate → rate-limit → 业务。日志中间件注入 *slog.Logger。
 - 错误码：proto 内集中定义 enum ErrorReason，由 protoc-gen-go-errors 生成，service 层禁止手拼 JSON 错误响应。
 - 配置：全部走 configs/*.yaml + config.Load，禁止硬编码 IP/端口/密钥/魔法数字。
 - Wire：新增依赖时在对应 internal/*/provider.go 补充 ProviderSet，并运行 make gen / go generate ./... 重新生成 wire_gen.go；禁止手改 wire_gen.go（生成文件顶部注释声明）。
@@ -350,3 +351,11 @@ Kratos 四层：`api → service → biz → data`（非 DDD 四层）。
   真实 PG 验证声明/围栏/回滚/聚合/门闩/重放/分区维护，以及端到端
   「事件 → router → sender → webhook 收到签名请求」与 1 万事件对账。
 - 与 core 的集成测试共用 `reborn_test`，两个模块的集成测试不要并行运行。
+
+### 13.6 共享库 kit（backend/kit）
+
+- core 与 notify 已各写一份的代码才进 kit；kit 包不得 import 任一模块的 internal。
+- 分层边界随包走：`kit/dbx`（含 pgx）仅 data 层；`kit/httpx` 仅 server/cmd；`idgen`/`paging`/`notifycontract` biz 可用（depguard 强制）。
+- 与 core 对齐的任何契约（jsonb json 标签、状态/来源字面量、事件正则、`InsertEventSQL`/`DedupGateSQL`）只改 `kit/notifycontract`，禁止在本模块复制字面量；biz 侧用类型别名/常量再导出保持包内名称不变。
+- `SilenceWindow` 以契约结构为底层类型（非别名）以挂 `Contains` 方法，json 标签随契约。
+

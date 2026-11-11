@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/lanyulei/reborn/backend/kit/idgen"
+
 	v1 "github.com/lanyulei/reborn/backend/core/api/system/v1"
 
 	"github.com/go-kratos/kratos/v3/errors"
@@ -149,7 +151,7 @@ func (uc *AuthUsecase) Login(ctx context.Context, username, password, ip, userAg
 // 登录（审计尽力而为，不构成登录前置条件）。同步写、请求 ctx 内完成；客户端
 // 提前断开导致写失败同样走告警降级。
 func (uc *AuthUsecase) recordLogin(ctx context.Context, entry *LoginLog) {
-	id, err := newID()
+	id, err := idgen.NewID()
 	if err != nil {
 		uc.log.WarnContext(ctx, "generate login log id failed", "error", err, "username", entry.Username)
 		return
@@ -205,7 +207,7 @@ func (uc *AuthUsecase) Refresh(ctx context.Context, raw string) (*TokenPair, err
 	if err != nil {
 		return nil, err
 	}
-	nextID, err := newID()
+	nextID, err := idgen.NewID()
 	if err != nil {
 		return nil, err
 	}
@@ -268,7 +270,7 @@ func (uc *AuthUsecase) issueTokens(ctx context.Context, u *User, now time.Time) 
 	if err != nil {
 		return nil, err
 	}
-	id, err := newID()
+	id, err := idgen.NewID()
 	if err != nil {
 		return nil, err
 	}

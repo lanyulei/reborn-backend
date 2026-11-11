@@ -34,6 +34,10 @@ linters:
               desc: "biz 禁止 import 传输层：transport 上下文提取一律在 service 层"
             - pkg: "github.com/jackc/pgx"
               desc: "biz 禁止 import 数据库驱动：data 是唯一允许驱动的层"
+            - pkg: "github.com/lanyulei/reborn/backend/kit/dbx"
+              desc: "biz 禁止 import kit/dbx：含 pgx 驱动，仅 data 层可用"
+            - pkg: "github.com/lanyulei/reborn/backend/kit/httpx"
+              desc: "biz 禁止 import kit/httpx：传输层装配仅 server/cmd 可用"
         # service 只做编排与转换：禁止触碰驱动与 data 实现。
         service:
           files:
@@ -43,6 +47,8 @@ linters:
               desc: "service 禁止 import data：仓储经 biz 接口访问"
             - pkg: "github.com/jackc/pgx"
               desc: "service 禁止 import 数据库驱动：data 是唯一允许驱动的层"
+            - pkg: "github.com/lanyulei/reborn/backend/kit/dbx"
+              desc: "service 禁止 import kit/dbx：含 pgx 驱动，仅 data 层可用"
         # data 实现仓储：禁止反向依赖上层。
         data:
           files:

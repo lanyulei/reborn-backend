@@ -366,6 +366,17 @@ var permissionCatalog = []MenuSpec{
 			},
 		},
 	},
+	{
+		Code: "assistant",
+		Name: "智能助手",
+		DefaultOps: []string{
+			"/assistant.v1.AssistantChatService/Chat",
+			"/assistant.v1.AssistantChatService/Confirm",
+			"/assistant.v1.AssistantService/ListConversations",
+			"/assistant.v1.AssistantService/ListMessages",
+			"/assistant.v1.AssistantService/DeleteConversation",
+		},
+	},
 }
 
 // catalogIndexes 是目录的码索引（注册表不可变，进程内构建一次）。

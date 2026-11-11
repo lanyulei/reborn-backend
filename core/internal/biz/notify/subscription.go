@@ -6,8 +6,8 @@ import (
 	"time"
 
 	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
-	"github.com/lanyulei/reborn/backend/core/internal/pkg/idgen"
-	"github.com/lanyulei/reborn/backend/core/internal/pkg/paging"
+	"github.com/lanyulei/reborn/backend/kit/idgen"
+	"github.com/lanyulei/reborn/backend/kit/paging"
 
 	"github.com/go-kratos/kratos/v3/errors"
 )

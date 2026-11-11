@@ -40,9 +40,9 @@ type GrantSet struct {
 // 应用侧归一，减少无效写）。
 func (g GrantSet) normalized() GrantSet {
 	return GrantSet{
-		Menus:    sortedUnique(g.Menus),
-		Elements: sortedUnique(g.Elements),
-		Apis:     sortedUnique(g.Apis),
+		Menus:    SortedUnique(g.Menus),
+		Elements: SortedUnique(g.Elements),
+		Apis:     SortedUnique(g.Apis),
 	}
 }
 
@@ -154,10 +154,10 @@ func (uc *PermissionUsecase) SetGrants(ctx context.Context, roleID string, grant
 	return nil
 }
 
-// sortedUnique 返回去重后的字典序副本；SetGrants 的入参归一化
+// SortedUnique 返回去重后的字典序副本（testfake 亦复用）；SetGrants 的入参归一化
 // （(role_id, resource_type, resource_code) / (role_id, operation) 唯一
 // 索引兜底，应用侧先行去重减少无效写）。
-func sortedUnique(codes []string) []string {
+func SortedUnique(codes []string) []string {
 	seen := make(map[string]struct{}, len(codes))
 	uniq := make([]string, 0, len(codes))
 	for _, code := range codes {

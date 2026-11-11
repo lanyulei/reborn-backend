@@ -4,26 +4,27 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"regexp"
 	"text/template"
 	"time"
 
+	"github.com/lanyulei/reborn/backend/kit/notifycontract"
+
 	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
-	"github.com/lanyulei/reborn/backend/core/internal/pkg/idgen"
-	"github.com/lanyulei/reborn/backend/core/internal/pkg/paging"
+	"github.com/lanyulei/reborn/backend/kit/idgen"
+	"github.com/lanyulei/reborn/backend/kit/paging"
 
 	"github.com/go-kratos/kratos/v3/errors"
 )
 
 // TemplateChannelAny 是模板渠道类型维度的通配值（'*'：适用全部渠道类型）。
-const TemplateChannelAny = "*"
+const TemplateChannelAny = notifycontract.TemplateChannelAny
 
 // TemplateEventTypeAny 是模板事件类型维度的通配值（'*'：适用全部事件）。
-const TemplateEventTypeAny = "*"
+const TemplateEventTypeAny = notifycontract.TemplateEventTypeAny
 
 // templateEventTypePattern 事件类型取值：'*' 或小写字母/数字开头的点分串
 // （如 monitor.alert.firing；与 api protovalidate 同式，入口双保险）。
-var templateEventTypePattern = regexp.MustCompile(`^(\*|[a-z0-9][a-z0-9._-]{0,127})$`)
+var templateEventTypePattern = notifycontract.TemplateEventTypePattern
 
 // templateChannelTypes 渠道类型维度合法取值：通配 + 五种渠道类型。
 var templateChannelTypes = map[string]struct{}{

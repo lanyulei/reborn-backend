@@ -4,32 +4,18 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/lanyulei/reborn/backend/kit/notifycontract"
 )
 
-// MatchPattern 事件模式匹配（路由/静默/订阅/生产者白名单同一语义）：
+// MatchPattern 事件模式匹配（路由/静默/订阅/生产者白名单同一语义，kit/notifycontract 实现）：
 // '*' 全匹配；'x.y.*' 等价前缀 'x.y.'；其余精确相等。
 func MatchPattern(pattern, eventType string) bool {
-	switch {
-	case pattern == "*":
-		return true
-	case strings.HasSuffix(pattern, ".*"):
-		return strings.HasPrefix(eventType, pattern[:len(pattern)-1])
-	default:
-		return pattern == eventType
-	}
+	return notifycontract.MatchPattern(pattern, eventType)
 }
 
 // patternSpecificity 精确 0 < 前缀 1 < 全匹配 2（同优先级路由的决胜次序）。
-func patternSpecificity(pattern string) int {
-	switch {
-	case pattern == "*":
-		return 2
-	case strings.HasSuffix(pattern, ".*"):
-		return 1
-	default:
-		return 0
-	}
-}
+func patternSpecificity(pattern string) int { return notifycontract.PatternSpecificity(pattern) }
 
 // MatchRoute 选路：biz 内启用路由中 pattern 命中 ∧ severity ≥ 下限 ∧ tag_match
 // 全等（AND）者取优先级最高（priority 最小）；无命中返回 nil。

@@ -15,8 +15,6 @@ import (
 
 // NotifyChannelService 实现 api/notify/v1 生成的 NotifyChannelServiceServer。
 type NotifyChannelService struct {
-	notifyv1.UnimplementedNotifyChannelServiceServer
-
 	uc    *biz.ChannelUsecase
 	guard bizGuard
 }

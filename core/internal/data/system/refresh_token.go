@@ -8,6 +8,7 @@ import (
 
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
 	basedata "github.com/lanyulei/reborn/backend/core/internal/data"
+	"github.com/lanyulei/reborn/backend/kit/dbx"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -83,7 +84,7 @@ func (r *refreshTokenRepo) FindByHash(ctx context.Context, tokenHash string) (*b
 // Save implements biz.RefreshTokenWriter：插入新令牌，并同事务惰性清理该用户
 // 已过期的历史行（无后台清理任务）。
 func (r *refreshTokenRepo) Save(ctx context.Context, token *biz.RefreshToken) error {
-	return basedata.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx,
 			"DELETE FROM system_refresh_token WHERE user_id = $1 AND expire_time < now()", token.UserID); err != nil {
 			return fmt.Errorf("purge expired refresh tokens: %w", err)
@@ -96,7 +97,7 @@ func (r *refreshTokenRepo) Save(ctx context.Context, token *biz.RefreshToken) er
 // 新行；旧行不存在（未知/已被轮换/已登出）返回 ErrTokenInvalid，天然覆盖
 // 并发轮换竞争（败者检测到令牌重放，强制重新登录）。
 func (r *refreshTokenRepo) Rotate(ctx context.Context, oldHash string, next *biz.RefreshToken) error {
-	return basedata.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, "DELETE FROM system_refresh_token WHERE token_hash = $1", oldHash)
 		if err != nil {
 			return fmt.Errorf("delete old refresh token: %w", err)

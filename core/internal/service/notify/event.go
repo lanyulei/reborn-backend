@@ -12,8 +12,6 @@ import (
 // NotifyEventService 实现 api/notify/v1 生成的 NotifyEventServiceServer：
 // 只读查询运行表（管道写 / core 读），无写路径。
 type NotifyEventService struct {
-	notifyv1.UnimplementedNotifyEventServiceServer
-
 	uc    *biz.EventUsecase
 	guard bizGuard
 }

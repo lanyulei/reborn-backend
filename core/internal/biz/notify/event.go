@@ -4,24 +4,26 @@ import (
 	"context"
 	"time"
 
-	"github.com/lanyulei/reborn/backend/core/internal/pkg/paging"
+	"github.com/lanyulei/reborn/backend/kit/notifycontract"
+
+	"github.com/lanyulei/reborn/backend/kit/paging"
 )
 
 // 事件来源与状态常量（与 notify_event 列注释对齐，管道状态机的字面量口径）。
 const (
 	// EventSourceAPI 生产者经管道 ingress 接入。
-	EventSourceAPI = "api"
+	EventSourceAPI = notifycontract.EventSourceAPI
 	// EventSourceInternal core 业务同事务直插（NotificationWriter）。
-	EventSourceInternal = "internal"
+	EventSourceInternal = notifycontract.EventSourceInternal
 
 	// EventStatusReceived 已落库待路由。
-	EventStatusReceived int32 = 1
+	EventStatusReceived = notifycontract.EventStatusReceived
 	// EventStatusRouted 已生成投递任务。
-	EventStatusRouted int32 = 2
+	EventStatusRouted = notifycontract.EventStatusRouted
 	// EventStatusSuppressed 静默命中被抑制。
-	EventStatusSuppressed int32 = 3
+	EventStatusSuppressed = notifycontract.EventStatusSuppressed
 	// EventStatusFailed 无匹配路由等终态失败。
-	EventStatusFailed int32 = 4
+	EventStatusFailed = notifycontract.EventStatusFailed
 )
 
 // Event 事件领域模型（DO）：notify_event 运行表一行的排障视图（管道写 /

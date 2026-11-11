@@ -3,52 +3,34 @@
 package data
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
-	"crypto/sha256"
-	"fmt"
+	"errors"
 
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/notify"
 	"github.com/lanyulei/reborn/backend/core/internal/conf"
+	"github.com/lanyulei/reborn/backend/kit/secretbox"
 )
 
-// SecretBox 渠道凭据加密器：AES-256-GCM，密文布局 = nonce(12B) || ciphertext。
-// 主密钥为任意非空字节串，经 SHA-256 派生 32 字节 AES 密钥（密钥来自环境变量
-// 注入的随机值而非低熵口令，无需 PBKDF 系拉伸）。aead 为 nil 表示未配置主密钥：
-// Seal 返回 ErrChannelSecretUnavailable，无 secret 渠道的读写不受影响。
+// SecretBox 渠道凭据加密器：kit/secretbox（AES-256-GCM，key = sha256(主密钥)，
+// nonce||ct）的 core 侧封装——**只提供 Seal**（只写不读由调用面约束），未配置主密钥
+// 时 Seal 返回业务哨兵 ErrChannelSecretUnavailable（可选能力，不阻断启动）。
 type SecretBox struct {
-	aead cipher.AEAD
+	box *secretbox.Box
 }
 
-// NewSecretBox 由启动配置构造。未配置主密钥返回未启用的 box 而非报错——渠道
-// 凭据加密是可选能力，缺失时在写入带 secret 的渠道处快速失败（绝不静默落明文），
-// 不阻断整个服务启动。
+// NewSecretBox 由启动配置构造。
 func NewSecretBox(c *conf.Notify) (*SecretBox, error) {
-	material := c.GetMaster().GetKey()
-	if material == "" {
-		return &SecretBox{}, nil
-	}
-	key := sha256.Sum256([]byte(material))
-	block, err := aes.NewCipher(key[:])
+	box, err := secretbox.New(c.GetMaster().GetKey())
 	if err != nil {
-		return nil, fmt.Errorf("notify secretbox init cipher: %w", err)
+		return nil, err
 	}
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("notify secretbox init gcm: %w", err)
-	}
-	return &SecretBox{aead: aead}, nil
+	return &SecretBox{box: box}, nil
 }
 
-// Seal 加密明文凭据；未配置主密钥时返回业务哨兵错误。
+// Seal 加密明文凭据。
 func (b *SecretBox) Seal(plaintext string) ([]byte, error) {
-	if b.aead == nil {
+	out, err := b.box.Seal(plaintext)
+	if errors.Is(err, secretbox.ErrUnavailable) {
 		return nil, biz.ErrChannelSecretUnavailable
 	}
-	nonce := make([]byte, b.aead.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, fmt.Errorf("notify secretbox nonce: %w", err)
-	}
-	return b.aead.Seal(nonce, nonce, []byte(plaintext), nil), nil
+	return out, err
 }

@@ -7,12 +7,12 @@
 package data
 
 import (
-	"context"
-	"fmt"
 	"time"
 
 	"github.com/lanyulei/reborn/backend/core/internal/conf"
 	"github.com/lanyulei/reborn/backend/core/internal/pkg/txrun"
+
+	"github.com/lanyulei/reborn/backend/kit/dbx"
 
 	"github.com/google/wire"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -36,36 +36,16 @@ type Data struct {
 // NewData 构造数据层资源：解析 DSN、应用连接池参数并 Ping 验证连通性，
 // 失败在装配阶段快速返回错误；cleanup 在进程退出时统一释放连接。
 func NewData(c *conf.Data) (*Data, func(), error) {
-	if c.GetDatabase().GetSource() == "" {
-		return nil, nil, fmt.Errorf("data.database.source is required")
-	}
-	cfg, err := pgxpool.ParseConfig(c.GetDatabase().GetSource())
+	pool, err := dbx.NewPool(c.GetDatabase().GetSource(), dbx.PoolOptions{
+		MaxConns:    c.GetDatabase().GetMaxConns(),
+		MinConns:    c.GetDatabase().GetMinConns(),
+		MaxIdleTime: c.GetDatabase().GetMaxConnIdleTime().AsDuration(),
+		PingTimeout: dataPingTimeout,
+	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("parse database source: %w", err)
-	}
-	if n := c.GetDatabase().GetMaxConns(); n > 0 {
-		cfg.MaxConns = int32(n)
-	}
-	if n := c.GetDatabase().GetMinConns(); n > 0 {
-		cfg.MinConns = int32(n)
-	}
-	if d := c.GetDatabase().GetMaxConnIdleTime(); d != nil {
-		cfg.MaxConnIdleTime = d.AsDuration()
-	}
-
-	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
-	if err != nil {
-		return nil, nil, fmt.Errorf("create database pool: %w", err)
+		return nil, nil, err
 	}
 	cleanup := func() { pool.Close() }
-
-	// 启动阶段连通性验证（非请求链路，独立超时上下文）。
-	pingCtx, cancel := context.WithTimeout(context.Background(), dataPingTimeout)
-	defer cancel()
-	if err := pool.Ping(pingCtx); err != nil {
-		cleanup()
-		return nil, nil, fmt.Errorf("ping database: %w", err)
-	}
 	logoDir := c.GetUpload().GetDir()
 	if logoDir == "" {
 		logoDir = "./uploads"

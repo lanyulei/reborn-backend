@@ -13,8 +13,6 @@ import (
 // proto 与领域模型显式转换，调优项默认值在此解析（proto 三态 optional：
 // severity_max=2、time_window 缺省全程、enabled=true）。
 type NotifySilenceService struct {
-	notifyv1.UnimplementedNotifySilenceServiceServer
-
 	uc    *biz.SilenceUsecase
 	guard bizGuard
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/lanyulei/reborn/backend/kit/dbx"
 	"github.com/lanyulei/reborn/backend/notify/internal/biz"
 
 	"github.com/jackc/pgx/v5"
@@ -102,7 +103,7 @@ func (r *aggRepo) CloseGroup(ctx context.Context, key string, threshold, suppres
 	fn func(ctx context.Context, tx biz.RouterTx, group *biz.AggGroup) error,
 ) (bool, error) {
 	closed := false
-	err := WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+	err := dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		var (
 			g       biz.AggGroup
 			samples []byte

@@ -6,6 +6,7 @@ import (
 	"slices"
 	"sync"
 
+	assistantv1 "github.com/lanyulei/reborn/backend/core/api/assistant/v1"
 	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
 	v1 "github.com/lanyulei/reborn/backend/core/api/system/v1"
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
@@ -39,6 +40,7 @@ var operationFiles = []protoreflect.FileDescriptor{
 	notifyv1.File_notify_v1_dispatch_proto,
 	notifyv1.File_notify_v1_delivery_log_proto,
 	notifyv1.File_notify_v1_dead_letter_proto,
+	assistantv1.File_assistant_v1_assistant_proto,
 }
 
 // authzExemptOperations 是免授权检查的操作集合（proto full method），为鉴权
@@ -162,4 +164,65 @@ func validateOperations(operations []string) error {
 		}
 	}
 	return nil
+}
+
+// AuthorizableMethod 是可授权 RPC 的方法级视图：供 assistant 域生成模型工具
+// 目录（与 listOperations 同源、同口径，避免两处维护 proto 文件清单）。
+type AuthorizableMethod struct {
+	// Name proto full method；Code = md5(Name)。
+	Name string
+	Code string
+	// Title 中文显示名（system.v1.title 注解）。
+	Title string
+	// HTTPMethod / Path / Body 来自 google.api.http 主绑定；Body 为 "" 或 "*"。
+	HTTPMethod string
+	Path       string
+	Body       string
+	// Input 请求消息描述符（生成入参 JSON Schema 用）。
+	Input protoreflect.MessageDescriptor
+}
+
+// AuthorizableMethods 枚举全部可授权 RPC（扣除免授权操作），按 Name 字典序；
+// 描述符不可变，结果缓存。
+var AuthorizableMethods = sync.OnceValue(func() []AuthorizableMethod {
+	out := make([]AuthorizableMethod, 0, 64)
+	for _, fd := range operationFiles {
+		services := fd.Services()
+		for i := range services.Len() {
+			svc := services.Get(i)
+			methods := svc.Methods()
+			for j := range methods.Len() {
+				m := methods.Get(j)
+				name := fmt.Sprintf("/%s/%s", svc.FullName(), m.Name())
+				if IsAuthzExempt(name) {
+					continue
+				}
+				method, path := httpRoute(m)
+				out = append(out, AuthorizableMethod{
+					Name:       name,
+					Code:       biz.OperationCode(name),
+					Title:      title(m),
+					HTTPMethod: method,
+					Path:       path,
+					Body:       httpBody(m),
+					Input:      m.Input(),
+				})
+			}
+		}
+	}
+	slices.SortFunc(out, func(a, b AuthorizableMethod) int { return cmp.Compare(a.Name, b.Name) })
+	return out
+})
+
+// httpBody 读 rpc 的 google.api.http 注解 body 字段；未标注返回空串。
+func httpBody(m protoreflect.MethodDescriptor) string {
+	opts := m.Options()
+	if opts == nil || !proto.HasExtension(opts, annotations.E_Http) {
+		return ""
+	}
+	rule, ok := proto.GetExtension(opts, annotations.E_Http).(*annotations.HttpRule)
+	if !ok || rule == nil {
+		return ""
+	}
+	return rule.GetBody()
 }

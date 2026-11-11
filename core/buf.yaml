@@ -18,6 +18,7 @@ lint:
     ENUM_VALUE_PREFIX:
       - api/system/v1/error_reason.proto
       - api/notify/v1/error_reason.proto
+      - api/assistant/v1/error_reason.proto
     # 内部配置结构非对外 API，不携带版本后缀。
     PACKAGE_VERSION_SUFFIX:
       - internal/conf/conf.proto

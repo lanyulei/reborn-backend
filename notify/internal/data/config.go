@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/lanyulei/reborn/backend/kit/dbx"
 	"github.com/lanyulei/reborn/backend/notify/internal/biz"
 
 	"github.com/jackc/pgx/v5"
@@ -56,7 +57,7 @@ func loadVersions(ctx context.Context, q querier) (biz.ConfigVersions, error) {
 // LoadSnapshot implements biz.ConfigRepo.
 func (r *configRepo) LoadSnapshot(ctx context.Context) (*biz.Snapshot, error) {
 	var snap *biz.Snapshot
-	err := WithTxOptions(ctx, r.data.Pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
+	err := dbx.WithTxOptions(ctx, r.data.Pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
 		versions, err := loadVersions(ctx, tx)
 		if err != nil {
 			return err

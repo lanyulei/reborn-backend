@@ -13,8 +13,6 @@ import (
 
 // UserService 实现 api/system/v1 生成的 UserServiceServer。
 type UserService struct {
-	v1.UnimplementedUserServiceServer
-
 	uc *biz.UserUsecase
 }
 

@@ -90,9 +90,9 @@ func (s *adminPermStub) ListGrantsByRoles(_ context.Context, roleIDs []string) (
 		union.Apis = append(union.Apis, g.Apis...)
 	}
 	return GrantSet{
-		Menus:    sortedUnique(union.Menus),
-		Elements: sortedUnique(union.Elements),
-		Apis:     sortedUnique(union.Apis),
+		Menus:    SortedUnique(union.Menus),
+		Elements: SortedUnique(union.Elements),
+		Apis:     SortedUnique(union.Apis),
 	}, nil
 }
 

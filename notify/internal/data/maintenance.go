@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/lanyulei/reborn/backend/kit/dbx"
 	"github.com/lanyulei/reborn/backend/notify/internal/biz"
 
 	"github.com/jackc/pgx/v5"
@@ -57,7 +58,7 @@ func (r *maintenanceRepo) EnsurePartition(ctx context.Context, table string, mon
 		!isDuplicateObject(err) {
 		return fmt.Errorf("add range check %s: %w", name, err)
 	}
-	return WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, "SET LOCAL lock_timeout = '2s'"); err != nil {
 			return err
 		}
@@ -108,7 +109,7 @@ func (r *maintenanceRepo) DropPartitionsBefore(ctx context.Context, table string
 		if start.AddDate(0, 1, 0).After(before) {
 			continue
 		}
-		err = WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+		err = dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 			if _, err := tx.Exec(ctx, "SET LOCAL lock_timeout = '2s'"); err != nil {
 				return err
 			}

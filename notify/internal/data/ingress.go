@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/lanyulei/reborn/backend/kit/dbx"
+	"github.com/lanyulei/reborn/backend/kit/notifycontract"
 	"github.com/lanyulei/reborn/backend/notify/internal/biz"
 
 	"github.com/jackc/pgx/v5"
@@ -26,19 +28,14 @@ func NewIngressRepo(data *Data) *ingressRepo { return &ingressRepo{data: data} }
 // （过期行被新值替换；命中则返回首次 event_id），返回值 == 本次 id 才插入事件。
 func (r *ingressRepo) SaveEvents(ctx context.Context, producer *biz.Producer, events []*biz.Event, dedupTTL time.Duration) ([]biz.IngressResult, error) {
 	results := make([]biz.IngressResult, 0, len(events))
-	err := WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+	err := dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		if err := consumeQuota(ctx, tx, producer, len(events)); err != nil {
 			return err
 		}
 		for _, ev := range events {
 			if ev.DedupKey != "" {
 				var winner string
-				if err := tx.QueryRow(ctx,
-					`INSERT INTO notify_dedup (biz_id, dedup_key, event_id, expire_time) VALUES ($1, $2, $3, now() + $4)
-					 ON CONFLICT (biz_id, dedup_key) DO UPDATE SET
-					   event_id = CASE WHEN notify_dedup.expire_time < now() THEN EXCLUDED.event_id ELSE notify_dedup.event_id END,
-					   expire_time = CASE WHEN notify_dedup.expire_time < now() THEN EXCLUDED.expire_time ELSE notify_dedup.expire_time END
-					 RETURNING event_id::text`,
+				if err := tx.QueryRow(ctx, notifycontract.DedupGateSQL,
 					ev.BizID, ev.DedupKey, ev.ID, dedupTTL).Scan(&winner); err != nil {
 					return fmt.Errorf("dedup gate: %w", err)
 				}
@@ -60,7 +57,7 @@ func (r *ingressRepo) SaveEvents(ctx context.Context, producer *biz.Producer, ev
 	return results, nil
 }
 
-// insertEvent 与 core insertEventPlan 同一列集与可空口径（dedup/group 空串、
+// insertEvent 与 core 共用 notifycontract.InsertEventSQL（同一列集与可空口径（dedup/group 空串、
 // payload/recipients 空集落 NULL）；时间列取数据库 now()（与 router 到期判定
 // 同一时钟源，见 insertDispatches）。
 func insertEvent(ctx context.Context, tx pgx.Tx, ev *biz.Event) error {
@@ -72,11 +69,8 @@ func insertEvent(ctx context.Context, tx pgx.Tx, ev *biz.Event) error {
 		}
 		recipients = raw
 	}
-	if _, err := tx.Exec(ctx,
-		`INSERT INTO notify_event (id, biz_id, event_type, severity, title, payload, dedup_key, group_key, recipients,
-		   source, status, publish_state, publish_attempts, next_publish_time, create_time)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,now(),now())`,
-		ev.ID, ev.BizID, ev.EventType, ev.Severity, ev.Title, nilIfEmptyBytes(ev.Payload), nilIfEmpty(ev.DedupKey), nilIfEmpty(ev.GroupKey),
+	if _, err := tx.Exec(ctx, notifycontract.InsertEventSQL,
+		ev.ID, ev.BizID, ev.EventType, ev.Severity, ev.Title, dbx.NilIfEmptyBytes(ev.Payload), dbx.NilIfEmpty(ev.DedupKey), dbx.NilIfEmpty(ev.GroupKey),
 		recipients, ev.Source, ev.Status, ev.PublishState, ev.PublishAttempts); err != nil {
 		return fmt.Errorf("insert event: %w", err)
 	}

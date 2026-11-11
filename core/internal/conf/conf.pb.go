@@ -32,7 +32,9 @@ type Bootstrap struct {
 	// security 安全相关配置（密码哈希等）。
 	Security *Security `protobuf:"bytes,3,opt,name=security,proto3" json:"security,omitempty"`
 	// notify 通知域配置（渠道凭据加密等）。
-	Notify        *Notify `protobuf:"bytes,4,opt,name=notify,proto3" json:"notify,omitempty"`
+	Notify *Notify `protobuf:"bytes,4,opt,name=notify,proto3" json:"notify,omitempty"`
+	// assistant 智能助手域配置（模型接入与 Agent 运行参数）。
+	Assistant     *Assistant `protobuf:"bytes,5,opt,name=assistant,proto3" json:"assistant,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -95,13 +97,18 @@ func (x *Bootstrap) GetNotify() *Notify {
 	return nil
 }
 
-// Server 是 HTTP/gRPC 服务器配置。
+func (x *Bootstrap) GetAssistant() *Assistant {
+	if x != nil {
+		return x.Assistant
+	}
+	return nil
+}
+
+// Server 是 HTTP 服务器配置（仅 HTTP 协议；gRPC 已停用）。
 type Server struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// http HTTP 配置。
-	Http *Server_HTTP `protobuf:"bytes,1,opt,name=http,proto3" json:"http,omitempty"`
-	// grpc gRPC 配置。
-	Grpc          *Server_GRPC `protobuf:"bytes,2,opt,name=grpc,proto3" json:"grpc,omitempty"`
+	Http          *Server_HTTP `protobuf:"bytes,1,opt,name=http,proto3" json:"http,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -139,13 +146,6 @@ func (*Server) Descriptor() ([]byte, []int) {
 func (x *Server) GetHttp() *Server_HTTP {
 	if x != nil {
 		return x.Http
-	}
-	return nil
-}
-
-func (x *Server) GetGrpc() *Server_GRPC {
-	if x != nil {
-		return x.Grpc
 	}
 	return nil
 }
@@ -325,6 +325,126 @@ func (x *Notify) GetDedupTtl() *durationpb.Duration {
 	return nil
 }
 
+// Assistant 是智能助手域配置：OpenAI 兼容模型接入 + Agent 运行参数。
+// api_key 为空表示助手停用（Chat 返回 ASSISTANT_DISABLED），其余功能不受影响。
+type Assistant struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// base_url OpenAI 兼容接口根地址（如 https://open.bigmodel.cn/api/paas/v4）。
+	BaseUrl string `protobuf:"bytes,1,opt,name=base_url,json=baseUrl,proto3" json:"base_url,omitempty"`
+	// api_key 模型 API Key；一律经 KRATOS_ASSISTANT_API_KEY 环境变量注入
+	//（占位符 ${ASSISTANT_API_KEY}），禁止写入配置文件；为空即停用助手。
+	ApiKey string `protobuf:"bytes,2,opt,name=api_key,json=apiKey,proto3" json:"api_key,omitempty"`
+	// model 模型名（如 glm-4.5-flash）。
+	Model string `protobuf:"bytes,3,opt,name=model,proto3" json:"model,omitempty"`
+	// loopback_addr 工具执行回环地址（本服务 HTTP 根，如 http://127.0.0.1:8010）。
+	LoopbackAddr string `protobuf:"bytes,4,opt,name=loopback_addr,json=loopbackAddr,proto3" json:"loopback_addr,omitempty"`
+	// timeout 单轮 Agent 运行上限（含模型生成与工具调用），也是会话租约 TTL；缺省 5m。
+	Timeout *durationpb.Duration `protobuf:"bytes,5,opt,name=timeout,proto3" json:"timeout,omitempty"`
+	// llm_connect_timeout 模型连接建立超时；缺省 3s。
+	LlmConnectTimeout *durationpb.Duration `protobuf:"bytes,6,opt,name=llm_connect_timeout,json=llmConnectTimeout,proto3" json:"llm_connect_timeout,omitempty"`
+	// tool_timeout 单次工具（回环接口）调用超时；缺省 5s。
+	ToolTimeout *durationpb.Duration `protobuf:"bytes,7,opt,name=tool_timeout,json=toolTimeout,proto3" json:"tool_timeout,omitempty"`
+	// max_steps 单轮最多模型调用次数（防循环）；缺省 20。
+	MaxSteps int32 `protobuf:"varint,8,opt,name=max_steps,json=maxSteps,proto3" json:"max_steps,omitempty"`
+	// max_concurrent_runs 单实例并发轮次上限（自我保护）；缺省 8。
+	MaxConcurrentRuns int32 `protobuf:"varint,9,opt,name=max_concurrent_runs,json=maxConcurrentRuns,proto3" json:"max_concurrent_runs,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *Assistant) Reset() {
+	*x = Assistant{}
+	mi := &file_conf_conf_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Assistant) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Assistant) ProtoMessage() {}
+
+func (x *Assistant) ProtoReflect() protoreflect.Message {
+	mi := &file_conf_conf_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Assistant.ProtoReflect.Descriptor instead.
+func (*Assistant) Descriptor() ([]byte, []int) {
+	return file_conf_conf_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *Assistant) GetBaseUrl() string {
+	if x != nil {
+		return x.BaseUrl
+	}
+	return ""
+}
+
+func (x *Assistant) GetApiKey() string {
+	if x != nil {
+		return x.ApiKey
+	}
+	return ""
+}
+
+func (x *Assistant) GetModel() string {
+	if x != nil {
+		return x.Model
+	}
+	return ""
+}
+
+func (x *Assistant) GetLoopbackAddr() string {
+	if x != nil {
+		return x.LoopbackAddr
+	}
+	return ""
+}
+
+func (x *Assistant) GetTimeout() *durationpb.Duration {
+	if x != nil {
+		return x.Timeout
+	}
+	return nil
+}
+
+func (x *Assistant) GetLlmConnectTimeout() *durationpb.Duration {
+	if x != nil {
+		return x.LlmConnectTimeout
+	}
+	return nil
+}
+
+func (x *Assistant) GetToolTimeout() *durationpb.Duration {
+	if x != nil {
+		return x.ToolTimeout
+	}
+	return nil
+}
+
+func (x *Assistant) GetMaxSteps() int32 {
+	if x != nil {
+		return x.MaxSteps
+	}
+	return 0
+}
+
+func (x *Assistant) GetMaxConcurrentRuns() int32 {
+	if x != nil {
+		return x.MaxConcurrentRuns
+	}
+	return 0
+}
+
 // HTTP 是 HTTP 服务器配置。
 type Server_HTTP struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -340,7 +460,7 @@ type Server_HTTP struct {
 
 func (x *Server_HTTP) Reset() {
 	*x = Server_HTTP{}
-	mi := &file_conf_conf_proto_msgTypes[5]
+	mi := &file_conf_conf_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -352,7 +472,7 @@ func (x *Server_HTTP) String() string {
 func (*Server_HTTP) ProtoMessage() {}
 
 func (x *Server_HTTP) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[5]
+	mi := &file_conf_conf_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -383,70 +503,6 @@ func (x *Server_HTTP) GetAddr() string {
 }
 
 func (x *Server_HTTP) GetTimeout() *durationpb.Duration {
-	if x != nil {
-		return x.Timeout
-	}
-	return nil
-}
-
-// GRPC 是 gRPC 服务器配置。
-type Server_GRPC struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// network 监听网络类型，如 tcp；留空使用默认值。
-	Network string `protobuf:"bytes,1,opt,name=network,proto3" json:"network,omitempty"`
-	// addr 监听地址。
-	Addr string `protobuf:"bytes,2,opt,name=addr,proto3" json:"addr,omitempty"`
-	// timeout 请求处理超时。
-	Timeout       *durationpb.Duration `protobuf:"bytes,3,opt,name=timeout,proto3" json:"timeout,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *Server_GRPC) Reset() {
-	*x = Server_GRPC{}
-	mi := &file_conf_conf_proto_msgTypes[6]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *Server_GRPC) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*Server_GRPC) ProtoMessage() {}
-
-func (x *Server_GRPC) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[6]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use Server_GRPC.ProtoReflect.Descriptor instead.
-func (*Server_GRPC) Descriptor() ([]byte, []int) {
-	return file_conf_conf_proto_rawDescGZIP(), []int{1, 1}
-}
-
-func (x *Server_GRPC) GetNetwork() string {
-	if x != nil {
-		return x.Network
-	}
-	return ""
-}
-
-func (x *Server_GRPC) GetAddr() string {
-	if x != nil {
-		return x.Addr
-	}
-	return ""
-}
-
-func (x *Server_GRPC) GetTimeout() *durationpb.Duration {
 	if x != nil {
 		return x.Timeout
 	}
@@ -811,21 +867,17 @@ var File_conf_conf_proto protoreflect.FileDescriptor
 
 const file_conf_conf_proto_rawDesc = "" +
 	"\n" +
-	"\x0fconf/conf.proto\x12\x04conf\x1a\x1egoogle/protobuf/duration.proto\"\xa3\x01\n" +
+	"\x0fconf/conf.proto\x12\x04conf\x1a\x1egoogle/protobuf/duration.proto\"\xd2\x01\n" +
 	"\tBootstrap\x12$\n" +
 	"\x06server\x18\x01 \x01(\v2\f.conf.ServerR\x06server\x12\x1e\n" +
 	"\x04data\x18\x02 \x01(\v2\n" +
 	".conf.DataR\x04data\x12*\n" +
 	"\bsecurity\x18\x03 \x01(\v2\x0e.conf.SecurityR\bsecurity\x12$\n" +
-	"\x06notify\x18\x04 \x01(\v2\f.conf.NotifyR\x06notify\"\xac\x02\n" +
+	"\x06notify\x18\x04 \x01(\v2\f.conf.NotifyR\x06notify\x12-\n" +
+	"\tassistant\x18\x05 \x01(\v2\x0f.conf.AssistantR\tassistant\"\x9a\x01\n" +
 	"\x06Server\x12%\n" +
-	"\x04http\x18\x01 \x01(\v2\x11.conf.Server.HTTPR\x04http\x12%\n" +
-	"\x04grpc\x18\x02 \x01(\v2\x11.conf.Server.GRPCR\x04grpc\x1ai\n" +
+	"\x04http\x18\x01 \x01(\v2\x11.conf.Server.HTTPR\x04http\x1ai\n" +
 	"\x04HTTP\x12\x18\n" +
-	"\anetwork\x18\x01 \x01(\tR\anetwork\x12\x12\n" +
-	"\x04addr\x18\x02 \x01(\tR\x04addr\x123\n" +
-	"\atimeout\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\atimeout\x1ai\n" +
-	"\x04GRPC\x12\x18\n" +
 	"\anetwork\x18\x01 \x01(\tR\anetwork\x12\x12\n" +
 	"\x04addr\x18\x02 \x01(\tR\x04addr\x123\n" +
 	"\atimeout\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\atimeout\"\xa5\x02\n" +
@@ -863,7 +915,17 @@ const file_conf_conf_proto_rawDesc = "" +
 	"\x06master\x18\x01 \x01(\v2\x13.conf.Notify.MasterR\x06master\x126\n" +
 	"\tdedup_ttl\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\bdedupTtl\x1a\x1a\n" +
 	"\x06Master\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03keyB<Z:github.com/lanyulei/reborn/backend/core/internal/conf;confb\x06proto3"
+	"\x03key\x18\x01 \x01(\tR\x03key\"\x85\x03\n" +
+	"\tAssistant\x12\x19\n" +
+	"\bbase_url\x18\x01 \x01(\tR\abaseUrl\x12\x17\n" +
+	"\aapi_key\x18\x02 \x01(\tR\x06apiKey\x12\x14\n" +
+	"\x05model\x18\x03 \x01(\tR\x05model\x12#\n" +
+	"\rloopback_addr\x18\x04 \x01(\tR\floopbackAddr\x123\n" +
+	"\atimeout\x18\x05 \x01(\v2\x19.google.protobuf.DurationR\atimeout\x12I\n" +
+	"\x13llm_connect_timeout\x18\x06 \x01(\v2\x19.google.protobuf.DurationR\x11llmConnectTimeout\x12<\n" +
+	"\ftool_timeout\x18\a \x01(\v2\x19.google.protobuf.DurationR\vtoolTimeout\x12\x1b\n" +
+	"\tmax_steps\x18\b \x01(\x05R\bmaxSteps\x12.\n" +
+	"\x13max_concurrent_runs\x18\t \x01(\x05R\x11maxConcurrentRunsB<Z:github.com/lanyulei/reborn/backend/core/internal/conf;confb\x06proto3"
 
 var (
 	file_conf_conf_proto_rawDescOnce sync.Once
@@ -884,8 +946,8 @@ var file_conf_conf_proto_goTypes = []any{
 	(*Data)(nil),                // 2: conf.Data
 	(*Security)(nil),            // 3: conf.Security
 	(*Notify)(nil),              // 4: conf.Notify
-	(*Server_HTTP)(nil),         // 5: conf.Server.HTTP
-	(*Server_GRPC)(nil),         // 6: conf.Server.GRPC
+	(*Assistant)(nil),           // 5: conf.Assistant
+	(*Server_HTTP)(nil),         // 6: conf.Server.HTTP
 	(*Data_Database)(nil),       // 7: conf.Data.Database
 	(*Data_Upload)(nil),         // 8: conf.Data.Upload
 	(*Security_Authz)(nil),      // 9: conf.Security.Authz
@@ -899,8 +961,8 @@ var file_conf_conf_proto_depIdxs = []int32{
 	2,  // 1: conf.Bootstrap.data:type_name -> conf.Data
 	3,  // 2: conf.Bootstrap.security:type_name -> conf.Security
 	4,  // 3: conf.Bootstrap.notify:type_name -> conf.Notify
-	5,  // 4: conf.Server.http:type_name -> conf.Server.HTTP
-	6,  // 5: conf.Server.grpc:type_name -> conf.Server.GRPC
+	5,  // 4: conf.Bootstrap.assistant:type_name -> conf.Assistant
+	6,  // 5: conf.Server.http:type_name -> conf.Server.HTTP
 	7,  // 6: conf.Data.database:type_name -> conf.Data.Database
 	8,  // 7: conf.Data.upload:type_name -> conf.Data.Upload
 	10, // 8: conf.Security.password:type_name -> conf.Security.Password
@@ -908,17 +970,19 @@ var file_conf_conf_proto_depIdxs = []int32{
 	9,  // 10: conf.Security.authz:type_name -> conf.Security.Authz
 	12, // 11: conf.Notify.master:type_name -> conf.Notify.Master
 	13, // 12: conf.Notify.dedup_ttl:type_name -> google.protobuf.Duration
-	13, // 13: conf.Server.HTTP.timeout:type_name -> google.protobuf.Duration
-	13, // 14: conf.Server.GRPC.timeout:type_name -> google.protobuf.Duration
-	13, // 15: conf.Data.Database.max_conn_idle_time:type_name -> google.protobuf.Duration
-	13, // 16: conf.Security.Authz.policy_ttl:type_name -> google.protobuf.Duration
-	13, // 17: conf.Security.Jwt.access_ttl:type_name -> google.protobuf.Duration
-	13, // 18: conf.Security.Jwt.refresh_ttl:type_name -> google.protobuf.Duration
-	19, // [19:19] is the sub-list for method output_type
-	19, // [19:19] is the sub-list for method input_type
-	19, // [19:19] is the sub-list for extension type_name
-	19, // [19:19] is the sub-list for extension extendee
-	0,  // [0:19] is the sub-list for field type_name
+	13, // 13: conf.Assistant.timeout:type_name -> google.protobuf.Duration
+	13, // 14: conf.Assistant.llm_connect_timeout:type_name -> google.protobuf.Duration
+	13, // 15: conf.Assistant.tool_timeout:type_name -> google.protobuf.Duration
+	13, // 16: conf.Server.HTTP.timeout:type_name -> google.protobuf.Duration
+	13, // 17: conf.Data.Database.max_conn_idle_time:type_name -> google.protobuf.Duration
+	13, // 18: conf.Security.Authz.policy_ttl:type_name -> google.protobuf.Duration
+	13, // 19: conf.Security.Jwt.access_ttl:type_name -> google.protobuf.Duration
+	13, // 20: conf.Security.Jwt.refresh_ttl:type_name -> google.protobuf.Duration
+	21, // [21:21] is the sub-list for method output_type
+	21, // [21:21] is the sub-list for method input_type
+	21, // [21:21] is the sub-list for extension type_name
+	21, // [21:21] is the sub-list for extension extendee
+	0,  // [0:21] is the sub-list for field type_name
 }
 
 func init() { file_conf_conf_proto_init() }

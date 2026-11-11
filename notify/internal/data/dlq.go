@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/lanyulei/reborn/backend/kit/dbx"
 	"github.com/lanyulei/reborn/backend/notify/internal/biz"
 
 	"github.com/jackc/pgx/v5"
@@ -23,7 +24,7 @@ func NewDlqRepo(data *Data) *dlqRepo { return &dlqRepo{data: data} }
 // SKIP LOCKED）→ 插入新 dispatch → 提交（评审 #16）。
 func (r *dlqRepo) Replay(ctx context.Context, limit int, build func(dl *biz.DeadLetter) (*biz.Dispatch, error)) (int, error) {
 	n := 0
-	err := WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+	err := dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx,
 			`UPDATE notify_dlq SET replay_state = 3, update_time = now()
 			 WHERE id IN (SELECT id FROM notify_dlq WHERE replay_state = 2 ORDER BY update_time LIMIT $1 FOR UPDATE SKIP LOCKED)

@@ -6,13 +6,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
+	"github.com/lanyulei/reborn/backend/kit/notifycontract"
+
 	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
-	"github.com/lanyulei/reborn/backend/core/internal/pkg/idgen"
-	"github.com/lanyulei/reborn/backend/core/internal/pkg/paging"
+	"github.com/lanyulei/reborn/backend/kit/idgen"
+	"github.com/lanyulei/reborn/backend/kit/paging"
 
 	"github.com/go-kratos/kratos/v3/errors"
 )
@@ -20,46 +21,33 @@ import (
 // 渠道类型常量（落库字符串；与 api NotifyChannelType 枚举一一对应，service 层转换）。
 const (
 	// ChannelTypeEmail 邮件（SMTP）。
-	ChannelTypeEmail = "email"
+	ChannelTypeEmail = notifycontract.ChannelTypeEmail
 	// ChannelTypeWebhook 通用 Webhook（仅 HTTPS）。
-	ChannelTypeWebhook = "webhook"
+	ChannelTypeWebhook = notifycontract.ChannelTypeWebhook
 	// ChannelTypeDingtalk 钉钉群机器人。
-	ChannelTypeDingtalk = "dingtalk"
+	ChannelTypeDingtalk = notifycontract.ChannelTypeDingtalk
 	// ChannelTypeWecom 企业微信群机器人。
-	ChannelTypeWecom = "wecom"
+	ChannelTypeWecom = notifycontract.ChannelTypeWecom
 	// ChannelTypeFeishu 飞书群机器人。
-	ChannelTypeFeishu = "feishu"
+	ChannelTypeFeishu = notifycontract.ChannelTypeFeishu
 )
 
 // DefaultBizID 默认业务租户标识。
-const DefaultBizID = "default"
+const DefaultBizID = notifycontract.DefaultBizID
 
-// EmailConfig 邮件渠道配置（type=email）。json 标签即 notify_channel.config
-// 列的落库结构（管道服务按同一 schema 读取，见 backend/docs/notify-design.md §5.1.1）。
-type EmailConfig struct {
-	Host     string `json:"host"`
-	Port     uint32 `json:"port"`
-	Username string `json:"username"`
-	FromAddr string `json:"from_addr"`
-	StartTLS bool   `json:"starttls"`
-}
+// EmailConfig 等 jsonb 列结构是与管道共享的数据契约（kit/notifycontract，json 标签即
+// 落库 schema；两端同时发布）。
+type EmailConfig = notifycontract.EmailConfig
 
 // WebhookConfig Webhook 渠道配置（type=webhook）。
-type WebhookConfig struct {
-	URL      string            `json:"url"`
-	Method   string            `json:"method"`
-	Headers  map[string]string `json:"headers"`
-	TimeoutS int32             `json:"timeout_s"`
-}
+type WebhookConfig = notifycontract.WebhookConfig
 
 // DefaultWebhookTimeoutS 是 webhook 出站超时缺省值（秒）：入参未指定时由
 // service 层补齐后落库，保证管道侧总能拿到 1-10 范围内的确定超时。
 const DefaultWebhookTimeoutS int32 = 5
 
 // RobotConfig 群机器人渠道配置（type=dingtalk/wecom/feishu）。
-type RobotConfig struct {
-	AtMobiles []string `json:"at_mobiles"`
-}
+type RobotConfig = notifycontract.RobotConfig
 
 // ChannelConfig 类型化渠道配置：恰好一个分支非 nil，且须与渠道 type 匹配
 // （email→Email、webhook→Webhook、三类群机器人→Robot）。
@@ -70,10 +58,7 @@ type ChannelConfig struct {
 }
 
 // RateLimit 令牌桶限流参数；QPS=0 表示不限。
-type RateLimit struct {
-	QPS   int64 `json:"qps"`
-	Burst int64 `json:"burst"`
-}
+type RateLimit = notifycontract.RateLimit
 
 // Channel 渠道领域模型（DO）；与 proto 实体、data 层 PO 显式转换，禁止跨层直传。
 // 一行渠道 = 一个可独立发送/限流/启停的端点实例。Secret 仅在写入链路携带明文
@@ -325,7 +310,7 @@ type TestEventSpec struct {
 
 // eventTypePattern 事件类型取值：小写字母/数字开头的点分串（比路由模式
 // 严——不允许 * 与尾部通配；与 ingress 侧事件名校验一致）。
-var eventTypePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,127}$`)
+var eventTypePattern = notifycontract.EventTypePattern
 
 // SendTestEvent 按渠道实例发送测试事件（§5.1.1 连通性测试）：校验实例
 // 存在且启用后，经 EventWriter 直插一条 source=internal 的测试事件，与

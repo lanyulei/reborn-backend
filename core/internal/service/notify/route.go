@@ -14,8 +14,6 @@ import (
 // severity_min=1、priority=5、aggregate_window_s=0、suppress_threshold=500、
 // suppress_duration_m=30、enabled=true）。
 type NotifyRouteService struct {
-	notifyv1.UnimplementedNotifyRouteServiceServer
-
 	uc    *biz.RouteUsecase
 	guard bizGuard
 }

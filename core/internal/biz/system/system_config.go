@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/lanyulei/reborn/backend/kit/idgen"
 )
 
 // SystemConfig 是系统配置领域模型（DO）：全局展示配置（标题/子标题/logo/
@@ -72,7 +74,7 @@ func (uc *SystemConfigUsecase) Get(ctx context.Context) (*SystemConfig, error) {
 // Save 全量覆盖系统配置：生成新行主键（首次插入用）、填充审计时间与修改人
 // 后委托仓储；updateUser 来自 JWT claims（写接口必经鉴权中间件）。
 func (uc *SystemConfigUsecase) Save(ctx context.Context, cfg *SystemConfig, updateUser string) error {
-	id, err := newID()
+	id, err := idgen.NewID()
 	if err != nil {
 		return err
 	}

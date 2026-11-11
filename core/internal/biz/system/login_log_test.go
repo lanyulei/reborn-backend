@@ -3,6 +3,8 @@ package biz
 import (
 	"context"
 	"testing"
+
+	"github.com/lanyulei/reborn/backend/kit/paging"
 )
 
 // loginLogReaderStub 记录 List 调用参数的读仓储 stub。
@@ -40,8 +42,8 @@ func TestLoginLogUsecase_List(t *testing.T) {
 	}{
 		{"as-is", 2, 20, 2, 20},
 		{"page floor", 0, 20, 1, 20},
-		{"size floor", 1, 0, 1, defaultPageSize},
-		{"size ceiling", 1, 1000, 1, maxPageSize},
+		{"size floor", 1, 0, 1, paging.DefaultPageSize},
+		{"size ceiling", 1, 1000, 1, paging.MaxPageSize},
 	}
 	for _, tc := range cases {
 		logs, total, err := uc.List(ctx, filter, tc.page, tc.pageSize)

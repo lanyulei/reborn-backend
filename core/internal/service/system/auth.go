@@ -16,8 +16,6 @@ import (
 
 // AuthService 实现 api/system/v1 生成的 AuthServiceServer。
 type AuthService struct {
-	v1.UnimplementedAuthServiceServer
-
 	uc    *biz.AuthUsecase
 	authz *biz.AuthzUsecase
 }
@@ -127,7 +125,7 @@ const maxUserAgentBytes = 255
 
 // clientIP 从传输上下文提取客户端 IP：HTTP 侧优先 X-Forwarded-For 首段
 // （逗号分隔取最左并去空白；可信 LB 追加头为部署前提，与限流同），否则取
-// RemoteAddr 的 host 部分；gRPC 侧取不到返回空串（DO 约定：空串=未取到，
+// RemoteAddr 的 host 部分；非 HTTP 传输取不到返回空串（DO 约定：空串=未取到，
 // 落库为 NULL）。
 //
 // 两路取值均须经 net.ParseIP 解析成功并规范化：XFF 是客户端可控头，不校验
@@ -164,8 +162,8 @@ func parseIP(s string) string {
 	return ip.String()
 }
 
-// userAgent 从传输上下文提取客户端 User-Agent（HTTP/gRPC 两协议通用：
-// transport 层统一 Header 接口），超长截断至落库上限；取不到返回空串。
+// userAgent 从传输上下文提取客户端 User-Agent（经 transport 层统一 Header
+// 接口），超长截断至落库上限；取不到返回空串。
 func userAgent(ctx context.Context) string {
 	tr, ok := transport.FromServerContext(ctx)
 	if !ok || tr == nil {

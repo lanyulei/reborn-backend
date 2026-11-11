@@ -511,21 +511,10 @@ func (s *Store) ListGrantsByRoles(_ context.Context, roleIDs []string) (biz.Gran
 		union.Apis = append(union.Apis, g.Apis...)
 	}
 	return biz.GrantSet{
-		Menus:    sortedUnique(union.Menus),
-		Elements: sortedUnique(union.Elements),
-		Apis:     sortedUnique(union.Apis),
+		Menus:    biz.SortedUnique(union.Menus),
+		Elements: biz.SortedUnique(union.Elements),
+		Apis:     biz.SortedUnique(union.Apis),
 	}, nil
-}
-
-// sortedUnique 返回去重后的字典序副本（nil 输入返回 nil，对齐 data 层无行
-// 时的 nil 切片）。
-func sortedUnique(codes []string) []string {
-	if len(codes) == 0 {
-		return nil
-	}
-	out := slices.Clone(codes)
-	slices.Sort(out)
-	return slices.Compact(out)
 }
 
 // ReplaceForRole implements biz.PermissionAdminRepo：同一临界区内全量覆盖

@@ -10,6 +10,7 @@ import (
 
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
 	basedata "github.com/lanyulei/reborn/backend/core/internal/data"
+	"github.com/lanyulei/reborn/backend/kit/dbx"
 
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
@@ -99,7 +100,7 @@ func (r *roleRepo) ListRoles(ctx context.Context, filter biz.RoleFilter, page, p
 	where := []string{"delete_time IS NULL"}
 	args := make([]any, 0, 4)
 	if filter.Keyword != "" {
-		args = append(args, basedata.LikeContains(filter.Keyword))
+		args = append(args, dbx.LikeContains(filter.Keyword))
 		n := strconv.Itoa(len(args))
 		where = append(where, "(name ILIKE $"+n+" OR code ILIKE $"+n+")")
 	}
@@ -187,7 +188,7 @@ func (r *roleRepo) CreateRole(ctx context.Context, role *biz.Role) error {
 	_, err := r.data.Pool.Exec(ctx,
 		`INSERT INTO system_role (id, name, code, status, biz_scope, create_time, update_time)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		role.ID, role.Name, role.Code, role.Status, textArrayArg(role.BizScope), role.CreateTime, role.UpdateTime)
+		role.ID, role.Name, role.Code, role.Status, dbx.TextArray(role.BizScope), role.CreateTime, role.UpdateTime)
 	if err != nil {
 		return mapRoleUniqueViolation(err)
 	}
@@ -210,7 +211,7 @@ func (r *roleRepo) UpdateRole(ctx context.Context, id string, upd biz.RoleUpdate
 		add("status", *upd.Status)
 	}
 	if upd.BizScope != nil {
-		add("biz_scope", textArrayArg(*upd.BizScope))
+		add("biz_scope", dbx.TextArray(*upd.BizScope))
 	}
 	if len(sets) == 0 {
 		return nil
@@ -256,13 +257,4 @@ func (r *roleRepo) DeleteRole(ctx context.Context, id string) error {
 		return fmt.Errorf("delete role permissions: %w", err)
 	}
 	return tx.Commit(ctx)
-}
-
-// textArrayArg 归一化 text[] 实参：nil 切片会被 pgx 编码为 NULL（撞 NOT NULL），
-// 统一落空数组。
-func textArrayArg(items []string) []string {
-	if items == nil {
-		return []string{}
-	}
-	return items
 }

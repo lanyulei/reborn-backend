@@ -10,6 +10,7 @@ import (
 
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/notify"
 	basedata "github.com/lanyulei/reborn/backend/core/internal/data"
+	"github.com/lanyulei/reborn/backend/kit/dbx"
 
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
@@ -74,7 +75,7 @@ func scanTemplate(scan func(dest ...any) error) (*biz.Template, error) {
 
 // CreateTemplate implements biz.TemplateRepo：落库并同事务 bump 版本。
 func (r *templateRepo) CreateTemplate(ctx context.Context, tpl *biz.Template) error {
-	return basedata.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO notify_template
 			     (id, biz_id, event_type, channel_type, subject, body, version, enabled, create_time, update_time)
@@ -119,7 +120,7 @@ func (r *templateRepo) UpdateTemplate(ctx context.Context, id string, upd biz.Te
 	args = append(args, id)
 	query := "UPDATE notify_template SET " + strings.Join(sets, ", ") +
 		", update_time = now() WHERE id = $" + strconv.Itoa(len(args)) + " AND delete_time IS NULL"
-	return basedata.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, query, args...)
 		if err != nil {
 			return mapTemplateUniqueViolation(err)
@@ -133,7 +134,7 @@ func (r *templateRepo) UpdateTemplate(ctx context.Context, id string, upd biz.Te
 
 // DeleteTemplate implements biz.TemplateRepo：软删并同事务 bump 版本。
 func (r *templateRepo) DeleteTemplate(ctx context.Context, id string) error {
-	return basedata.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx,
 			"UPDATE notify_template SET delete_time = now(), update_time = now()"+
 				" WHERE id = $1 AND delete_time IS NULL", id)
@@ -170,7 +171,7 @@ func (r *templateRepo) ListTemplates(ctx context.Context, filter biz.TemplateFil
 		where = append(where, "biz_id = $"+strconv.Itoa(len(args)))
 	}
 	if filter.Keyword != "" {
-		args = append(args, basedata.LikeContains(filter.Keyword))
+		args = append(args, dbx.LikeContains(filter.Keyword))
 		n := strconv.Itoa(len(args))
 		where = append(where, "(event_type ILIKE $"+n+" OR channel_type ILIKE $"+n+" OR subject ILIKE $"+n+")")
 	}

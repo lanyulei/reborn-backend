@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lanyulei/reborn/backend/kit/dbx"
 	"github.com/lanyulei/reborn/backend/notify/internal/biz"
 	"github.com/lanyulei/reborn/backend/notify/internal/conf"
 
@@ -82,7 +83,7 @@ func seedConfig(t *testing.T, d *Data, webhookURL string) {
 	t.Helper()
 	ctx := context.Background()
 	box := testBox(t)
-	sealed, err := box.Seal("hook-secret", []byte("0123456789ab"))
+	sealed, err := box.SealWithNonce("hook-secret", []byte("0123456789ab"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +120,7 @@ func seedEvent(t *testing.T, d *Data, id, eventType string, severity int32, grou
 	if _, err := d.Pool.Exec(context.Background(),
 		`INSERT INTO notify_event (id, biz_id, event_type, severity, title, payload, dedup_key, group_key, recipients, source, status, publish_state, publish_attempts, next_publish_time, create_time)
 		 VALUES ($1, 'default', $2, $3, $4, '{"host":"web-1"}', NULL, $5, $6, 'internal', 1, 0, 0, now(), now())`,
-		id, eventType, severity, "title-"+id, nilIfEmpty(groupKey), recipients); err != nil {
+		id, eventType, severity, "title-"+id, dbx.NilIfEmpty(groupKey), recipients); err != nil {
 		t.Fatalf("seed event %s: %v", id, err)
 	}
 }
@@ -223,7 +224,7 @@ func TestIntegration_SnapshotTenancyColumns(t *testing.T) {
 	seedConfig(t, d, "http://127.0.0.1:9/hook")
 	ctx := context.Background()
 	box := testBox(t)
-	sign, _ := box.Seal("SIGN-SECRET", []byte("abcdefghijkl"))
+	sign, _ := box.SealWithNonce("SIGN-SECRET", []byte("abcdefghijkl"))
 	if _, err := d.Pool.Exec(ctx, "UPDATE notify_producer SET qps_limit = 7, daily_limit = 700 WHERE id = $1", idProducer); err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +248,7 @@ func TestIntegration_SnapshotTenancyColumns(t *testing.T) {
 
 func mustSeal(t *testing.T, box *SecretBox, plain string) []byte {
 	t.Helper()
-	out, err := box.Seal(plain, []byte("0123456789ab"))
+	out, err := box.SealWithNonce(plain, []byte("0123456789ab"))
 	if err != nil {
 		t.Fatal(err)
 	}
