@@ -100,6 +100,9 @@ message Role {
   // biz_scope 可管理的通知 biz 列表；空 = 不限（现有角色缺省）。用户可管范围
   // = 启用角色 scope 并集，任一角色不限即不限；超管恒不限。
   repeated string biz_scope = 7;
+  // builtin 是否内置角色（迁移预置）：不可删除，编辑/授权仅超管；
+  // 新建用户自动绑定且不可解绑。
+  bool builtin = 8;
 }
 
 // BizScope 通知 biz 范围整组替换载荷（更新时须显式携带，空列表 = 清空 = 不限）。

@@ -62,7 +62,7 @@ func (r *userRoleRepo) BindUserRoles(ctx context.Context, userID string, roleIDs
 // ListUserRoles implements biz.UserRoleRepo：关联表 join 角色表，过滤已软删角色。
 func (r *userRoleRepo) ListUserRoles(ctx context.Context, userID string) ([]*biz.Role, error) {
 	rows, err := r.data.Pool.Query(ctx,
-		"SELECT r.id, r.name, r.code, r.status, r.biz_scope, r.create_time, r.update_time"+
+		"SELECT r.id, r.name, r.code, r.status, r.biz_scope, r.builtin, r.create_time, r.update_time"+
 			" FROM system_user_role ur JOIN system_role r ON r.id = ur.role_id AND r.delete_time IS NULL"+
 			" WHERE ur.user_id = $1 ORDER BY r.code", userID)
 	if err != nil {

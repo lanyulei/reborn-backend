@@ -8,10 +8,12 @@ import (
 	"time"
 
 	bizassistant "github.com/lanyulei/reborn/backend/core/internal/biz/assistant"
+	bizcmdb "github.com/lanyulei/reborn/backend/core/internal/biz/cmdb"
 	biznotify "github.com/lanyulei/reborn/backend/core/internal/biz/notify"
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
 	"github.com/lanyulei/reborn/backend/core/internal/conf"
 	assistantservice "github.com/lanyulei/reborn/backend/core/internal/service/assistant"
+	cmdbservice "github.com/lanyulei/reborn/backend/core/internal/service/cmdb"
 	notifyservice "github.com/lanyulei/reborn/backend/core/internal/service/notify"
 	service "github.com/lanyulei/reborn/backend/core/internal/service/system"
 	"github.com/lanyulei/reborn/backend/core/internal/testfake"
@@ -42,6 +44,14 @@ type testServices struct {
 	chatModel     *testfake.ChatModel
 	loopback      *testfake.Loopback
 	assistantData *testfake.AssistantStore
+	cmdbModel     *cmdbservice.CmdbModelService
+	cmdbCI        *cmdbservice.CmdbCIService
+	cmdbRelation  *cmdbservice.CmdbRelationService
+	cmdbScope     *cmdbservice.CmdbScopeService
+	cmdbSync      *cmdbservice.CmdbSyncService
+	cmdbInsight   *cmdbservice.CmdbInsightService
+	syncData      *testfake.SyncStore
+	cmdbData      *testfake.CmdbStore
 	store         *testfake.Store
 	authz         *biz.AuthzUsecase
 	signer        *biz.TokenSigner
@@ -82,7 +92,7 @@ func newTestServices(t *testing.T) testServices {
 	}
 	userUC := biz.NewUserUsecase(store, store, store, store, hasher, store)
 	authzUC := biz.NewAuthzUsecase(store, store, store, authorizer)
-	channelUC := biznotify.NewChannelUsecase(store, store, store)
+	channelUC := biznotify.NewChannelUsecase(store, store, store).WithTestEventCooldown(0)
 	// 智能助手：脚本模型桩 + 真实 HTTP 回环（地址在 httptest 启动后注入），
 	// 工具调用真实经过 auth/authz 中间件链。
 	chatModel := testfake.NewChatModel()
@@ -97,26 +107,44 @@ func newTestServices(t *testing.T) testServices {
 		bizassistant.AgentConfig{Enabled: true, Timeout: 30 * time.Second, MaxSteps: 6, MaxConcurrentRuns: 4},
 		testLogger())
 	conversationUC := bizassistant.NewConversationUsecase(assistantData.Conversations(), assistantData.Messages(), assistantData.ToolCalls())
+	// CMDB：内存仓储，模型/资源/关系/历史语义对齐 data 层。
+	cmdbData := testfake.NewCmdbStore()
+	roleUC := biz.NewRoleUsecase(store, store, authorizer)
+	cmdbModelUC := bizcmdb.NewModelUsecase(cmdbData.Models(), cmdbData.Fields(), cmdbData.RelationTypes(), cmdbData.Relations(), cmdbData.Views(), &testfake.FakeIndexer{}, cmdbData.Groups(), cmdbData.SchemaAudits())
+	cmdbRelationUC := bizcmdb.NewRelationUsecase(cmdbData.RelationTypes(), cmdbData.CIs(), cmdbData.Relations(), cmdbData.Fields())
+	cmdbCIUC := bizcmdb.NewCIUsecase(cmdbData.Models(), cmdbData.Fields(), cmdbData.RelationTypes(), cmdbData.CIs(), cmdbData.Relations(), cmdbData.Histories(), cmdbRelationUC)
+	cmdbScopeUC := bizcmdb.NewScopeUsecase(cmdbData.Scopes(), authzUC, roleUC, cmdbData.Models())
+	syncData := testfake.NewSyncStore()
+	cmdbSyncUC := bizcmdb.NewSyncUsecase(syncData.Sources(), syncData.Tasks(), syncData.Runs(), &testfake.FakeSealer{Enabled: true})
+	cmdbInsightUC := bizcmdb.NewInsightUsecase(cmdbData.Groups(), cmdbData.Favorites(), cmdbData.Overviews(), cmdbData.SchemaAudits(), cmdbData.Models())
 	return testServices{
+		cmdbModel:     cmdbservice.NewCmdbModelService(cmdbModelUC),
+		cmdbCI:        cmdbservice.NewCmdbCIService(cmdbCIUC, cmdbScopeUC),
+		cmdbRelation:  cmdbservice.NewCmdbRelationService(cmdbRelationUC, cmdbCIUC, cmdbScopeUC),
+		cmdbScope:     cmdbservice.NewCmdbScopeService(cmdbScopeUC),
+		cmdbSync:      cmdbservice.NewCmdbSyncService(cmdbSyncUC),
+		cmdbInsight:   cmdbservice.NewCmdbInsightService(cmdbInsightUC, cmdbScopeUC),
+		syncData:      syncData,
+		cmdbData:      cmdbData,
 		assistant:     assistantservice.NewAssistantService(conversationUC),
 		assistantChat: assistantservice.NewAssistantChatService(agentUC),
 		chatModel:     chatModel,
 		loopback:      loopback,
 		assistantData: assistantData,
 		user:          service.NewUserService(userUC),
-		role:          service.NewRoleService(biz.NewRoleUsecase(store, store, authorizer), biz.NewPermissionUsecase(store, store, authorizer, biznotify.NewNotificationUsecase(store, nil), testfake.NewTxManager())),
-		auth:          service.NewAuthService(authUC, authzUC),
+		role:          service.NewRoleService(biz.NewRoleUsecase(store, store, authorizer), biz.NewPermissionUsecase(store, store, authorizer, biznotify.NewNotificationUsecase(store, nil), testfake.NewTxManager()), userUC),
+		auth:          service.NewAuthService(authUC, authzUC, biz.NewAvatarUsecase(store, store, testfake.NewAvatarStore())),
 		syscfg:        service.NewSystemConfigService(biz.NewSystemConfigUsecase(store)),
 		loginLog:      service.NewLoginLogService(biz.NewLoginLogUsecase(store)),
-		notify:        notifyservice.NewNotifyChannelService(channelUC, authzUC),
+		notify:        notifyservice.NewNotifyChannelService(channelUC, biznotify.NewChannelHealthUsecase(store), authzUC),
 		template:      notifyservice.NewNotifyTemplateService(biznotify.NewTemplateUsecase(store), authzUC),
-		route:         notifyservice.NewNotifyRouteService(biznotify.NewRouteUsecase(store, store), authzUC),
+		route:         notifyservice.NewNotifyRouteService(biznotify.NewRouteUsecase(store, store), biznotify.NewPreviewUsecase(store, store, store, store), authzUC),
 		silence:       notifyservice.NewNotifySilenceService(biznotify.NewSilenceUsecase(store), authzUC),
 		// 订阅代管校验复用 system 用户用例（is_admin 直查 store）。
 		subscription: notifyservice.NewNotifySubscriptionService(
-			biznotify.NewSubscriptionUsecase(store), userUC),
+			biznotify.NewSubscriptionUsecase(store), userUC, authzUC),
 		producer: notifyservice.NewNotifyProducerService(biznotify.NewProducerUsecase(store), authzUC),
-		event:    notifyservice.NewNotifyEventService(biznotify.NewEventUsecase(store), authzUC),
+		event:    notifyservice.NewNotifyEventService(biznotify.NewEventUsecase(store, store), biznotify.NewDispatchUsecase(store), biznotify.NewDeliveryLogUsecase(store), authzUC),
 		dispatch: notifyservice.NewNotifyDispatchService(biznotify.NewDispatchUsecase(store), channelUC, authzUC),
 		deliveryLog: notifyservice.NewNotifyDeliveryLogService(
 			biznotify.NewDeliveryLogUsecase(store), channelUC, authzUC),
@@ -160,6 +188,12 @@ func TestNewHTTPServerWithOptions(t *testing.T) {
 		svc.deadLetter,
 		svc.assistant,
 		svc.assistantChat,
+		svc.cmdbModel,
+		svc.cmdbCI,
+		svc.cmdbRelation,
+		svc.cmdbScope,
+		svc.cmdbSync,
+		svc.cmdbInsight,
 		svc.signer,
 		svc.authz,
 	)

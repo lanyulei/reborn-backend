@@ -27,9 +27,10 @@ dep:
 	buf dep update
 
 .PHONY: run
-# run 本地运行（必须用 kratos CLI）。
+# run 本地启动服务（kratos CLI）。显式指向 cmd/server：cmd/ 下还有 migrate 子命令，
+# 不带路径时 kratos 会交互式询问"要运行哪个目录"；迁移请用 make migrate。
 run:
-	kratos run
+	kratos run $(CURDIR)/cmd/server
 
 .PHONY: format
 # format 按 gofumpt 规范格式化全部源码。

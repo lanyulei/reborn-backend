@@ -157,9 +157,9 @@ func (r *channelRepo) CreateChannel(ctx context.Context, ch *biz.Channel) error 
 	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO notify_channel
-			     (id, biz_id, type, name, config, secret, sign_secret, rate_limit, enabled, create_time, update_time)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-			ch.ID, ch.BizID, ch.Type, ch.Name, cfgJSON, secret, signSecret, rlJSON, ch.Enabled, ch.CreateTime, ch.UpdateTime); err != nil {
+			     (id, biz_id, type, name, config, secret, sign_secret, rate_limit, enabled, create_time, update_time, create_user, update_user)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)`,
+			ch.ID, ch.BizID, ch.Type, ch.Name, cfgJSON, secret, signSecret, rlJSON, ch.Enabled, ch.CreateTime, ch.UpdateTime, operatorArg(ctx)); err != nil {
 			return mapChannelUniqueViolation(err)
 		}
 		return bumpChannelCfgVersion(ctx, tx)
@@ -213,6 +213,7 @@ func (r *channelRepo) UpdateChannel(ctx context.Context, id string, upd biz.Chan
 	if len(sets) == 0 {
 		return nil
 	}
+	add("update_user", operatorArg(ctx))
 
 	args = append(args, id)
 	query := "UPDATE notify_channel SET " + strings.Join(sets, ", ") +
@@ -233,8 +234,8 @@ func (r *channelRepo) UpdateChannel(ctx context.Context, id string, upd biz.Chan
 func (r *channelRepo) DeleteChannel(ctx context.Context, id string) error {
 	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx,
-			"UPDATE notify_channel SET delete_time = now(), update_time = now()"+
-				" WHERE id = $1 AND delete_time IS NULL", id)
+			"UPDATE notify_channel SET delete_time = now(), update_time = now(), delete_user = $2"+
+				" WHERE id = $1 AND delete_time IS NULL", id, operatorArg(ctx))
 		if err != nil {
 			return fmt.Errorf("soft delete channel: %w", err)
 		}

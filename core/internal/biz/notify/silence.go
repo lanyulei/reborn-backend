@@ -32,6 +32,8 @@ type SilenceWindow = notifycontract.SilenceWindow
 // SilenceRule 静默规则：匹配决策（pattern/severity 上限/时间窗）互为整体，
 // 创建与整组替换更新共用同一校验。
 type SilenceRule struct {
+	Name         string // 可读名称（空 = 未命名）
+	Description  string
 	EventPattern string
 	SeverityMax  int32
 	Window       *SilenceWindow // nil = 全程静默
@@ -82,6 +84,8 @@ type SilenceRepo interface {
 	DeleteSilence(ctx context.Context, id string) error
 	// GetSilence 按 ID 查询未删除静默规则；不存在返回 ErrSilenceNotFound。
 	GetSilence(ctx context.Context, id string) (*Silence, error)
+	// ListSilencesByBiz 取 biz 内全部未删除静默规则（不分页；路由试算用）。
+	ListSilencesByBiz(ctx context.Context, bizID string) ([]*Silence, error)
 	// ListSilences 分页查询未删除静默规则；page 从 1 起，pageSize 上限 100，
 	// 按创建时间倒序。
 	ListSilences(ctx context.Context, filter SilenceFilter, page, pageSize int64) ([]*Silence, int64, error)

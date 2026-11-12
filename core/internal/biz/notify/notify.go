@@ -4,4 +4,4 @@ package biz
 import "github.com/google/wire"
 
 // ProviderSet is notify 域 biz providers.
-var ProviderSet = wire.NewSet(NewChannelUsecase, NewTemplateUsecase, NewRouteUsecase, NewSilenceUsecase, NewSubscriptionUsecase, NewProducerUsecase, NewEventUsecase, NewDispatchUsecase, NewDeliveryLogUsecase, NewDeadLetterUsecase, NewNotificationUsecase)
+var ProviderSet = wire.NewSet(NewChannelUsecase, NewTemplateUsecase, NewRouteUsecase, NewSilenceUsecase, NewSubscriptionUsecase, NewProducerUsecase, NewEventUsecase, NewDispatchUsecase, NewDeliveryLogUsecase, NewDeadLetterUsecase, NewNotificationUsecase, NewPreviewUsecase, NewChannelHealthUsecase)

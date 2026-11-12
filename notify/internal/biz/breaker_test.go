@@ -71,3 +71,22 @@ func TestBackoffSchedule(t *testing.T) {
 		t.Fatalf("Backoff(0) = %v", d)
 	}
 }
+
+func TestBreaker_CancelProbe(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(1_800_000_000, 0)
+	b := NewBreaker()
+	b.now = func() time.Time { return now }
+	const ch = "c1"
+	for i := 0; i < 10; i++ {
+		b.Record(ch, false)
+	}
+	now = now.Add(61 * time.Second)
+	if !b.Allow(ch) || b.Allow(ch) {
+		t.Fatal("half-open must allow exactly one probe")
+	}
+	b.CancelProbe(ch) // 探测未真正发送（限流）→ 归还名额
+	if !b.Allow(ch) {
+		t.Fatal("cancelled probe slot must be available again")
+	}
+}

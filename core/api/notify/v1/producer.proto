@@ -152,8 +152,11 @@ message UpdateProducerRequest {
   optional bool enabled = 3;
 }
 
-// UpdateProducerResponse 更新生产者响应。
-message UpdateProducerResponse {}
+// UpdateProducerResponse 更新生产者响应：返回更新后的生产者（不含 token）。
+message UpdateProducerResponse {
+  // producer 更新后的生产者。
+  NotifyProducer producer = 1;
+}
 
 // RotateProducerTokenRequest 轮换令牌请求。
 message RotateProducerTokenRequest {

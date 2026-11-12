@@ -44,7 +44,7 @@ func mapTemplateUniqueViolation(err error) error {
 }
 
 // templateSelectColumns 是模板查询列序，与 scanTemplate 对应。
-const templateSelectColumns = "id, biz_id, event_type, channel_type, subject, body, version, enabled, create_time, update_time"
+const templateSelectColumns = "id, biz_id, event_type, channel_type, subject, body, version, enabled, create_time, update_time, format"
 
 // scanTemplate 按列序扫描一行模板数据并解码为 DO。
 func scanTemplate(scan func(dest ...any) error) (*biz.Template, error) {
@@ -54,9 +54,10 @@ func scanTemplate(scan func(dest ...any) error) (*biz.Template, error) {
 		version                           int32
 		enabled                           bool
 		createTime, updateTime            time.Time
+		format                            string
 	)
 	if err := scan(&id, &bizID, &eventType, &channelType, &subject, &body,
-		&version, &enabled, &createTime, &updateTime); err != nil {
+		&version, &enabled, &createTime, &updateTime, &format); err != nil {
 		return nil, err
 	}
 	return &biz.Template{
@@ -66,6 +67,7 @@ func scanTemplate(scan func(dest ...any) error) (*biz.Template, error) {
 		ChannelType: channelType,
 		Subject:     subject,
 		Body:        body,
+		Format:      format,
 		Version:     version,
 		Enabled:     enabled,
 		CreateTime:  createTime,
@@ -78,10 +80,10 @@ func (r *templateRepo) CreateTemplate(ctx context.Context, tpl *biz.Template) er
 	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO notify_template
-			     (id, biz_id, event_type, channel_type, subject, body, version, enabled, create_time, update_time)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+			     (id, biz_id, event_type, channel_type, subject, body, version, enabled, create_time, update_time, create_user, update_user, format)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11, COALESCE(NULLIF($12, ''), 'text'))`,
 			tpl.ID, tpl.BizID, tpl.EventType, tpl.ChannelType, tpl.Subject, tpl.Body,
-			tpl.Version, tpl.Enabled, tpl.CreateTime, tpl.UpdateTime); err != nil {
+			tpl.Version, tpl.Enabled, tpl.CreateTime, tpl.UpdateTime, operatorArg(ctx), tpl.Format); err != nil {
 			return mapTemplateUniqueViolation(err)
 		}
 		return bumpCfgVersion(ctx, tx, "notify_template")
@@ -109,12 +111,16 @@ func (r *templateRepo) UpdateTemplate(ctx context.Context, id string, upd biz.Te
 	if upd.Body != nil {
 		add("body", *upd.Body)
 	}
+	if upd.Format != nil {
+		add("format", *upd.Format)
+	}
 	if upd.Enabled != nil {
 		add("enabled", *upd.Enabled)
 	}
 	if len(sets) == 0 {
 		return nil
 	}
+	add("update_user", operatorArg(ctx))
 	sets = append(sets, "version = version + 1")
 
 	args = append(args, id)
@@ -136,8 +142,8 @@ func (r *templateRepo) UpdateTemplate(ctx context.Context, id string, upd biz.Te
 func (r *templateRepo) DeleteTemplate(ctx context.Context, id string) error {
 	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx,
-			"UPDATE notify_template SET delete_time = now(), update_time = now()"+
-				" WHERE id = $1 AND delete_time IS NULL", id)
+			"UPDATE notify_template SET delete_time = now(), update_time = now(), delete_user = $2"+
+				" WHERE id = $1 AND delete_time IS NULL", id, operatorArg(ctx))
 		if err != nil {
 			return fmt.Errorf("soft delete template: %w", err)
 		}
@@ -217,4 +223,23 @@ func (r *templateRepo) ListTemplates(ctx context.Context, filter biz.TemplateFil
 		templates = append(templates, tpl)
 	}
 	return templates, total, rows.Err()
+}
+
+// ListTemplatesByBiz implements biz 仓储接口：biz 内全部未删除行（不分页，配置表规模；路由试算用）。
+func (r *templateRepo) ListTemplatesByBiz(ctx context.Context, bizID string) ([]*biz.Template, error) {
+	rows, err := r.data.Pool.Query(ctx,
+		"SELECT "+templateSelectColumns+" FROM notify_template WHERE biz_id = $1 AND delete_time IS NULL ORDER BY create_time", bizID)
+	if err != nil {
+		return nil, fmt.Errorf("list templates by biz: %w", err)
+	}
+	defer rows.Close()
+	var out []*biz.Template
+	for rows.Next() {
+		item, err := scanTemplate(rows.Scan)
+		if err != nil {
+			return nil, fmt.Errorf("scan template: %w", err)
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
 }

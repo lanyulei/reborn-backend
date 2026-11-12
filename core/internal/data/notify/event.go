@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -13,6 +14,9 @@ import (
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/notify"
 	basedata "github.com/lanyulei/reborn/backend/core/internal/data"
 	"github.com/lanyulei/reborn/backend/core/internal/pkg/txrun"
+	"github.com/lanyulei/reborn/backend/kit/dbx"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // 编译期断言锁住 biz 契约。
@@ -104,6 +108,18 @@ func (r *eventRepo) ListEvents(ctx context.Context, filter biz.EventFilter, page
 	if filter.Status != nil {
 		add("status = %s", *filter.Status)
 	}
+	if filter.Severity != nil {
+		add("severity = %s", *filter.Severity)
+	}
+	if filter.Source != "" {
+		add("source = %s", filter.Source)
+	}
+	if filter.Keyword != "" {
+		add("title ILIKE %s", dbx.LikeContains(filter.Keyword))
+	}
+	if filter.GroupKey != "" {
+		add("group_key = %s", filter.GroupKey)
+	}
 	if filter.CreateTimeStart != nil {
 		add("create_time >= %s", *filter.CreateTimeStart)
 	}
@@ -170,6 +186,19 @@ func insertEventPlan(event *biz.Event) (string, []any, error) {
 		dedupKey, groupKey, recipients, event.Source, event.Status, event.PublishState,
 		event.PublishAttempts,
 	}, nil
+}
+
+// GetEvent implements biz.EventRepo（分区表按主键逐分区探查，单行详情可接受）。
+func (r *eventRepo) GetEvent(ctx context.Context, id string) (*biz.Event, error) {
+	row := r.data.Pool.QueryRow(ctx, "SELECT "+eventSelectColumns+" FROM notify_event WHERE id = $1", id)
+	event, err := scanEvent(row.Scan)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, biz.ErrEventNotFound
+		}
+		return nil, fmt.Errorf("get event: %w", err)
+	}
+	return event, nil
 }
 
 // InsertEvent implements biz.EventWriter：core 对 notify_event 的唯一写路径

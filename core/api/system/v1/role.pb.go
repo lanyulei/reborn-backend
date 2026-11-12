@@ -41,7 +41,10 @@ type Role struct {
 	UpdateTime *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=update_time,json=updateTime,proto3" json:"update_time,omitempty"`
 	// biz_scope 可管理的通知 biz 列表；空 = 不限（现有角色缺省）。用户可管范围
 	// = 启用角色 scope 并集，任一角色不限即不限；超管恒不限。
-	BizScope      []string `protobuf:"bytes,7,rep,name=biz_scope,json=bizScope,proto3" json:"biz_scope,omitempty"`
+	BizScope []string `protobuf:"bytes,7,rep,name=biz_scope,json=bizScope,proto3" json:"biz_scope,omitempty"`
+	// builtin 是否内置角色（迁移预置）：不可删除，编辑/授权仅超管；
+	// 新建用户自动绑定且不可解绑。
+	Builtin       bool `protobuf:"varint,8,opt,name=builtin,proto3" json:"builtin,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -123,6 +126,13 @@ func (x *Role) GetBizScope() []string {
 		return x.BizScope
 	}
 	return nil
+}
+
+func (x *Role) GetBuiltin() bool {
+	if x != nil {
+		return x.Builtin
+	}
+	return false
 }
 
 // BizScope 通知 biz 范围整组替换载荷（更新时须显式携带，空列表 = 清空 = 不限）。
@@ -1327,7 +1337,7 @@ var File_system_v1_role_proto protoreflect.FileDescriptor
 
 const file_system_v1_role_proto_rawDesc = "" +
 	"\n" +
-	"\x14system/v1/role.proto\x12\tsystem.v1\x1a\x1cgoogle/api/annotations.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1bbuf/validate/validate.proto\x1a\x1bsystem/v1/annotations.proto\"\xed\x01\n" +
+	"\x14system/v1/role.proto\x12\tsystem.v1\x1a\x1cgoogle/api/annotations.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1bbuf/validate/validate.proto\x1a\x1bsystem/v1/annotations.proto\"\x87\x02\n" +
 	"\x04Role\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x12\n" +
@@ -1337,7 +1347,8 @@ const file_system_v1_role_proto_rawDesc = "" +
 	"createTime\x12;\n" +
 	"\vupdate_time\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"updateTime\x12\x1b\n" +
-	"\tbiz_scope\x18\a \x03(\tR\bbizScope\"D\n" +
+	"\tbiz_scope\x18\a \x03(\tR\bbizScope\x12\x18\n" +
+	"\abuiltin\x18\b \x01(\bR\abuiltin\"D\n" +
 	"\bBizScope\x128\n" +
 	"\x05items\x18\x01 \x03(\tB\"\xbaH\x1f\x92\x01\x1c\x10@\x18\x01\"\x16r\x142\x12^[a-z0-9_-]{1,64}$R\x05items\"\xd4\x01\n" +
 	"\x11CreateRoleRequest\x12\x1d\n" +

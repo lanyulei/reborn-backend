@@ -9,6 +9,7 @@ package v1
 import (
 	context "context"
 	http "github.com/go-kratos/kratos/v3/transport/http"
+	httpbody "google.golang.org/genproto/googleapis/api/httpbody"
 )
 
 // This is a compile-time assertion to ensure that this generated file
@@ -18,13 +19,18 @@ var _ = new(context.Context)
 const _ = http.SupportPackageIsVersion3
 
 const OperationAuthServiceGetLoginProfile = "/system.v1.AuthService/GetLoginProfile"
+const OperationAuthServiceGetUserAvatar = "/system.v1.AuthService/GetUserAvatar"
 const OperationAuthServiceLogin = "/system.v1.AuthService/Login"
 const OperationAuthServiceLogout = "/system.v1.AuthService/Logout"
 const OperationAuthServiceRefreshToken = "/system.v1.AuthService/RefreshToken"
+const OperationAuthServiceUploadMyAvatar = "/system.v1.AuthService/UploadMyAvatar"
 
 type AuthServiceHTTPServer interface {
 	// GetLoginProfile GetLoginProfile 查询当前登录用户信息与角色；用户身份取自 Bearer token。
 	GetLoginProfile(context.Context, *GetLoginProfileRequest) (*GetLoginProfileResponse, error)
+	// GetUserAvatar GetUserAvatar 以原始字节流返回用户头像（HttpBody），供 <img> 直载；匿名可读
+	// （静态资源语义，路径含不可枚举的用户 UUID）。未设置返回 AVATAR_NOT_FOUND。
+	GetUserAvatar(context.Context, *GetUserAvatarRequest) (*httpbody.HttpBody, error)
 	// Login Login 登录：校验用户名密码，签发 access + refresh 双令牌。
 	// 用户不存在与密码错误统一返回 INVALID_CREDENTIALS，不区分口径以防枚举。
 	Login(context.Context, *LoginRequest) (*LoginResponse, error)
@@ -32,6 +38,9 @@ type AuthServiceHTTPServer interface {
 	Logout(context.Context, *LogoutRequest) (*LogoutResponse, error)
 	// RefreshToken RefreshToken 用刷新令牌换发新双令牌；旧刷新令牌即刻失效（轮换）。
 	RefreshToken(context.Context, *RefreshTokenRequest) (*RefreshTokenResponse, error)
+	// UploadMyAvatar UploadMyAvatar 上传当前登录用户的头像（自助接口，免授权）：图片落盘后把带内容
+	// 指纹的访问地址写入用户 avatar 字段并返回。
+	UploadMyAvatar(context.Context, *UploadMyAvatarRequest) (*UploadMyAvatarResponse, error)
 }
 
 func RegisterAuthServiceHTTPServer(s *http.Server, srv AuthServiceHTTPServer) {
@@ -40,6 +49,8 @@ func RegisterAuthServiceHTTPServer(s *http.Server, srv AuthServiceHTTPServer) {
 	r.Handle("POST", "/api/v1/token/refresh", _AuthService_RefreshToken0_HTTP_Handler(srv))
 	r.Handle("POST", "/api/v1/logout", _AuthService_Logout0_HTTP_Handler(srv))
 	r.Handle("GET", "/api/v1/me", _AuthService_GetLoginProfile0_HTTP_Handler(srv))
+	r.Handle("POST", "/api/v1/me/avatar", _AuthService_UploadMyAvatar0_HTTP_Handler(srv))
+	r.Handle("GET", "/api/v1/user/{id}/avatar", _AuthService_GetUserAvatar0_HTTP_Handler(srv))
 }
 
 func _AuthService_Login0_HTTP_Handler(srv AuthServiceHTTPServer) func(ctx http.Context) error {
@@ -118,9 +129,53 @@ func _AuthService_GetLoginProfile0_HTTP_Handler(srv AuthServiceHTTPServer) func(
 	}
 }
 
+func _AuthService_UploadMyAvatar0_HTTP_Handler(srv AuthServiceHTTPServer) func(ctx http.Context) error {
+	return func(ctx http.Context) error {
+		var in UploadMyAvatarRequest
+		if err := ctx.Bind(&in); err != nil {
+			return err
+		}
+		http.SetOperation(ctx, OperationAuthServiceUploadMyAvatar)
+		h := ctx.Middleware(func(ctx context.Context, req interface{}) (interface{}, error) {
+			return srv.UploadMyAvatar(ctx, req.(*UploadMyAvatarRequest))
+		})
+		out, err := h(ctx, &in)
+		if err != nil {
+			return err
+		}
+		reply := out.(*UploadMyAvatarResponse)
+		return ctx.Result(200, reply)
+	}
+}
+
+func _AuthService_GetUserAvatar0_HTTP_Handler(srv AuthServiceHTTPServer) func(ctx http.Context) error {
+	return func(ctx http.Context) error {
+		var in GetUserAvatarRequest
+		if err := ctx.BindQuery(&in); err != nil {
+			return err
+		}
+		if err := ctx.BindVars(&in); err != nil {
+			return err
+		}
+		http.SetOperation(ctx, OperationAuthServiceGetUserAvatar)
+		h := ctx.Middleware(func(ctx context.Context, req interface{}) (interface{}, error) {
+			return srv.GetUserAvatar(ctx, req.(*GetUserAvatarRequest))
+		})
+		out, err := h(ctx, &in)
+		if err != nil {
+			return err
+		}
+		reply := out.(*httpbody.HttpBody)
+		return ctx.Blob(200, http.BodyContentType(reply), reply.GetData())
+	}
+}
+
 type AuthServiceHTTPClient interface {
 	// GetLoginProfile GetLoginProfile 查询当前登录用户信息与角色；用户身份取自 Bearer token。
 	GetLoginProfile(ctx context.Context, req *GetLoginProfileRequest, opts ...http.CallOption) (rsp *GetLoginProfileResponse, err error)
+	// GetUserAvatar GetUserAvatar 以原始字节流返回用户头像（HttpBody），供 <img> 直载；匿名可读
+	// （静态资源语义，路径含不可枚举的用户 UUID）。未设置返回 AVATAR_NOT_FOUND。
+	GetUserAvatar(ctx context.Context, req *GetUserAvatarRequest, opts ...http.CallOption) (rsp *httpbody.HttpBody, err error)
 	// Login Login 登录：校验用户名密码，签发 access + refresh 双令牌。
 	// 用户不存在与密码错误统一返回 INVALID_CREDENTIALS，不区分口径以防枚举。
 	Login(ctx context.Context, req *LoginRequest, opts ...http.CallOption) (rsp *LoginResponse, err error)
@@ -128,6 +183,9 @@ type AuthServiceHTTPClient interface {
 	Logout(ctx context.Context, req *LogoutRequest, opts ...http.CallOption) (rsp *LogoutResponse, err error)
 	// RefreshToken RefreshToken 用刷新令牌换发新双令牌；旧刷新令牌即刻失效（轮换）。
 	RefreshToken(ctx context.Context, req *RefreshTokenRequest, opts ...http.CallOption) (rsp *RefreshTokenResponse, err error)
+	// UploadMyAvatar UploadMyAvatar 上传当前登录用户的头像（自助接口，免授权）：图片落盘后把带内容
+	// 指纹的访问地址写入用户 avatar 字段并返回。
+	UploadMyAvatar(ctx context.Context, req *UploadMyAvatarRequest, opts ...http.CallOption) (rsp *UploadMyAvatarResponse, err error)
 }
 
 type AuthServiceHTTPClientImpl struct {
@@ -146,6 +204,24 @@ func (c *AuthServiceHTTPClientImpl) GetLoginProfile(ctx context.Context, in *Get
 	opts = append([]http.CallOption{
 		http.Accept("application/protojson"),
 		http.Operation(OperationAuthServiceGetLoginProfile),
+		http.PathTemplate(pattern),
+	}, opts...)
+	err := c.cc.Invoke(ctx, "GET", path, nil, &out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GetUserAvatar GetUserAvatar 以原始字节流返回用户头像（HttpBody），供 <img> 直载；匿名可读
+// （静态资源语义，路径含不可枚举的用户 UUID）。未设置返回 AVATAR_NOT_FOUND。
+func (c *AuthServiceHTTPClientImpl) GetUserAvatar(ctx context.Context, in *GetUserAvatarRequest, opts ...http.CallOption) (*httpbody.HttpBody, error) {
+	var out httpbody.HttpBody
+	pattern := "/api/v1/user/{id}/avatar"
+	path := http.BuildPath(pattern, in, http.WithQueryParams())
+	opts = append([]http.CallOption{
+		http.Accept("application/protojson"),
+		http.Operation(OperationAuthServiceGetUserAvatar),
 		http.PathTemplate(pattern),
 	}, opts...)
 	err := c.cc.Invoke(ctx, "GET", path, nil, &out, opts...)
@@ -201,6 +277,25 @@ func (c *AuthServiceHTTPClientImpl) RefreshToken(ctx context.Context, in *Refres
 		http.Accept("application/protojson"),
 		http.ContentType("application/protojson"),
 		http.Operation(OperationAuthServiceRefreshToken),
+		http.PathTemplate(pattern),
+	}, opts...)
+	err := c.cc.Invoke(ctx, "POST", path, in, &out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// UploadMyAvatar UploadMyAvatar 上传当前登录用户的头像（自助接口，免授权）：图片落盘后把带内容
+// 指纹的访问地址写入用户 avatar 字段并返回。
+func (c *AuthServiceHTTPClientImpl) UploadMyAvatar(ctx context.Context, in *UploadMyAvatarRequest, opts ...http.CallOption) (*UploadMyAvatarResponse, error) {
+	var out UploadMyAvatarResponse
+	pattern := "/api/v1/me/avatar"
+	path := http.BuildPath(pattern, in)
+	opts = append([]http.CallOption{
+		http.Accept("application/protojson"),
+		http.ContentType("application/protojson"),
+		http.Operation(OperationAuthServiceUploadMyAvatar),
 		http.PathTemplate(pattern),
 	}, opts...)
 	err := c.cc.Invoke(ctx, "POST", path, in, &out, opts...)

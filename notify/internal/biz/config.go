@@ -87,6 +87,7 @@ type Template struct {
 	ChannelType string
 	Subject     string
 	Body        string
+	Format      string // text/markdown/html/card（空 = text）；渠道按 notifycontract.EffectiveFormat 降级
 	Version     int32
 	Enabled     bool
 }
@@ -209,6 +210,28 @@ type ConfigCache struct {
 	buckets RateBucketSyncer
 	log     *slog.Logger
 	current atomic.Pointer[Snapshot]
+
+	lastOK   atomic.Int64 // 最近一次成功 Load/Refresh（含版本未变）的 unix 纳秒；0 = 从未成功
+	failures atomic.Int64 // 累计刷新失败次数（指标）
+}
+
+// ConfigStatus 配置缓存健康快照（/healthz 与指标）。
+type ConfigStatus struct {
+	LoadedAt time.Time // 当前快照装入时间（零值 = 未加载）
+	LastOK   time.Time // 最近一次成功刷新（零值 = 从未成功）
+	Failures int64     // 累计刷新失败次数
+}
+
+// Status 返回健康快照。
+func (c *ConfigCache) Status() ConfigStatus {
+	st := ConfigStatus{Failures: c.failures.Load()}
+	if snap := c.current.Load(); snap != nil {
+		st.LoadedAt = snap.LoadedAt
+	}
+	if ns := c.lastOK.Load(); ns > 0 {
+		st.LastOK = time.Unix(0, ns)
+	}
+	return st
 }
 
 // NewConfigCache new a ConfigCache（不加载；由 worker 启动时 Load）。
@@ -223,9 +246,11 @@ func (c *ConfigCache) Current() *Snapshot { return c.current.Load() }
 func (c *ConfigCache) Load(ctx context.Context) error {
 	snap, err := c.repo.LoadSnapshot(ctx)
 	if err != nil {
+		c.failures.Add(1)
 		return fmt.Errorf("load config snapshot: %w", err)
 	}
 	c.install(ctx, snap)
+	c.lastOK.Store(time.Now().UnixNano())
 	return nil
 }
 
@@ -237,9 +262,11 @@ func (c *ConfigCache) Refresh(ctx context.Context) error {
 	}
 	versions, err := c.repo.LoadVersions(ctx)
 	if err != nil {
+		c.failures.Add(1)
 		return fmt.Errorf("load config versions: %w", err)
 	}
 	if versionsEqual(cur.Versions, versions) {
+		c.lastOK.Store(time.Now().UnixNano())
 		return nil
 	}
 	return c.Load(ctx)

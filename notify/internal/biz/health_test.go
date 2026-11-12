@@ -57,6 +57,11 @@ func (s *healthRepoStub) ClaimProbe(_ context.Context, id string) (bool, bool, e
 	return true, false, nil
 }
 
+func (s *healthRepoStub) CancelProbe(_ context.Context, id string) error {
+	s.probing[id] = false
+	return nil
+}
+
 func (s *healthRepoStub) ListOpen(context.Context) (map[string]time.Time, error) {
 	out := map[string]time.Time{}
 	for k, v := range s.open {

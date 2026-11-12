@@ -15,6 +15,7 @@ import (
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/notify"
 	"github.com/lanyulei/reborn/backend/core/internal/conf"
 	basedata "github.com/lanyulei/reborn/backend/core/internal/data"
+	"github.com/lanyulei/reborn/backend/core/internal/pkg/operator"
 
 	"github.com/go-kratos/kratos/v3/errors"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -355,7 +356,7 @@ func TestIntegration_SendTestEvent(t *testing.T) {
 	box := newTestSecretBox(t)
 	channelRepo := NewChannelRepo(d, box)
 	eventRepo := NewEventRepo(d)
-	uc := biz.NewChannelUsecase(channelRepo, eventRepo, NewRouteRepo(d))
+	uc := biz.NewChannelUsecase(channelRepo, eventRepo, NewRouteRepo(d)).WithTestEventCooldown(0) // 集成测试连续发多条测试事件，关闭冷却
 	ctx := context.Background()
 
 	ch, err := uc.Create(ctx, &biz.Channel{
@@ -479,5 +480,50 @@ func TestIntegration_ListChannelsByIDs(t *testing.T) {
 	}
 	if empty, err := repo.ListChannelsByIDs(ctx, nil); err != nil || len(empty) != 0 {
 		t.Fatalf("ListChannelsByIDs(nil) = %v, %v; want empty", empty, err)
+	}
+}
+
+// TestIntegration_ChannelAuditColumns 请求上下文里的操作者 ID 落 create_user /
+// update_user / delete_user；未注入（内部任务）落 NULL。
+func TestIntegration_ChannelAuditColumns(t *testing.T) {
+	d := newIntegrationNotifyData(t)
+	repo := NewChannelRepo(d, newTestSecretBox(t))
+	const alice, bob = "018f3e1a-0f01-7000-8000-00000000a11c", "018f3e1a-0f01-7000-8000-00000000b0b0"
+	ctxA, ctxB := operator.WithID(context.Background(), alice), operator.WithID(context.Background(), bob)
+	ch := newChannelDO("018f3e1a-0f02-7000-8000-000000000001", "audited")
+	if err := repo.CreateChannel(ctxA, ch); err != nil {
+		t.Fatalf("CreateChannel() error = %v", err)
+	}
+	audit := func() (create, update, del *string) {
+		if err := d.Pool.QueryRow(context.Background(),
+			"SELECT create_user::text, update_user::text, delete_user::text FROM notify_channel WHERE id = $1", ch.ID).Scan(&create, &update, &del); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	if c, u, del := audit(); c == nil || *c != alice || u == nil || *u != alice || del != nil {
+		t.Fatalf("after create: create_user=%v update_user=%v delete_user=%v", c, u, del)
+	}
+	name := "audited-2"
+	if err := repo.UpdateChannel(ctxB, ch.ID, biz.ChannelUpdate{Name: &name}); err != nil {
+		t.Fatalf("UpdateChannel() error = %v", err)
+	}
+	if c, u, _ := audit(); *c != alice || u == nil || *u != bob {
+		t.Fatalf("after update: create_user=%v update_user=%v", c, u)
+	}
+	if err := repo.DeleteChannel(ctxA, ch.ID); err != nil {
+		t.Fatalf("DeleteChannel() error = %v", err)
+	}
+	if _, _, del := audit(); del == nil || *del != alice {
+		t.Fatalf("after delete: delete_user=%v", del)
+	}
+	// 无操作者（内部任务）：NULL，不报错。
+	anon := newChannelDO("018f3e1a-0f02-7000-8000-000000000002", "anon")
+	if err := repo.CreateChannel(context.Background(), anon); err != nil {
+		t.Fatalf("CreateChannel(anon) error = %v", err)
+	}
+	var create *string
+	if err := d.Pool.QueryRow(context.Background(), "SELECT create_user::text FROM notify_channel WHERE id = $1", anon.ID).Scan(&create); err != nil || create != nil {
+		t.Fatalf("anon create_user = %v, %v, want NULL", create, err)
 	}
 }

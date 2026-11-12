@@ -41,7 +41,11 @@ func newSubscriptionService(t *testing.T, admin bool) *NotifySubscriptionService
 
 // newSubscriptionServiceOn 在共享 store 上构造订阅 service（代管双方看同一数据）。
 func newSubscriptionServiceOn(store *testfake.Store, admin bool) *NotifySubscriptionService {
-	return NewNotifySubscriptionService(biz.NewSubscriptionUsecase(store), adminResolverStub{admin: admin})
+	return newSubscriptionServiceScoped(store, admin, testfake.Unrestricted())
+}
+
+func newSubscriptionServiceScoped(store *testfake.Store, admin bool, scope *testfake.BizScopeStub) *NotifySubscriptionService {
+	return NewNotifySubscriptionService(biz.NewSubscriptionUsecase(store), adminResolverStub{admin: admin}, scope)
 }
 
 // protoPrefs 返回合法偏好载荷（email 开关 + 钉钉目标群）。
@@ -301,5 +305,65 @@ func TestNotifySubscriptionService_SelfIDCaseInsensitive(t *testing.T) {
 	}
 	if resp.GetSubscription().GetUserId() != subOperatorID {
 		t.Fatalf("user_id = %q, want canonical operator id", resp.GetSubscription().GetUserId())
+	}
+}
+
+// TestNotifySubscriptionService_OnBehalfBizScope 角色 biz_scope 只约束代管路径：
+// 受限管理员代管他人时目标 biz 须在范围内、列表须携带 biz；本人自助不受限。
+func TestNotifySubscriptionService_OnBehalfBizScope(t *testing.T) {
+	t.Parallel()
+	ctx := subClaimsContext()
+	store := testfake.NewStore()
+	scoped := newSubscriptionServiceScoped(store, true, testfake.Scoped("ops"))
+
+	// 本人自助：default biz 不在范围内也允许（个人偏好非管理动作）。
+	if _, err := scoped.UpsertSubscription(ctx, &notifyv1.UpsertSubscriptionRequest{
+		EventPattern: "monitor.alert.*", ChannelPrefs: protoPrefs(),
+	}); err != nil {
+		t.Fatalf("self upsert outside scope error = %v", err)
+	}
+	// 代管他人到范围外 biz（缺省 default）：403。
+	if _, err := scoped.UpsertSubscription(ctx, &notifyv1.UpsertSubscriptionRequest{
+		UserId: sptr(subOtherID), EventPattern: "monitor.alert.*", ChannelPrefs: protoPrefs(),
+	}); !errors.Is(err, biz.ErrBizForbidden) {
+		t.Fatalf("on-behalf upsert outside scope error = %v, want ErrBizForbidden", err)
+	}
+	// 代管他人到范围内 biz：合法。
+	if _, err := scoped.UpsertSubscription(ctx, &notifyv1.UpsertSubscriptionRequest{
+		UserId: sptr(subOtherID), BizId: sptr("ops"), EventPattern: "monitor.alert.*", ChannelPrefs: protoPrefs(),
+	}); err != nil {
+		t.Fatalf("on-behalf upsert in scope error = %v", err)
+	}
+	// 代管列表：受限须携带 biz（400），越权 403，范围内放行。
+	if _, err := scoped.ListSubscriptions(ctx, &notifyv1.ListSubscriptionsRequest{
+		Page: 1, PageSize: 10, UserId: sptr(subOtherID),
+	}); !errors.Is(err, biz.ErrBizRequired) {
+		t.Fatalf("on-behalf list without biz error = %v, want ErrBizRequired", err)
+	}
+	if _, err := scoped.ListSubscriptions(ctx, &notifyv1.ListSubscriptionsRequest{
+		Page: 1, PageSize: 10, UserId: sptr(subOtherID), BizId: sptr("default"),
+	}); !errors.Is(err, biz.ErrBizForbidden) {
+		t.Fatalf("on-behalf list outside scope error = %v, want ErrBizForbidden", err)
+	}
+	list, err := scoped.ListSubscriptions(ctx, &notifyv1.ListSubscriptionsRequest{
+		Page: 1, PageSize: 10, UserId: sptr(subOtherID), BizId: sptr("ops"),
+	})
+	if err != nil || list.GetTotal() != 1 || list.GetItems()[0].GetBizId() != "ops" {
+		t.Fatalf("on-behalf list in scope = %+v, %v", list.GetItems(), err)
+	}
+	// 本人列表无需 biz；biz_id 仅作过滤。
+	if list, err := scoped.ListSubscriptions(ctx, &notifyv1.ListSubscriptionsRequest{Page: 1, PageSize: 10}); err != nil || list.GetTotal() != 1 {
+		t.Fatalf("self list = %+v, %v", list, err)
+	}
+	// 代管删除范围外订阅：403（不限管理员建的 default 订阅）。
+	full := newSubscriptionServiceOn(store, true)
+	resp, err := full.UpsertSubscription(ctx, &notifyv1.UpsertSubscriptionRequest{
+		UserId: sptr(subOtherID), EventPattern: "permission.change", ChannelPrefs: protoPrefs(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := scoped.DeleteSubscription(ctx, &notifyv1.DeleteSubscriptionRequest{Id: resp.GetSubscription().GetId()}); !errors.Is(err, biz.ErrBizForbidden) {
+		t.Fatalf("on-behalf delete outside scope error = %v, want ErrBizForbidden", err)
 	}
 }

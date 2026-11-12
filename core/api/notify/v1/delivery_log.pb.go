@@ -157,6 +157,9 @@ type ListDeliveryLogsRequest struct {
 	ChannelId *string `protobuf:"bytes,4,opt,name=channel_id,json=channelId,proto3,oneof" json:"channel_id,omitempty"`
 	// ok 投递结果过滤，可选：true 仅成功 / false 仅失败。
 	Ok *bool `protobuf:"varint,5,opt,name=ok,proto3,oneof" json:"ok,omitempty"`
+	// 时间窗口：create_time_start 缺省 = (create_time_end 或当前时间) 往前 7 天；
+	// 两者跨度上限 90 天（400 NOTIFY_TIME_RANGE_INVALID）。分区表按时间裁剪，无界
+	// 查询会扫全部分区。
 	// create_time_start 落库时间下界（含），可选。
 	CreateTimeStart *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=create_time_start,json=createTimeStart,proto3,oneof" json:"create_time_start,omitempty"`
 	// create_time_end 落库时间上界（含），可选。

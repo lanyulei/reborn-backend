@@ -54,6 +54,26 @@ func (uc *AuthzUsecase) Allowed(ctx context.Context, userID, operationCode strin
 	return false, nil
 }
 
+// EnabledRoleIDs 返回用户启用角色 ID（跨域窄接口 cmdb.RoleSource 的实现）：
+// 超管 (true, nil)；非可用用户 (false, 空)。
+func (uc *AuthzUsecase) EnabledRoleIDs(ctx context.Context, userID string) (bool, []string, error) {
+	isAdmin, roles, err := uc.enabledRoles(ctx, userID)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			return false, nil, nil
+		}
+		return false, nil, err
+	}
+	if isAdmin {
+		return true, nil, nil
+	}
+	ids := make([]string, 0, len(roles))
+	for _, r := range roles {
+		ids = append(ids, r.ID)
+	}
+	return false, ids, nil
+}
+
 // EffectiveOperations 返回用户当前有效授权操作 code 并集（字典序），供
 // GetLoginProfile 暴露给前端做菜单/路由可见性，与 Allowed 同一判定口径：
 // 用户不存在（含已软删）→ 空集；is_admin 超管 → 空集（直通，无需枚举，

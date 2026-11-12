@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"time"
 
 	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/notify"
@@ -55,15 +56,13 @@ func (s *NotifyDispatchService) ListDispatches(ctx context.Context, req *notifyv
 		EventID:   req.GetEventId(),
 		ChannelID: req.GetChannelId(),
 		Status:    req.Status,
+		Recipient: req.GetRecipient(),
 	}
-	if ts := req.GetCreateTimeStart(); ts != nil {
-		t := ts.AsTime()
-		filter.CreateTimeStart = &t
+	start, end, err := listTimeRange(req.GetCreateTimeStart(), req.GetCreateTimeEnd(), time.Now())
+	if err != nil {
+		return nil, err
 	}
-	if ts := req.GetCreateTimeEnd(); ts != nil {
-		t := ts.AsTime()
-		filter.CreateTimeEnd = &t
-	}
+	filter.CreateTimeStart, filter.CreateTimeEnd = start, end
 	dispatches, total, err := s.uc.List(ctx, filter, req.GetPage(), int64(req.GetPageSize()))
 	if err != nil {
 		return nil, err
@@ -80,4 +79,27 @@ func (s *NotifyDispatchService) ListDispatches(ctx context.Context, req *notifyv
 		resp.Items = append(resp.Items, item)
 	}
 	return resp, nil
+}
+
+// GetDispatch implements proto NotifyDispatchService/GetDispatch：受限用户须任务
+// 所属渠道的 biz 在范围内。
+func (s *NotifyDispatchService) GetDispatch(ctx context.Context, req *notifyv1.GetDispatchRequest) (*notifyv1.GetDispatchResponse, error) {
+	dispatch, err := s.uc.Get(ctx, req.GetId())
+	if err != nil {
+		return nil, err
+	}
+	if err := s.guard.requireRow(ctx, func() (string, error) {
+		ch, err := s.channels.Get(ctx, dispatch.ChannelID)
+		if err != nil {
+			return "", err
+		}
+		return ch.BizID, nil
+	}); err != nil {
+		return nil, err
+	}
+	item, err := toProtoDispatch(dispatch)
+	if err != nil {
+		return nil, err
+	}
+	return &notifyv1.GetDispatchResponse{Dispatch: item}, nil
 }

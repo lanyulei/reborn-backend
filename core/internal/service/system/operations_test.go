@@ -40,7 +40,7 @@ func TestListOperations(t *testing.T) {
 		// 可授权操作按域分包：新业务域加入 operationFiles 时在此追加前缀，
 		// 防止误挂无关 proto。
 		if !strings.HasPrefix(svc, "system.v1.") && !strings.HasPrefix(svc, "notify.v1.") &&
-			!strings.HasPrefix(svc, "assistant.v1.") {
+			!strings.HasPrefix(svc, "assistant.v1.") && !strings.HasPrefix(svc, "cmdb.v1.") {
 			t.Fatalf("operation %q not in an authorized proto package", op.Name)
 		}
 		if op.Title == "" {
@@ -155,6 +155,9 @@ func TestIsAuthzExempt(t *testing.T) {
 		v1.OperationSystemConfigServiceGetSystemConfig,
 		// logo 文件读取：登录页 <img> 直载，有意免检（上传接口不免检）
 		v1.OperationSystemConfigServiceGetSystemLogo,
+		// 头像：上传为本人自助接口；读取为 <img> 直载的静态资源语义
+		v1.OperationAuthServiceUploadMyAvatar,
+		v1.OperationAuthServiceGetUserAvatar,
 	}
 	if len(authzExemptOperations) != len(want) {
 		t.Fatalf("authzExemptOperations has %d members, want exactly %d", len(authzExemptOperations), len(want))

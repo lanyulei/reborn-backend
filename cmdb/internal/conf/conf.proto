@@ -1,0 +1,109 @@
+syntax = "proto3";
+
+package conf;
+
+import "google/protobuf/duration.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/cmdb/internal/conf;conf";
+
+// Bootstrap 是 CMDB 数据面（采集 / 对账）启动配置的根结构，对应 configs/*.yaml。
+message Bootstrap {
+  // server HTTP 服务器（仅 /healthz /metrics；数据面不暴露业务接口）。
+  Server server = 1;
+  // data 数据层资源配置（与 core 同库，cmdb_sync_role 成员账号）。
+  Data data = 2;
+  // sync 采集与对账参数。
+  Sync sync = 3;
+  // notify 凭据解密主密钥（与 core notify.master.key 同一密钥）。
+  Notify notify = 4;
+}
+
+// Server 是 HTTP 服务器配置。
+message Server {
+  // HTTP 是 HTTP 服务器配置。
+  message HTTP {
+    // network 监听网络类型，如 tcp；留空使用默认值。
+    string network = 1;
+    // addr 监听地址。
+    string addr = 2;
+    // timeout 请求处理超时。
+    google.protobuf.Duration timeout = 3;
+  }
+  // http HTTP 配置。
+  HTTP http = 1;
+}
+
+// Data 是数据层资源配置；密钥类字段一律从环境变量注入。
+message Data {
+  // Database 是 PostgreSQL 连接池配置（pgx）。
+  message Database {
+    // source 数据源 DSN；生产环境通过环境变量注入（KRATOS_DATA_DATABASE_SOURCE）。
+    string source = 1;
+    // max_conns 最大连接数；0 使用驱动默认值。
+    int32 max_conns = 2;
+    // min_conns 最小空闲连接数；0 使用驱动默认值。
+    int32 min_conns = 3;
+    // max_conn_idle_time 连接最大空闲时长；未设置使用驱动默认值。
+    google.protobuf.Duration max_conn_idle_time = 4;
+  }
+  // database 数据库配置。
+  Database database = 1;
+}
+
+// Sync 是采集 / 对账参数。全部 Duration 采用 protojson 秒格式（如 0.2s）。
+message Sync {
+  // Scheduler 调度器（选主单实例）参数。
+  message Scheduler {
+    // poll_interval 到期采集源扫描周期，缺省 10s。
+    google.protobuf.Duration poll_interval = 1;
+    // stale_multiplier 陈旧判定倍数：last_synced_at 早于 now - interval × 倍数 即置 stale，缺省 3。
+    int32 stale_multiplier = 2;
+    // staging_retention 遗留暂存行（运行异常中止）清理阈值，缺省 24h。
+    google.protobuf.Duration staging_retention = 3;
+  }
+  // Worker 任务执行器参数。
+  message Worker {
+    // poll_interval 待领取任务轮询周期，缺省 2s。
+    google.protobuf.Duration poll_interval = 1;
+    // concurrency 单实例并发任务数（每个并发一条循环），缺省 2。
+    int32 concurrency = 2;
+    // lease 任务租约（续约周期为其 1/3；过期可被其它实例重领），缺省 5m。
+    google.protobuf.Duration lease = 3;
+    // collect_timeout 单次采集总超时（分页请求各自 ≤3s），缺省 10m。
+    google.protobuf.Duration collect_timeout = 4;
+    // request_timeout 单次出站请求超时（AGENTS：≤3s 缺省），缺省 3s。
+    google.protobuf.Duration request_timeout = 5;
+    // staging_batch 暂存写入批大小，缺省 500。
+    int32 staging_batch = 6;
+  }
+  // Maintenance 历史分区维护（选主单实例）参数。
+  message Maintenance {
+    // interval 执行周期，缺省 1h（启动即先跑一轮）。
+    google.protobuf.Duration interval = 1;
+    // partitions_ahead 预建未来分区月数，缺省 2。
+    int32 partitions_ahead = 2;
+    // history_retention 变更历史保留期，缺省 365d；0 = 不删除。
+    google.protobuf.Duration history_retention = 3;
+  }
+  // roles 启用的组件角色：scheduler / worker / webhook；环境变量 SERVER_ROLES（逗号分隔）优先；
+  // 两者皆空 = 全部角色。
+  repeated string roles = 1;
+  // scheduler 调度器参数。
+  Scheduler scheduler = 2;
+  // worker 执行器参数。
+  Worker worker = 3;
+  // maintenance 维护参数。
+  Maintenance maintenance = 4;
+}
+
+// Notify 是凭据解密配置（复用通知域主密钥，采集源凭据由 core 用同一密钥加密）。
+message Notify {
+  // Master 是主密钥配置。
+  message Master {
+    // key AES-256-GCM 主密钥；经 KRATOS_NOTIFY_MASTER_KEY 环境变量注入。
+    // 为空时：带凭据的采集源任务直接失败（"master key unavailable"）。
+    string key = 1;
+  }
+  // master 主密钥。
+  Master master = 1;
+}

@@ -21,6 +21,7 @@ const OperationNotifyRouteServiceCreateRoute = "/notify.v1.NotifyRouteService/Cr
 const OperationNotifyRouteServiceDeleteRoute = "/notify.v1.NotifyRouteService/DeleteRoute"
 const OperationNotifyRouteServiceGetRoute = "/notify.v1.NotifyRouteService/GetRoute"
 const OperationNotifyRouteServiceListRoutes = "/notify.v1.NotifyRouteService/ListRoutes"
+const OperationNotifyRouteServicePreviewRouting = "/notify.v1.NotifyRouteService/PreviewRouting"
 const OperationNotifyRouteServiceUpdateRoute = "/notify.v1.NotifyRouteService/UpdateRoute"
 
 type NotifyRouteServiceHTTPServer interface {
@@ -32,6 +33,11 @@ type NotifyRouteServiceHTTPServer interface {
 	GetRoute(context.Context, *GetRouteRequest) (*GetRouteResponse, error)
 	// ListRoutes ListRoutes 分页查询路由，page_size 上限 100。
 	ListRoutes(context.Context, *ListRoutesRequest) (*ListRoutesResponse, error)
+	// PreviewRouting PreviewRouting 路由试算（只读，不落库）：按管道同一语义（静默 → 选路：pattern 命中
+	// ∧ severity ≥ 下限 ∧ tag_match 全等，priority → 精确度 → id 决胜）回答"这条事件会
+	// 被哪条路由接住、发到哪些渠道、用哪个模板、会不会被静默/聚合"，供配好路由后
+	// 先验证再上线。
+	PreviewRouting(context.Context, *PreviewRoutingRequest) (*PreviewRoutingResponse, error)
 	// UpdateRoute UpdateRoute 更新路由：spec 整组替换规则字段，enabled 独立启停，至少传其一；
 	// biz_id 不可改，channel_ids 仍须同 biz 存在。
 	UpdateRoute(context.Context, *UpdateRouteRequest) (*UpdateRouteResponse, error)
@@ -44,6 +50,7 @@ func RegisterNotifyRouteServiceHTTPServer(s *http.Server, srv NotifyRouteService
 	r.Handle("DELETE", "/api/v1/notify/route/{id}", _NotifyRouteService_DeleteRoute0_HTTP_Handler(srv))
 	r.Handle("GET", "/api/v1/notify/route/{id}", _NotifyRouteService_GetRoute0_HTTP_Handler(srv))
 	r.Handle("GET", "/api/v1/notify/route", _NotifyRouteService_ListRoutes0_HTTP_Handler(srv))
+	r.Handle("POST", "/api/v1/notify/route:preview", _NotifyRouteService_PreviewRouting0_HTTP_Handler(srv))
 }
 
 func _NotifyRouteService_CreateRoute0_HTTP_Handler(srv NotifyRouteServiceHTTPServer) func(ctx http.Context) error {
@@ -150,6 +157,25 @@ func _NotifyRouteService_ListRoutes0_HTTP_Handler(srv NotifyRouteServiceHTTPServ
 	}
 }
 
+func _NotifyRouteService_PreviewRouting0_HTTP_Handler(srv NotifyRouteServiceHTTPServer) func(ctx http.Context) error {
+	return func(ctx http.Context) error {
+		var in PreviewRoutingRequest
+		if err := ctx.Bind(&in); err != nil {
+			return err
+		}
+		http.SetOperation(ctx, OperationNotifyRouteServicePreviewRouting)
+		h := ctx.Middleware(func(ctx context.Context, req interface{}) (interface{}, error) {
+			return srv.PreviewRouting(ctx, req.(*PreviewRoutingRequest))
+		})
+		out, err := h(ctx, &in)
+		if err != nil {
+			return err
+		}
+		reply := out.(*PreviewRoutingResponse)
+		return ctx.Result(200, reply)
+	}
+}
+
 type NotifyRouteServiceHTTPClient interface {
 	// CreateRoute CreateRoute 创建路由；channel_ids 须为同 biz 未删除渠道。
 	CreateRoute(ctx context.Context, req *CreateRouteRequest, opts ...http.CallOption) (rsp *CreateRouteResponse, err error)
@@ -159,6 +185,11 @@ type NotifyRouteServiceHTTPClient interface {
 	GetRoute(ctx context.Context, req *GetRouteRequest, opts ...http.CallOption) (rsp *GetRouteResponse, err error)
 	// ListRoutes ListRoutes 分页查询路由，page_size 上限 100。
 	ListRoutes(ctx context.Context, req *ListRoutesRequest, opts ...http.CallOption) (rsp *ListRoutesResponse, err error)
+	// PreviewRouting PreviewRouting 路由试算（只读，不落库）：按管道同一语义（静默 → 选路：pattern 命中
+	// ∧ severity ≥ 下限 ∧ tag_match 全等，priority → 精确度 → id 决胜）回答"这条事件会
+	// 被哪条路由接住、发到哪些渠道、用哪个模板、会不会被静默/聚合"，供配好路由后
+	// 先验证再上线。
+	PreviewRouting(ctx context.Context, req *PreviewRoutingRequest, opts ...http.CallOption) (rsp *PreviewRoutingResponse, err error)
 	// UpdateRoute UpdateRoute 更新路由：spec 整组替换规则字段，enabled 独立启停，至少传其一；
 	// biz_id 不可改，channel_ids 仍须同 biz 存在。
 	UpdateRoute(ctx context.Context, req *UpdateRouteRequest, opts ...http.CallOption) (rsp *UpdateRouteResponse, err error)
@@ -235,6 +266,27 @@ func (c *NotifyRouteServiceHTTPClientImpl) ListRoutes(ctx context.Context, in *L
 		http.PathTemplate(pattern),
 	}, opts...)
 	err := c.cc.Invoke(ctx, "GET", path, nil, &out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// PreviewRouting PreviewRouting 路由试算（只读，不落库）：按管道同一语义（静默 → 选路：pattern 命中
+// ∧ severity ≥ 下限 ∧ tag_match 全等，priority → 精确度 → id 决胜）回答"这条事件会
+// 被哪条路由接住、发到哪些渠道、用哪个模板、会不会被静默/聚合"，供配好路由后
+// 先验证再上线。
+func (c *NotifyRouteServiceHTTPClientImpl) PreviewRouting(ctx context.Context, in *PreviewRoutingRequest, opts ...http.CallOption) (*PreviewRoutingResponse, error) {
+	var out PreviewRoutingResponse
+	pattern := "/api/v1/notify/route:preview"
+	path := http.BuildPath(pattern, in)
+	opts = append([]http.CallOption{
+		http.Accept("application/protojson"),
+		http.ContentType("application/protojson"),
+		http.Operation(OperationNotifyRouteServicePreviewRouting),
+		http.PathTemplate(pattern),
+	}, opts...)
+	err := c.cc.Invoke(ctx, "POST", path, in, &out, opts...)
 	if err != nil {
 		return nil, err
 	}

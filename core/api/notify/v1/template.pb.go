@@ -12,6 +12,7 @@ import (
 	_ "google.golang.org/genproto/googleapis/api/annotations"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	structpb "google.golang.org/protobuf/types/known/structpb"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
@@ -47,7 +48,10 @@ type NotifyTemplate struct {
 	// create_time 创建时间。
 	CreateTime *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=create_time,json=createTime,proto3" json:"create_time,omitempty"`
 	// update_time 更新时间。
-	UpdateTime    *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=update_time,json=updateTime,proto3" json:"update_time,omitempty"`
+	UpdateTime *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=update_time,json=updateTime,proto3" json:"update_time,omitempty"`
+	// format 输出格式 text/markdown/html/card：渠道按能力降级——email 仅 html 生效（其余纯文本）；
+	// 群机器人 card→卡片、markdown/html→markdown、text→文本；webhook 透传。
+	Format        string `protobuf:"bytes,11,opt,name=format,proto3" json:"format,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -152,6 +156,13 @@ func (x *NotifyTemplate) GetUpdateTime() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *NotifyTemplate) GetFormat() string {
+	if x != nil {
+		return x.Format
+	}
+	return ""
+}
+
 // CreateTemplateRequest 创建模板请求。
 type CreateTemplateRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -166,7 +177,9 @@ type CreateTemplateRequest struct {
 	// body 正文模板（Go template）。
 	Body string `protobuf:"bytes,5,opt,name=body,proto3" json:"body,omitempty"`
 	// enabled 初始启用状态，可选；未指定默认启用。
-	Enabled       *bool `protobuf:"varint,6,opt,name=enabled,proto3,oneof" json:"enabled,omitempty"`
+	Enabled *bool `protobuf:"varint,6,opt,name=enabled,proto3,oneof" json:"enabled,omitempty"`
+	// format 输出格式，可选，缺省 text（text/markdown/html/card）。
+	Format        *string `protobuf:"bytes,7,opt,name=format,proto3,oneof" json:"format,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -243,6 +256,13 @@ func (x *CreateTemplateRequest) GetEnabled() bool {
 	return false
 }
 
+func (x *CreateTemplateRequest) GetFormat() string {
+	if x != nil && x.Format != nil {
+		return *x.Format
+	}
+	return ""
+}
+
 // CreateTemplateResponse 创建模板响应。
 type CreateTemplateResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -304,7 +324,9 @@ type UpdateTemplateRequest struct {
 	// body 新正文模板。
 	Body *string `protobuf:"bytes,5,opt,name=body,proto3,oneof" json:"body,omitempty"`
 	// enabled 新启用状态。
-	Enabled       *bool `protobuf:"varint,6,opt,name=enabled,proto3,oneof" json:"enabled,omitempty"`
+	Enabled *bool `protobuf:"varint,6,opt,name=enabled,proto3,oneof" json:"enabled,omitempty"`
+	// format 输出格式，可选（text/markdown/html/card）。
+	Format        *string `protobuf:"bytes,7,opt,name=format,proto3,oneof" json:"format,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -381,9 +403,18 @@ func (x *UpdateTemplateRequest) GetEnabled() bool {
 	return false
 }
 
-// UpdateTemplateResponse 更新模板响应。
+func (x *UpdateTemplateRequest) GetFormat() string {
+	if x != nil && x.Format != nil {
+		return *x.Format
+	}
+	return ""
+}
+
+// UpdateTemplateResponse 更新模板响应：返回更新后的模板（version 已 +1）。
 type UpdateTemplateResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// template 更新后的模板。
+	Template      *NotifyTemplate `protobuf:"bytes,1,opt,name=template,proto3" json:"template,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -416,6 +447,13 @@ func (x *UpdateTemplateResponse) ProtoReflect() protoreflect.Message {
 // Deprecated: Use UpdateTemplateResponse.ProtoReflect.Descriptor instead.
 func (*UpdateTemplateResponse) Descriptor() ([]byte, []int) {
 	return file_notify_v1_template_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *UpdateTemplateResponse) GetTemplate() *NotifyTemplate {
+	if x != nil {
+		return x.Template
+	}
+	return nil
 }
 
 // DeleteTemplateRequest 删除模板请求。
@@ -748,11 +786,222 @@ func (x *ListTemplatesResponse) GetTotal() int64 {
 	return 0
 }
 
+// RenderSample 模板预览样例上下文（渲染变量 Title/Payload/Severity/Count/BizID；
+// Samples 由系统生成一条样例；EventTime 取当前时间）。
+type RenderSample struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// title 标题，缺省 "sample"。
+	Title *string `protobuf:"bytes,1,opt,name=title,proto3,oneof" json:"title,omitempty"`
+	// payload 载荷对象，缺省 {"host":"sample-host"}。
+	Payload *structpb.Struct `protobuf:"bytes,2,opt,name=payload,proto3" json:"payload,omitempty"`
+	// severity 严重级 1-4，缺省 2。
+	Severity *int32 `protobuf:"varint,3,opt,name=severity,proto3,oneof" json:"severity,omitempty"`
+	// count 聚合条数，缺省 1（>1 时 Samples 注入样例）。
+	Count *int32 `protobuf:"varint,4,opt,name=count,proto3,oneof" json:"count,omitempty"`
+	// biz_id 业务标识，缺省 default。
+	BizId         *string `protobuf:"bytes,5,opt,name=biz_id,json=bizId,proto3,oneof" json:"biz_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RenderSample) Reset() {
+	*x = RenderSample{}
+	mi := &file_notify_v1_template_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RenderSample) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RenderSample) ProtoMessage() {}
+
+func (x *RenderSample) ProtoReflect() protoreflect.Message {
+	mi := &file_notify_v1_template_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RenderSample.ProtoReflect.Descriptor instead.
+func (*RenderSample) Descriptor() ([]byte, []int) {
+	return file_notify_v1_template_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *RenderSample) GetTitle() string {
+	if x != nil && x.Title != nil {
+		return *x.Title
+	}
+	return ""
+}
+
+func (x *RenderSample) GetPayload() *structpb.Struct {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+func (x *RenderSample) GetSeverity() int32 {
+	if x != nil && x.Severity != nil {
+		return *x.Severity
+	}
+	return 0
+}
+
+func (x *RenderSample) GetCount() int32 {
+	if x != nil && x.Count != nil {
+		return *x.Count
+	}
+	return 0
+}
+
+func (x *RenderSample) GetBizId() string {
+	if x != nil && x.BizId != nil {
+		return *x.BizId
+	}
+	return ""
+}
+
+// RenderTemplateRequest 模板预览请求。
+type RenderTemplateRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// subject 标题模板。
+	Subject string `protobuf:"bytes,1,opt,name=subject,proto3" json:"subject,omitempty"`
+	// body 正文模板。
+	Body string `protobuf:"bytes,2,opt,name=body,proto3" json:"body,omitempty"`
+	// sample 样例上下文，可选。
+	Sample *RenderSample `protobuf:"bytes,3,opt,name=sample,proto3" json:"sample,omitempty"`
+	// format 输出格式，可选，缺省 text；html 走 html/template（载荷自动转义）。
+	Format        *string `protobuf:"bytes,4,opt,name=format,proto3,oneof" json:"format,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RenderTemplateRequest) Reset() {
+	*x = RenderTemplateRequest{}
+	mi := &file_notify_v1_template_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RenderTemplateRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RenderTemplateRequest) ProtoMessage() {}
+
+func (x *RenderTemplateRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_notify_v1_template_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RenderTemplateRequest.ProtoReflect.Descriptor instead.
+func (*RenderTemplateRequest) Descriptor() ([]byte, []int) {
+	return file_notify_v1_template_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *RenderTemplateRequest) GetSubject() string {
+	if x != nil {
+		return x.Subject
+	}
+	return ""
+}
+
+func (x *RenderTemplateRequest) GetBody() string {
+	if x != nil {
+		return x.Body
+	}
+	return ""
+}
+
+func (x *RenderTemplateRequest) GetSample() *RenderSample {
+	if x != nil {
+		return x.Sample
+	}
+	return nil
+}
+
+func (x *RenderTemplateRequest) GetFormat() string {
+	if x != nil && x.Format != nil {
+		return *x.Format
+	}
+	return ""
+}
+
+// RenderTemplateResponse 模板预览响应。
+type RenderTemplateResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// subject 渲染后的标题。
+	Subject string `protobuf:"bytes,1,opt,name=subject,proto3" json:"subject,omitempty"`
+	// body 渲染后的正文。
+	Body          string `protobuf:"bytes,2,opt,name=body,proto3" json:"body,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RenderTemplateResponse) Reset() {
+	*x = RenderTemplateResponse{}
+	mi := &file_notify_v1_template_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RenderTemplateResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RenderTemplateResponse) ProtoMessage() {}
+
+func (x *RenderTemplateResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_notify_v1_template_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RenderTemplateResponse.ProtoReflect.Descriptor instead.
+func (*RenderTemplateResponse) Descriptor() ([]byte, []int) {
+	return file_notify_v1_template_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *RenderTemplateResponse) GetSubject() string {
+	if x != nil {
+		return x.Subject
+	}
+	return ""
+}
+
+func (x *RenderTemplateResponse) GetBody() string {
+	if x != nil {
+		return x.Body
+	}
+	return ""
+}
+
 var File_notify_v1_template_proto protoreflect.FileDescriptor
 
 const file_notify_v1_template_proto_rawDesc = "" +
 	"\n" +
-	"\x18notify/v1/template.proto\x12\tnotify.v1\x1a\x1cgoogle/api/annotations.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1bbuf/validate/validate.proto\x1a\x1bsystem/v1/annotations.proto\"\xd5\x02\n" +
+	"\x18notify/v1/template.proto\x12\tnotify.v1\x1a\x1cgoogle/api/annotations.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1bbuf/validate/validate.proto\x1a\x1bsystem/v1/annotations.proto\"\xed\x02\n" +
 	"\x0eNotifyTemplate\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x15\n" +
 	"\x06biz_id\x18\x02 \x01(\tR\x05bizId\x12\x1d\n" +
@@ -767,7 +1016,8 @@ const file_notify_v1_template_proto_rawDesc = "" +
 	"createTime\x12;\n" +
 	"\vupdate_time\x18\n" +
 	" \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"updateTime\"\xf7\x02\n" +
+	"updateTime\x12\x16\n" +
+	"\x06format\x18\v \x01(\tR\x06format\"\xc2\x03\n" +
 	"\x15CreateTemplateRequest\x129\n" +
 	"\x06biz_id\x18\x01 \x01(\tB\x1d\xbaH\x1ar\x18\x10\x01\x18@2\x12^[a-z0-9_-]{1,64}$H\x00R\x05bizId\x88\x01\x01\x12L\n" +
 	"\n" +
@@ -776,12 +1026,14 @@ const file_notify_v1_template_proto_rawDesc = "" +
 	"\asubject\x18\x04 \x01(\tB\n" +
 	"\xbaH\ar\x05\x10\x01\x18\xff\x01R\asubject\x12\x1f\n" +
 	"\x04body\x18\x05 \x01(\tB\v\xbaH\br\x06\x10\x01\x18\x80\x80\x02R\x04body\x12\x1d\n" +
-	"\aenabled\x18\x06 \x01(\bH\x01R\aenabled\x88\x01\x01B\t\n" +
+	"\aenabled\x18\x06 \x01(\bH\x01R\aenabled\x88\x01\x01\x12>\n" +
+	"\x06format\x18\a \x01(\tB!\xbaH\x1er\x1cR\x04textR\bmarkdownR\x04htmlR\x04cardH\x02R\x06format\x88\x01\x01B\t\n" +
 	"\a_biz_idB\n" +
 	"\n" +
-	"\b_enabled\"O\n" +
+	"\b_enabledB\t\n" +
+	"\a_format\"O\n" +
 	"\x16CreateTemplateResponse\x125\n" +
-	"\btemplate\x18\x01 \x01(\v2\x19.notify.v1.NotifyTemplateR\btemplate\"\xdb\x04\n" +
+	"\btemplate\x18\x01 \x01(\v2\x19.notify.v1.NotifyTemplateR\btemplate\"\xba\x05\n" +
 	"\x15UpdateTemplateRequest\x12\x18\n" +
 	"\x02id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\x12Q\n" +
 	"\n" +
@@ -790,16 +1042,19 @@ const file_notify_v1_template_proto_rawDesc = "" +
 	"\asubject\x18\x04 \x01(\tB\n" +
 	"\xbaH\ar\x05\x10\x01\x18\xff\x01H\x02R\asubject\x88\x01\x01\x12$\n" +
 	"\x04body\x18\x05 \x01(\tB\v\xbaH\br\x06\x10\x01\x18\x80\x80\x02H\x03R\x04body\x88\x01\x01\x12\x1d\n" +
-	"\aenabled\x18\x06 \x01(\bH\x04R\aenabled\x88\x01\x01:\xc4\x01\xbaH\xc0\x01\x1a\xbd\x01\n" +
-	" notify.template.update.non_empty\x12-at least one updatable field must be provided\x1ajhas(this.event_type) || has(this.channel_type) || has(this.subject) || has(this.body) || has(this.enabled)B\r\n" +
+	"\aenabled\x18\x06 \x01(\bH\x04R\aenabled\x88\x01\x01\x12>\n" +
+	"\x06format\x18\a \x01(\tB!\xbaH\x1er\x1cR\x04textR\bmarkdownR\x04htmlR\x04cardH\x05R\x06format\x88\x01\x01:\xd8\x01\xbaH\xd4\x01\x1a\xd1\x01\n" +
+	" notify.template.update.non_empty\x12-at least one updatable field must be provided\x1a~has(this.event_type) || has(this.channel_type) || has(this.subject) || has(this.body) || has(this.enabled) || has(this.format)B\r\n" +
 	"\v_event_typeB\x0f\n" +
 	"\r_channel_typeB\n" +
 	"\n" +
 	"\b_subjectB\a\n" +
 	"\x05_bodyB\n" +
 	"\n" +
-	"\b_enabled\"\x18\n" +
-	"\x16UpdateTemplateResponse\"1\n" +
+	"\b_enabledB\t\n" +
+	"\a_format\"O\n" +
+	"\x16UpdateTemplateResponse\x125\n" +
+	"\btemplate\x18\x01 \x01(\v2\x19.notify.v1.NotifyTemplateR\btemplate\"1\n" +
 	"\x15DeleteTemplateRequest\x12\x18\n" +
 	"\x02id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\"\x18\n" +
 	"\x16DeleteTemplateResponse\".\n" +
@@ -825,13 +1080,33 @@ const file_notify_v1_template_proto_rawDesc = "" +
 	"\a_biz_id\"^\n" +
 	"\x15ListTemplatesResponse\x12/\n" +
 	"\x05items\x18\x01 \x03(\v2\x19.notify.v1.NotifyTemplateR\x05items\x12\x14\n" +
-	"\x05total\x18\x02 \x01(\x03R\x05total2\xf1\x05\n" +
+	"\x05total\x18\x02 \x01(\x03R\x05total\"\x87\x02\n" +
+	"\fRenderSample\x12#\n" +
+	"\x05title\x18\x01 \x01(\tB\b\xbaH\x05r\x03\x18\xff\x01H\x00R\x05title\x88\x01\x01\x121\n" +
+	"\apayload\x18\x02 \x01(\v2\x17.google.protobuf.StructR\apayload\x12*\n" +
+	"\bseverity\x18\x03 \x01(\x05B\t\xbaH\x06\x1a\x04\x18\x04(\x01H\x01R\bseverity\x88\x01\x01\x12\"\n" +
+	"\x05count\x18\x04 \x01(\x05B\a\xbaH\x04\x1a\x02(\x01H\x02R\x05count\x88\x01\x01\x12#\n" +
+	"\x06biz_id\x18\x05 \x01(\tB\a\xbaH\x04r\x02\x18@H\x03R\x05bizId\x88\x01\x01B\b\n" +
+	"\x06_titleB\v\n" +
+	"\t_severityB\b\n" +
+	"\x06_countB\t\n" +
+	"\a_biz_id\"\xd6\x01\n" +
+	"\x15RenderTemplateRequest\x12\"\n" +
+	"\asubject\x18\x01 \x01(\tB\b\xbaH\x05r\x03\x18\x80\x04R\asubject\x12\x1d\n" +
+	"\x04body\x18\x02 \x01(\tB\t\xbaH\x06r\x04\x18\x80\x80\x04R\x04body\x12/\n" +
+	"\x06sample\x18\x03 \x01(\v2\x17.notify.v1.RenderSampleR\x06sample\x12>\n" +
+	"\x06format\x18\x04 \x01(\tB!\xbaH\x1er\x1cR\x04textR\bmarkdownR\x04htmlR\x04cardH\x00R\x06format\x88\x01\x01B\t\n" +
+	"\a_format\"F\n" +
+	"\x16RenderTemplateResponse\x12\x18\n" +
+	"\asubject\x18\x01 \x01(\tR\asubject\x12\x12\n" +
+	"\x04body\x18\x02 \x01(\tR\x04body2\x84\a\n" +
 	"\x15NotifyTemplateService\x12\x8f\x01\n" +
 	"\x0eCreateTemplate\x12 .notify.v1.CreateTemplateRequest\x1a!.notify.v1.CreateTemplateResponse\"8\xc2\xf3\x18\x12创建通知模板\x82\xd3\xe4\x93\x02\x1c:\x01*\"\x17/api/v1/notify/template\x12\x94\x01\n" +
 	"\x0eUpdateTemplate\x12 .notify.v1.UpdateTemplateRequest\x1a!.notify.v1.UpdateTemplateResponse\"=\xc2\xf3\x18\x12更新通知模板\x82\xd3\xe4\x93\x02!:\x01*\x1a\x1c/api/v1/notify/template/{id}\x12\x91\x01\n" +
 	"\x0eDeleteTemplate\x12 .notify.v1.DeleteTemplateRequest\x1a!.notify.v1.DeleteTemplateResponse\":\xc2\xf3\x18\x12删除通知模板\x82\xd3\xe4\x93\x02\x1e*\x1c/api/v1/notify/template/{id}\x12\x88\x01\n" +
 	"\vGetTemplate\x12\x1d.notify.v1.GetTemplateRequest\x1a\x1e.notify.v1.GetTemplateResponse\":\xc2\xf3\x18\x12查询通知模板\x82\xd3\xe4\x93\x02\x1e\x12\x1c/api/v1/notify/template/{id}\x12\x8f\x01\n" +
-	"\rListTemplates\x12\x1f.notify.v1.ListTemplatesRequest\x1a .notify.v1.ListTemplatesResponse\";\xc2\xf3\x18\x18查询通知模板列表\x82\xd3\xe4\x93\x02\x19\x12\x17/api/v1/notify/templateB:Z8github.com/lanyulei/reborn/backend/core/api/notify/v1;v1b\x06proto3"
+	"\rListTemplates\x12\x1f.notify.v1.ListTemplatesRequest\x1a .notify.v1.ListTemplatesResponse\";\xc2\xf3\x18\x18查询通知模板列表\x82\xd3\xe4\x93\x02\x19\x12\x17/api/v1/notify/template\x12\x90\x01\n" +
+	"\x0eRenderTemplate\x12 .notify.v1.RenderTemplateRequest\x1a!.notify.v1.RenderTemplateResponse\"9\xc2\xf3\x18\f模板预览\x82\xd3\xe4\x93\x02#:\x01*\"\x1e/api/v1/notify/template:renderB:Z8github.com/lanyulei/reborn/backend/core/api/notify/v1;v1b\x06proto3"
 
 var (
 	file_notify_v1_template_proto_rawDescOnce sync.Once
@@ -845,7 +1120,7 @@ func file_notify_v1_template_proto_rawDescGZIP() []byte {
 	return file_notify_v1_template_proto_rawDescData
 }
 
-var file_notify_v1_template_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_notify_v1_template_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_notify_v1_template_proto_goTypes = []any{
 	(*NotifyTemplate)(nil),         // 0: notify.v1.NotifyTemplate
 	(*CreateTemplateRequest)(nil),  // 1: notify.v1.CreateTemplateRequest
@@ -858,29 +1133,38 @@ var file_notify_v1_template_proto_goTypes = []any{
 	(*GetTemplateResponse)(nil),    // 8: notify.v1.GetTemplateResponse
 	(*ListTemplatesRequest)(nil),   // 9: notify.v1.ListTemplatesRequest
 	(*ListTemplatesResponse)(nil),  // 10: notify.v1.ListTemplatesResponse
-	(*timestamppb.Timestamp)(nil),  // 11: google.protobuf.Timestamp
+	(*RenderSample)(nil),           // 11: notify.v1.RenderSample
+	(*RenderTemplateRequest)(nil),  // 12: notify.v1.RenderTemplateRequest
+	(*RenderTemplateResponse)(nil), // 13: notify.v1.RenderTemplateResponse
+	(*timestamppb.Timestamp)(nil),  // 14: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),        // 15: google.protobuf.Struct
 }
 var file_notify_v1_template_proto_depIdxs = []int32{
-	11, // 0: notify.v1.NotifyTemplate.create_time:type_name -> google.protobuf.Timestamp
-	11, // 1: notify.v1.NotifyTemplate.update_time:type_name -> google.protobuf.Timestamp
+	14, // 0: notify.v1.NotifyTemplate.create_time:type_name -> google.protobuf.Timestamp
+	14, // 1: notify.v1.NotifyTemplate.update_time:type_name -> google.protobuf.Timestamp
 	0,  // 2: notify.v1.CreateTemplateResponse.template:type_name -> notify.v1.NotifyTemplate
-	0,  // 3: notify.v1.GetTemplateResponse.template:type_name -> notify.v1.NotifyTemplate
-	0,  // 4: notify.v1.ListTemplatesResponse.items:type_name -> notify.v1.NotifyTemplate
-	1,  // 5: notify.v1.NotifyTemplateService.CreateTemplate:input_type -> notify.v1.CreateTemplateRequest
-	3,  // 6: notify.v1.NotifyTemplateService.UpdateTemplate:input_type -> notify.v1.UpdateTemplateRequest
-	5,  // 7: notify.v1.NotifyTemplateService.DeleteTemplate:input_type -> notify.v1.DeleteTemplateRequest
-	7,  // 8: notify.v1.NotifyTemplateService.GetTemplate:input_type -> notify.v1.GetTemplateRequest
-	9,  // 9: notify.v1.NotifyTemplateService.ListTemplates:input_type -> notify.v1.ListTemplatesRequest
-	2,  // 10: notify.v1.NotifyTemplateService.CreateTemplate:output_type -> notify.v1.CreateTemplateResponse
-	4,  // 11: notify.v1.NotifyTemplateService.UpdateTemplate:output_type -> notify.v1.UpdateTemplateResponse
-	6,  // 12: notify.v1.NotifyTemplateService.DeleteTemplate:output_type -> notify.v1.DeleteTemplateResponse
-	8,  // 13: notify.v1.NotifyTemplateService.GetTemplate:output_type -> notify.v1.GetTemplateResponse
-	10, // 14: notify.v1.NotifyTemplateService.ListTemplates:output_type -> notify.v1.ListTemplatesResponse
-	10, // [10:15] is the sub-list for method output_type
-	5,  // [5:10] is the sub-list for method input_type
-	5,  // [5:5] is the sub-list for extension type_name
-	5,  // [5:5] is the sub-list for extension extendee
-	0,  // [0:5] is the sub-list for field type_name
+	0,  // 3: notify.v1.UpdateTemplateResponse.template:type_name -> notify.v1.NotifyTemplate
+	0,  // 4: notify.v1.GetTemplateResponse.template:type_name -> notify.v1.NotifyTemplate
+	0,  // 5: notify.v1.ListTemplatesResponse.items:type_name -> notify.v1.NotifyTemplate
+	15, // 6: notify.v1.RenderSample.payload:type_name -> google.protobuf.Struct
+	11, // 7: notify.v1.RenderTemplateRequest.sample:type_name -> notify.v1.RenderSample
+	1,  // 8: notify.v1.NotifyTemplateService.CreateTemplate:input_type -> notify.v1.CreateTemplateRequest
+	3,  // 9: notify.v1.NotifyTemplateService.UpdateTemplate:input_type -> notify.v1.UpdateTemplateRequest
+	5,  // 10: notify.v1.NotifyTemplateService.DeleteTemplate:input_type -> notify.v1.DeleteTemplateRequest
+	7,  // 11: notify.v1.NotifyTemplateService.GetTemplate:input_type -> notify.v1.GetTemplateRequest
+	9,  // 12: notify.v1.NotifyTemplateService.ListTemplates:input_type -> notify.v1.ListTemplatesRequest
+	12, // 13: notify.v1.NotifyTemplateService.RenderTemplate:input_type -> notify.v1.RenderTemplateRequest
+	2,  // 14: notify.v1.NotifyTemplateService.CreateTemplate:output_type -> notify.v1.CreateTemplateResponse
+	4,  // 15: notify.v1.NotifyTemplateService.UpdateTemplate:output_type -> notify.v1.UpdateTemplateResponse
+	6,  // 16: notify.v1.NotifyTemplateService.DeleteTemplate:output_type -> notify.v1.DeleteTemplateResponse
+	8,  // 17: notify.v1.NotifyTemplateService.GetTemplate:output_type -> notify.v1.GetTemplateResponse
+	10, // 18: notify.v1.NotifyTemplateService.ListTemplates:output_type -> notify.v1.ListTemplatesResponse
+	13, // 19: notify.v1.NotifyTemplateService.RenderTemplate:output_type -> notify.v1.RenderTemplateResponse
+	14, // [14:20] is the sub-list for method output_type
+	8,  // [8:14] is the sub-list for method input_type
+	8,  // [8:8] is the sub-list for extension type_name
+	8,  // [8:8] is the sub-list for extension extendee
+	0,  // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_notify_v1_template_proto_init() }
@@ -891,13 +1175,15 @@ func file_notify_v1_template_proto_init() {
 	file_notify_v1_template_proto_msgTypes[1].OneofWrappers = []any{}
 	file_notify_v1_template_proto_msgTypes[3].OneofWrappers = []any{}
 	file_notify_v1_template_proto_msgTypes[9].OneofWrappers = []any{}
+	file_notify_v1_template_proto_msgTypes[11].OneofWrappers = []any{}
+	file_notify_v1_template_proto_msgTypes[12].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_notify_v1_template_proto_rawDesc), len(file_notify_v1_template_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   11,
+			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

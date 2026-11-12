@@ -28,13 +28,22 @@ func Backoff(attempt int32) time.Duration {
 	return base + time.Duration(rand.Int64N(int64(base)/5+1)) //nolint:gosec // 抖动非安全用途
 }
 
-// 发送侧延后口径（不计尝试）：无令牌按桶缺口、熔断打开、渠道停用、secret 不可用。
+// 发送侧延后口径（不计尝试）：无令牌按桶缺口、熔断打开、渠道停用、secret 不可用、
+// 发送前瞬时错误（DB 抖动 / 渲染超时：放回而非烧掉 5 分钟租约 + 一次尝试）。
 const (
-	releaseMinDelay      = time.Second
-	releaseBreakerDelay  = 5 * time.Second
-	releaseDisabledDelay = 60 * time.Second
-	releaseSecretDelay   = 60 * time.Second
+	releaseMinDelay       = time.Second
+	releaseBreakerDelay   = 5 * time.Second
+	releaseDisabledDelay  = 60 * time.Second
+	releaseSecretDelay    = 60 * time.Second
+	releaseTransientDelay = 5 * time.Second
 )
+
+// writebackTimeout 发送后落账（Finish/Release/熔断记录）的独立时限：落账不随
+// 停机取消，只受本时限约束。
+const writebackTimeout = 10 * time.Second
+
+// defaultMaxSendTimeout 渠道显式超时的缺省上限。
+const defaultMaxSendTimeout = 10 * time.Second
 
 // ClaimedDispatch 已声明的任务（含围栏令牌 Attempts：声明时 +1 后的值）。
 type ClaimedDispatch struct {
@@ -48,8 +57,13 @@ type FinishResult struct {
 	Error         string
 	ProviderMsgID string
 	LatencyMs     int32
-	// NextRetry 失败且可重试时的下次时间；Dead 由仓储按 attempts ≥ MaxAttempts 或 !Retryable 判定。
-	NextRetry time.Time
+	// RetryAfter 失败且可重试时距下次重试的间隔（仓储写 now() + RetryAfter，时钟一律
+	// 取数据库）；Dead 由仓储按 attempts ≥ MaxAttempts 或 !Retryable 判定。
+	RetryAfter time.Duration
+	// Content / TemplateID 本次首次渲染的快照（nil = 本次未渲染，列保持不变）：随
+	// 落账同事务写入，省一次发送前的独立往返。
+	Content    []byte
+	TemplateID string
 }
 
 // DispatchRepo 发送任务仓储（sender 侧）。所有写语句以 (id, create_time, status=2,
@@ -58,16 +72,17 @@ type DispatchRepo interface {
 	// Claim 声明一批到期任务：status→2、attempts+1、租约 next_retry_time=now()+lease；
 	// paused 渠道排除。
 	Claim(ctx context.Context, limit int, lease time.Duration, paused []string) ([]*ClaimedDispatch, error)
-	// SaveContent 写渲染快照并回填 template_id 列（空=NULL；围栏）。
-	SaveContent(ctx context.Context, d *ClaimedDispatch, content []byte, templateID string) error
-	// Finish 落账：delivery_log + 终态/退避（围栏）；dead 同事务写 notify_dlq。
+	// Finish 落账：delivery_log + 终态/退避 + 渲染快照（围栏）；dead 同事务写
+	// notify_dlq。单事务单批（一次往返）。
 	Finish(ctx context.Context, d *ClaimedDispatch, res FinishResult, maxAttempts int32) error
 	// Release 不计尝试放回：status→1、attempts-1、next_retry_time=now()+delay（围栏）。
 	Release(ctx context.Context, d *ClaimedDispatch, delay time.Duration) error
 	// ReapExpired 回收租约过期的 sending 行：记失败尝试并按退避转 failed / dead。
 	ReapExpired(ctx context.Context, limit int, maxAttempts int32, backoff func(int32) time.Duration) (int, error)
-	// GetEvent 取源事件（渲染上下文）。
-	GetEvent(ctx context.Context, id string) (*Event, error)
+	// GetEvents 批量取源事件（渲染上下文）：一批 dispatch 的 distinct event_id 一次
+	// 往返；maxCreateTime 为分区剪枝上界（事件先于其 dispatch 创建）。缺失的 id
+	// 不在结果中（已按保留期清理）。
+	GetEvents(ctx context.Context, ids []string, maxCreateTime time.Time) (map[string]*Event, error)
 }
 
 // ErrStaleClaim 围栏拒绝：任务已被回收/他人重领，本次结果丢弃（at-least-once 既定）。
@@ -81,9 +96,11 @@ type RateLimiter interface {
 	Take(ctx context.Context, ch *Channel) (ok bool, wait time.Duration, err error)
 }
 
-// SendObserver 发送结果观测钩子（指标）：result ∈ sent / retry / dead / released。
+// SendObserver 发送结果观测钩子（指标）：result ∈ sent / retry / dead / released；
+// ObserveSendLatency 记录一次真实出站的耗时（成功与失败都记）。
 type SendObserver interface {
 	ObserveDispatch(channelType, result string)
+	ObserveSendLatency(channelType string, d time.Duration)
 }
 
 // 观测结果取值。
@@ -96,15 +113,19 @@ const (
 
 type noopObserver struct{}
 
-func (noopObserver) ObserveDispatch(string, string) {}
+func (noopObserver) ObserveDispatch(string, string)           {}
+func (noopObserver) ObserveSendLatency(string, time.Duration) {}
 
 // SenderOptions sender 用例参数。
 type SenderOptions struct {
-	Lease         time.Duration
-	SendTimeout   time.Duration
-	RenderTimeout time.Duration
-	Concurrency   int
-	MaxAttempts   int32
+	Lease time.Duration
+	// SendTimeout 渠道未显式配置超时时的单次发送超时。
+	SendTimeout time.Duration
+	// MaxSendTimeout 渠道显式超时（webhook timeout_s）的上限。
+	MaxSendTimeout time.Duration
+	RenderTimeout  time.Duration
+	Concurrency    int
+	MaxAttempts    int32
 }
 
 // SenderUsecase 发送用例：Claim → 渠道健康检查 → 渲染快照 → 熔断 → 令牌桶 →
@@ -129,7 +150,10 @@ func NewSenderUsecase(repo DispatchRepo, cfg *ConfigCache, limiter RateLimiter, 
 	return &SenderUsecase{
 		repo: repo, cfg: cfg, limiter: limiter, sender: sender, renderer: renderer, log: logger,
 		breaker: NewSharedBreaker(nil, logger), paused: make(map[string]time.Time), observer: noopObserver{},
-		opts: SenderOptions{Lease: 5 * time.Minute, SendTimeout: 3 * time.Second, RenderTimeout: defaultRenderTimeout, Concurrency: 16, MaxAttempts: 6},
+		opts: SenderOptions{
+			Lease: 5 * time.Minute, SendTimeout: 3 * time.Second, MaxSendTimeout: defaultMaxSendTimeout,
+			RenderTimeout: defaultRenderTimeout, Concurrency: 16, MaxAttempts: 6,
+		},
 	}
 }
 
@@ -140,6 +164,9 @@ func (uc *SenderUsecase) WithOptions(o SenderOptions) *SenderUsecase {
 	}
 	if o.SendTimeout > 0 {
 		uc.opts.SendTimeout = o.SendTimeout
+	}
+	if o.MaxSendTimeout > 0 {
+		uc.opts.MaxSendTimeout = o.MaxSendTimeout
 	}
 	if o.RenderTimeout > 0 {
 		uc.opts.RenderTimeout = o.RenderTimeout
@@ -185,12 +212,18 @@ func (uc *SenderUsecase) SendOnce(ctx context.Context, limit int) (int, error) {
 	if len(claimed) == 0 {
 		return 0, nil
 	}
+	events, err := uc.loadEvents(ctx, claimed)
+	if err != nil {
+		// 瞬时：整批放回（不计尝试、短延后），不让 100 条任务各占 5 分钟租约。
+		uc.releaseAll(ctx, claimed, releaseTransientDelay)
+		return 0, err
+	}
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(uc.opts.Concurrency)
 	for _, d := range claimed {
 		g.Go(func() error {
 			// 单任务处理失败只记日志（租约到期后由回收器兜底），不中止其余任务。
-			if err := uc.handle(gctx, snap, d); err != nil && !errors.Is(err, ErrStaleClaim) {
+			if err := uc.handle(gctx, snap, d, events); err != nil && !errors.Is(err, ErrStaleClaim) {
 				uc.log.ErrorContext(gctx, "dispatch handling failed", "dispatch_id", d.ID, "error", err)
 			}
 			return nil
@@ -205,11 +238,64 @@ func (uc *SenderUsecase) ReapOnce(ctx context.Context, limit int) (int, error) {
 	return uc.repo.ReapExpired(ctx, limit, uc.opts.MaxAttempts, Backoff)
 }
 
-func (uc *SenderUsecase) handle(ctx context.Context, snap *Snapshot, d *ClaimedDispatch) error {
+// loadEvents 一批任务的源事件一次取回（distinct event_id；create_time 上界剪枝）。
+func (uc *SenderUsecase) loadEvents(ctx context.Context, claimed []*ClaimedDispatch) (map[string]*Event, error) {
+	ids := make([]string, 0, len(claimed))
+	seen := make(map[string]struct{}, len(claimed))
+	var maxCreate time.Time
+	for _, d := range claimed {
+		if d.CreateTime.After(maxCreate) {
+			maxCreate = d.CreateTime
+		}
+		if _, ok := seen[d.EventID]; ok {
+			continue
+		}
+		seen[d.EventID] = struct{}{}
+		ids = append(ids, d.EventID)
+	}
+	events, err := uc.repo.GetEvents(ctx, ids, maxCreate)
+	if err != nil {
+		return nil, fmt.Errorf("load events: %w", err)
+	}
+	return events, nil
+}
+
+// releaseAll 整批放回（落账 ctx 不随取消）；失败只记日志，租约回收兜底。
+func (uc *SenderUsecase) releaseAll(ctx context.Context, claimed []*ClaimedDispatch, delay time.Duration) {
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), writebackTimeout)
+	defer cancel()
+	for _, d := range claimed {
+		if err := uc.repo.Release(wctx, d, delay); err != nil && !errors.Is(err, ErrStaleClaim) {
+			uc.log.WarnContext(ctx, "release claimed dispatch failed", "dispatch_id", d.ID, "error", err)
+		}
+	}
+}
+
+// breakerDelay 熔断打开时的放回/暂停时长：到 open_until 为止（下限 5s、上限一个
+// 打开周期）。固定 5s 会让打开渠道的积压每 5s 被声明再放回一次（每行两次含
+// content 的 UPDATE），10 万积压 = 每秒数万次无效写。
+func (uc *SenderUsecase) breakerDelay(channelID string) time.Duration {
+	delay := releaseBreakerDelay
+	if until := uc.breaker.OpenUntil(channelID); !until.IsZero() {
+		delay = max(releaseBreakerDelay, min(time.Until(until), breakerOpenFor))
+	}
+	return delay
+}
+
+func (uc *SenderUsecase) handle(ctx context.Context, snap *Snapshot, d *ClaimedDispatch, events map[string]*Event) error {
 	ch := snap.Channel(d.ChannelID)
+	// 落账一律在不受取消影响的 ctx 上执行（独立超时）：消息一旦发出（或已决定放回），
+	// 写回失败即意味着行停在 sending 直到租约到期被回收重发——停机取消不得造成重复投递。
+	writeback := func(fn func(ctx context.Context) error) error {
+		wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), writebackTimeout)
+		defer cancel()
+		return fn(wctx)
+	}
 	if ch == nil {
 		uc.observer.ObserveDispatch("unknown", ObserveDead)
-		return uc.repo.Finish(ctx, d, FinishResult{Retryable: false, Error: "channel deleted"}, uc.opts.MaxAttempts)
+		return writeback(func(c context.Context) error {
+			return uc.repo.Finish(c, d, FinishResult{Retryable: false, Error: "channel deleted"}, uc.opts.MaxAttempts)
+		})
 	}
 	finish := func(res FinishResult) error {
 		switch {
@@ -220,11 +306,19 @@ func (uc *SenderUsecase) handle(ctx context.Context, snap *Snapshot, d *ClaimedD
 		default:
 			uc.observer.ObserveDispatch(ch.Type, ObserveDead)
 		}
-		return uc.repo.Finish(ctx, d, res, uc.opts.MaxAttempts)
+		return writeback(func(c context.Context) error { return uc.repo.Finish(c, d, res, uc.opts.MaxAttempts) })
 	}
 	release := func(delay time.Duration) error {
 		uc.observer.ObserveDispatch(ch.Type, ObserveReleased)
-		return uc.repo.Release(ctx, d, delay)
+		return writeback(func(c context.Context) error { return uc.repo.Release(c, d, delay) })
+	}
+	// transient 发送前瞬时错误：尽力放回（不计尝试、短延后）再上报；放回失败（含围栏
+	// 拒绝）只记日志——最坏仍由租约回收兜底。
+	transient := func(err error) error {
+		if rerr := release(releaseTransientDelay); rerr != nil && !errors.Is(rerr, ErrStaleClaim) {
+			uc.log.WarnContext(ctx, "release after transient error failed", "dispatch_id", d.ID, "error", rerr)
+		}
+		return err
 	}
 	switch {
 	case !ch.Enabled:
@@ -235,47 +329,46 @@ func (uc *SenderUsecase) handle(ctx context.Context, snap *Snapshot, d *ClaimedD
 	case !uc.sender.Supports(ch.Type):
 		return finish(FinishResult{Retryable: false, Error: ErrChannelTypeUnsupported.Error()})
 	}
-	event, err := uc.repo.GetEvent(ctx, d.EventID)
-	if err != nil {
-		if errors.Is(err, ErrEventNotFound) {
-			return finish(FinishResult{Retryable: false, Error: err.Error()})
-		}
-		return fmt.Errorf("load event: %w", err) // 瞬时：租约到期回收重试
+	event, ok := events[d.EventID]
+	if !ok {
+		return finish(FinishResult{Retryable: false, Error: ErrEventNotFound.Error()})
 	}
 	content, err := DecodeContent(d.Content)
 	if err != nil {
 		return finish(FinishResult{Retryable: false, Error: Truncate(err.Error(), 512)})
 	}
+	// snapshot 本次首次渲染的快照：随落账同事务写入（省一次独立往返）；渲染后又被
+	// 放回（熔断/限流）则下次重渲染——模板已缓存，代价微秒级。
+	var snapshot []byte
 	if !content.Rendered() {
 		tpl := snap.Template(event.BizID, event.EventType, ch.Type)
-		subject, body, err := uc.renderer.Render(ctx, tpl, RenderContextFor(event, content.Agg))
+		subject, body, format, err := uc.renderer.Render(ctx, tpl, ch.Type, RenderContextFor(event, content.Agg))
 		if err != nil {
 			if errors.Is(err, ErrRenderTimeout) {
-				return fmt.Errorf("render: %w", err) // 瞬时
+				return transient(fmt.Errorf("render: %w", err))
 			}
 			return finish(FinishResult{Retryable: false, Error: Truncate("render: "+err.Error(), 512)})
 		}
-		content.Subject, content.Body = subject, body
+		content.Subject, content.Body, content.Format = subject, body, format
 		if tpl != nil {
 			content.TemplateID, content.TemplateVersion = tpl.ID, tpl.Version
 		}
-		raw, err := EncodeContent(content)
-		if err != nil {
-			return err
-		}
-		if err := uc.repo.SaveContent(ctx, d, raw, content.TemplateID); err != nil {
+		if snapshot, err = EncodeContent(content); err != nil {
 			return err
 		}
 	}
 	if !uc.breaker.Allow(ctx, ch.ID) {
-		uc.pause(ch.ID, releaseBreakerDelay)
-		return release(releaseBreakerDelay)
+		delay := uc.breakerDelay(ch.ID)
+		uc.pause(ch.ID, delay)
+		return release(delay)
 	}
 	ok, wait, err := uc.limiter.Take(ctx, ch)
 	if err != nil {
-		return fmt.Errorf("rate limiter: %w", err)
+		uc.breaker.CancelProbe(ctx, ch.ID) // Allow 可能放出了半开探测名额，未真正发送须归还
+		return transient(fmt.Errorf("rate limiter: %w", err))
 	}
 	if !ok {
+		uc.breaker.CancelProbe(ctx, ch.ID)
 		if wait < releaseMinDelay {
 			wait = releaseMinDelay
 		}
@@ -284,22 +377,36 @@ func (uc *SenderUsecase) handle(ctx context.Context, snap *Snapshot, d *ClaimedD
 	}
 	msg := RenderedMessage{
 		EventID: event.ID, BizID: event.BizID, EventType: event.EventType, Severity: event.Severity,
-		Title: event.Title, Subject: content.Subject, Body: content.Body, Payload: event.Payload,
+		Title: event.Title, Subject: content.Subject, Body: content.Body, Format: content.Format, Payload: event.Payload,
 		Recipient: d.Recipient, SendKey: d.SendKey, Agg: content.Agg,
 	}
-	sendCtx, cancel := context.WithTimeout(ctx, uc.opts.SendTimeout)
+	sendCtx, cancel := context.WithTimeout(ctx, uc.sendTimeout(ch))
 	start := time.Now()
 	res, sendErr := uc.sender.Send(sendCtx, ch, msg)
 	cancel()
-	latency := int32(time.Since(start).Milliseconds()) //nolint:gosec // 毫秒级时延不会溢出 int32
-	uc.breaker.Record(ctx, ch.ID, sendErr == nil)
-	fr := FinishResult{OK: sendErr == nil, ProviderMsgID: res.ProviderMsgID, LatencyMs: latency}
+	elapsed := time.Since(start)
+	uc.observer.ObserveSendLatency(ch.Type, elapsed)
+	latency := int32(elapsed.Milliseconds()) //nolint:gosec // 毫秒级时延不会溢出 int32
+	_ = writeback(func(c context.Context) error { uc.breaker.Record(c, ch.ID, sendErr == nil); return nil })
+	fr := FinishResult{OK: sendErr == nil, ProviderMsgID: res.ProviderMsgID, LatencyMs: latency, Content: snapshot, TemplateID: content.TemplateID}
 	if sendErr != nil {
 		fr.Retryable = res.Retryable
 		fr.Error = Truncate(sendErr.Error(), 512)
-		fr.NextRetry = time.Now().Add(Backoff(d.Attempts))
+		// 退避取 max(退避表, 对端 Retry-After)，上限一个退避表最大值：对端明确要求等更久
+		// 时按对端，否则固定退避把 429 直接变成下一次 429。
+		fr.RetryAfter = max(Backoff(d.Attempts), min(res.RetryAfter, retryBackoff[len(retryBackoff)-1]))
 	}
 	return finish(fr)
+}
+
+// sendTimeout 单次发送超时：渠道显式 timeout_s（webhook）取 min(timeout_s,
+// MaxSendTimeout)，未配置取 SendTimeout。此前渠道值被嵌在固定 3s 内，>3s 的配置
+// 形同虚设。
+func (uc *SenderUsecase) sendTimeout(ch *Channel) time.Duration {
+	if ch.Webhook != nil && ch.Webhook.TimeoutS > 0 {
+		return min(time.Duration(ch.Webhook.TimeoutS)*time.Second, uc.opts.MaxSendTimeout)
+	}
+	return uc.opts.SendTimeout
 }
 
 func (uc *SenderUsecase) pause(channelID string, d time.Duration) {

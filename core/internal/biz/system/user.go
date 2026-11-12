@@ -3,6 +3,7 @@ package biz
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/lanyulei/reborn/backend/kit/idgen"
@@ -48,15 +49,17 @@ const (
 // 除认证链路经 UserReader.GetUserByUsername 取哈希校验外，任何读路径不得回填该字段。
 // Email/Phone 空串表示未填写，data 层落库为 NULL。
 type User struct {
-	ID         string
-	Username   string
-	Password   string
-	Nickname   string
-	Email      string
-	Phone      string
-	Gender     string
-	IsAdmin    bool
-	Status     int32
+	ID       string
+	Username string
+	Password string
+	Nickname string
+	Email    string
+	Phone    string
+	Gender   string
+	IsAdmin  bool
+	Status   int32
+	// Avatar 头像地址；空 = 未设置。
+	Avatar     string
 	CreateTime time.Time
 	UpdateTime time.Time
 }
@@ -77,6 +80,7 @@ type UserUpdate struct {
 	IsAdmin      *bool
 	Status       *int32
 	PasswordHash *string
+	Avatar       *string
 }
 
 // 用户域哨兵错误：跨层业务错误统一携带 Kratos code/reason，
@@ -156,6 +160,16 @@ func (uc *UserUsecase) Create(ctx context.Context, user *User) (*User, error) {
 	user.CreateTime, user.UpdateTime = now, now
 	if err := uc.writer.CreateUser(ctx, user); err != nil {
 		return nil, err
+	}
+	// 新建用户自动绑定全部内置角色（默认角色）；无内置角色时不写绑定。
+	builtin, err := uc.roleReader.ListBuiltinRoleIDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(builtin) > 0 {
+		if err := uc.roles.BindUserRoles(ctx, id, builtin); err != nil {
+			return nil, fmt.Errorf("bind builtin roles: %w", err)
+		}
 	}
 	user.Password = ""
 	return user, nil
@@ -267,7 +281,26 @@ func (uc *UserUsecase) BindRoles(ctx context.Context, userID string, roleIDs []s
 			return ErrRoleNotFound
 		}
 	}
-	return uc.roles.BindUserRoles(ctx, userID, roleIDs)
+	// 内置角色不可解绑：无论入参如何，落库集合始终并入全部内置角色（去重保序）。
+	builtin, err := uc.roleReader.ListBuiltinRoleIDs(ctx)
+	if err != nil {
+		return err
+	}
+	return uc.roles.BindUserRoles(ctx, userID, mergeRoleIDs(roleIDs, builtin))
+}
+
+// mergeRoleIDs 按出现顺序去重合并两组角色 ID。
+func mergeRoleIDs(a, b []string) []string {
+	merged := make([]string, 0, len(a)+len(b))
+	seen := make(map[string]struct{}, len(a)+len(b))
+	for _, id := range slices.Concat(a, b) {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		merged = append(merged, id)
+	}
+	return merged
 }
 
 // ListRoles 查询用户已绑定的角色；用户不存在返回 ErrUserNotFound。

@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-kratos/kratos/v3/errors"
 )
@@ -665,5 +666,88 @@ func TestChannelUsecase_SignSecret(t *testing.T) {
 	clear := ""
 	if err := uc.Update(ctx, mail.ID, ChannelUpdate{SignSecret: &clear}); err != nil {
 		t.Fatalf("Update(clear sign on email) error = %v, want nil (no-op clear allowed)", err)
+	}
+}
+
+// TestChannelUsecase_SendTestEventCooldown 同一渠道 10s 内第二次测试 429；校验失败
+// 不消耗名额；冷却到期后放行；不同渠道互不影响。
+func TestChannelUsecase_SendTestEventCooldown(t *testing.T) {
+	t.Parallel()
+	stub := newChannelRepoStub()
+	uc := NewChannelUsecase(stub, new(eventWriterStub), stub)
+	now := time.Unix(1_800_000_000, 0)
+	uc.now = func() time.Time { return now }
+	ctx := context.Background()
+	a, err := uc.Create(ctx, newEmailChannel("email-a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := uc.Create(ctx, newEmailChannel("email-b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := uc.SendTestEvent(ctx, a.ID, TestEventSpec{}); err != nil {
+		t.Fatalf("first test: %v", err)
+	}
+	if _, err := uc.SendTestEvent(ctx, a.ID, TestEventSpec{}); !errors.Is(err, ErrChannelTestTooFrequent) {
+		t.Fatalf("second test within cooldown error = %v, want ErrChannelTestTooFrequent", err)
+	}
+	if _, err := uc.SendTestEvent(ctx, b.ID, TestEventSpec{}); err != nil {
+		t.Fatalf("other channel must not be throttled: %v", err)
+	}
+	now = now.Add(TestEventCooldown - time.Second)
+	if _, err := uc.SendTestEvent(ctx, a.ID, TestEventSpec{EventType: "Bad Type"}); !errors.Is(err, ErrChannelConfigInvalid) {
+		t.Fatalf("validation error = %v, want ErrChannelConfigInvalid (not cooldown)", err)
+	}
+	now = now.Add(time.Second)
+	if _, err := uc.SendTestEvent(ctx, a.ID, TestEventSpec{}); err != nil {
+		t.Fatalf("after cooldown: %v", err)
+	}
+	// 过期条目随占用被清理：b 的记录已超冷却期 → 只剩 a。
+	if len(uc.lastTest) != 1 {
+		t.Fatalf("cooldown map = %d entries, want 1 (expired entries pruned)", len(uc.lastTest))
+	}
+	if _, err := uc.SendTestEvent(ctx, b.ID, TestEventSpec{}); err != nil {
+		t.Fatalf("b after cooldown: %v", err)
+	}
+	if _, err := NewChannelUsecase(stub, new(eventWriterStub), stub).WithTestEventCooldown(0).SendTestEvent(ctx, a.ID, TestEventSpec{}); err != nil {
+		t.Fatalf("cooldown disabled: %v", err)
+	}
+}
+
+// TestChannelUsecase_WebhookURLRejectsLocal webhook 目标不得指向本机/私网字面量（SSRF）。
+func TestChannelUsecase_WebhookURLRejectsLocal(t *testing.T) {
+	t.Parallel()
+	stub := newChannelRepoStub()
+	uc := NewChannelUsecase(stub, new(eventWriterStub), stub)
+	for _, u := range []string{"https://localhost/h", "https://127.0.0.1/h", "https://10.0.0.5/h", "https://[::1]/h", "https://169.254.169.254/latest", "https://100.64.1.1/x"} {
+		_, err := uc.Create(context.Background(), &Channel{Type: ChannelTypeWebhook, Name: "w" + u, Config: &ChannelConfig{Webhook: &WebhookConfig{URL: u, Method: "POST", TimeoutS: 3}}})
+		if !errors.Is(err, ErrChannelConfigInvalid) {
+			t.Errorf("%s: error = %v, want ErrChannelConfigInvalid", u, err)
+		}
+	}
+	if _, err := uc.Create(context.Background(), &Channel{Type: ChannelTypeWebhook, Name: "ok", Config: &ChannelConfig{Webhook: &WebhookConfig{URL: "https://hooks.example.com/x", Method: "POST", TimeoutS: 3}}}); err != nil {
+		t.Fatalf("public host must pass: %v", err)
+	}
+}
+
+// TestChannelUsecase_RobotCardURL card_url 须 https 且非本机/私网；card_button 依赖 card_url。
+func TestChannelUsecase_RobotCardURL(t *testing.T) {
+	t.Parallel()
+	stub := newChannelRepoStub()
+	uc := NewChannelUsecase(stub, new(eventWriterStub), stub)
+	ctx := context.Background()
+	mk := func(name string, robot *RobotConfig) error {
+		_, err := uc.Create(ctx, &Channel{Type: ChannelTypeDingtalk, Name: name, Secret: "t", Config: &ChannelConfig{Robot: robot}})
+		return err
+	}
+	if err := mk("ok", &RobotConfig{CardURL: "https://ops.example.com/alerts", CardButton: "查看"}); err != nil {
+		t.Fatalf("valid card: %v", err)
+	}
+	if err := mk("local", &RobotConfig{CardURL: "https://10.0.0.1/x"}); !errors.Is(err, ErrChannelConfigInvalid) {
+		t.Fatalf("private card_url error = %v", err)
+	}
+	if err := mk("btn", &RobotConfig{CardButton: "x"}); !errors.Is(err, ErrChannelConfigInvalid) {
+		t.Fatalf("button without url error = %v", err)
 	}
 }

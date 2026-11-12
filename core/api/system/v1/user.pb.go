@@ -46,7 +46,9 @@ type User struct {
 	// create_time 创建时间。
 	CreateTime *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=create_time,json=createTime,proto3" json:"create_time,omitempty"`
 	// update_time 更新时间。
-	UpdateTime    *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=update_time,json=updateTime,proto3" json:"update_time,omitempty"`
+	UpdateTime *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=update_time,json=updateTime,proto3" json:"update_time,omitempty"`
+	// avatar 头像地址；空 = 未设置（前端回退首字母/图标）。
+	Avatar        string `protobuf:"bytes,11,opt,name=avatar,proto3" json:"avatar,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -149,6 +151,13 @@ func (x *User) GetUpdateTime() *timestamppb.Timestamp {
 		return x.UpdateTime
 	}
 	return nil
+}
+
+func (x *User) GetAvatar() string {
+	if x != nil {
+		return x.Avatar
+	}
+	return ""
 }
 
 // CreateUserRequest 创建用户请求。
@@ -1111,7 +1120,7 @@ var File_system_v1_user_proto protoreflect.FileDescriptor
 
 const file_system_v1_user_proto_rawDesc = "" +
 	"\n" +
-	"\x14system/v1/user.proto\x12\tsystem.v1\x1a\x1cgoogle/api/annotations.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1bbuf/validate/validate.proto\x1a\x1bsystem/v1/annotations.proto\x1a\x14system/v1/role.proto\"\xbf\x02\n" +
+	"\x14system/v1/user.proto\x12\tsystem.v1\x1a\x1cgoogle/api/annotations.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1bbuf/validate/validate.proto\x1a\x1bsystem/v1/annotations.proto\x1a\x14system/v1/role.proto\"\xd7\x02\n" +
 	"\x04User\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1a\n" +
 	"\busername\x18\x02 \x01(\tR\busername\x12\x1a\n" +
@@ -1125,7 +1134,8 @@ const file_system_v1_user_proto_rawDesc = "" +
 	"createTime\x12;\n" +
 	"\vupdate_time\x18\n" +
 	" \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"updateTime\"\x91\x03\n" +
+	"updateTime\x12\x16\n" +
+	"\x06avatar\x18\v \x01(\tR\x06avatar\"\x91\x03\n" +
 	"\x11CreateUserRequest\x128\n" +
 	"\busername\x18\x01 \x01(\tB\x1c\xbaH\x19r\x172\x15^[a-zA-Z0-9_-]{3,64}$R\busername\x12&\n" +
 	"\bpassword\x18\x02 \x01(\tB\n" +

@@ -28,6 +28,8 @@ const silenceSeverityDefault = 2
 // silenceRuleFromProto 转换 proto 静默规则载荷并解析可选调优项默认值。
 func silenceRuleFromProto(spec *notifyv1.SilenceSpec) *biz.SilenceRule {
 	rule := &biz.SilenceRule{
+		Name:         spec.GetName(),
+		Description:  spec.GetDescription(),
 		EventPattern: spec.GetEventPattern(),
 		SeverityMax:  spec.GetSeverityMax(),
 	}
@@ -61,6 +63,8 @@ func toProtoSilence(silence *biz.Silence) *notifyv1.NotifySilence {
 	return &notifyv1.NotifySilence{
 		Id:           silence.ID,
 		BizId:        silence.BizID,
+		Name:         silence.Name,
+		Description:  silence.Description,
 		EventPattern: silence.EventPattern,
 		SeverityMax:  silence.SeverityMax,
 		TimeWindow:   toProtoWindow(silence.Window),
@@ -103,7 +107,11 @@ func (s *NotifySilenceService) UpdateSilence(ctx context.Context, req *notifyv1.
 	if err := s.uc.Update(ctx, req.GetId(), upd); err != nil {
 		return nil, err
 	}
-	return &notifyv1.UpdateSilenceResponse{}, nil
+	silence, err := s.uc.Get(ctx, req.GetId())
+	if err != nil {
+		return nil, err
+	}
+	return &notifyv1.UpdateSilenceResponse{Silence: toProtoSilence(silence)}, nil
 }
 
 // DeleteSilence implements proto NotifySilenceService/DeleteSilence。

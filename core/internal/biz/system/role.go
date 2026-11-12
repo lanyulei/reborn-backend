@@ -20,6 +20,7 @@ type Role struct {
 	Code       string
 	Status     int32
 	BizScope   []string // 可管理的通知 biz 列表；空 = 不限
+	Builtin    bool     // 内置角色（迁移预置）：不可删除，编辑/授权仅超管，新建用户自动绑定
 	CreateTime time.Time
 	UpdateTime time.Time
 }
@@ -44,6 +45,8 @@ var (
 	ErrRoleNotFound = errors.NotFound(v1.ErrorReason_ROLE_NOT_FOUND.String(), "role not found")
 	// ErrRoleCodeExists 角色标识已被占用。
 	ErrRoleCodeExists = errors.Conflict(v1.ErrorReason_ROLE_CODE_EXISTS.String(), "role code already exists")
+	// ErrRoleBuiltin 内置角色不可删除。
+	ErrRoleBuiltin = errors.BadRequest(v1.ErrorReason_ROLE_BUILTIN_PROTECTED.String(), "built-in role cannot be deleted")
 )
 
 // RoleReader 是角色只读仓储接口，由 data 层实现（依赖倒置）。
@@ -54,6 +57,8 @@ type RoleReader interface {
 	ListRoles(ctx context.Context, filter RoleFilter, page, pageSize int64) ([]*Role, int64, error)
 	// ListRolesByIDs 按 ID 集合查询未删除角色（绑定校验用），自动去重输入。
 	ListRolesByIDs(ctx context.Context, ids []string) ([]*Role, error)
+	// ListBuiltinRoleIDs 查询全部未删除内置角色 ID（新建用户自动绑定 / 绑定时兜底保留）。
+	ListBuiltinRoleIDs(ctx context.Context) ([]string, error)
 }
 
 // RoleWriter 是角色写仓储接口，由 data 层实现（依赖倒置）。
@@ -106,8 +111,16 @@ func (uc *RoleUsecase) Update(ctx context.Context, id string, upd RoleUpdate) er
 	return uc.writer.UpdateRole(ctx, id, upd)
 }
 
-// Delete 软删角色并级联物理删除其用户绑定；不存在返回 ErrRoleNotFound。
+// Delete 软删角色并级联物理删除其用户绑定；不存在返回 ErrRoleNotFound，
+// 内置角色返回 ErrRoleBuiltin（不区分操作者身份）。
 func (uc *RoleUsecase) Delete(ctx context.Context, id string) error {
+	role, err := uc.reader.GetRole(ctx, id)
+	if err != nil {
+		return err
+	}
+	if role.Builtin {
+		return ErrRoleBuiltin
+	}
 	if err := uc.writer.DeleteRole(ctx, id); err != nil {
 		return err
 	}
@@ -124,6 +137,23 @@ func (uc *RoleUsecase) Get(ctx context.Context, id string) (*Role, error) {
 }
 
 // List 分页查询角色；分页参数先规整再委托仓储。
+// ListRoleRefs 返回全部未删除角色的 ID / 名称 / 编码（跨域窄接口 cmdb.RoleDirectory
+// 的实现；角色为小集合，按页上限循环取全）。
+func (uc *RoleUsecase) ListRoleRefs(ctx context.Context) (ids, names, codes []string, err error) {
+	for page := int64(1); ; page++ {
+		roles, total, err := uc.reader.ListRoles(ctx, RoleFilter{}, page, paging.MaxPageSize)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		for _, r := range roles {
+			ids, names, codes = append(ids, r.ID), append(names, r.Name), append(codes, r.Code)
+		}
+		if int64(len(ids)) >= total || len(roles) == 0 {
+			return ids, names, codes, nil
+		}
+	}
+}
+
 func (uc *RoleUsecase) List(ctx context.Context, filter RoleFilter, page, pageSize int64) ([]*Role, int64, error) {
 	page, pageSize = paging.Normalize(page, pageSize)
 	return uc.reader.ListRoles(ctx, filter, page, pageSize)

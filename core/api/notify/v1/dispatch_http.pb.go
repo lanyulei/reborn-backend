@@ -17,9 +17,12 @@ var _ = new(context.Context)
 
 const _ = http.SupportPackageIsVersion3
 
+const OperationNotifyDispatchServiceGetDispatch = "/notify.v1.NotifyDispatchService/GetDispatch"
 const OperationNotifyDispatchServiceListDispatches = "/notify.v1.NotifyDispatchService/ListDispatches"
 
 type NotifyDispatchServiceHTTPServer interface {
+	// GetDispatch GetDispatch 发送任务详情（含渲染快照）。
+	GetDispatch(context.Context, *GetDispatchRequest) (*GetDispatchResponse, error)
 	// ListDispatches ListDispatches 分页查询发送任务，page_size 上限 100；按生成时间倒序。
 	ListDispatches(context.Context, *ListDispatchesRequest) (*ListDispatchesResponse, error)
 }
@@ -27,6 +30,7 @@ type NotifyDispatchServiceHTTPServer interface {
 func RegisterNotifyDispatchServiceHTTPServer(s *http.Server, srv NotifyDispatchServiceHTTPServer) {
 	r := s.Route("/")
 	r.Handle("GET", "/api/v1/notify/dispatch", _NotifyDispatchService_ListDispatches0_HTTP_Handler(srv))
+	r.Handle("GET", "/api/v1/notify/dispatch/{id}", _NotifyDispatchService_GetDispatch0_HTTP_Handler(srv))
 }
 
 func _NotifyDispatchService_ListDispatches0_HTTP_Handler(srv NotifyDispatchServiceHTTPServer) func(ctx http.Context) error {
@@ -48,7 +52,31 @@ func _NotifyDispatchService_ListDispatches0_HTTP_Handler(srv NotifyDispatchServi
 	}
 }
 
+func _NotifyDispatchService_GetDispatch0_HTTP_Handler(srv NotifyDispatchServiceHTTPServer) func(ctx http.Context) error {
+	return func(ctx http.Context) error {
+		var in GetDispatchRequest
+		if err := ctx.BindQuery(&in); err != nil {
+			return err
+		}
+		if err := ctx.BindVars(&in); err != nil {
+			return err
+		}
+		http.SetOperation(ctx, OperationNotifyDispatchServiceGetDispatch)
+		h := ctx.Middleware(func(ctx context.Context, req interface{}) (interface{}, error) {
+			return srv.GetDispatch(ctx, req.(*GetDispatchRequest))
+		})
+		out, err := h(ctx, &in)
+		if err != nil {
+			return err
+		}
+		reply := out.(*GetDispatchResponse)
+		return ctx.Result(200, reply)
+	}
+}
+
 type NotifyDispatchServiceHTTPClient interface {
+	// GetDispatch GetDispatch 发送任务详情（含渲染快照）。
+	GetDispatch(ctx context.Context, req *GetDispatchRequest, opts ...http.CallOption) (rsp *GetDispatchResponse, err error)
 	// ListDispatches ListDispatches 分页查询发送任务，page_size 上限 100；按生成时间倒序。
 	ListDispatches(ctx context.Context, req *ListDispatchesRequest, opts ...http.CallOption) (rsp *ListDispatchesResponse, err error)
 }
@@ -59,6 +87,23 @@ type NotifyDispatchServiceHTTPClientImpl struct {
 
 func NewNotifyDispatchServiceHTTPClient(client *http.Client) NotifyDispatchServiceHTTPClient {
 	return &NotifyDispatchServiceHTTPClientImpl{client}
+}
+
+// GetDispatch GetDispatch 发送任务详情（含渲染快照）。
+func (c *NotifyDispatchServiceHTTPClientImpl) GetDispatch(ctx context.Context, in *GetDispatchRequest, opts ...http.CallOption) (*GetDispatchResponse, error) {
+	var out GetDispatchResponse
+	pattern := "/api/v1/notify/dispatch/{id}"
+	path := http.BuildPath(pattern, in, http.WithQueryParams())
+	opts = append([]http.CallOption{
+		http.Accept("application/protojson"),
+		http.Operation(OperationNotifyDispatchServiceGetDispatch),
+		http.PathTemplate(pattern),
+	}, opts...)
+	err := c.cc.Invoke(ctx, "GET", path, nil, &out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // ListDispatches ListDispatches 分页查询发送任务，page_size 上限 100；按生成时间倒序。

@@ -213,10 +213,21 @@ type ListEventsRequest struct {
 	EventType *string `protobuf:"bytes,4,opt,name=event_type,json=eventType,proto3,oneof" json:"event_type,omitempty"`
 	// status 路由状态过滤，可选：1 received / 2 routed / 3 suppressed / 4 failed。
 	Status *int32 `protobuf:"varint,5,opt,name=status,proto3,oneof" json:"status,omitempty"`
+	// 时间窗口：create_time_start 缺省 = (create_time_end 或当前时间) 往前 7 天；
+	// 两者跨度上限 90 天（400 NOTIFY_TIME_RANGE_INVALID）。分区表按时间裁剪，无界
+	// 查询会扫全部分区。
 	// create_time_start 落库时间下界（含），可选。
 	CreateTimeStart *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=create_time_start,json=createTimeStart,proto3,oneof" json:"create_time_start,omitempty"`
 	// create_time_end 落库时间上界（含），可选。
 	CreateTimeEnd *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=create_time_end,json=createTimeEnd,proto3,oneof" json:"create_time_end,omitempty"`
+	// severity 严重级精确过滤，可选（1-4）。
+	Severity *int32 `protobuf:"varint,8,opt,name=severity,proto3,oneof" json:"severity,omitempty"`
+	// source 来源过滤，可选：api（管道接入）/ internal（core 直插）。
+	Source *string `protobuf:"bytes,9,opt,name=source,proto3,oneof" json:"source,omitempty"`
+	// keyword 标题关键字，可选；模糊匹配 title。
+	Keyword *string `protobuf:"bytes,10,opt,name=keyword,proto3,oneof" json:"keyword,omitempty"`
+	// group_key 分组键精确过滤，可选（聚合排障）。
+	GroupKey      *string `protobuf:"bytes,11,opt,name=group_key,json=groupKey,proto3,oneof" json:"group_key,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -300,6 +311,34 @@ func (x *ListEventsRequest) GetCreateTimeEnd() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *ListEventsRequest) GetSeverity() int32 {
+	if x != nil && x.Severity != nil {
+		return *x.Severity
+	}
+	return 0
+}
+
+func (x *ListEventsRequest) GetSource() string {
+	if x != nil && x.Source != nil {
+		return *x.Source
+	}
+	return ""
+}
+
+func (x *ListEventsRequest) GetKeyword() string {
+	if x != nil && x.Keyword != nil {
+		return *x.Keyword
+	}
+	return ""
+}
+
+func (x *ListEventsRequest) GetGroupKey() string {
+	if x != nil && x.GroupKey != nil {
+		return *x.GroupKey
+	}
+	return ""
+}
+
 // ListEventsResponse 分页查询事件响应。
 type ListEventsResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -355,11 +394,213 @@ func (x *ListEventsResponse) GetTotal() int64 {
 	return 0
 }
 
+// GetEventRequest 事件详情请求。
+type GetEventRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// id 事件 ID。
+	Id            string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetEventRequest) Reset() {
+	*x = GetEventRequest{}
+	mi := &file_notify_v1_event_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetEventRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetEventRequest) ProtoMessage() {}
+
+func (x *GetEventRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_notify_v1_event_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetEventRequest.ProtoReflect.Descriptor instead.
+func (*GetEventRequest) Descriptor() ([]byte, []int) {
+	return file_notify_v1_event_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *GetEventRequest) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+// GetEventResponse 事件详情响应：事件 + 发送任务 + 每个任务最近一次投递明细。
+type GetEventResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// event 事件。
+	Event *NotifyEvent `protobuf:"bytes,1,opt,name=event,proto3" json:"event,omitempty"`
+	// dispatches 该事件生成的发送任务（按生成时间倒序，最多 100 条）。
+	Dispatches []*NotifyDispatch `protobuf:"bytes,2,rep,name=dispatches,proto3" json:"dispatches,omitempty"`
+	// latest_logs 每个发送任务最近一次投递明细（按 dispatch_id 对应；无尝试的任务无条目）。
+	LatestLogs    []*NotifyDeliveryLog `protobuf:"bytes,3,rep,name=latest_logs,json=latestLogs,proto3" json:"latest_logs,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetEventResponse) Reset() {
+	*x = GetEventResponse{}
+	mi := &file_notify_v1_event_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetEventResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetEventResponse) ProtoMessage() {}
+
+func (x *GetEventResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_notify_v1_event_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetEventResponse.ProtoReflect.Descriptor instead.
+func (*GetEventResponse) Descriptor() ([]byte, []int) {
+	return file_notify_v1_event_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *GetEventResponse) GetEvent() *NotifyEvent {
+	if x != nil {
+		return x.Event
+	}
+	return nil
+}
+
+func (x *GetEventResponse) GetDispatches() []*NotifyDispatch {
+	if x != nil {
+		return x.Dispatches
+	}
+	return nil
+}
+
+func (x *GetEventResponse) GetLatestLogs() []*NotifyDeliveryLog {
+	if x != nil {
+		return x.LatestLogs
+	}
+	return nil
+}
+
+// ReplayEventRequest 事件重发请求。
+type ReplayEventRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// id 源事件 ID。
+	Id            string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReplayEventRequest) Reset() {
+	*x = ReplayEventRequest{}
+	mi := &file_notify_v1_event_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReplayEventRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReplayEventRequest) ProtoMessage() {}
+
+func (x *ReplayEventRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_notify_v1_event_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReplayEventRequest.ProtoReflect.Descriptor instead.
+func (*ReplayEventRequest) Descriptor() ([]byte, []int) {
+	return file_notify_v1_event_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *ReplayEventRequest) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+// ReplayEventResponse 事件重发响应：新落库的事件。
+type ReplayEventResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// event 新事件（source=internal，新 id）。
+	Event         *NotifyEvent `protobuf:"bytes,1,opt,name=event,proto3" json:"event,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReplayEventResponse) Reset() {
+	*x = ReplayEventResponse{}
+	mi := &file_notify_v1_event_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReplayEventResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReplayEventResponse) ProtoMessage() {}
+
+func (x *ReplayEventResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_notify_v1_event_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReplayEventResponse.ProtoReflect.Descriptor instead.
+func (*ReplayEventResponse) Descriptor() ([]byte, []int) {
+	return file_notify_v1_event_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *ReplayEventResponse) GetEvent() *NotifyEvent {
+	if x != nil {
+		return x.Event
+	}
+	return nil
+}
+
 var File_notify_v1_event_proto protoreflect.FileDescriptor
 
 const file_notify_v1_event_proto_rawDesc = "" +
 	"\n" +
-	"\x15notify/v1/event.proto\x12\tnotify.v1\x1a\x1cgoogle/api/annotations.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1bbuf/validate/validate.proto\x1a\x1bsystem/v1/annotations.proto\"\x97\x04\n" +
+	"\x15notify/v1/event.proto\x12\tnotify.v1\x1a\x1cgoogle/api/annotations.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1bbuf/validate/validate.proto\x1a\x1cnotify/v1/delivery_log.proto\x1a\x18notify/v1/dispatch.proto\x1a\x1bsystem/v1/annotations.proto\"\x97\x04\n" +
 	"\vNotifyEvent\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x15\n" +
 	"\x06biz_id\x18\x02 \x01(\tR\x05bizId\x12\x1d\n" +
@@ -380,7 +621,7 @@ const file_notify_v1_event_proto_rawDesc = "" +
 	"\x10publish_attempts\x18\r \x01(\x05R\x0fpublishAttempts\x12F\n" +
 	"\x11next_publish_time\x18\x0e \x01(\v2\x1a.google.protobuf.TimestampR\x0fnextPublishTime\x12;\n" +
 	"\vcreate_time\x18\x0f \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"createTime\"\xae\x05\n" +
+	"createTime\"\x93\a\n" +
 	"\x11ListEventsRequest\x12\x1b\n" +
 	"\x04page\x18\x01 \x01(\x03B\a\xbaH\x04\"\x02(\x01R\x04page\x12&\n" +
 	"\tpage_size\x18\x02 \x01(\x05B\t\xbaH\x06\x1a\x04\x18d(\x01R\bpageSize\x129\n" +
@@ -389,19 +630,45 @@ const file_notify_v1_event_proto_rawDesc = "" +
 	"event_type\x18\x04 \x01(\tB(\xbaH%r#\x10\x01\x18\x80\x012\x1c^[a-z0-9][a-z0-9._-]{0,127}$H\x01R\teventType\x88\x01\x01\x12&\n" +
 	"\x06status\x18\x05 \x01(\x05B\t\xbaH\x06\x1a\x04\x18\x04(\x01H\x02R\x06status\x88\x01\x01\x12K\n" +
 	"\x11create_time_start\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampH\x03R\x0fcreateTimeStart\x88\x01\x01\x12G\n" +
-	"\x0fcreate_time_end\x18\a \x01(\v2\x1a.google.protobuf.TimestampH\x04R\rcreateTimeEnd\x88\x01\x01:\xbd\x01\xbaH\xb9\x01\x1a\xb6\x01\n" +
+	"\x0fcreate_time_end\x18\a \x01(\v2\x1a.google.protobuf.TimestampH\x04R\rcreateTimeEnd\x88\x01\x01\x12*\n" +
+	"\bseverity\x18\b \x01(\x05B\t\xbaH\x06\x1a\x04\x18\x04(\x01H\x05R\bseverity\x88\x01\x01\x121\n" +
+	"\x06source\x18\t \x01(\tB\x14\xbaH\x11r\x0fR\x03apiR\binternalH\x06R\x06source\x88\x01\x01\x12&\n" +
+	"\akeyword\x18\n" +
+	" \x01(\tB\a\xbaH\x04r\x02\x18@H\aR\akeyword\x88\x01\x01\x12*\n" +
+	"\tgroup_key\x18\v \x01(\tB\b\xbaH\x05r\x03\x18\x80\x01H\bR\bgroupKey\x88\x01\x01:\xbd\x01\xbaH\xb9\x01\x1a\xb6\x01\n" +
 	"\x1cnotify.event.list.time_range\x12(createTimeStart must be <= createTimeEnd\x1al!has(this.create_time_start) || !has(this.create_time_end) || this.create_time_start <= this.create_time_endB\t\n" +
 	"\a_biz_idB\r\n" +
 	"\v_event_typeB\t\n" +
 	"\a_statusB\x14\n" +
 	"\x12_create_time_startB\x12\n" +
-	"\x10_create_time_end\"X\n" +
+	"\x10_create_time_endB\v\n" +
+	"\t_severityB\t\n" +
+	"\a_sourceB\n" +
+	"\n" +
+	"\b_keywordB\f\n" +
+	"\n" +
+	"_group_key\"X\n" +
 	"\x12ListEventsResponse\x12,\n" +
 	"\x05items\x18\x01 \x03(\v2\x16.notify.v1.NotifyEventR\x05items\x12\x14\n" +
-	"\x05total\x18\x02 \x01(\x03R\x05total2\x9a\x01\n" +
+	"\x05total\x18\x02 \x01(\x03R\x05total\"+\n" +
+	"\x0fGetEventRequest\x12\x18\n" +
+	"\x02id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\"\xba\x01\n" +
+	"\x10GetEventResponse\x12,\n" +
+	"\x05event\x18\x01 \x01(\v2\x16.notify.v1.NotifyEventR\x05event\x129\n" +
+	"\n" +
+	"dispatches\x18\x02 \x03(\v2\x19.notify.v1.NotifyDispatchR\n" +
+	"dispatches\x12=\n" +
+	"\vlatest_logs\x18\x03 \x03(\v2\x1c.notify.v1.NotifyDeliveryLogR\n" +
+	"latestLogs\".\n" +
+	"\x12ReplayEventRequest\x12\x18\n" +
+	"\x02id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\"C\n" +
+	"\x13ReplayEventResponse\x12,\n" +
+	"\x05event\x18\x01 \x01(\v2\x16.notify.v1.NotifyEventR\x05event2\xb1\x03\n" +
 	"\x12NotifyEventService\x12\x83\x01\n" +
 	"\n" +
-	"ListEvents\x12\x1c.notify.v1.ListEventsRequest\x1a\x1d.notify.v1.ListEventsResponse\"8\xc2\xf3\x18\x18查询通知事件列表\x82\xd3\xe4\x93\x02\x16\x12\x14/api/v1/notify/eventB:Z8github.com/lanyulei/reborn/backend/core/api/notify/v1;v1b\x06proto3"
+	"ListEvents\x12\x1c.notify.v1.ListEventsRequest\x1a\x1d.notify.v1.ListEventsResponse\"8\xc2\xf3\x18\x18查询通知事件列表\x82\xd3\xe4\x93\x02\x16\x12\x14/api/v1/notify/event\x12\x82\x01\n" +
+	"\bGetEvent\x12\x1a.notify.v1.GetEventRequest\x1a\x1b.notify.v1.GetEventResponse\"=\xc2\xf3\x18\x18查询通知事件详情\x82\xd3\xe4\x93\x02\x1b\x12\x19/api/v1/notify/event/{id}\x12\x8f\x01\n" +
+	"\vReplayEvent\x12\x1d.notify.v1.ReplayEventRequest\x1a\x1e.notify.v1.ReplayEventResponse\"A\xc2\xf3\x18\x12重发通知事件\x82\xd3\xe4\x93\x02%:\x01*\" /api/v1/notify/event/{id}:replayB:Z8github.com/lanyulei/reborn/backend/core/api/notify/v1;v1b\x06proto3"
 
 var (
 	file_notify_v1_event_proto_rawDescOnce sync.Once
@@ -415,28 +682,42 @@ func file_notify_v1_event_proto_rawDescGZIP() []byte {
 	return file_notify_v1_event_proto_rawDescData
 }
 
-var file_notify_v1_event_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_notify_v1_event_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_notify_v1_event_proto_goTypes = []any{
 	(*NotifyEvent)(nil),           // 0: notify.v1.NotifyEvent
 	(*ListEventsRequest)(nil),     // 1: notify.v1.ListEventsRequest
 	(*ListEventsResponse)(nil),    // 2: notify.v1.ListEventsResponse
-	(*structpb.Struct)(nil),       // 3: google.protobuf.Struct
-	(*timestamppb.Timestamp)(nil), // 4: google.protobuf.Timestamp
+	(*GetEventRequest)(nil),       // 3: notify.v1.GetEventRequest
+	(*GetEventResponse)(nil),      // 4: notify.v1.GetEventResponse
+	(*ReplayEventRequest)(nil),    // 5: notify.v1.ReplayEventRequest
+	(*ReplayEventResponse)(nil),   // 6: notify.v1.ReplayEventResponse
+	(*structpb.Struct)(nil),       // 7: google.protobuf.Struct
+	(*timestamppb.Timestamp)(nil), // 8: google.protobuf.Timestamp
+	(*NotifyDispatch)(nil),        // 9: notify.v1.NotifyDispatch
+	(*NotifyDeliveryLog)(nil),     // 10: notify.v1.NotifyDeliveryLog
 }
 var file_notify_v1_event_proto_depIdxs = []int32{
-	3, // 0: notify.v1.NotifyEvent.payload:type_name -> google.protobuf.Struct
-	4, // 1: notify.v1.NotifyEvent.next_publish_time:type_name -> google.protobuf.Timestamp
-	4, // 2: notify.v1.NotifyEvent.create_time:type_name -> google.protobuf.Timestamp
-	4, // 3: notify.v1.ListEventsRequest.create_time_start:type_name -> google.protobuf.Timestamp
-	4, // 4: notify.v1.ListEventsRequest.create_time_end:type_name -> google.protobuf.Timestamp
-	0, // 5: notify.v1.ListEventsResponse.items:type_name -> notify.v1.NotifyEvent
-	1, // 6: notify.v1.NotifyEventService.ListEvents:input_type -> notify.v1.ListEventsRequest
-	2, // 7: notify.v1.NotifyEventService.ListEvents:output_type -> notify.v1.ListEventsResponse
-	7, // [7:8] is the sub-list for method output_type
-	6, // [6:7] is the sub-list for method input_type
-	6, // [6:6] is the sub-list for extension type_name
-	6, // [6:6] is the sub-list for extension extendee
-	0, // [0:6] is the sub-list for field type_name
+	7,  // 0: notify.v1.NotifyEvent.payload:type_name -> google.protobuf.Struct
+	8,  // 1: notify.v1.NotifyEvent.next_publish_time:type_name -> google.protobuf.Timestamp
+	8,  // 2: notify.v1.NotifyEvent.create_time:type_name -> google.protobuf.Timestamp
+	8,  // 3: notify.v1.ListEventsRequest.create_time_start:type_name -> google.protobuf.Timestamp
+	8,  // 4: notify.v1.ListEventsRequest.create_time_end:type_name -> google.protobuf.Timestamp
+	0,  // 5: notify.v1.ListEventsResponse.items:type_name -> notify.v1.NotifyEvent
+	0,  // 6: notify.v1.GetEventResponse.event:type_name -> notify.v1.NotifyEvent
+	9,  // 7: notify.v1.GetEventResponse.dispatches:type_name -> notify.v1.NotifyDispatch
+	10, // 8: notify.v1.GetEventResponse.latest_logs:type_name -> notify.v1.NotifyDeliveryLog
+	0,  // 9: notify.v1.ReplayEventResponse.event:type_name -> notify.v1.NotifyEvent
+	1,  // 10: notify.v1.NotifyEventService.ListEvents:input_type -> notify.v1.ListEventsRequest
+	3,  // 11: notify.v1.NotifyEventService.GetEvent:input_type -> notify.v1.GetEventRequest
+	5,  // 12: notify.v1.NotifyEventService.ReplayEvent:input_type -> notify.v1.ReplayEventRequest
+	2,  // 13: notify.v1.NotifyEventService.ListEvents:output_type -> notify.v1.ListEventsResponse
+	4,  // 14: notify.v1.NotifyEventService.GetEvent:output_type -> notify.v1.GetEventResponse
+	6,  // 15: notify.v1.NotifyEventService.ReplayEvent:output_type -> notify.v1.ReplayEventResponse
+	13, // [13:16] is the sub-list for method output_type
+	10, // [10:13] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_notify_v1_event_proto_init() }
@@ -444,6 +725,8 @@ func file_notify_v1_event_proto_init() {
 	if File_notify_v1_event_proto != nil {
 		return
 	}
+	file_notify_v1_delivery_log_proto_init()
+	file_notify_v1_dispatch_proto_init()
 	file_notify_v1_event_proto_msgTypes[1].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -451,7 +734,7 @@ func file_notify_v1_event_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_notify_v1_event_proto_rawDesc), len(file_notify_v1_event_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   3,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

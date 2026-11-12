@@ -35,7 +35,7 @@ func NewRouteRepo(data *basedata.Data) *routeRepo {
 // routeSelectColumns 是路由查询列序，与 scanRoute 对应。
 const routeSelectColumns = "id, biz_id, event_pattern, severity_min, tag_match, priority, " +
 	"channel_ids, recipient_policy, aggregate_window_s, suppress_threshold, suppress_duration_m, " +
-	"enabled, create_time, update_time"
+	"enabled, create_time, update_time, name, description"
 
 // scanRoute 按列序扫描一行路由数据并解码为 DO（jsonb 列经字节中转反序列化）。
 func scanRoute(scan func(dest ...any) error) (*biz.Route, error) {
@@ -49,10 +49,11 @@ func scanRoute(scan func(dest ...any) error) (*biz.Route, error) {
 		durationM               int32
 		enabled                 bool
 		createTime, updateTime  time.Time
+		name, description       string
 	)
 	if err := scan(&id, &bizID, &eventPattern, &severityMin, &tagMatch, &priority,
 		&channelIDs, &recipientRaw, &windowS, &threshold, &durationM,
-		&enabled, &createTime, &updateTime); err != nil {
+		&enabled, &createTime, &updateTime, &name, &description); err != nil {
 		return nil, err
 	}
 	if len(recipientRaw) > 0 {
@@ -71,6 +72,8 @@ func scanRoute(scan func(dest ...any) error) (*biz.Route, error) {
 		BizID:   bizID,
 		Enabled: enabled,
 		RouteRule: biz.RouteRule{
+			Name:              name,
+			Description:       description,
 			EventPattern:      eventPattern,
 			SeverityMin:       severityMin,
 			TagMatch:          tags,
@@ -123,13 +126,13 @@ func (r *routeRepo) CreateRoute(ctx context.Context, route *biz.Route) error {
 			`INSERT INTO notify_route
 			     (id, biz_id, event_pattern, severity_min, tag_match, priority,
 			      channel_ids, recipient_policy, aggregate_window_s, suppress_threshold,
-			      suppress_duration_m, enabled, create_time, update_time)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+			      suppress_duration_m, enabled, create_time, update_time, create_user, update_user, name, description)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $15, $16, $17)`,
 			route.ID, route.BizID, route.EventPattern, route.SeverityMin,
 			tags, route.Priority,
 			route.ChannelIDs, recipient,
 			route.AggregateWindowS, route.SuppressThreshold, route.SuppressDurationM,
-			route.Enabled, route.CreateTime, route.UpdateTime); err != nil {
+			route.Enabled, route.CreateTime, route.UpdateTime, operatorArg(ctx), route.Name, route.Description); err != nil {
 			return fmt.Errorf("insert route: %w", err)
 		}
 		return bumpCfgVersion(ctx, tx, "notify_route")
@@ -163,6 +166,8 @@ func (r *routeRepo) UpdateRoute(ctx context.Context, id string, upd biz.RouteUpd
 		add("aggregate_window_s", upd.Rule.AggregateWindowS)
 		add("suppress_threshold", upd.Rule.SuppressThreshold)
 		add("suppress_duration_m", upd.Rule.SuppressDurationM)
+		add("name", upd.Rule.Name)
+		add("description", upd.Rule.Description)
 	}
 	if upd.Enabled != nil {
 		add("enabled", *upd.Enabled)
@@ -170,6 +175,7 @@ func (r *routeRepo) UpdateRoute(ctx context.Context, id string, upd biz.RouteUpd
 	if len(sets) == 0 {
 		return nil
 	}
+	add("update_user", operatorArg(ctx))
 	args = append(args, id)
 	query := "UPDATE notify_route SET " + strings.Join(sets, ", ") +
 		", update_time = now() WHERE id = $" + strconv.Itoa(len(args)) + " AND delete_time IS NULL"
@@ -189,8 +195,8 @@ func (r *routeRepo) UpdateRoute(ctx context.Context, id string, upd biz.RouteUpd
 func (r *routeRepo) DeleteRoute(ctx context.Context, id string) error {
 	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx,
-			"UPDATE notify_route SET delete_time = now(), update_time = now()"+
-				" WHERE id = $1 AND delete_time IS NULL", id)
+			"UPDATE notify_route SET delete_time = now(), update_time = now(), delete_user = $2"+
+				" WHERE id = $1 AND delete_time IS NULL", id, operatorArg(ctx))
 		if err != nil {
 			return fmt.Errorf("soft delete route: %w", err)
 		}
@@ -225,7 +231,7 @@ func (r *routeRepo) ListRoutes(ctx context.Context, filter biz.RouteFilter, page
 	}
 	if filter.Keyword != "" {
 		args = append(args, dbx.LikeContains(filter.Keyword))
-		where = append(where, "event_pattern ILIKE $"+strconv.Itoa(len(args)))
+		where = append(where, "(event_pattern ILIKE $"+strconv.Itoa(len(args))+" OR name ILIKE $"+strconv.Itoa(len(args))+")")
 	}
 	if filter.Enabled != nil {
 		args = append(args, *filter.Enabled)
@@ -272,4 +278,23 @@ func (r *routeRepo) CountRoutesUsingChannel(ctx context.Context, channelID strin
 		return 0, fmt.Errorf("count routes using channel: %w", err)
 	}
 	return n, nil
+}
+
+// ListRoutesByBiz implements biz 仓储接口：biz 内全部未删除行（不分页，配置表规模；路由试算用）。
+func (r *routeRepo) ListRoutesByBiz(ctx context.Context, bizID string) ([]*biz.Route, error) {
+	rows, err := r.data.Pool.Query(ctx,
+		"SELECT "+routeSelectColumns+" FROM notify_route WHERE biz_id = $1 AND delete_time IS NULL ORDER BY create_time", bizID)
+	if err != nil {
+		return nil, fmt.Errorf("list routes by biz: %w", err)
+	}
+	defer rows.Close()
+	var out []*biz.Route
+	for rows.Next() {
+		item, err := scanRoute(rows.Scan)
+		if err != nil {
+			return nil, fmt.Errorf("scan route: %w", err)
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
 }

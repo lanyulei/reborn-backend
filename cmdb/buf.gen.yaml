@@ -1,0 +1,14 @@
+version: v2
+inputs:
+  - directory: api
+plugins:
+  - local: ["go", "tool", "protoc-gen-go"]
+    out: api
+    opt: paths=source_relative
+  # 数据面只暴露 HTTP（令牌头鉴权）。
+  - local: ["go", "tool", "protoc-gen-go-http"]
+    out: api
+    opt: paths=source_relative
+  - local: ["go", "tool", "protoc-gen-go-errors"]
+    out: api
+    opt: paths=source_relative

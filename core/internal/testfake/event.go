@@ -24,6 +24,18 @@ func (s *Store) ListEvents(_ context.Context, filter biz.EventFilter, page, page
 		if filter.Status != nil && event.Status != *filter.Status {
 			continue
 		}
+		if filter.Severity != nil && event.Severity != *filter.Severity {
+			continue
+		}
+		if filter.Source != "" && event.Source != filter.Source {
+			continue
+		}
+		if filter.Keyword != "" && !strings.Contains(event.Title, filter.Keyword) {
+			continue
+		}
+		if filter.GroupKey != "" && event.GroupKey != filter.GroupKey {
+			continue
+		}
 		if filter.CreateTimeStart != nil && event.CreateTime.Before(*filter.CreateTimeStart) {
 			continue
 		}
@@ -69,6 +81,18 @@ func (s *Store) SeedEvent(event *biz.Event) {
 		event.NextPublishTime = event.CreateTime
 	}
 	s.events = append(s.events, cloneEvent(event))
+}
+
+// GetEvent implements biz.EventRepo。
+func (s *Store) GetEvent(_ context.Context, id string) (*biz.Event, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, event := range s.events {
+		if event.ID == id {
+			return cloneEvent(event), nil
+		}
+	}
+	return nil, biz.ErrEventNotFound
 }
 
 // InsertEvent implements biz.EventWriter：core 侧事件直插（SendTestEvent

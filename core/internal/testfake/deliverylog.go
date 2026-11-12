@@ -50,6 +50,28 @@ func (s *Store) ListDeliveryLogs(_ context.Context, filter biz.DeliveryLogFilter
 	return items[start:end], total, nil
 }
 
+// LatestByDispatchIDs implements biz.DeliveryLogRepo：每个 dispatch 最近一次尝试。
+func (s *Store) LatestByDispatchIDs(_ context.Context, dispatchIDs []string) ([]*biz.DeliveryLog, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	latest := make(map[string]*biz.DeliveryLog, len(dispatchIDs))
+	for _, log := range s.deliveryLogs {
+		if !slices.Contains(dispatchIDs, log.DispatchID) {
+			continue
+		}
+		if cur, ok := latest[log.DispatchID]; !ok || log.CreateTime.After(cur.CreateTime) || (log.CreateTime.Equal(cur.CreateTime) && log.ID > cur.ID) {
+			latest[log.DispatchID] = log
+		}
+	}
+	out := make([]*biz.DeliveryLog, 0, len(latest))
+	for _, id := range dispatchIDs {
+		if log, ok := latest[id]; ok {
+			out = append(out, cloneDeliveryLog(log))
+		}
+	}
+	return out, nil
+}
+
 // cloneDeliveryLog 拷贝投递明细 DO（全列标量，浅拷贝即深拷贝）。
 func cloneDeliveryLog(log *biz.DeliveryLog) *biz.DeliveryLog {
 	cp := *log

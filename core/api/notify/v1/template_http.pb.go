@@ -21,6 +21,7 @@ const OperationNotifyTemplateServiceCreateTemplate = "/notify.v1.NotifyTemplateS
 const OperationNotifyTemplateServiceDeleteTemplate = "/notify.v1.NotifyTemplateService/DeleteTemplate"
 const OperationNotifyTemplateServiceGetTemplate = "/notify.v1.NotifyTemplateService/GetTemplate"
 const OperationNotifyTemplateServiceListTemplates = "/notify.v1.NotifyTemplateService/ListTemplates"
+const OperationNotifyTemplateServiceRenderTemplate = "/notify.v1.NotifyTemplateService/RenderTemplate"
 const OperationNotifyTemplateServiceUpdateTemplate = "/notify.v1.NotifyTemplateService/UpdateTemplate"
 
 type NotifyTemplateServiceHTTPServer interface {
@@ -32,6 +33,9 @@ type NotifyTemplateServiceHTTPServer interface {
 	GetTemplate(context.Context, *GetTemplateRequest) (*GetTemplateResponse, error)
 	// ListTemplates ListTemplates 分页查询模板，page_size 上限 100。
 	ListTemplates(context.Context, *ListTemplatesRequest) (*ListTemplatesResponse, error)
+	// RenderTemplate RenderTemplate 模板预览（只读，不落库）：用给定样例按管道同一口径渲染
+	// subject/body（零函数、顶层变量严格、载荷字段宽松、输出 ≤64KB）。
+	RenderTemplate(context.Context, *RenderTemplateRequest) (*RenderTemplateResponse, error)
 	// UpdateTemplate UpdateTemplate 部分更新模板；spec（event_type/channel_type）可改但组合仍须
 	// 唯一；任何更新 version+1。
 	UpdateTemplate(context.Context, *UpdateTemplateRequest) (*UpdateTemplateResponse, error)
@@ -44,6 +48,7 @@ func RegisterNotifyTemplateServiceHTTPServer(s *http.Server, srv NotifyTemplateS
 	r.Handle("DELETE", "/api/v1/notify/template/{id}", _NotifyTemplateService_DeleteTemplate0_HTTP_Handler(srv))
 	r.Handle("GET", "/api/v1/notify/template/{id}", _NotifyTemplateService_GetTemplate0_HTTP_Handler(srv))
 	r.Handle("GET", "/api/v1/notify/template", _NotifyTemplateService_ListTemplates0_HTTP_Handler(srv))
+	r.Handle("POST", "/api/v1/notify/template:render", _NotifyTemplateService_RenderTemplate0_HTTP_Handler(srv))
 }
 
 func _NotifyTemplateService_CreateTemplate0_HTTP_Handler(srv NotifyTemplateServiceHTTPServer) func(ctx http.Context) error {
@@ -150,6 +155,25 @@ func _NotifyTemplateService_ListTemplates0_HTTP_Handler(srv NotifyTemplateServic
 	}
 }
 
+func _NotifyTemplateService_RenderTemplate0_HTTP_Handler(srv NotifyTemplateServiceHTTPServer) func(ctx http.Context) error {
+	return func(ctx http.Context) error {
+		var in RenderTemplateRequest
+		if err := ctx.Bind(&in); err != nil {
+			return err
+		}
+		http.SetOperation(ctx, OperationNotifyTemplateServiceRenderTemplate)
+		h := ctx.Middleware(func(ctx context.Context, req interface{}) (interface{}, error) {
+			return srv.RenderTemplate(ctx, req.(*RenderTemplateRequest))
+		})
+		out, err := h(ctx, &in)
+		if err != nil {
+			return err
+		}
+		reply := out.(*RenderTemplateResponse)
+		return ctx.Result(200, reply)
+	}
+}
+
 type NotifyTemplateServiceHTTPClient interface {
 	// CreateTemplate CreateTemplate 创建模板；同 biz 内 (event_type, channel_type) 组合唯一。
 	CreateTemplate(ctx context.Context, req *CreateTemplateRequest, opts ...http.CallOption) (rsp *CreateTemplateResponse, err error)
@@ -159,6 +183,9 @@ type NotifyTemplateServiceHTTPClient interface {
 	GetTemplate(ctx context.Context, req *GetTemplateRequest, opts ...http.CallOption) (rsp *GetTemplateResponse, err error)
 	// ListTemplates ListTemplates 分页查询模板，page_size 上限 100。
 	ListTemplates(ctx context.Context, req *ListTemplatesRequest, opts ...http.CallOption) (rsp *ListTemplatesResponse, err error)
+	// RenderTemplate RenderTemplate 模板预览（只读，不落库）：用给定样例按管道同一口径渲染
+	// subject/body（零函数、顶层变量严格、载荷字段宽松、输出 ≤64KB）。
+	RenderTemplate(ctx context.Context, req *RenderTemplateRequest, opts ...http.CallOption) (rsp *RenderTemplateResponse, err error)
 	// UpdateTemplate UpdateTemplate 部分更新模板；spec（event_type/channel_type）可改但组合仍须
 	// 唯一；任何更新 version+1。
 	UpdateTemplate(ctx context.Context, req *UpdateTemplateRequest, opts ...http.CallOption) (rsp *UpdateTemplateResponse, err error)
@@ -235,6 +262,25 @@ func (c *NotifyTemplateServiceHTTPClientImpl) ListTemplates(ctx context.Context,
 		http.PathTemplate(pattern),
 	}, opts...)
 	err := c.cc.Invoke(ctx, "GET", path, nil, &out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// RenderTemplate RenderTemplate 模板预览（只读，不落库）：用给定样例按管道同一口径渲染
+// subject/body（零函数、顶层变量严格、载荷字段宽松、输出 ≤64KB）。
+func (c *NotifyTemplateServiceHTTPClientImpl) RenderTemplate(ctx context.Context, in *RenderTemplateRequest, opts ...http.CallOption) (*RenderTemplateResponse, error) {
+	var out RenderTemplateResponse
+	pattern := "/api/v1/notify/template:render"
+	path := http.BuildPath(pattern, in)
+	opts = append([]http.CallOption{
+		http.Accept("application/protojson"),
+		http.ContentType("application/protojson"),
+		http.Operation(OperationNotifyTemplateServiceRenderTemplate),
+		http.PathTemplate(pattern),
+	}, opts...)
+	err := c.cc.Invoke(ctx, "POST", path, in, &out, opts...)
 	if err != nil {
 		return nil, err
 	}

@@ -13,13 +13,24 @@ var (
 	_ biz.Pinger      = (*Data)(nil)
 )
 
-// Backlog implements biz.BacklogRepo（两条部分索引计数，不触碰历史分区）。
+// Backlog implements biz.BacklogRepo：部分索引上的有界计数——超过 biz.BacklogCap
+// 即停止扫描（百万积压时每次抓取不再全索引扫描；指标读数 ≥ BacklogCap 表示饱和）。
 func (d *Data) Backlog(ctx context.Context) (biz.Backlog, error) {
 	var b biz.Backlog
+	var oldestPending, oldestDue *time.Time
 	if err := d.Pool.QueryRow(ctx,
-		"SELECT (SELECT count(*) FROM notify_event WHERE publish_state = 0),"+
-			" (SELECT count(*) FROM notify_dispatch WHERE status IN (1, 4) AND next_retry_time <= now())").Scan(&b.PendingEvents, &b.DueDispatches); err != nil {
+		"SELECT (SELECT count(*) FROM (SELECT 1 FROM notify_event WHERE publish_state = 0 LIMIT $1) p),"+
+			" (SELECT count(*) FROM (SELECT 1 FROM notify_dispatch WHERE status IN (1, 4) AND next_retry_time <= now() LIMIT $1) q),"+
+			" (SELECT min(next_publish_time) FROM notify_event WHERE publish_state = 0),"+
+			" (SELECT min(next_retry_time) FROM notify_dispatch WHERE status IN (1, 4) AND next_retry_time <= now())",
+		biz.BacklogCap).Scan(&b.PendingEvents, &b.DueDispatches, &oldestPending, &oldestDue); err != nil {
 		return b, fmt.Errorf("query backlog: %w", err)
+	}
+	if oldestPending != nil {
+		b.OldestPending = *oldestPending
+	}
+	if oldestDue != nil {
+		b.OldestDue = *oldestDue
 	}
 	return b, nil
 }

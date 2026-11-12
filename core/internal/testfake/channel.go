@@ -44,7 +44,7 @@ func cloneChannelConfig(cfg *biz.ChannelConfig) *biz.ChannelConfig {
 		}
 	}
 	if cfg.Robot != nil {
-		cp.Robot = &biz.RobotConfig{AtMobiles: slices.Clone(cfg.Robot.AtMobiles)}
+		cp.Robot = &biz.RobotConfig{AtMobiles: slices.Clone(cfg.Robot.AtMobiles), CardURL: cfg.Robot.CardURL, CardButton: cfg.Robot.CardButton}
 	}
 	return cp
 }

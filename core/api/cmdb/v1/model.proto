@@ -1,0 +1,720 @@
+syntax = "proto3";
+
+package cmdb.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "buf/validate/validate.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/cmdb/v1;v1";
+
+// CmdbModelService 资源模型管理：资源类型、类型字段、关系类型（元数据）。
+// 新增一类基础设施 = 新建类型 + 定义字段 + 配置关系，无需改代码。
+service CmdbModelService {
+  // ListModels 分页查询资源类型。
+  rpc ListModels(ListModelsRequest) returns (ListModelsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/cmdb/model"
+    };
+    option (system.v1.title) = "查询资源类型列表";
+  }
+  // GetModel 查询资源类型详情（含字段定义与适用的关系类型）。
+  rpc GetModel(GetModelRequest) returns (GetModelResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/cmdb/model/{code}"
+    };
+    option (system.v1.title) = "查询资源类型详情";
+  }
+  // CreateModel 创建资源类型。
+  rpc CreateModel(CreateModelRequest) returns (CreateModelResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/cmdb/model"
+      body: "*"
+    };
+    option (system.v1.title) = "创建资源类型";
+  }
+  // UpdateModel 更新资源类型（编码不可改）。
+  rpc UpdateModel(UpdateModelRequest) returns (UpdateModelResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/cmdb/model/{code}"
+      body: "*"
+    };
+    option (system.v1.title) = "更新资源类型";
+  }
+  // DeleteModel 删除资源类型（软删；仍有资源或关系类型引用时 409）。
+  rpc DeleteModel(DeleteModelRequest) returns (DeleteModelResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/cmdb/model/{code}"
+    };
+    option (system.v1.title) = "删除资源类型";
+  }
+  // CreateField 为资源类型新增字段。
+  rpc CreateField(CreateFieldRequest) returns (CreateFieldResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/cmdb/model/{model_code}/field"
+      body: "*"
+    };
+    option (system.v1.title) = "新增类型字段";
+  }
+  // UpdateField 更新字段定义（编码与数据类型不可改，保证历史数据可解释）。
+  rpc UpdateField(UpdateFieldRequest) returns (UpdateFieldResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/cmdb/model/{model_code}/field/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "更新类型字段";
+  }
+  // DeleteField 废弃字段（标记 deprecated，不删除已有数据）。
+  rpc DeleteField(DeleteFieldRequest) returns (DeleteFieldResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/cmdb/model/{model_code}/field/{id}"
+    };
+    option (system.v1.title) = "废弃类型字段";
+  }
+  // ListRelationTypes 查询关系类型（可按资源类型过滤出适用的关系）。
+  rpc ListRelationTypes(ListRelationTypesRequest) returns (ListRelationTypesResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/cmdb/relation-type"
+    };
+    option (system.v1.title) = "查询关系类型列表";
+  }
+  // CreateRelationType 创建关系类型。
+  rpc CreateRelationType(CreateRelationTypeRequest) returns (CreateRelationTypeResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/cmdb/relation-type"
+      body: "*"
+    };
+    option (system.v1.title) = "创建关系类型";
+  }
+  // UpdateRelationType 更新关系类型（编码与两端类型不可改）。
+  rpc UpdateRelationType(UpdateRelationTypeRequest) returns (UpdateRelationTypeResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/cmdb/relation-type/{code}"
+      body: "*"
+    };
+    option (system.v1.title) = "更新关系类型";
+  }
+  // DeleteRelationType 删除关系类型（软删；仍有关系实例时 409）。
+  rpc DeleteRelationType(DeleteRelationTypeRequest) returns (DeleteRelationTypeResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/cmdb/relation-type/{code}"
+    };
+    option (system.v1.title) = "删除关系类型";
+  }
+  // GetModelView 查询类型的详情页布局；未配置时返回按字段与适用关系生成的缺省布局。
+  rpc GetModelView(GetModelViewRequest) returns (GetModelViewResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/cmdb/model/{model_code}/view"
+    };
+    option (system.v1.title) = "查询详情布局";
+  }
+  // UpdateModelView 整体替换类型的详情页布局；引用的字段与关系必须存在。
+  rpc UpdateModelView(UpdateModelViewRequest) returns (UpdateModelViewResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/cmdb/model/{model_code}/view"
+      body: "*"
+    };
+    option (system.v1.title) = "更新详情布局";
+  }
+}
+
+// CmdbScopeService 数据范围：按角色限制可见的资源类型与环境（接口权限之外的第二道门）。
+service CmdbScopeService {
+  // ListRoleScopes 列出全部角色及其 CMDB 数据范围（未配置 = 不限）。
+  rpc ListRoleScopes(ListRoleScopesRequest) returns (ListRoleScopesResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/cmdb/scope/role"
+    };
+    option (system.v1.title) = "查询角色数据范围";
+  }
+  // SetRoleScope 设置角色数据范围（整体替换；两者皆空 = 不限）。
+  rpc SetRoleScope(SetRoleScopeRequest) returns (SetRoleScopeResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/cmdb/scope/role/{role_id}"
+      body: "*"
+    };
+    option (system.v1.title) = "设置角色数据范围";
+  }
+  // GetMyScope 当前用户的有效数据范围（前端据此隐藏不可见类型）。
+  rpc GetMyScope(GetMyScopeRequest) returns (GetMyScopeResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/cmdb/scope/me"
+    };
+    option (system.v1.title) = "查询我的数据范围";
+  }
+}
+
+// ViewSection 详情页的一个区块：属性分组或关联面板。
+message ViewSection {
+  // type 区块类型：attrs 属性分组 / relation 关联面板。
+  string type = 1 [(buf.validate.field).string = { in: ["attrs", "relation"] }];
+  // title 区块标题；关联面板留空则取关系的正向/反向名。
+  optional string title = 2 [(buf.validate.field).string.max_len = 64];
+  // fields 属性分组包含的字段编码（type=attrs）。
+  repeated string fields = 3 [(buf.validate.field).repeated = {
+    max_items: 200
+    items: {
+      string: { max_len: 64 }
+    }
+  }];
+  // relation_type 关系类型编码（type=relation）。
+  optional string relation_type = 4 [(buf.validate.field).string.max_len = 64];
+  // direction 方向：outgoing / incoming（type=relation）。
+  optional string direction = 5 [(buf.validate.field).string = { in: ["outgoing", "incoming"] }];
+  // columns 关联面板展示的对端字段编码；空则取对端类型的列表可见字段。
+  repeated string columns = 6 [(buf.validate.field).repeated = {
+    max_items: 50
+    items: {
+      string: { max_len: 64 }
+    }
+  }];
+  // collapsed 面板默认折叠。
+  bool collapsed = 7;
+}
+
+// GetModelViewRequest 查询详情布局请求。
+message GetModelViewRequest {
+  // model_code 类型编码。
+  string model_code = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+}
+
+// GetModelViewResponse 查询详情布局响应。
+message GetModelViewResponse {
+  // model_code 类型编码。
+  string model_code = 1;
+  // configured 是否为人工配置（false = 缺省生成）。
+  bool configured = 2;
+  // sections 区块列表。
+  repeated ViewSection sections = 3;
+}
+
+// UpdateModelViewRequest 更新详情布局请求。
+message UpdateModelViewRequest {
+  // model_code 类型编码。
+  string model_code = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // sections 区块列表（整体替换），≤50。
+  repeated ViewSection sections = 2 [(buf.validate.field).repeated.max_items = 50];
+}
+
+// UpdateModelViewResponse 更新详情布局响应。
+message UpdateModelViewResponse {
+  // sections 保存后的区块列表。
+  repeated ViewSection sections = 1;
+}
+
+// RoleScope 角色数据范围。
+message RoleScope {
+  // role_id 角色 ID。
+  string role_id = 1;
+  // role_name 角色名。
+  string role_name = 2;
+  // role_code 角色编码。
+  string role_code = 3;
+  // model_codes 可见资源类型；空 = 不限。
+  repeated string model_codes = 4;
+  // envs 可见环境；空 = 不限。
+  repeated string envs = 5;
+}
+
+// ListRoleScopesRequest 查询角色数据范围请求。
+message ListRoleScopesRequest {}
+
+// ListRoleScopesResponse 查询角色数据范围响应。
+message ListRoleScopesResponse {
+  // items 全部未删除角色及其范围。
+  repeated RoleScope items = 1;
+}
+
+// SetRoleScopeRequest 设置角色数据范围请求。
+message SetRoleScopeRequest {
+  // role_id 角色 ID。
+  string role_id = 1 [(buf.validate.field).string.uuid = true];
+  // model_codes 可见资源类型，≤200；空 = 不限。
+  repeated string model_codes = 2 [(buf.validate.field).repeated = {
+    max_items: 200
+    unique: true
+    items: {
+      string: {
+        min_len: 1
+        max_len: 64
+      }
+    }
+  }];
+  // envs 可见环境，≤100；空 = 不限。
+  repeated string envs = 3 [(buf.validate.field).repeated = {
+    max_items: 100
+    unique: true
+    items: {
+      string: {
+        min_len: 1
+        max_len: 32
+      }
+    }
+  }];
+}
+
+// SetRoleScopeResponse 设置角色数据范围响应。
+message SetRoleScopeResponse {
+  // scope 保存后的范围。
+  RoleScope scope = 1;
+}
+
+// GetMyScopeRequest 查询我的数据范围请求。
+message GetMyScopeRequest {}
+
+// GetMyScopeResponse 查询我的数据范围响应。
+message GetMyScopeResponse {
+  // unrestricted 不限（超管或任一启用角色未配置）。
+  bool unrestricted = 1;
+  // model_codes 可见资源类型（unrestricted=false 时有效）。
+  repeated string model_codes = 2;
+  // envs 可见环境（unrestricted=false 时有效；空 = 环境不限）。
+  repeated string envs = 3;
+}
+
+// CmdbModel 资源类型实体。
+message CmdbModel {
+  // code 类型编码，小写字母/数字/下划线，创建后不可改。
+  string code = 1;
+  // name 展示名。
+  string name = 2;
+  // category 所属分组编码（内置：compute / network / storage / cloud / component / other，可自定义）。
+  string category = 3;
+  // icon 图标标识（前端图标名）。
+  string icon = 4;
+  // description 说明。
+  string description = 5;
+  // status 状态：1 启用 / 2 停用（停用后不可新建该类型资源）。
+  int32 status = 6;
+  // builtin 是否内置类型（内置不可删除）。
+  bool builtin = 7;
+  // ci_count 该类型下未删除资源数。
+  int64 ci_count = 8;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 9;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 10;
+}
+
+// FieldRule 字段校验规则；未设置的项不校验。
+message FieldRule {
+  // pattern 正则（string/ip 类型）。
+  optional string pattern = 1 [(buf.validate.field).string.max_len = 256];
+  // min 最小值（int/float）。
+  optional double min = 2;
+  // max 最大值（int/float）。
+  optional double max = 3;
+  // min_len 最小长度（string）。
+  optional int32 min_len = 4 [(buf.validate.field).int32.gte = 0];
+  // max_len 最大长度（string）。
+  optional int32 max_len = 5 [(buf.validate.field).int32.gte = 0];
+}
+
+// CmdbField 类型字段定义。
+message CmdbField {
+  // id 字段标识。
+  string id = 1;
+  // model_code 所属类型。
+  string model_code = 2;
+  // code 字段编码（attrs 中的键），创建后不可改。
+  string code = 3;
+  // name 展示名。
+  string name = 4;
+  // type 数据类型：string / int / float / bool / enum / datetime / json / ip / ref。
+  string type = 5;
+  // required 必填。
+  bool required = 6;
+  // unique 同类型内唯一（参与唯一键）。
+  bool unique = 7;
+  // enum_values 枚举值（type=enum）。
+  repeated string enum_values = 8;
+  // ref_model 引用的资源类型编码（type=ref，值为该类型资源 ID）。
+  string ref_model = 9;
+  // rule 校验规则。
+  FieldRule rule = 10;
+  // owner 字段归属：manual 人工维护 / sync 同步只读 / both 同步写入但允许人工覆盖。
+  string owner = 11;
+  // list_visible 列表页默认展示。
+  bool list_visible = 12;
+  // sort 排序（越小越靠前）。
+  int32 sort = 13;
+  // description 说明（表单提示）。
+  string description = 14;
+  // deprecated 已废弃（不再展示与校验，历史数据保留）。
+  bool deprecated = 15;
+  // indexed 为该属性建表达式索引（高频筛选字段）。
+  bool indexed = 16;
+  // sensitive 敏感属性：读取接口、历史与导出一律脱敏。
+  bool sensitive = 17;
+}
+
+// CmdbRelationType 关系类型定义（有向：src → dst）。
+message CmdbRelationType {
+  // code 关系编码，创建后不可改。
+  string code = 1;
+  // name 展示名。
+  string name = 2;
+  // forward_name 正向名（在 src 详情页展示，如"安装的配件"）。
+  string forward_name = 3;
+  // backward_name 反向名（在 dst 详情页展示，如"所属主机"）。
+  string backward_name = 4;
+  // src_model 源端资源类型编码，* 表示任意。
+  string src_model = 5;
+  // dst_model 目标端资源类型编码，* 表示任意。
+  string dst_model = 6;
+  // cardinality 基数：one_to_one / one_to_many（一个 src 多个 dst，一个 dst 只属一个 src）/ many_to_many。
+  string cardinality = 7;
+  // on_delete src 退役/删除时对 dst 的策略：restrict 禁止 / cascade_retire 级联退役。
+  string on_delete = 8;
+  // description 说明。
+  string description = 9;
+  // relation_count 关系实例数。
+  int64 relation_count = 10;
+}
+
+// ListModelsRequest 分页查询资源类型请求。
+message ListModelsRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // keyword 编码/名称模糊匹配，可选。
+  optional string keyword = 3 [(buf.validate.field).string.max_len = 64];
+  // category 分类过滤，可选。
+  optional string category = 4 [(buf.validate.field).string.max_len = 64];
+  // status 状态过滤，可选：1 启用 / 2 停用。
+  optional int32 status = 5 [(buf.validate.field).int32 = { in: [1, 2] }];
+}
+
+// ListModelsResponse 分页查询资源类型响应。
+message ListModelsResponse {
+  // items 当前页数据。
+  repeated CmdbModel items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// GetModelRequest 查询资源类型详情请求。
+message GetModelRequest {
+  // code 类型编码。
+  string code = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+}
+
+// GetModelResponse 查询资源类型详情响应。
+message GetModelResponse {
+  // model 类型。
+  CmdbModel model = 1;
+  // fields 字段定义（含已废弃，按 sort 排序）。
+  repeated CmdbField fields = 2;
+  // relation_types 适用于该类型的关系类型（任一端匹配或通配）。
+  repeated CmdbRelationType relation_types = 3;
+}
+
+// CreateModelRequest 创建资源类型请求。
+message CreateModelRequest {
+  // code 类型编码：2-64 位小写字母/数字/下划线，字母开头。
+  string code = 1 [(buf.validate.field).string = {
+    pattern: "^[a-z][a-z0-9_]{1,63}$"
+  }];
+  // name 展示名，1-64 位。
+  string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // category 所属分组编码（须为已存在的模型分组，见 CmdbInsightService.ListModelGroups）。
+  string category = 3 [(buf.validate.field).string = {
+    pattern: "^[a-z][a-z0-9_]{1,63}$"
+  }];
+  // icon 图标标识，可选。
+  optional string icon = 4 [(buf.validate.field).string.max_len = 64];
+  // description 说明，可选。
+  optional string description = 5 [(buf.validate.field).string.max_len = 512];
+}
+
+// CreateModelResponse 创建资源类型响应。
+message CreateModelResponse {
+  // model 创建后的类型。
+  CmdbModel model = 1;
+}
+
+// UpdateModelRequest 更新资源类型请求；未传字段不更新。
+message UpdateModelRequest {
+  // code 目标类型编码。
+  string code = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // name 展示名。
+  optional string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // category 所属分组编码（须为已存在的模型分组）。
+  optional string category = 3 [(buf.validate.field).string = {
+    pattern: "^[a-z][a-z0-9_]{1,63}$"
+  }];
+  // icon 图标标识。
+  optional string icon = 4 [(buf.validate.field).string.max_len = 64];
+  // description 说明。
+  optional string description = 5 [(buf.validate.field).string.max_len = 512];
+  // status 状态：1 启用 / 2 停用。
+  optional int32 status = 6 [(buf.validate.field).int32 = { in: [1, 2] }];
+}
+
+// UpdateModelResponse 更新资源类型响应。
+message UpdateModelResponse {
+  // model 更新后的类型。
+  CmdbModel model = 1;
+}
+
+// DeleteModelRequest 删除资源类型请求。
+message DeleteModelRequest {
+  // code 目标类型编码。
+  string code = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+}
+
+// DeleteModelResponse 删除资源类型响应。
+message DeleteModelResponse {}
+
+// CreateFieldRequest 新增类型字段请求。
+message CreateFieldRequest {
+  // model_code 所属类型。
+  string model_code = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // code 字段编码：1-64 位小写字母/数字/下划线，字母开头。
+  string code = 2 [(buf.validate.field).string = {
+    pattern: "^[a-z][a-z0-9_]{0,63}$"
+  }];
+  // name 展示名，1-64 位。
+  string name = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // type 数据类型。
+  string type = 4 [(buf.validate.field).string = {
+    in: ["string", "int", "float", "bool", "enum", "datetime", "json", "ip", "ref"]
+  }];
+  // required 必填，可选。
+  optional bool required = 5;
+  // unique 唯一，可选。
+  optional bool unique = 6;
+  // enum_values 枚举值（type=enum 必填），每项 1-64 位，≤100 项。
+  repeated string enum_values = 7 [(buf.validate.field).repeated = {
+    max_items: 100
+    items: {
+      string: {
+        min_len: 1
+        max_len: 64
+      }
+    }
+  }];
+  // ref_model 引用类型编码（type=ref 必填）。
+  optional string ref_model = 8 [(buf.validate.field).string.max_len = 64];
+  // rule 校验规则，可选。
+  FieldRule rule = 9;
+  // owner 归属：manual / sync / both，缺省 manual。
+  optional string owner = 10 [(buf.validate.field).string = { in: ["manual", "sync", "both"] }];
+  // list_visible 列表默认展示，可选。
+  optional bool list_visible = 11;
+  // sort 排序，可选。
+  optional int32 sort = 12;
+  // description 说明，可选。
+  optional string description = 13 [(buf.validate.field).string.max_len = 256];
+  // indexed 建表达式索引，可选。
+  optional bool indexed = 14;
+  // sensitive 敏感属性，可选。
+  optional bool sensitive = 15;
+}
+
+// CreateFieldResponse 新增类型字段响应。
+message CreateFieldResponse {
+  // field 创建后的字段。
+  CmdbField field = 1;
+}
+
+// UpdateFieldRequest 更新类型字段请求；未传字段不更新。
+message UpdateFieldRequest {
+  // model_code 所属类型。
+  string model_code = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // id 字段标识。
+  string id = 2 [(buf.validate.field).string.uuid = true];
+  // name 展示名。
+  optional string name = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // required 必填。
+  optional bool required = 4;
+  // unique 唯一。
+  optional bool unique = 5;
+  // enum_values 枚举值整组替换（type=enum）。
+  repeated string enum_values = 6 [(buf.validate.field).repeated = {
+    max_items: 100
+    items: {
+      string: {
+        min_len: 1
+        max_len: 64
+      }
+    }
+  }];
+  // rule 校验规则整组替换。
+  FieldRule rule = 7;
+  // owner 归属。
+  optional string owner = 8 [(buf.validate.field).string = { in: ["manual", "sync", "both"] }];
+  // list_visible 列表默认展示。
+  optional bool list_visible = 9;
+  // sort 排序。
+  optional int32 sort = 10;
+  // description 说明。
+  optional string description = 11 [(buf.validate.field).string.max_len = 256];
+  // indexed 建/撤表达式索引。
+  optional bool indexed = 12;
+  // sensitive 敏感属性。
+  optional bool sensitive = 13;
+}
+
+// UpdateFieldResponse 更新类型字段响应。
+message UpdateFieldResponse {
+  // field 更新后的字段。
+  CmdbField field = 1;
+}
+
+// DeleteFieldRequest 废弃类型字段请求。
+message DeleteFieldRequest {
+  // model_code 所属类型。
+  string model_code = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // id 字段标识。
+  string id = 2 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteFieldResponse 废弃类型字段响应。
+message DeleteFieldResponse {}
+
+// ListRelationTypesRequest 查询关系类型请求。
+message ListRelationTypesRequest {
+  // model_code 按资源类型过滤出适用的关系（任一端匹配或通配），可选。
+  optional string model_code = 1 [(buf.validate.field).string.max_len = 64];
+}
+
+// ListRelationTypesResponse 查询关系类型响应。
+message ListRelationTypesResponse {
+  // items 关系类型。
+  repeated CmdbRelationType items = 1;
+}
+
+// CreateRelationTypeRequest 创建关系类型请求。
+message CreateRelationTypeRequest {
+  // code 关系编码：2-64 位小写字母/数字/下划线，字母开头。
+  string code = 1 [(buf.validate.field).string = {
+    pattern: "^[a-z][a-z0-9_]{1,63}$"
+  }];
+  // name 展示名。
+  string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // forward_name 正向名。
+  string forward_name = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // backward_name 反向名。
+  string backward_name = 4 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // src_model 源端类型编码或 *。
+  string src_model = 5 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // dst_model 目标端类型编码或 *。
+  string dst_model = 6 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // cardinality 基数。
+  string cardinality = 7 [(buf.validate.field).string = {
+    in: ["one_to_one", "one_to_many", "many_to_many"]
+  }];
+  // on_delete 删除策略，缺省 restrict。
+  optional string on_delete = 8 [(buf.validate.field).string = { in: ["restrict", "cascade_retire"] }];
+  // description 说明，可选。
+  optional string description = 9 [(buf.validate.field).string.max_len = 256];
+}
+
+// CreateRelationTypeResponse 创建关系类型响应。
+message CreateRelationTypeResponse {
+  // relation_type 创建后的关系类型。
+  CmdbRelationType relation_type = 1;
+}
+
+// UpdateRelationTypeRequest 更新关系类型请求；未传字段不更新。
+message UpdateRelationTypeRequest {
+  // code 目标关系编码。
+  string code = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // name 展示名。
+  optional string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // forward_name 正向名。
+  optional string forward_name = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // backward_name 反向名。
+  optional string backward_name = 4 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // on_delete 删除策略。
+  optional string on_delete = 5 [(buf.validate.field).string = { in: ["restrict", "cascade_retire"] }];
+  // description 说明。
+  optional string description = 6 [(buf.validate.field).string.max_len = 256];
+}
+
+// UpdateRelationTypeResponse 更新关系类型响应。
+message UpdateRelationTypeResponse {
+  // relation_type 更新后的关系类型。
+  CmdbRelationType relation_type = 1;
+}
+
+// DeleteRelationTypeRequest 删除关系类型请求。
+message DeleteRelationTypeRequest {
+  // code 目标关系编码。
+  string code = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+}
+
+// DeleteRelationTypeResponse 删除关系类型响应。
+message DeleteRelationTypeResponse {}

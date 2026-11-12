@@ -18,6 +18,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/lanyulei/reborn/backend/kit/notifycontract"
 	"github.com/lanyulei/reborn/backend/notify/internal/biz"
 )
 
@@ -28,8 +29,18 @@ const (
 	FeishuEndpoint   = "https://open.feishu.cn/open-apis/bot/v2/hook/"
 )
 
-// robotBodyLimit 群机器人正文上限（钉钉 markdown 20KB；按 rune 截断留余量）。
-const robotBodyLimit = 4000
+// 平台正文上限（字节；官方上限留余量，UTF-8 安全截断）：钉钉 markdown 20000、
+// 企微 text 2048 / markdown 4096（企微按**字节**计，4000 个汉字 ≈ 12KB 直接 errcode 死信）、
+// 飞书 text 30000。标题与装饰（### / ** / @ 名单）从预算里扣除。
+const (
+	dingtalkMarkdownBytes = 18000
+	wecomTextBytes        = 2000
+	wecomMarkdownBytes    = 4000
+	wecomCardBytes        = 500 // template_card sub_title_text 上限 512B
+	feishuTextBytes       = 28000
+	robotBodyMinBytes     = 200
+	defaultCardButton     = "查看详情"
+)
 
 // RobotSender 群机器人适配器（dingtalk / wecom / feishu）：实例 secret 即机器人
 // access_token/key，目标群由实例决定（收件标识 $group:xxx 仅作标注）；config.at_mobiles
@@ -79,7 +90,21 @@ func (s *RobotSender) Send(ctx context.Context, ch *biz.Channel, msg biz.Rendere
 	if ch.Robot != nil {
 		mobiles = ch.Robot.AtMobiles
 	}
-	body := truncateRunes(msg.Body, robotBodyLimit)
+	at := atSuffix(mobiles)
+	// budget 按平台字节上限扣除标题与装饰后的正文预算。
+	budget := func(limit int, decor string) string {
+		return truncateBytes(msg.Body, max(limit-len(decor), robotBodyMinBytes))
+	}
+	// 卡片：模板 format=card 且（钉钉/企微）渠道配了 card_url；否则按各平台既有格式
+	// （text/markdown 对机器人均为现有口径：钉钉 markdown、企微 markdown/有 @ 则 text、飞书 text）。
+	card := msg.Format == notifycontract.TemplateFormatCard
+	cardURL, cardButton := "", defaultCardButton
+	if ch.Robot != nil {
+		cardURL = ch.Robot.CardURL
+		if ch.Robot.CardButton != "" {
+			cardButton = ch.Robot.CardButton
+		}
+	}
 	var (
 		target  string
 		payload any
@@ -91,23 +116,51 @@ func (s *RobotSender) Send(ctx context.Context, ch *biz.Channel, msg biz.Rendere
 			ts := strconv.FormatInt(time.Now().UnixMilli(), 10)
 			target += "&timestamp=" + ts + "&sign=" + url.QueryEscape(DingtalkSign(ch.SignSecret, ts))
 		}
-		payload = map[string]any{
-			"msgtype":  "markdown",
-			"markdown": map[string]string{"title": msg.Subject, "text": "### " + msg.Subject + "\n\n" + body + atSuffix(mobiles)},
-			"at":       map[string]any{"atMobiles": mobiles, "isAtAll": false},
+		head := "### " + escapeMarkdown(msg.Subject) + "\n\n"
+		if card && cardURL != "" {
+			// actionCard 不支持 @ 名单；整体跳转按钮指向 card_url。
+			payload = map[string]any{
+				"msgtype": "actionCard",
+				"actionCard": map[string]string{
+					"title": msg.Subject, "text": head + budget(dingtalkMarkdownBytes, head),
+					"btnOrientation": "0", "singleTitle": cardButton, "singleURL": cardURL,
+				},
+			}
+		} else {
+			payload = map[string]any{
+				"msgtype":  "markdown",
+				"markdown": map[string]string{"title": msg.Subject, "text": head + budget(dingtalkMarkdownBytes, head+at) + at},
+				"at":       map[string]any{"atMobiles": mobiles, "isAtAll": false},
+			}
 		}
 	case biz.ChannelTypeWecom:
 		target = s.endpoints[ch.Type] + "?key=" + url.QueryEscape(ch.Secret)
-		if len(mobiles) > 0 {
-			payload = map[string]any{"msgtype": "text", "text": map[string]any{
-				"content": msg.Subject + "\n" + body, "mentioned_mobile_list": mobiles,
+		switch {
+		case card && cardURL != "":
+			payload = map[string]any{"msgtype": "template_card", "template_card": map[string]any{
+				"card_type":      "text_notice",
+				"main_title":     map[string]string{"title": truncateBytes(msg.Subject, 128)},
+				"sub_title_text": budget(wecomCardBytes, ""),
+				"card_action":    map[string]any{"type": 1, "url": cardURL},
 			}}
-		} else {
-			payload = map[string]any{"msgtype": "markdown", "markdown": map[string]string{"content": "**" + msg.Subject + "**\n" + body}}
+		case len(mobiles) > 0:
+			head := msg.Subject + "\n"
+			payload = map[string]any{"msgtype": "text", "text": map[string]any{
+				"content": head + budget(wecomTextBytes, head), "mentioned_mobile_list": mobiles,
+			}}
+		default:
+			head := "**" + escapeMarkdown(msg.Subject) + "**\n"
+			payload = map[string]any{"msgtype": "markdown", "markdown": map[string]string{"content": head + budget(wecomMarkdownBytes, head)}}
 		}
 	case biz.ChannelTypeFeishu:
 		target = s.endpoints[ch.Type] + url.PathEscape(ch.Secret)
-		feishu := map[string]any{"msg_type": "text", "content": map[string]string{"text": msg.Subject + "\n" + body}}
+		var feishu map[string]any
+		if card {
+			feishu = feishuCard(msg, budget(feishuTextBytes, ""), cardURL, cardButton)
+		} else {
+			head := msg.Subject + "\n"
+			feishu = map[string]any{"msg_type": "text", "content": map[string]string{"text": head + budget(feishuTextBytes, head)}}
+		}
 		if ch.SignSecret != "" {
 			ts := strconv.FormatInt(time.Now().Unix(), 10)
 			feishu["timestamp"], feishu["sign"] = ts, FeishuSign(ch.SignSecret, ts)
@@ -133,8 +186,8 @@ func (s *RobotSender) Send(ctx context.Context, ch *biz.Channel, msg biz.Rendere
 	defer func() { _ = resp.Body.Close() }()
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<10))
 	switch {
-	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
-		return biz.SendResult{Retryable: true}, fmt.Errorf("robot responded %d", resp.StatusCode)
+	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode >= 500:
+		return biz.SendResult{Retryable: true, RetryAfter: retryAfter(resp.Header)}, fmt.Errorf("robot responded %d", resp.StatusCode)
 	case resp.StatusCode < 200 || resp.StatusCode >= 300:
 		return biz.SendResult{Retryable: false}, fmt.Errorf("robot responded %d: %s", resp.StatusCode, truncateRunes(string(respBody), 200))
 	}
@@ -143,6 +196,27 @@ func (s *RobotSender) Send(ctx context.Context, ch *biz.Channel, msg biz.Rendere
 		return biz.SendResult{ProviderMsgID: msg.SendKey}, nil
 	}
 	return biz.SendResult{Retryable: robotRetryable(ch.Type, code)}, fmt.Errorf("robot error %d: %s", code, message)
+}
+
+// feishuCard 飞书 interactive 卡片：标题色随严重级（1 blue / 2 orange / 3 red / 4 carmine），
+// 正文 lark_md，有 card_url 时追加按钮。
+func feishuCard(msg biz.RenderedMessage, body, cardURL, cardButton string) map[string]any {
+	colors := map[int32]string{1: "blue", 2: "orange", 3: "red", 4: "carmine"}
+	color, ok := colors[msg.Severity]
+	if !ok {
+		color = "blue"
+	}
+	elements := []any{map[string]any{"tag": "div", "text": map[string]string{"tag": "lark_md", "content": body}}}
+	if cardURL != "" {
+		elements = append(elements, map[string]any{"tag": "action", "actions": []any{map[string]any{
+			"tag": "button", "type": "primary", "text": map[string]string{"tag": "plain_text", "content": cardButton}, "url": cardURL,
+		}}})
+	}
+	return map[string]any{"msg_type": "interactive", "card": map[string]any{
+		"config":   map[string]bool{"wide_screen_mode": true},
+		"header":   map[string]any{"template": color, "title": map[string]string{"tag": "plain_text", "content": msg.Subject}},
+		"elements": elements,
+	}}
 }
 
 // robotResult 解析三家机器人的统一结果：钉钉/企微 errcode+errmsg；飞书 code+msg
@@ -202,6 +276,47 @@ func truncateRunes(s string, max int) string {
 	}
 	r := []rune(s)
 	return string(r[:max]) + "…"
+}
+
+// truncateBytes 按字节上限截断（在 rune 边界切，追加 …；上限含省略号）。
+func truncateBytes(s string, max int) string {
+	const ellipsis = "…"
+	if len(s) <= max {
+		return s
+	}
+	cut := max - len(ellipsis)
+	if cut <= 0 {
+		return ellipsis
+	}
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + ellipsis
+}
+
+// markdownEscaper 标题进 markdown 字段前转义控制字符：标题来自事件 title（生产者
+// 可控），`](http://…)` / `#` 等会改写渲染结构。正文是模板作者输出，不转义。
+var markdownEscaper = strings.NewReplacer(
+	"\\", "\\\\", "*", "\\*", "_", "\\_", "#", "\\#", "[", "\\[", "]", "\\]", "(", "\\(", ")", "\\)", ">", "\\>", "`", "\\`", "~", "\\~",
+)
+
+func escapeMarkdown(s string) string { return markdownEscaper.Replace(s) }
+
+// retryAfter 解析 Retry-After（秒数或 HTTP 日期）；缺失/非法返回 0。
+func retryAfter(h http.Header) time.Duration {
+	v := strings.TrimSpace(h.Get("Retry-After"))
+	if v == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
+		return time.Duration(secs) * time.Second
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		if d := time.Until(t); d > 0 {
+			return d
+		}
+	}
+	return 0
 }
 
 // DingtalkSign 钉钉加签：base64(HMAC-SHA256(key = secret, msg = ts(ms) + "\n" + secret))。

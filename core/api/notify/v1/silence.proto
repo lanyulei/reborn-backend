@@ -95,6 +95,10 @@ message SilenceSpec {
   // time_window 免打扰时间窗，可选；缺省全程静默（更新时整组替换语义下
   // 不传即清除窗口）。
   optional SilenceWindow time_window = 3;
+  // name 可读名称，可选（≤64；控制台列表展示）。
+  optional string name = 4 [(buf.validate.field).string.max_len = 64];
+  // description 说明，可选（≤255）。
+  optional string description = 5 [(buf.validate.field).string.max_len = 255];
 }
 
 // NotifySilence 静默规则实体。
@@ -115,6 +119,10 @@ message NotifySilence {
   google.protobuf.Timestamp create_time = 7;
   // update_time 更新时间。
   google.protobuf.Timestamp update_time = 8;
+  // name 可读名称（空 = 未命名）。
+  string name = 9;
+  // description 说明。
+  string description = 10;
 }
 
 // CreateSilenceRequest 创建静默规则请求。
@@ -153,8 +161,11 @@ message UpdateSilenceRequest {
   optional bool enabled = 3;
 }
 
-// UpdateSilenceResponse 更新静默规则响应。
-message UpdateSilenceResponse {}
+// UpdateSilenceResponse 更新静默规则响应：返回更新后的规则。
+message UpdateSilenceResponse {
+  // silence 更新后的静默规则。
+  NotifySilence silence = 1;
+}
 
 // DeleteSilenceRequest 删除静默规则请求。
 message DeleteSilenceRequest {
@@ -186,7 +197,7 @@ message ListSilencesRequest {
     gte: 1
     lte: 100
   }];
-  // keyword 关键字，可选；模糊匹配 event_pattern。
+  // keyword 关键字，可选；模糊匹配 name / event_pattern。
   optional string keyword = 3 [(buf.validate.field).string.max_len = 64];
   // enabled 启用状态过滤，可选。
   optional bool enabled = 4;

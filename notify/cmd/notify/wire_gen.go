@@ -26,7 +26,10 @@ import (
 
 // wireApp init kratos application.
 func wireApp(confServer *conf.Server, confData *conf.Data, pipeline *conf.Pipeline, notify *conf.Notify, logger *slog.Logger) (*kratos.App, func(), error) {
-	roles := server.NewRoles(pipeline)
+	roles, err := server.NewRoles(pipeline)
+	if err != nil {
+		return nil, nil, err
+	}
 	dataData, cleanup, err := data.NewData(confData)
 	if err != nil {
 		return nil, nil, err
@@ -43,31 +46,44 @@ func wireApp(confServer *conf.Server, confData *conf.Data, pipeline *conf.Pipeli
 	ingressRepo := data.NewIngressRepo(dataData)
 	ingressUsecase := biz.NewIngressUsecase(ingressRepo)
 	producerResolver := server.NewProducerResolver()
-	ingressService := service.NewIngressService(ingressUsecase, producerResolver)
-	metrics, cleanup2, err := server.NewMetrics(dataData)
+	metrics, cleanup2, err := server.NewMetrics(dataData, configCache)
 	if err != nil {
 		cleanup()
 		return nil, nil, err
 	}
-	health := server.NewHealth(configCache, dataData)
+	ingressObserver := server.NewIngressObserver(metrics)
+	ingressService := service.NewIngressService(ingressUsecase, producerResolver, ingressObserver)
+	natsBackbone, cleanup3, err := data.NewNatsBackbone(pipeline)
+	if err != nil {
+		cleanup2()
+		cleanup()
+		return nil, nil, err
+	}
+	backbone := data.NewBackboneStatus(pipeline, natsBackbone)
+	health := server.NewHealth(configCache, dataData, backbone)
 	httpServer := server.NewHTTPServer(confServer, roles, logger, producerAuth, ingressService, metrics, health)
 	eventRepo := data.NewEventRepo(dataData)
-	routerUsecase := biz.NewRouterUsecase(eventRepo, configCache, logger)
+	eventSource := data.NewEventSource(pipeline, eventRepo, natsBackbone)
+	routerUsecase := biz.NewRouterUsecase(eventSource, configCache, logger)
 	aggRepo := data.NewAggRepo(dataData)
 	sweeperUsecase := biz.NewSweeperUsecase(aggRepo, configCache, logger)
 	dispatchRepo := data.NewDispatchRepo(dataData)
+	bizDispatchRepo := data.NewDispatchSource(pipeline, dispatchRepo, natsBackbone)
 	channelSender := channel.NewMux()
 	renderer := biz.NewRenderer()
-	senderUsecase := biz.NewSenderUsecase(dispatchRepo, configCache, rateBucketRepo, channelSender, renderer, logger)
+	senderUsecase := biz.NewSenderUsecase(bizDispatchRepo, configCache, rateBucketRepo, channelSender, renderer, logger)
 	dlqRepo := data.NewDlqRepo(dataData)
 	dlqUsecase := biz.NewDlqUsecase(dlqRepo, logger)
 	maintenanceRepo := data.NewMaintenanceRepo(dataData)
 	maintenanceUsecase := biz.NewMaintenanceUsecase(maintenanceRepo, logger)
+	relayer := data.NewRelayer(pipeline, dataData, natsBackbone, logger)
+	relayUsecase := biz.NewRelayUsecase(relayer, logger)
 	locker := data.NewLocker(dataData)
 	healthRepo := data.NewHealthRepo(dataData)
 	hooks := server.NewHooks(metrics)
-	set, err := worker.NewSet(pipeline, configCache, routerUsecase, sweeperUsecase, senderUsecase, dlqUsecase, maintenanceUsecase, locker, healthRepo, hooks, logger)
+	set, err := worker.NewSet(pipeline, configCache, routerUsecase, sweeperUsecase, senderUsecase, dlqUsecase, maintenanceUsecase, relayUsecase, locker, healthRepo, hooks, logger)
 	if err != nil {
+		cleanup3()
 		cleanup2()
 		cleanup()
 		return nil, nil, err
@@ -75,6 +91,7 @@ func wireApp(confServer *conf.Server, confData *conf.Data, pipeline *conf.Pipeli
 	v2 := server.NewServers(roles, logger, httpServer, set)
 	app := newApp(logger, v2)
 	return app, func() {
+		cleanup3()
 		cleanup2()
 		cleanup()
 	}, nil

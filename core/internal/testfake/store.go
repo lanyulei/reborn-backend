@@ -68,6 +68,7 @@ type Store struct {
 	dispatches    []*biznotify.Dispatch          // 发送任务运行数据（append-only，经 SeedDispatch 预置）
 	deliveryLogs  []*biznotify.DeliveryLog       // 投递明细运行数据（append-only，经 SeedDeliveryLog 预置）
 	deadLetters   []*biznotify.DeadLetter        // 死信运行数据（sender 写入，经 SeedDeadLetter 预置）
+	channelHealth []*biznotify.ChannelHealth     // 渠道健康（管道 sender 写入，经 SeedChannelHealth 预置）
 	dedup         map[string]dedupEntry          // 直插去重门闩（biz|dedup_key → 首次事件）
 	systemConfig  *biz.SystemConfig              // 单例配置行（nil = 未配置）
 	logoFile      []byte                         // logo 文件内容（nil = 未上传）
@@ -241,6 +242,9 @@ func (s *Store) UpdateUser(_ context.Context, id string, upd biz.UserUpdate) err
 	if upd.PasswordHash != nil {
 		u.Password = *upd.PasswordHash
 	}
+	if upd.Avatar != nil {
+		u.Avatar = *upd.Avatar
+	}
 	u.UpdateTime = time.Now()
 	return nil
 }
@@ -325,6 +329,20 @@ func (s *Store) ListRolesByIDs(_ context.Context, ids []string) ([]*biz.Role, er
 		}
 	}
 	return roles, nil
+}
+
+// ListBuiltinRoleIDs implements biz.RoleReader：按 code 升序返回内置角色 ID。
+func (s *Store) ListBuiltinRoleIDs(_ context.Context) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ids := make([]string, 0, 1)
+	for _, r := range s.roles {
+		if r.Builtin {
+			ids = append(ids, r.ID)
+		}
+	}
+	slices.SortFunc(ids, func(a, b string) int { return strings.Compare(s.roles[a].Code, s.roles[b].Code) })
+	return ids, nil
 }
 
 // CreateRole implements biz.RoleWriter.
@@ -634,4 +652,38 @@ func (s *Store) ListLoginLogs(_ context.Context, filter biz.LoginLogFilter, page
 	}
 	end := min(start+pageSize, total)
 	return matched[start:end], total, nil
+}
+
+// AvatarStore 头像文件内存桩（biz.AvatarStore）。
+type AvatarStore struct {
+	mu    sync.Mutex
+	files map[string]avatarFile
+}
+
+type avatarFile struct {
+	data []byte
+	mime string
+}
+
+// NewAvatarStore new an AvatarStore.
+func NewAvatarStore() *AvatarStore { return &AvatarStore{files: map[string]avatarFile{}} }
+
+// SaveAvatarFile implements biz.AvatarStore.
+func (s *AvatarStore) SaveAvatarFile(_ context.Context, userID string, data []byte, ext string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	mime := map[string]string{".png": "image/png", ".jpg": "image/jpeg", ".webp": "image/webp"}[ext]
+	s.files[userID] = avatarFile{data: append([]byte(nil), data...), mime: mime}
+	return nil
+}
+
+// ReadAvatarFile implements biz.AvatarStore.
+func (s *AvatarStore) ReadAvatarFile(_ context.Context, userID string) ([]byte, string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f, ok := s.files[userID]
+	if !ok {
+		return nil, "", biz.ErrAvatarNotFound
+	}
+	return append([]byte(nil), f.data...), f.mime, nil
 }

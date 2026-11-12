@@ -17,6 +17,7 @@ var ProviderSet = wire.NewSet(
 	NewRefreshTokenRepo,
 	NewPermissionRepo,
 	NewSystemConfigRepo,
+	NewAvatarStore,
 	NewLoginLogRepo,
 	// 接口在消费侧（biz）定义，实现在本包绑定。
 	wire.Bind(new(biz.UserReader), new(*userRepo)),
@@ -30,6 +31,7 @@ var ProviderSet = wire.NewSet(
 	wire.Bind(new(biz.PermissionGrantReader), new(*permissionRepo)),
 	wire.Bind(new(biz.PermissionAdminRepo), new(*permissionRepo)),
 	wire.Bind(new(biz.SystemConfigRepo), new(*systemConfigRepo)),
+	wire.Bind(new(biz.AvatarStore), new(*avatarStore)),
 	wire.Bind(new(biz.LoginLogWriter), new(*loginLogRepo)),
 	wire.Bind(new(biz.LoginLogReader), new(*loginLogRepo)),
 )

@@ -67,6 +67,15 @@ service NotifyChannelService {
     };
     option (system.v1.title) = "发送渠道测试事件";
   }
+  // ListChannelHealth 渠道健康（跨实例共享熔断状态，管道 sender 每次发送结果
+  // upsert）：打开/探测中/60s 滑窗样本与失败数；只读视图（迁移 0031 授予
+  // notify_core_role SELECT），受限用户须带 biz_id。
+  rpc ListChannelHealth(ListChannelHealthRequest) returns (ListChannelHealthResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/notify/channel-health"
+    };
+    option (system.v1.title) = "查询渠道健康";
+  }
 }
 
 // NotifyChannelType 渠道类型，决定管道侧适配器与 config 结构。
@@ -92,6 +101,10 @@ message NotifyRateLimit {
   int64 qps = 1 [(buf.validate.field).int64.gte = 0];
   // burst 令牌桶容量（突发上限），0 表示不限。
   int64 burst = 2 [(buf.validate.field).int64.gte = 0];
+  // per_minute 每分钟配额（qps=0 时生效）：群机器人平台按"每分钟 N 条"限制（钉钉/企微
+  // 20/min），整数 qps 表达不了。两者皆 0 时按渠道类型缺省（dingtalk/wecom 20/min、
+  // feishu 100/min；email/webhook 不限）。
+  int64 per_minute = 3 [(buf.validate.field).int64.gte = 0];
 }
 
 // EmailChannelConfig 邮件渠道配置（type=EMAIL）；secret 为 SMTP 密码（必传）。
@@ -131,8 +144,9 @@ message WebhookChannelConfig {
   string method = 2 [(buf.validate.field).string = {in: ["POST"]}];
   // headers 附加请求头（如鉴权头）。
   map<string, string> headers = 3 [(buf.validate.field).map.max_pairs = 16];
-  // timeout_s 出站超时秒数，1-10；可选，未指定默认 5（core 落库时补齐，
-  // 管道按该值设置请求超时）。
+  // timeout_s 出站超时秒数，1-10；可选，未指定默认 5（core 落库时补齐）。
+  // 管道按 min(timeout_s, sender.max_send_timeout) 设置请求超时（管道缺省上限
+  // 10s；未配置时取 sender.send_timeout 缺省 3s）。
   optional int32 timeout_s = 4 [(buf.validate.field).int32 = {
     gte: 1
     lte: 10
@@ -152,6 +166,14 @@ message RobotChannelConfig {
       }
     }
   }];
+  // card_url 卡片消息（模板 format=card）的跳转链接，可选，须 https 且非本机/私网；
+  // 为空时钉钉/企微降级为 markdown，飞书卡片无按钮。
+  optional string card_url = 2 [(buf.validate.field).string = {
+    max_len: 2048
+    pattern: "^https://"
+  }];
+  // card_button 卡片按钮文字，可选（≤32，缺省"查看详情"）；须同时配置 card_url。
+  optional string card_button = 3 [(buf.validate.field).string.max_len = 32];
 }
 
 // NotifyChannel 渠道实体（出参；secret 永不返回）。
@@ -277,8 +299,11 @@ message UpdateChannelRequest {
   optional string sign_secret = 9 [(buf.validate.field).string.max_len = 512];
 }
 
-// UpdateChannelResponse 更新渠道响应。
-message UpdateChannelResponse {}
+// UpdateChannelResponse 更新渠道响应：返回更新后的渠道（不含 secret，免二次 GET）。
+message UpdateChannelResponse {
+  // channel 更新后的渠道。
+  NotifyChannel channel = 1;
+}
 
 // DeleteChannelRequest 删除渠道请求。
 message DeleteChannelRequest {
@@ -362,4 +387,44 @@ message SendTestEventRequest {
 message SendTestEventResponse {
   // event 已落库的测试事件（source=internal，publish_state=pending）。
   NotifyEvent event = 1;
+}
+
+// ListChannelHealthRequest 渠道健康查询请求。
+message ListChannelHealthRequest {
+  // biz_id 业务过滤，可选；受限用户必须携带（400 NOTIFY_BIZ_REQUIRED）。
+  optional string biz_id = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+    pattern: "^[a-z0-9_-]{1,64}$"
+  }];
+}
+
+// NotifyChannelHealth 渠道健康行（notify_channel_health ⋈ notify_channel）。
+message NotifyChannelHealth {
+  // channel_id 渠道 ID。
+  string channel_id = 1;
+  // channel_name 渠道名。
+  string channel_name = 2;
+  // channel_type 渠道类型。
+  string channel_type = 3;
+  // biz_id 渠道所属业务。
+  string biz_id = 4;
+  // samples 当前 60s 滑窗样本数。
+  int32 samples = 5;
+  // failures 当前 60s 滑窗失败数。
+  int32 failures = 6;
+  // open 熔断是否打开（open_until 在未来）。
+  bool open = 7;
+  // open_until 打开截止（未打开时省略）。
+  google.protobuf.Timestamp open_until = 8;
+  // probing 半开探测已被某副本领取。
+  bool probing = 9;
+  // update_time 最近一次发送结果时间。
+  google.protobuf.Timestamp update_time = 10;
+}
+
+// ListChannelHealthResponse 渠道健康查询响应（按打开优先、最近更新倒序）。
+message ListChannelHealthResponse {
+  // items 健康行（无发送记录的渠道无条目）。
+  repeated NotifyChannelHealth items = 1;
 }

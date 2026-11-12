@@ -24,32 +24,76 @@ type ingressRepo struct {
 // NewIngressRepo new an ingressRepo.
 func NewIngressRepo(data *Data) *ingressRepo { return &ingressRepo{data: data} }
 
-// SaveEvents implements biz.IngressRepo：单事务；dedup 门闩单语句 upsert RETURNING
-// （过期行被新值替换；命中则返回首次 event_id），返回值 == 本次 id 才插入事件。
+// SaveEvents implements biz.IngressRepo：单事务两轮 pgx.Batch（各一次往返）——
+// 第一轮全部 dedup 门闩（单语句 upsert RETURNING：过期行被新值替换；命中返回首次
+// event_id，== 本次 id 才是胜者），第二轮胜者事件插入；最后消费配额。此前逐事件
+// 两条语句串行：500 条批 = 1000 次往返，5s 请求超时内放不下。
 func (r *ingressRepo) SaveEvents(ctx context.Context, producer *biz.Producer, events []*biz.Event, dedupTTL time.Duration) ([]biz.IngressResult, error) {
-	results := make([]biz.IngressResult, 0, len(events))
+	results := make([]biz.IngressResult, len(events))
 	err := dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
-		if err := consumeQuota(ctx, tx, producer, len(events)); err != nil {
-			return err
+		winners := make([]bool, len(events))
+		gate := &pgx.Batch{}
+		gated := make([]int, 0, len(events))
+		for i, ev := range events {
+			if ev.DedupKey == "" {
+				winners[i] = true
+				continue
+			}
+			gate.Queue(notifycontract.DedupGateSQL, ev.BizID, ev.DedupKey, ev.ID, dedupTTL)
+			gated = append(gated, i)
 		}
-		for _, ev := range events {
-			if ev.DedupKey != "" {
+		if len(gated) > 0 {
+			res := tx.SendBatch(ctx, gate)
+			for _, i := range gated {
 				var winner string
-				if err := tx.QueryRow(ctx, notifycontract.DedupGateSQL,
-					ev.BizID, ev.DedupKey, ev.ID, dedupTTL).Scan(&winner); err != nil {
+				if err := res.QueryRow().Scan(&winner); err != nil {
+					_ = res.Close()
 					return fmt.Errorf("dedup gate: %w", err)
 				}
-				if winner != ev.ID {
-					results = append(results, biz.IngressResult{EventID: winner, Deduplicated: true})
-					continue
+				if winner == events[i].ID {
+					winners[i] = true
+				} else {
+					results[i] = biz.IngressResult{EventID: winner, Deduplicated: true}
 				}
 			}
-			if err := insertEvent(ctx, tx, ev); err != nil {
+			if err := res.Close(); err != nil {
+				return fmt.Errorf("dedup gate batch: %w", err)
+			}
+		}
+		ins := &pgx.Batch{}
+		inserted := 0
+		for i, ev := range events {
+			if !winners[i] {
+				continue
+			}
+			recipients, err := encodeRecipients(ev.Recipients)
+			if err != nil {
 				return err
 			}
-			results = append(results, biz.IngressResult{EventID: ev.ID})
+			// 与 core 共用 notifycontract.InsertEventSQL（同一列集与可空口径：dedup/group
+			// 空串、payload/recipients 空集落 NULL；时间列取数据库 now()）。
+			ins.Queue(notifycontract.InsertEventSQL,
+				ev.ID, ev.BizID, ev.EventType, ev.Severity, ev.Title, dbx.NilIfEmptyBytes(ev.Payload), dbx.NilIfEmpty(ev.DedupKey), dbx.NilIfEmpty(ev.GroupKey),
+				recipients, ev.Source, ev.Status, ev.PublishState, ev.PublishAttempts)
+			results[i] = biz.IngressResult{EventID: ev.ID}
+			inserted++
 		}
-		return nil
+		if inserted > 0 {
+			res := tx.SendBatch(ctx, ins)
+			for range inserted {
+				if _, err := res.Exec(); err != nil {
+					_ = res.Close()
+					return fmt.Errorf("insert event: %w", err)
+				}
+			}
+			if err := res.Close(); err != nil {
+				return fmt.Errorf("insert event batch: %w", err)
+			}
+		}
+		// 配额放在事务末尾消费：其 upsert 的行锁 (producer_id, window_kind) 只跨提交，
+		// 而非覆盖整段门闩 + 插入——否则同一生产者的并发请求全部串行（一次一个在途）。
+		// 超限整体回滚（门闩与事件行一并撤销）。
+		return consumeQuota(ctx, tx, producer, len(events))
 	})
 	if err != nil {
 		return nil, err
@@ -57,24 +101,16 @@ func (r *ingressRepo) SaveEvents(ctx context.Context, producer *biz.Producer, ev
 	return results, nil
 }
 
-// insertEvent 与 core 共用 notifycontract.InsertEventSQL（同一列集与可空口径（dedup/group 空串、
-// payload/recipients 空集落 NULL）；时间列取数据库 now()（与 router 到期判定
-// 同一时钟源，见 insertDispatches）。
-func insertEvent(ctx context.Context, tx pgx.Tx, ev *biz.Event) error {
-	var recipients any
-	if len(ev.Recipients) > 0 {
-		raw, err := json.Marshal(ev.Recipients)
-		if err != nil {
-			return fmt.Errorf("encode recipients: %w", err)
-		}
-		recipients = raw
+// encodeRecipients 显式收件 JSON（空集 → NULL）。
+func encodeRecipients(recipients []string) (any, error) {
+	if len(recipients) == 0 {
+		return nil, nil
 	}
-	if _, err := tx.Exec(ctx, notifycontract.InsertEventSQL,
-		ev.ID, ev.BizID, ev.EventType, ev.Severity, ev.Title, dbx.NilIfEmptyBytes(ev.Payload), dbx.NilIfEmpty(ev.DedupKey), dbx.NilIfEmpty(ev.GroupKey),
-		recipients, ev.Source, ev.Status, ev.PublishState, ev.PublishAttempts); err != nil {
-		return fmt.Errorf("insert event: %w", err)
+	raw, err := json.Marshal(recipients)
+	if err != nil {
+		return nil, fmt.Errorf("encode recipients: %w", err)
 	}
-	return nil
+	return raw, nil
 }
 
 // 配额窗口种类（notify_quota_counter.window_kind）。

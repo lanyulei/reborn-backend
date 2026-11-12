@@ -268,3 +268,31 @@ func IsUserSelfOperation(err error) bool {
 func ErrorUserSelfOperation(format string, args ...interface{}) *errors.Error {
 	return errors.New(400, ErrorReason_USER_SELF_OPERATION.String(), fmt.Sprintf(format, args...))
 }
+
+// ROLE_BUILTIN_PROTECTED 内置角色不可删除（删除即破坏新建用户默认关联），映射 HTTP 400。
+func IsRoleBuiltinProtected(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := errors.FromError(err)
+	return e.Reason == ErrorReason_ROLE_BUILTIN_PROTECTED.String() && e.Code == 400
+}
+
+// ROLE_BUILTIN_PROTECTED 内置角色不可删除（删除即破坏新建用户默认关联），映射 HTTP 400。
+func ErrorRoleBuiltinProtected(format string, args ...interface{}) *errors.Error {
+	return errors.New(400, ErrorReason_ROLE_BUILTIN_PROTECTED.String(), fmt.Sprintf(format, args...))
+}
+
+// AVATAR_NOT_FOUND 用户未设置头像（未配置语义，非错误状态），映射 HTTP 404。
+func IsAvatarNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := errors.FromError(err)
+	return e.Reason == ErrorReason_AVATAR_NOT_FOUND.String() && e.Code == 404
+}
+
+// AVATAR_NOT_FOUND 用户未设置头像（未配置语义，非错误状态），映射 HTTP 404。
+func ErrorAvatarNotFound(format string, args ...interface{}) *errors.Error {
+	return errors.New(404, ErrorReason_AVATAR_NOT_FOUND.String(), fmt.Sprintf(format, args...))
+}

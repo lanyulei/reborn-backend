@@ -324,3 +324,14 @@ func TestSilenceUsecase_ListPagingNormalize(t *testing.T) {
 		t.Fatalf("List(enabled filter) = %+v", items)
 	}
 }
+
+func (s *silenceRepoStub) ListSilencesByBiz(_ context.Context, bizID string) ([]*Silence, error) {
+	var out []*Silence
+	for _, sl := range s.silences {
+		if sl.BizID == bizID {
+			cp := *sl
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}

@@ -118,3 +118,27 @@ func (r *deliveryLogRepo) ListDeliveryLogs(ctx context.Context, filter biz.Deliv
 	}
 	return logs, total, rows.Err()
 }
+
+// LatestByDispatchIDs implements biz.DeliveryLogRepo：每个 dispatch 最近一次尝试
+// （DISTINCT ON，idx_notify_delivery_query 的 (dispatch_id, create_time DESC) 直接服务）。
+func (r *deliveryLogRepo) LatestByDispatchIDs(ctx context.Context, dispatchIDs []string) ([]*biz.DeliveryLog, error) {
+	if len(dispatchIDs) == 0 {
+		return nil, nil
+	}
+	rows, err := r.data.Pool.Query(ctx,
+		"SELECT DISTINCT ON (dispatch_id) "+deliveryLogSelectColumns+" FROM notify_delivery_log"+
+			" WHERE dispatch_id = ANY($1::uuid[]) ORDER BY dispatch_id, create_time DESC, id DESC", dispatchIDs)
+	if err != nil {
+		return nil, fmt.Errorf("latest delivery logs: %w", err)
+	}
+	defer rows.Close()
+	out := make([]*biz.DeliveryLog, 0, len(dispatchIDs))
+	for rows.Next() {
+		log, err := scanDeliveryLog(rows.Scan)
+		if err != nil {
+			return nil, fmt.Errorf("scan delivery log: %w", err)
+		}
+		out = append(out, log)
+	}
+	return out, rows.Err()
+}

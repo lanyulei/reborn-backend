@@ -94,10 +94,12 @@ func TestIntegration_RouterConcurrencyAndRollback(t *testing.T) {
 	// 回滚路径：回调报错 → 无状态变化。
 	boom := errors.New("boom")
 	if _, err := repo.ProcessPending(ctx, 10, func(ctx context.Context, tx biz.RouterTx, events []*biz.Event) error {
+		marks := make([]biz.EventMark, 0, len(events))
 		for _, ev := range events {
-			if err := tx.MarkEvent(ctx, ev.ID, ev.CreateTime, biz.EventStatusRouted); err != nil {
-				return err
-			}
+			marks = append(marks, biz.EventMark{ID: ev.ID, CreateTime: ev.CreateTime, Status: biz.EventStatusRouted})
+		}
+		if err := tx.MarkEvents(ctx, marks); err != nil {
+			return err
 		}
 		return boom
 	}); !errors.Is(err, boom) {

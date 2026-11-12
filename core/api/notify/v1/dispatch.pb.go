@@ -185,10 +185,15 @@ type ListDispatchesRequest struct {
 	ChannelId *string `protobuf:"bytes,4,opt,name=channel_id,json=channelId,proto3,oneof" json:"channel_id,omitempty"`
 	// status 任务状态过滤，可选：1 pending / 2 sending / 3 sent / 4 failed / 5 dead。
 	Status *int32 `protobuf:"varint,5,opt,name=status,proto3,oneof" json:"status,omitempty"`
+	// 时间窗口：create_time_start 缺省 = (create_time_end 或当前时间) 往前 7 天；
+	// 两者跨度上限 90 天（400 NOTIFY_TIME_RANGE_INVALID）。分区表按时间裁剪，无界
+	// 查询会扫全部分区。
 	// create_time_start 生成时间下界（含），可选。
 	CreateTimeStart *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=create_time_start,json=createTimeStart,proto3,oneof" json:"create_time_start,omitempty"`
 	// create_time_end 生成时间上界（含），可选。
 	CreateTimeEnd *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=create_time_end,json=createTimeEnd,proto3,oneof" json:"create_time_end,omitempty"`
+	// recipient 收件人精确过滤，可选（邮箱 / $群标识 / webhook URL）。
+	Recipient     *string `protobuf:"bytes,8,opt,name=recipient,proto3,oneof" json:"recipient,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -272,6 +277,13 @@ func (x *ListDispatchesRequest) GetCreateTimeEnd() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *ListDispatchesRequest) GetRecipient() string {
+	if x != nil && x.Recipient != nil {
+		return *x.Recipient
+	}
+	return ""
+}
+
 // ListDispatchesResponse 分页查询发送任务响应。
 type ListDispatchesResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -327,6 +339,98 @@ func (x *ListDispatchesResponse) GetTotal() int64 {
 	return 0
 }
 
+// GetDispatchRequest 发送任务详情请求。
+type GetDispatchRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// id 发送任务 ID。
+	Id            string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetDispatchRequest) Reset() {
+	*x = GetDispatchRequest{}
+	mi := &file_notify_v1_dispatch_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetDispatchRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetDispatchRequest) ProtoMessage() {}
+
+func (x *GetDispatchRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_notify_v1_dispatch_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetDispatchRequest.ProtoReflect.Descriptor instead.
+func (*GetDispatchRequest) Descriptor() ([]byte, []int) {
+	return file_notify_v1_dispatch_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *GetDispatchRequest) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+// GetDispatchResponse 发送任务详情响应。
+type GetDispatchResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// dispatch 发送任务。
+	Dispatch      *NotifyDispatch `protobuf:"bytes,1,opt,name=dispatch,proto3" json:"dispatch,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetDispatchResponse) Reset() {
+	*x = GetDispatchResponse{}
+	mi := &file_notify_v1_dispatch_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetDispatchResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetDispatchResponse) ProtoMessage() {}
+
+func (x *GetDispatchResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_notify_v1_dispatch_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetDispatchResponse.ProtoReflect.Descriptor instead.
+func (*GetDispatchResponse) Descriptor() ([]byte, []int) {
+	return file_notify_v1_dispatch_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *GetDispatchResponse) GetDispatch() *NotifyDispatch {
+	if x != nil {
+		return x.Dispatch
+	}
+	return nil
+}
+
 var File_notify_v1_dispatch_proto protoreflect.FileDescriptor
 
 const file_notify_v1_dispatch_proto_rawDesc = "" +
@@ -349,7 +453,7 @@ const file_notify_v1_dispatch_proto_rawDesc = "" +
 	" \x01(\tR\tlastError\x12\x19\n" +
 	"\bsend_key\x18\v \x01(\tR\asendKey\x12;\n" +
 	"\vcreate_time\x18\f \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"createTime\"\x86\x05\n" +
+	"createTime\"\xc1\x05\n" +
 	"\x15ListDispatchesRequest\x12\x1b\n" +
 	"\x04page\x18\x01 \x01(\x03B\a\xbaH\x04\"\x02(\x01R\x04page\x12&\n" +
 	"\tpage_size\x18\x02 \x01(\x05B\t\xbaH\x06\x1a\x04\x18d(\x01R\bpageSize\x12(\n" +
@@ -358,18 +462,26 @@ const file_notify_v1_dispatch_proto_rawDesc = "" +
 	"channel_id\x18\x04 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01H\x01R\tchannelId\x88\x01\x01\x12&\n" +
 	"\x06status\x18\x05 \x01(\x05B\t\xbaH\x06\x1a\x04\x18\x05(\x01H\x02R\x06status\x88\x01\x01\x12K\n" +
 	"\x11create_time_start\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampH\x03R\x0fcreateTimeStart\x88\x01\x01\x12G\n" +
-	"\x0fcreate_time_end\x18\a \x01(\v2\x1a.google.protobuf.TimestampH\x04R\rcreateTimeEnd\x88\x01\x01:\xc0\x01\xbaH\xbc\x01\x1a\xb9\x01\n" +
+	"\x0fcreate_time_end\x18\a \x01(\v2\x1a.google.protobuf.TimestampH\x04R\rcreateTimeEnd\x88\x01\x01\x12+\n" +
+	"\trecipient\x18\b \x01(\tB\b\xbaH\x05r\x03\x18\xff\x01H\x05R\trecipient\x88\x01\x01:\xc0\x01\xbaH\xbc\x01\x1a\xb9\x01\n" +
 	"\x1fnotify.dispatch.list.time_range\x12(createTimeStart must be <= createTimeEnd\x1al!has(this.create_time_start) || !has(this.create_time_end) || this.create_time_start <= this.create_time_endB\v\n" +
 	"\t_event_idB\r\n" +
 	"\v_channel_idB\t\n" +
 	"\a_statusB\x14\n" +
 	"\x12_create_time_startB\x12\n" +
-	"\x10_create_time_end\"_\n" +
+	"\x10_create_time_endB\f\n" +
+	"\n" +
+	"_recipient\"_\n" +
 	"\x16ListDispatchesResponse\x12/\n" +
 	"\x05items\x18\x01 \x03(\v2\x19.notify.v1.NotifyDispatchR\x05items\x12\x14\n" +
-	"\x05total\x18\x02 \x01(\x03R\x05total2\xb2\x01\n" +
+	"\x05total\x18\x02 \x01(\x03R\x05total\".\n" +
+	"\x12GetDispatchRequest\x12\x18\n" +
+	"\x02id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\"L\n" +
+	"\x13GetDispatchResponse\x125\n" +
+	"\bdispatch\x18\x01 \x01(\v2\x19.notify.v1.NotifyDispatchR\bdispatch2\xc9\x02\n" +
 	"\x15NotifyDispatchService\x12\x98\x01\n" +
-	"\x0eListDispatches\x12 .notify.v1.ListDispatchesRequest\x1a!.notify.v1.ListDispatchesResponse\"A\xc2\xf3\x18\x1e查询通知发送任务列表\x82\xd3\xe4\x93\x02\x19\x12\x17/api/v1/notify/dispatchB:Z8github.com/lanyulei/reborn/backend/core/api/notify/v1;v1b\x06proto3"
+	"\x0eListDispatches\x12 .notify.v1.ListDispatchesRequest\x1a!.notify.v1.ListDispatchesResponse\"A\xc2\xf3\x18\x1e查询通知发送任务列表\x82\xd3\xe4\x93\x02\x19\x12\x17/api/v1/notify/dispatch\x12\x94\x01\n" +
+	"\vGetDispatch\x12\x1d.notify.v1.GetDispatchRequest\x1a\x1e.notify.v1.GetDispatchResponse\"F\xc2\xf3\x18\x1e查询通知发送任务详情\x82\xd3\xe4\x93\x02\x1e\x12\x1c/api/v1/notify/dispatch/{id}B:Z8github.com/lanyulei/reborn/backend/core/api/notify/v1;v1b\x06proto3"
 
 var (
 	file_notify_v1_dispatch_proto_rawDescOnce sync.Once
@@ -383,28 +495,33 @@ func file_notify_v1_dispatch_proto_rawDescGZIP() []byte {
 	return file_notify_v1_dispatch_proto_rawDescData
 }
 
-var file_notify_v1_dispatch_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_notify_v1_dispatch_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
 var file_notify_v1_dispatch_proto_goTypes = []any{
 	(*NotifyDispatch)(nil),         // 0: notify.v1.NotifyDispatch
 	(*ListDispatchesRequest)(nil),  // 1: notify.v1.ListDispatchesRequest
 	(*ListDispatchesResponse)(nil), // 2: notify.v1.ListDispatchesResponse
-	(*structpb.Struct)(nil),        // 3: google.protobuf.Struct
-	(*timestamppb.Timestamp)(nil),  // 4: google.protobuf.Timestamp
+	(*GetDispatchRequest)(nil),     // 3: notify.v1.GetDispatchRequest
+	(*GetDispatchResponse)(nil),    // 4: notify.v1.GetDispatchResponse
+	(*structpb.Struct)(nil),        // 5: google.protobuf.Struct
+	(*timestamppb.Timestamp)(nil),  // 6: google.protobuf.Timestamp
 }
 var file_notify_v1_dispatch_proto_depIdxs = []int32{
-	3, // 0: notify.v1.NotifyDispatch.content:type_name -> google.protobuf.Struct
-	4, // 1: notify.v1.NotifyDispatch.next_retry_time:type_name -> google.protobuf.Timestamp
-	4, // 2: notify.v1.NotifyDispatch.create_time:type_name -> google.protobuf.Timestamp
-	4, // 3: notify.v1.ListDispatchesRequest.create_time_start:type_name -> google.protobuf.Timestamp
-	4, // 4: notify.v1.ListDispatchesRequest.create_time_end:type_name -> google.protobuf.Timestamp
+	5, // 0: notify.v1.NotifyDispatch.content:type_name -> google.protobuf.Struct
+	6, // 1: notify.v1.NotifyDispatch.next_retry_time:type_name -> google.protobuf.Timestamp
+	6, // 2: notify.v1.NotifyDispatch.create_time:type_name -> google.protobuf.Timestamp
+	6, // 3: notify.v1.ListDispatchesRequest.create_time_start:type_name -> google.protobuf.Timestamp
+	6, // 4: notify.v1.ListDispatchesRequest.create_time_end:type_name -> google.protobuf.Timestamp
 	0, // 5: notify.v1.ListDispatchesResponse.items:type_name -> notify.v1.NotifyDispatch
-	1, // 6: notify.v1.NotifyDispatchService.ListDispatches:input_type -> notify.v1.ListDispatchesRequest
-	2, // 7: notify.v1.NotifyDispatchService.ListDispatches:output_type -> notify.v1.ListDispatchesResponse
-	7, // [7:8] is the sub-list for method output_type
-	6, // [6:7] is the sub-list for method input_type
-	6, // [6:6] is the sub-list for extension type_name
-	6, // [6:6] is the sub-list for extension extendee
-	0, // [0:6] is the sub-list for field type_name
+	0, // 6: notify.v1.GetDispatchResponse.dispatch:type_name -> notify.v1.NotifyDispatch
+	1, // 7: notify.v1.NotifyDispatchService.ListDispatches:input_type -> notify.v1.ListDispatchesRequest
+	3, // 8: notify.v1.NotifyDispatchService.GetDispatch:input_type -> notify.v1.GetDispatchRequest
+	2, // 9: notify.v1.NotifyDispatchService.ListDispatches:output_type -> notify.v1.ListDispatchesResponse
+	4, // 10: notify.v1.NotifyDispatchService.GetDispatch:output_type -> notify.v1.GetDispatchResponse
+	9, // [9:11] is the sub-list for method output_type
+	7, // [7:9] is the sub-list for method input_type
+	7, // [7:7] is the sub-list for extension type_name
+	7, // [7:7] is the sub-list for extension extendee
+	0, // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_notify_v1_dispatch_proto_init() }
@@ -419,7 +536,7 @@ func file_notify_v1_dispatch_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_notify_v1_dispatch_proto_rawDesc), len(file_notify_v1_dispatch_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   3,
+			NumMessages:   5,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

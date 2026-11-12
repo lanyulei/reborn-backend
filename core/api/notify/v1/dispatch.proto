@@ -22,6 +22,13 @@ service NotifyDispatchService {
     };
     option (system.v1.title) = "查询通知发送任务列表";
   }
+  // GetDispatch 发送任务详情（含渲染快照）。
+  rpc GetDispatch(GetDispatchRequest) returns (GetDispatchResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/notify/dispatch/{id}"
+    };
+    option (system.v1.title) = "查询通知发送任务详情";
+  }
 }
 
 // NotifyDispatch 发送任务实体（notify_dispatch 一行的排障视图）。
@@ -77,10 +84,15 @@ message ListDispatchesRequest {
     gte: 1
     lte: 5
   }];
+  // 时间窗口：create_time_start 缺省 = (create_time_end 或当前时间) 往前 7 天；
+  // 两者跨度上限 90 天（400 NOTIFY_TIME_RANGE_INVALID）。分区表按时间裁剪，无界
+  // 查询会扫全部分区。
   // create_time_start 生成时间下界（含），可选。
   optional google.protobuf.Timestamp create_time_start = 6;
   // create_time_end 生成时间上界（含），可选。
   optional google.protobuf.Timestamp create_time_end = 7;
+  // recipient 收件人精确过滤，可选（邮箱 / $群标识 / webhook URL）。
+  optional string recipient = 8 [(buf.validate.field).string.max_len = 255];
 }
 
 // ListDispatchesResponse 分页查询发送任务响应。
@@ -89,4 +101,16 @@ message ListDispatchesResponse {
   repeated NotifyDispatch items = 1;
   // total 总数。
   int64 total = 2;
+}
+
+// GetDispatchRequest 发送任务详情请求。
+message GetDispatchRequest {
+  // id 发送任务 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetDispatchResponse 发送任务详情响应。
+message GetDispatchResponse {
+  // dispatch 发送任务。
+  NotifyDispatch dispatch = 1;
 }

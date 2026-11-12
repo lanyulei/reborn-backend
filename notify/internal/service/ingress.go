@@ -22,12 +22,20 @@ type ProducerResolver func(ctx context.Context) (*biz.Producer, bool)
 type IngressService struct {
 	uc       *biz.IngressUsecase
 	producer ProducerResolver
+	observer biz.IngressObserver
 }
 
-// NewIngressService new an IngressService.
-func NewIngressService(uc *biz.IngressUsecase, resolver ProducerResolver) *IngressService {
-	return &IngressService{uc: uc, producer: resolver}
+// NewIngressService new an IngressService（observer 为 nil 时不计数）。
+func NewIngressService(uc *biz.IngressUsecase, resolver ProducerResolver, observer biz.IngressObserver) *IngressService {
+	if observer == nil {
+		observer = noopIngressObserver{}
+	}
+	return &IngressService{uc: uc, producer: resolver, observer: observer}
 }
+
+type noopIngressObserver struct{}
+
+func (noopIngressObserver) ObserveIngress(string, int) {}
 
 // SendEvent implements NotifyIngressServiceHTTPServer.
 func (s *IngressService) SendEvent(ctx context.Context, req *ingressv1.SendEventRequest) (*ingressv1.SendEventResponse, error) {
@@ -64,8 +72,16 @@ func (s *IngressService) accept(ctx context.Context, in []*ingressv1.IngressEven
 		return nil, err
 	}
 	out := make([]*ingressv1.SendEventResponse, 0, len(results))
+	accepted, dedup := 0, 0
 	for _, r := range results {
+		if r.Deduplicated {
+			dedup++
+		} else {
+			accepted++
+		}
 		out = append(out, &ingressv1.SendEventResponse{EventId: r.EventID, Deduplicated: r.Deduplicated})
 	}
+	s.observer.ObserveIngress(biz.ObserveIngressAccepted, accepted)
+	s.observer.ObserveIngress(biz.ObserveIngressDeduplicated, dedup)
 	return out, nil
 }

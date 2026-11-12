@@ -15,36 +15,42 @@ import (
 // NotifySubscriptionService 实现 api/notify/v1 生成的 NotifySubscriptionServiceServer
 // （订阅中心）：目标用户缺省=操作者本人（claims），指定他人须 admin（代管），
 // 属主校验在本层强制；proto 与领域模型显式转换。
+//
+// biz 隔离只约束**代管路径**：订阅是用户个人偏好而非 biz 管理动作，本人自助不受
+// 角色 biz_scope 限制；管理员代管他人时与其它资源一致——目标 biz 须在范围内、
+// 列表须携带 biz 过滤。
 type NotifySubscriptionService struct {
 	uc    *biz.SubscriptionUsecase
 	admin biz.SubscriptionAdminResolver
+	guard bizGuard
 }
 
 // NewNotifySubscriptionService new a NotifySubscriptionService.
-func NewNotifySubscriptionService(uc *biz.SubscriptionUsecase, admin biz.SubscriptionAdminResolver) *NotifySubscriptionService {
-	return &NotifySubscriptionService{uc: uc, admin: admin}
+func NewNotifySubscriptionService(uc *biz.SubscriptionUsecase, admin biz.SubscriptionAdminResolver, scope biz.BizScopeResolver) *NotifySubscriptionService {
+	return &NotifySubscriptionService{uc: uc, admin: admin, guard: newBizGuard(scope)}
 }
 
 // resolveTargetUser 解析订阅目标用户并校验代管权限：requested 缺省或等于
-// 操作者 → 本人；指定他人 → 操作者须 is_admin，否则 ErrSubscriptionForbidden。
-func (s *NotifySubscriptionService) resolveTargetUser(ctx context.Context, requested string) (string, error) {
+// 操作者 → 本人（onBehalf=false）；指定他人 → 操作者须 is_admin，否则
+// ErrSubscriptionForbidden（onBehalf=true）。
+func (s *NotifySubscriptionService) resolveTargetUser(ctx context.Context, requested string) (target string, onBehalf bool, err error) {
 	operator, err := systemservice.UserIDFromContext(ctx)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	// UUID 比较大小写不敏感（string.uuid 校验接受大写，库内与 JWT subject
 	// 为规范小写）；命中本人时返回操作者（规范形态）。
 	if requested == "" || strings.EqualFold(requested, operator) {
-		return operator, nil
+		return operator, false, nil
 	}
 	admin, err := s.admin.IsAdminUser(ctx, operator)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if !admin {
-		return "", biz.ErrSubscriptionForbidden
+		return "", false, biz.ErrSubscriptionForbidden
 	}
-	return requested, nil
+	return requested, true, nil
 }
 
 // prefsFromProto 转换渠道偏好载荷（oneof → DO 恰一正取值）。oneof 未设置
@@ -97,11 +103,17 @@ func toProtoSubscription(sub *biz.Subscription) *notifyv1.NotifySubscription {
 }
 
 // UpsertSubscription implements proto NotifySubscriptionService/UpsertSubscription：
-// 目标用户缺省=本人、指定他人须 admin；同自然键整组替换偏好与启停。
+// 目标用户缺省=本人、指定他人须 admin（且目标 biz 在操作者范围内）；同自然键
+// 整组替换偏好与启停。
 func (s *NotifySubscriptionService) UpsertSubscription(ctx context.Context, req *notifyv1.UpsertSubscriptionRequest) (*notifyv1.UpsertSubscriptionResponse, error) {
-	target, err := s.resolveTargetUser(ctx, req.GetUserId())
+	target, onBehalf, err := s.resolveTargetUser(ctx, req.GetUserId())
 	if err != nil {
 		return nil, err
+	}
+	if onBehalf {
+		if err := s.guard.requireBiz(ctx, req.GetBizId()); err != nil {
+			return nil, err
+		}
 	}
 	enabled := true // 与其它资源一致：未指定默认启用
 	if req.Enabled != nil {
@@ -143,6 +155,9 @@ func (s *NotifySubscriptionService) DeleteSubscription(ctx context.Context, req 
 		if !admin {
 			return nil, biz.ErrSubscriptionForbidden
 		}
+		if err := s.guard.requireRow(ctx, func() (string, error) { return sub.BizID, nil }); err != nil {
+			return nil, err
+		}
 	}
 	if err := s.uc.Delete(ctx, req.GetId()); err != nil {
 		return nil, err
@@ -152,13 +167,21 @@ func (s *NotifySubscriptionService) DeleteSubscription(ctx context.Context, req 
 
 // ListSubscriptions implements proto NotifySubscriptionService/ListSubscriptions：
 // 目标用户缺省=本人、指定他人须 admin；恒按单一目标用户过滤（无全量模式）。
+// 代管路径受限用户必须携带 biz_id 且在范围内；本人自助 biz_id 仅为可选过滤。
 func (s *NotifySubscriptionService) ListSubscriptions(ctx context.Context, req *notifyv1.ListSubscriptionsRequest) (*notifyv1.ListSubscriptionsResponse, error) {
-	target, err := s.resolveTargetUser(ctx, req.GetUserId())
+	target, onBehalf, err := s.resolveTargetUser(ctx, req.GetUserId())
 	if err != nil {
 		return nil, err
 	}
+	bizID := req.GetBizId()
+	if onBehalf {
+		if bizID, err = s.guard.listBiz(ctx, req.BizId); err != nil {
+			return nil, err
+		}
+	}
 	filter := biz.SubscriptionFilter{
 		UserID:  target,
+		BizID:   bizID,
 		Keyword: req.GetKeyword(),
 		Enabled: req.Enabled,
 	}

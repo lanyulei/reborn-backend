@@ -17,16 +17,27 @@ var _ = new(context.Context)
 
 const _ = http.SupportPackageIsVersion3
 
+const OperationNotifyEventServiceGetEvent = "/notify.v1.NotifyEventService/GetEvent"
 const OperationNotifyEventServiceListEvents = "/notify.v1.NotifyEventService/ListEvents"
+const OperationNotifyEventServiceReplayEvent = "/notify.v1.NotifyEventService/ReplayEvent"
 
 type NotifyEventServiceHTTPServer interface {
+	// GetEvent GetEvent 事件下钻：事件 + 其全部发送任务（≤100）+ 每个任务最近一次投递明细，
+	// 一次调用覆盖控制台"这条通知到底发到哪了"的排障路径。
+	GetEvent(context.Context, *GetEventRequest) (*GetEventResponse, error)
 	// ListEvents ListEvents 分页查询事件，page_size 上限 100；按落库时间倒序。
 	ListEvents(context.Context, *ListEventsRequest) (*ListEventsResponse, error)
+	// ReplayEvent ReplayEvent 事件级重发：以原事件的类型/级别/标题/载荷/收件/分组重新直插一条
+	// source=internal 的新事件（新 id，不带 dedup_key——刻意再投），走完整路由链路；
+	// 用于路由/模板修复后整条重发（死信重放只重发单个失败任务）。
+	ReplayEvent(context.Context, *ReplayEventRequest) (*ReplayEventResponse, error)
 }
 
 func RegisterNotifyEventServiceHTTPServer(s *http.Server, srv NotifyEventServiceHTTPServer) {
 	r := s.Route("/")
 	r.Handle("GET", "/api/v1/notify/event", _NotifyEventService_ListEvents0_HTTP_Handler(srv))
+	r.Handle("GET", "/api/v1/notify/event/{id}", _NotifyEventService_GetEvent0_HTTP_Handler(srv))
+	r.Handle("POST", "/api/v1/notify/event/{id}:replay", _NotifyEventService_ReplayEvent0_HTTP_Handler(srv))
 }
 
 func _NotifyEventService_ListEvents0_HTTP_Handler(srv NotifyEventServiceHTTPServer) func(ctx http.Context) error {
@@ -48,9 +59,60 @@ func _NotifyEventService_ListEvents0_HTTP_Handler(srv NotifyEventServiceHTTPServ
 	}
 }
 
+func _NotifyEventService_GetEvent0_HTTP_Handler(srv NotifyEventServiceHTTPServer) func(ctx http.Context) error {
+	return func(ctx http.Context) error {
+		var in GetEventRequest
+		if err := ctx.BindQuery(&in); err != nil {
+			return err
+		}
+		if err := ctx.BindVars(&in); err != nil {
+			return err
+		}
+		http.SetOperation(ctx, OperationNotifyEventServiceGetEvent)
+		h := ctx.Middleware(func(ctx context.Context, req interface{}) (interface{}, error) {
+			return srv.GetEvent(ctx, req.(*GetEventRequest))
+		})
+		out, err := h(ctx, &in)
+		if err != nil {
+			return err
+		}
+		reply := out.(*GetEventResponse)
+		return ctx.Result(200, reply)
+	}
+}
+
+func _NotifyEventService_ReplayEvent0_HTTP_Handler(srv NotifyEventServiceHTTPServer) func(ctx http.Context) error {
+	return func(ctx http.Context) error {
+		var in ReplayEventRequest
+		if err := ctx.Bind(&in); err != nil {
+			return err
+		}
+		if err := ctx.BindVars(&in); err != nil {
+			return err
+		}
+		http.SetOperation(ctx, OperationNotifyEventServiceReplayEvent)
+		h := ctx.Middleware(func(ctx context.Context, req interface{}) (interface{}, error) {
+			return srv.ReplayEvent(ctx, req.(*ReplayEventRequest))
+		})
+		out, err := h(ctx, &in)
+		if err != nil {
+			return err
+		}
+		reply := out.(*ReplayEventResponse)
+		return ctx.Result(200, reply)
+	}
+}
+
 type NotifyEventServiceHTTPClient interface {
+	// GetEvent GetEvent 事件下钻：事件 + 其全部发送任务（≤100）+ 每个任务最近一次投递明细，
+	// 一次调用覆盖控制台"这条通知到底发到哪了"的排障路径。
+	GetEvent(ctx context.Context, req *GetEventRequest, opts ...http.CallOption) (rsp *GetEventResponse, err error)
 	// ListEvents ListEvents 分页查询事件，page_size 上限 100；按落库时间倒序。
 	ListEvents(ctx context.Context, req *ListEventsRequest, opts ...http.CallOption) (rsp *ListEventsResponse, err error)
+	// ReplayEvent ReplayEvent 事件级重发：以原事件的类型/级别/标题/载荷/收件/分组重新直插一条
+	// source=internal 的新事件（新 id，不带 dedup_key——刻意再投），走完整路由链路；
+	// 用于路由/模板修复后整条重发（死信重放只重发单个失败任务）。
+	ReplayEvent(ctx context.Context, req *ReplayEventRequest, opts ...http.CallOption) (rsp *ReplayEventResponse, err error)
 }
 
 type NotifyEventServiceHTTPClientImpl struct {
@@ -59,6 +121,24 @@ type NotifyEventServiceHTTPClientImpl struct {
 
 func NewNotifyEventServiceHTTPClient(client *http.Client) NotifyEventServiceHTTPClient {
 	return &NotifyEventServiceHTTPClientImpl{client}
+}
+
+// GetEvent GetEvent 事件下钻：事件 + 其全部发送任务（≤100）+ 每个任务最近一次投递明细，
+// 一次调用覆盖控制台"这条通知到底发到哪了"的排障路径。
+func (c *NotifyEventServiceHTTPClientImpl) GetEvent(ctx context.Context, in *GetEventRequest, opts ...http.CallOption) (*GetEventResponse, error) {
+	var out GetEventResponse
+	pattern := "/api/v1/notify/event/{id}"
+	path := http.BuildPath(pattern, in, http.WithQueryParams())
+	opts = append([]http.CallOption{
+		http.Accept("application/protojson"),
+		http.Operation(OperationNotifyEventServiceGetEvent),
+		http.PathTemplate(pattern),
+	}, opts...)
+	err := c.cc.Invoke(ctx, "GET", path, nil, &out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // ListEvents ListEvents 分页查询事件，page_size 上限 100；按落库时间倒序。
@@ -72,6 +152,26 @@ func (c *NotifyEventServiceHTTPClientImpl) ListEvents(ctx context.Context, in *L
 		http.PathTemplate(pattern),
 	}, opts...)
 	err := c.cc.Invoke(ctx, "GET", path, nil, &out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ReplayEvent ReplayEvent 事件级重发：以原事件的类型/级别/标题/载荷/收件/分组重新直插一条
+// source=internal 的新事件（新 id，不带 dedup_key——刻意再投），走完整路由链路；
+// 用于路由/模板修复后整条重发（死信重放只重发单个失败任务）。
+func (c *NotifyEventServiceHTTPClientImpl) ReplayEvent(ctx context.Context, in *ReplayEventRequest, opts ...http.CallOption) (*ReplayEventResponse, error) {
+	var out ReplayEventResponse
+	pattern := "/api/v1/notify/event/{id}:replay"
+	path := http.BuildPath(pattern, in)
+	opts = append([]http.CallOption{
+		http.Accept("application/protojson"),
+		http.ContentType("application/protojson"),
+		http.Operation(OperationNotifyEventServiceReplayEvent),
+		http.PathTemplate(pattern),
+	}, opts...)
+	err := c.cc.Invoke(ctx, "POST", path, in, &out, opts...)
 	if err != nil {
 		return nil, err
 	}

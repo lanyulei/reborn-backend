@@ -104,6 +104,8 @@ message User {
   google.protobuf.Timestamp create_time = 9;
   // update_time 更新时间。
   google.protobuf.Timestamp update_time = 10;
+  // avatar 头像地址；空 = 未设置（前端回退首字母/图标）。
+  string avatar = 11;
 }
 
 // CreateUserRequest 创建用户请求。

@@ -113,3 +113,13 @@ func TestDispatchUsecase_ListPagingNormalize(t *testing.T) {
 		t.Fatalf("List(other event) = (%v, %d, %v), want nil/0", items, total, err)
 	}
 }
+
+func (s *dispatchRepoStub) GetDispatch(_ context.Context, id string) (*Dispatch, error) {
+	for _, d := range s.dispatches {
+		if d.ID == id {
+			cp := *d
+			return &cp, nil
+		}
+	}
+	return nil, ErrDispatchNotFound
+}

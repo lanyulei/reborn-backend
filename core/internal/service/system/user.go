@@ -236,6 +236,7 @@ func toProtoUser(u *biz.User) *v1.User {
 		Gender:     u.Gender,
 		IsAdmin:    u.IsAdmin,
 		Status:     u.Status,
+		Avatar:     u.Avatar,
 		CreateTime: timestamppb.New(u.CreateTime),
 		UpdateTime: timestamppb.New(u.UpdateTime),
 	}

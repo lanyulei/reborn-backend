@@ -20,6 +20,7 @@ const _ = http.SupportPackageIsVersion3
 const OperationNotifyChannelServiceCreateChannel = "/notify.v1.NotifyChannelService/CreateChannel"
 const OperationNotifyChannelServiceDeleteChannel = "/notify.v1.NotifyChannelService/DeleteChannel"
 const OperationNotifyChannelServiceGetChannel = "/notify.v1.NotifyChannelService/GetChannel"
+const OperationNotifyChannelServiceListChannelHealth = "/notify.v1.NotifyChannelService/ListChannelHealth"
 const OperationNotifyChannelServiceListChannels = "/notify.v1.NotifyChannelService/ListChannels"
 const OperationNotifyChannelServiceSendTestEvent = "/notify.v1.NotifyChannelService/SendTestEvent"
 const OperationNotifyChannelServiceUpdateChannel = "/notify.v1.NotifyChannelService/UpdateChannel"
@@ -32,6 +33,10 @@ type NotifyChannelServiceHTTPServer interface {
 	DeleteChannel(context.Context, *DeleteChannelRequest) (*DeleteChannelResponse, error)
 	// GetChannel GetChannel 查询渠道详情（不含 secret）。
 	GetChannel(context.Context, *GetChannelRequest) (*GetChannelResponse, error)
+	// ListChannelHealth ListChannelHealth 渠道健康（跨实例共享熔断状态，管道 sender 每次发送结果
+	// upsert）：打开/探测中/60s 滑窗样本与失败数；只读视图（迁移 0031 授予
+	// notify_core_role SELECT），受限用户须带 biz_id。
+	ListChannelHealth(context.Context, *ListChannelHealthRequest) (*ListChannelHealthResponse, error)
 	// ListChannels ListChannels 分页查询渠道，page_size 上限 100。
 	ListChannels(context.Context, *ListChannelsRequest) (*ListChannelsResponse, error)
 	// SendTestEvent SendTestEvent 按渠道实例发送测试事件（设计 §5.1.1 连通性测试）：向
@@ -54,6 +59,7 @@ func RegisterNotifyChannelServiceHTTPServer(s *http.Server, srv NotifyChannelSer
 	r.Handle("GET", "/api/v1/notify/channel/{id}", _NotifyChannelService_GetChannel0_HTTP_Handler(srv))
 	r.Handle("GET", "/api/v1/notify/channel", _NotifyChannelService_ListChannels0_HTTP_Handler(srv))
 	r.Handle("POST", "/api/v1/notify/channel/{id}:test", _NotifyChannelService_SendTestEvent0_HTTP_Handler(srv))
+	r.Handle("GET", "/api/v1/notify/channel-health", _NotifyChannelService_ListChannelHealth0_HTTP_Handler(srv))
 }
 
 func _NotifyChannelService_CreateChannel0_HTTP_Handler(srv NotifyChannelServiceHTTPServer) func(ctx http.Context) error {
@@ -182,6 +188,25 @@ func _NotifyChannelService_SendTestEvent0_HTTP_Handler(srv NotifyChannelServiceH
 	}
 }
 
+func _NotifyChannelService_ListChannelHealth0_HTTP_Handler(srv NotifyChannelServiceHTTPServer) func(ctx http.Context) error {
+	return func(ctx http.Context) error {
+		var in ListChannelHealthRequest
+		if err := ctx.BindQuery(&in); err != nil {
+			return err
+		}
+		http.SetOperation(ctx, OperationNotifyChannelServiceListChannelHealth)
+		h := ctx.Middleware(func(ctx context.Context, req interface{}) (interface{}, error) {
+			return srv.ListChannelHealth(ctx, req.(*ListChannelHealthRequest))
+		})
+		out, err := h(ctx, &in)
+		if err != nil {
+			return err
+		}
+		reply := out.(*ListChannelHealthResponse)
+		return ctx.Result(200, reply)
+	}
+}
+
 type NotifyChannelServiceHTTPClient interface {
 	// CreateChannel CreateChannel 创建渠道；type 与 config 结构必须匹配，email/群机器人必须
 	// 携带 secret（SMTP 密码/机器人 token），webhook 的 HMAC 密钥可选。
@@ -190,6 +215,10 @@ type NotifyChannelServiceHTTPClient interface {
 	DeleteChannel(ctx context.Context, req *DeleteChannelRequest, opts ...http.CallOption) (rsp *DeleteChannelResponse, err error)
 	// GetChannel GetChannel 查询渠道详情（不含 secret）。
 	GetChannel(ctx context.Context, req *GetChannelRequest, opts ...http.CallOption) (rsp *GetChannelResponse, err error)
+	// ListChannelHealth ListChannelHealth 渠道健康（跨实例共享熔断状态，管道 sender 每次发送结果
+	// upsert）：打开/探测中/60s 滑窗样本与失败数；只读视图（迁移 0031 授予
+	// notify_core_role SELECT），受限用户须带 biz_id。
+	ListChannelHealth(ctx context.Context, req *ListChannelHealthRequest, opts ...http.CallOption) (rsp *ListChannelHealthResponse, err error)
 	// ListChannels ListChannels 分页查询渠道，page_size 上限 100。
 	ListChannels(ctx context.Context, req *ListChannelsRequest, opts ...http.CallOption) (rsp *ListChannelsResponse, err error)
 	// SendTestEvent SendTestEvent 按渠道实例发送测试事件（设计 §5.1.1 连通性测试）：向
@@ -256,6 +285,25 @@ func (c *NotifyChannelServiceHTTPClientImpl) GetChannel(ctx context.Context, in 
 	opts = append([]http.CallOption{
 		http.Accept("application/protojson"),
 		http.Operation(OperationNotifyChannelServiceGetChannel),
+		http.PathTemplate(pattern),
+	}, opts...)
+	err := c.cc.Invoke(ctx, "GET", path, nil, &out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ListChannelHealth ListChannelHealth 渠道健康（跨实例共享熔断状态，管道 sender 每次发送结果
+// upsert）：打开/探测中/60s 滑窗样本与失败数；只读视图（迁移 0031 授予
+// notify_core_role SELECT），受限用户须带 biz_id。
+func (c *NotifyChannelServiceHTTPClientImpl) ListChannelHealth(ctx context.Context, in *ListChannelHealthRequest, opts ...http.CallOption) (*ListChannelHealthResponse, error) {
+	var out ListChannelHealthResponse
+	pattern := "/api/v1/notify/channel-health"
+	path := http.BuildPath(pattern, in, http.WithQueryParams())
+	opts = append([]http.CallOption{
+		http.Accept("application/protojson"),
+		http.Operation(OperationNotifyChannelServiceListChannelHealth),
 		http.PathTemplate(pattern),
 	}, opts...)
 	err := c.cc.Invoke(ctx, "GET", path, nil, &out, opts...)

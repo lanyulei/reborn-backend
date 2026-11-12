@@ -22,6 +22,13 @@ service NotifyDeadLetterService {
     };
     option (system.v1.title) = "查询通知死信列表";
   }
+  // GetDeadLetter 死信详情。
+  rpc GetDeadLetter(GetDeadLetterRequest) returns (GetDeadLetterResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/notify/dead-letter/{id}"
+    };
+    option (system.v1.title) = "查询通知死信详情";
+  }
   // ReplayDeadLetter 标记死信待重放（replay_state: none → pending），返回
   // 更新后的行；仅 replay_state=none 的行可标记（409 NOTIFY_DLQ_INVALID_STATE）。
   rpc ReplayDeadLetter(ReplayDeadLetterRequest) returns (ReplayDeadLetterResponse) {
@@ -82,6 +89,9 @@ message ListDeadLettersRequest {
     gte: 1
     lte: 3
   }];
+  // 时间窗口：create_time_start 缺省 = (create_time_end 或当前时间) 往前 7 天；
+  // 两者跨度上限 90 天（400 NOTIFY_TIME_RANGE_INVALID）。分区表按时间裁剪，无界
+  // 查询会扫全部分区。
   // create_time_start 转入时间下界（含），可选。
   optional google.protobuf.Timestamp create_time_start = 6;
   // create_time_end 转入时间上界（含），可选。
@@ -105,5 +115,17 @@ message ReplayDeadLetterRequest {
 // ReplayDeadLetterResponse 标记死信待重放响应（更新后的行）。
 message ReplayDeadLetterResponse {
   // dead_letter 更新后的死信行（replay_state=pending）。
+  NotifyDeadLetter dead_letter = 1;
+}
+
+// GetDeadLetterRequest 死信详情请求。
+message GetDeadLetterRequest {
+  // id 死信 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetDeadLetterResponse 死信详情响应。
+message GetDeadLetterResponse {
+  // dead_letter 死信。
   NotifyDeadLetter dead_letter = 1;
 }

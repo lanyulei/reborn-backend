@@ -359,3 +359,22 @@ Kratos 四层：`api → service → biz → data`（非 DDD 四层）。
 - 与 core 对齐的任何契约（jsonb json 标签、状态/来源字面量、事件正则、`InsertEventSQL`/`DedupGateSQL`）只改 `kit/notifycontract`，禁止在本模块复制字面量；biz 侧用类型别名/常量再导出保持包内名称不变。
 - `SilenceWindow` 以契约结构为底层类型（非别名）以挂 `Contains` 方法，json 标签随契约。
 
+### 13.7 停机与落账
+
+- 循环 Stop 只关闭准入，在途迭代用不受取消的 ctx 跑完；Stop ctx 超时才硬中止。
+- 消息发出后的落账（Finish/Release/熔断 Record）一律 `context.WithoutCancel` + 独立超时（10s）。
+- 发送前的瞬时错误走 Release（不计尝试、5s 延后），只有不可重试错误走 Finish。
+- 重试到期时刻 `now() + interval` 由数据库计算（FinishResult.RetryAfter 为间隔，不传时刻）。
+- 分区边界字面量带显式 `+00`。
+- 批内多行写一律 pgx.Batch 或 unnest 单语句（ingress 门闩/插入、router 终态、sender 落账），禁止循环逐行往返。
+- 围栏在落账时判定（渲染快照随 Finish 写入，不再有发送前的独立快照语句）。
+- webhook 出站必须经 `WebhookSender.dialContext`（解析后私网校验）；新增出站类渠道同样不得直连未校验地址。
+- 模板只允许 `kit/notifycontract.TemplateFuncs` 的函数，两端注册同一集合；平台限长按字节算。
+
+### 13.8 NATS 骨干
+
+- PG 恒为事实源：任何 NATS 消费路径都必须经过与 pg 路径相同的条件 UPDATE 门闩/围栏，不得仅凭消息内容改状态。
+- relay 是唯一发布者；`publish_state` 只由 relay 翻转（0→1）与回拨（1→0）；消费侧不碰该列。
+- Msg-Id 带代际；去重窗口 ≤ AckWait；超期回拨阈值 ≥ 2×AckWait。
+- 新骨干实现只能替换 `biz.EventSource` / `biz.DispatchRepo` / `biz.Relayer` 三个接口，不改 router/sender 用例。
+

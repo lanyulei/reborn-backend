@@ -361,3 +361,92 @@ func TestTrialRenderContextMatchesWhitelist(t *testing.T) {
 		t.Fatal("unknown top-level field must be rejected")
 	}
 }
+
+func (s *templateRepoStub) ListTemplatesByBiz(_ context.Context, bizID string) ([]*Template, error) {
+	var out []*Template
+	for _, t := range s.templates {
+		if t.BizID == bizID {
+			cp := *t
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
+// TestTemplateUsecase_Render 预览渲染：样例按管道口径渲染；语法/顶层变量错误 → ErrTemplateInvalid。
+func TestTemplateUsecase_Render(t *testing.T) {
+	t.Parallel()
+	uc := NewTemplateUsecase(newTemplateRepoStub())
+	sample := trialRenderContext()
+	subject, body, err := uc.Render("[{{.BizID}}] {{.Title}}", "host={{.Payload.host}} n={{.Count}}", "", sample)
+	if err != nil || subject != "[default] sample" || body != "host=sample-host n=2" {
+		t.Fatalf("Render = %q, %q, %v", subject, body, err)
+	}
+	if _, _, err := uc.Render("{{.Nope}}", "x", "", sample); !errors.Is(err, ErrTemplateInvalid) {
+		t.Fatalf("unknown top-level var error = %v, want ErrTemplateInvalid", err)
+	}
+	if _, _, err := uc.Render("{{.Title", "x", "", sample); !errors.Is(err, ErrTemplateInvalid) {
+		t.Fatalf("parse error = %v, want ErrTemplateInvalid", err)
+	}
+}
+
+// TestTemplateUsecase_RenderFuncs 白名单函数在写入校验与预览里可用。
+func TestTemplateUsecase_RenderFuncs(t *testing.T) {
+	t.Parallel()
+	uc := NewTemplateUsecase(newTemplateRepoStub())
+	subject, body, err := uc.Render("{{severity .Severity}} {{upper .Title}}", "{{fmtTime .EventTime \"2006\"}} {{json .Payload}} {{trunc .Title 2}}", "", trialRenderContext())
+	if err != nil || subject != "warning SAMPLE" || body != `1970 {"host":"sample-host"} sa…` {
+		t.Fatalf("Render = %q / %q, %v", subject, body, err)
+	}
+	if err := validateTemplateText("body", "{{range .Samples}}{{fmtTime .create_time}}{{end}}"); err != nil {
+		t.Fatalf("sample create_time must be renderable with fmtTime: %v", err)
+	}
+	if err := validateTemplateText("body", "{{nope .Title}}"); !errors.Is(err, ErrTemplateInvalid) {
+		t.Fatalf("unknown func error = %v", err)
+	}
+}
+
+// TestTemplateUsecase_Format format 规整与 html 引擎：html 正文自动转义载荷；非法 format 拒绝；
+// Update 改 format 时按新引擎重新校验现有正文。
+func TestTemplateUsecase_Format(t *testing.T) {
+	t.Parallel()
+	stub := newTemplateRepoStub()
+	uc := NewTemplateUsecase(stub)
+	ctx := context.Background()
+	tpl, err := uc.Create(ctx, &Template{EventType: "a.b", ChannelType: ChannelTypeEmail, Subject: "s", Body: "<p>{{.Payload.host}}</p>", Format: "html", Enabled: true})
+	if err != nil || tpl.Format != "html" {
+		t.Fatalf("Create(html) = %+v, %v", tpl, err)
+	}
+	if got, _ := stub.GetTemplate(ctx, tpl.ID); got.Format != "html" {
+		t.Fatalf("stored format = %q", got.Format)
+	}
+	plain, err := uc.Create(ctx, &Template{EventType: "a.c", ChannelType: ChannelTypeEmail, Subject: "s", Body: "b"})
+	if err != nil || plain.Format != "text" {
+		t.Fatalf("empty format must default to text: %+v, %v", plain, err)
+	}
+	if _, err := uc.Create(ctx, &Template{EventType: "a.d", ChannelType: ChannelTypeEmail, Subject: "s", Body: "b", Format: "pdf"}); !errors.Is(err, ErrTemplateInvalid) {
+		t.Fatalf("bad format error = %v", err)
+	}
+	sample := trialRenderContext()
+	sample.Payload = map[string]any{"host": "<script>x</script>"}
+	_, body, err := uc.Render("s", "<p>{{.Payload.host}}</p>", "html", sample)
+	if err != nil || body != "<p>&lt;script&gt;x&lt;/script&gt;</p>" {
+		t.Fatalf("html render must escape: %q, %v", body, err)
+	}
+	_, body, err = uc.Render("s", "<p>{{.Payload.host}}</p>", "text", sample)
+	if err != nil || body != "<p><script>x</script></p>" {
+		t.Fatalf("text render must not escape: %q, %v", body, err)
+	}
+	// html 引擎对不完整标签内的动作有更严的上下文规则：改 format 时用新引擎复核旧正文。
+	raw, err := uc.Create(ctx, &Template{EventType: "a.e", ChannelType: ChannelTypeEmail, Subject: "s", Body: "<a href=\"{{.Title}}"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := "html"
+	if err := uc.Update(ctx, raw.ID, TemplateUpdate{Format: &html}); err == nil {
+		t.Fatal("switching to html must re-validate the body with html/template")
+	}
+	if err := uc.Update(ctx, plain.ID, TemplateUpdate{Format: &html}); err != nil {
+		t.Fatalf("plain body under html: %v", err)
+	}
+}

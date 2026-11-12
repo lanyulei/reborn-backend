@@ -4,9 +4,11 @@ import (
 	"context"
 	"time"
 
+	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
 	"github.com/lanyulei/reborn/backend/kit/notifycontract"
-
 	"github.com/lanyulei/reborn/backend/kit/paging"
+
+	"github.com/go-kratos/kratos/v3/errors"
 )
 
 // 任务状态常量（与 notify_dispatch 列注释对齐，管道 sender 状态机的字面量口径）。
@@ -50,9 +52,13 @@ type DispatchFilter struct {
 	EventID         string
 	ChannelID       string
 	Status          *int32
+	Recipient       string // 精确；空 = 不过滤
 	CreateTimeStart *time.Time
 	CreateTimeEnd   *time.Time
 }
+
+// ErrDispatchNotFound 目标发送任务不存在。
+var ErrDispatchNotFound = errors.NotFound(notifyv1.ErrorReason_NOTIFY_DISPATCH_NOT_FOUND.String(), "dispatch not found")
 
 // DispatchRepo 发送任务仓储接口，由 data 层实现（依赖倒置）；只读——任务
 // 由管道 router 生成、sender 推进状态，core 无管理写路径。
@@ -60,6 +66,8 @@ type DispatchRepo interface {
 	// ListDispatches 分页查询发送任务；page 从 1 起，pageSize 上限 100，
 	// 按生成时间倒序（查询索引 idx_notify_dispatch_query）。
 	ListDispatches(ctx context.Context, filter DispatchFilter, page, pageSize int64) ([]*Dispatch, int64, error)
+	// GetDispatch 按 ID 查询发送任务；不存在返回 ErrDispatchNotFound。
+	GetDispatch(ctx context.Context, id string) (*Dispatch, error)
 }
 
 // DispatchUsecase 发送任务查询用例：纯读编排（分页规整后委托仓储）。
@@ -70,6 +78,11 @@ type DispatchUsecase struct {
 // NewDispatchUsecase new a DispatchUsecase.
 func NewDispatchUsecase(repo DispatchRepo) *DispatchUsecase {
 	return &DispatchUsecase{repo: repo}
+}
+
+// Get 查询发送任务详情。
+func (uc *DispatchUsecase) Get(ctx context.Context, id string) (*Dispatch, error) {
+	return uc.repo.GetDispatch(ctx, id)
 }
 
 // List 分页查询发送任务；分页参数先规整再委托仓储。

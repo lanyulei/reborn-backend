@@ -9,9 +9,10 @@ import (
 	"github.com/google/wire"
 
 	serviceassistant "github.com/lanyulei/reborn/backend/core/internal/service/assistant"
+	servicecmdb "github.com/lanyulei/reborn/backend/core/internal/service/cmdb"
 	servicenotify "github.com/lanyulei/reborn/backend/core/internal/service/notify"
 	servicesystem "github.com/lanyulei/reborn/backend/core/internal/service/system"
 )
 
 // ProviderSet 聚合各业务域的 service providers。
-var ProviderSet = wire.NewSet(servicesystem.ProviderSet, servicenotify.ProviderSet, serviceassistant.ProviderSet)
+var ProviderSet = wire.NewSet(servicesystem.ProviderSet, servicenotify.ProviderSet, serviceassistant.ProviderSet, servicecmdb.ProviderSet)

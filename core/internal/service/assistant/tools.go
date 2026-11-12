@@ -25,8 +25,17 @@ var excludedOperations = map[string]struct{}{
 	"/assistant.v1.AssistantService/DeleteConversation": {},
 	"/system.v1.SystemConfigService/UploadSystemLogo":   {},
 	"/system.v1.SystemConfigService/GetSystemLogo":      {},
+	"/system.v1.AuthService/UploadMyAvatar":             {},
+	"/system.v1.AuthService/GetUserAvatar":              {},
 	"/system.v1.RoleService/ListOperations":             {},
 	"/system.v1.RoleService/ListPermissionCatalog":      {},
+	// CMDB 批量导入/导出：HttpBody 与大批量载荷不适合作为对话工具。
+	"/cmdb.v1.CmdbCIService/ImportCIs": {},
+	"/cmdb.v1.CmdbCIService/ExportCIs": {},
+	// 采集源凭据明文不经过模型。
+	"/cmdb.v1.CmdbSyncService/CreateSource":  {},
+	"/cmdb.v1.CmdbSyncService/UpdateSource":  {},
+	"/cmdb.v1.CmdbSyncService/RotateWebhook": {},
 }
 
 // NewToolCatalog 从可授权 RPC 枚举生成模型工具目录（启动期一次性反射；运行

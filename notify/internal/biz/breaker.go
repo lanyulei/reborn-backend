@@ -94,6 +94,39 @@ func (b *Breaker) Record(channelID string, ok bool) {
 	}
 }
 
+// CancelProbe 归还 Allow 放出的半开探测名额（探测未真正发送：限流无令牌 / 限流器
+// 错误）。probing 否则只能由 Record 清除——不归还则该渠道此后一直被拒。
+func (b *Breaker) CancelProbe(channelID string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.state(channelID).probing = false
+}
+
+// OpenChannels 当前打开中的渠道及截止（指标）。
+func (b *Breaker) OpenChannels() map[string]time.Time {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	now := b.now()
+	out := map[string]time.Time{}
+	for id, st := range b.states {
+		if !st.openUntil.IsZero() && now.Before(st.openUntil) {
+			out[id] = st.openUntil
+		}
+	}
+	return out
+}
+
+// OpenUntil 返回打开截止（零值 = 未打开）。
+func (b *Breaker) OpenUntil(channelID string) time.Time {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	st := b.state(channelID)
+	if st.openUntil.IsZero() || !b.now().Before(st.openUntil) {
+		return time.Time{}
+	}
+	return st.openUntil
+}
+
 // Open 报告渠道是否处于打开状态（指标用）。
 func (b *Breaker) Open(channelID string) bool {
 	b.mu.Lock()

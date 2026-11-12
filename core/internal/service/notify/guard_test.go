@@ -14,7 +14,7 @@ import (
 // newScopedChannelService 构造受限（仅可管 monitor）的渠道 service 与共享 store。
 func newScopedChannelService(scope *testfake.BizScopeStub) (*NotifyChannelService, *testfake.Store) {
 	store := testfake.NewStore()
-	return NewNotifyChannelService(biz.NewChannelUsecase(store, store, store), scope), store
+	return NewNotifyChannelService(biz.NewChannelUsecase(store, store, store), biz.NewChannelHealthUsecase(store), scope), store
 }
 
 func emailReq(bizID, name string) *notifyv1.CreateChannelRequest {
@@ -34,7 +34,7 @@ func TestBizGuard_ScopedMatrix(t *testing.T) {
 	t.Parallel()
 	svc, store := newScopedChannelService(testfake.Scoped("monitor"))
 	// 用不限 service 预置 default 与 monitor 各一渠道（模拟其他团队的配置）。
-	admin := NewNotifyChannelService(biz.NewChannelUsecase(store, store, store), testfake.Unrestricted())
+	admin := NewNotifyChannelService(biz.NewChannelUsecase(store, store, store), biz.NewChannelHealthUsecase(store), testfake.Unrestricted())
 	def, err := admin.CreateChannel(testCtx(), emailReq("default", "mail-default"))
 	if err != nil {
 		t.Fatal(err)
@@ -104,7 +104,7 @@ func TestBizGuard_RuntimeTablesRequireChannel(t *testing.T) {
 	t.Parallel()
 	store := testfake.NewStore()
 	channels := biz.NewChannelUsecase(store, store, store)
-	admin := NewNotifyChannelService(channels, testfake.Unrestricted())
+	admin := NewNotifyChannelService(channels, biz.NewChannelHealthUsecase(store), testfake.Unrestricted())
 	mon, _ := admin.CreateChannel(testCtx(), emailReq("monitor", "m"))
 	def, _ := admin.CreateChannel(testCtx(), emailReq("default", "d"))
 	scope := testfake.Scoped("monitor")

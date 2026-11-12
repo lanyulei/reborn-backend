@@ -3,7 +3,9 @@ package channel
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -91,4 +93,45 @@ func TestWebhookSender_Outcomes(t *testing.T) {
 	if err == nil || !res.Retryable {
 		t.Fatalf("timeout: %+v %v", res, err)
 	}
+}
+
+// TestWebhookSender_SSRFBlockedAndRetryAfter 未放行 insecure 时，回环/私网目标在拨号前
+// 被拒（确定性失败）；429 的 Retry-After 透传；幂等键同时放 Idempotency-Key。
+func TestWebhookSender_SSRFBlockedAndRetryAfter(t *testing.T) {
+	t.Parallel()
+	s := NewWebhookSender()
+	for _, u := range []string{"https://127.0.0.1:1/h", "https://localhost/h", "https://10.1.2.3/h"} {
+		res, err := s.Send(context.Background(), &biz.Channel{Type: biz.ChannelTypeWebhook, Webhook: &biz.WebhookConfig{URL: u}}, biz.RenderedMessage{})
+		if err == nil || res.Retryable || !strings.Contains(err.Error(), "private or local") {
+			t.Fatalf("%s: must be blocked non-retryably, got %+v %v", u, res, err)
+		}
+	}
+	// 解析后命中私网同样拒绝（DNS 重绑定场景）：用自定义解析器把公网域名指到回环。
+	s2 := NewWebhookSender()
+	s2.resolver = fakeResolver{"hooks.example.com": {net.ParseIP("127.0.0.1")}}
+	res, err := s2.Send(context.Background(), &biz.Channel{Type: biz.ChannelTypeWebhook, Webhook: &biz.WebhookConfig{URL: "https://hooks.example.com/h"}}, biz.RenderedMessage{})
+	if err == nil || res.Retryable || !errors.Is(err, errWebhookHostBlocked) {
+		t.Fatalf("resolved private address must be blocked: %+v %v", res, err)
+	}
+	var idem string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		idem = r.Header.Get("Idempotency-Key")
+		w.Header().Set("Retry-After", "30")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+	res, err = NewWebhookSender().WithInsecure().Send(context.Background(), &biz.Channel{Type: biz.ChannelTypeWebhook, Webhook: &biz.WebhookConfig{URL: srv.URL}}, biz.RenderedMessage{SendKey: "k9"})
+	if err == nil || !res.Retryable || res.RetryAfter != 30*time.Second || idem != "k9" {
+		t.Fatalf("429: %+v %v idem=%q", res, err, idem)
+	}
+}
+
+type fakeResolver map[string][]net.IP
+
+func (f fakeResolver) LookupIPAddr(_ context.Context, host string) ([]net.IPAddr, error) {
+	var out []net.IPAddr
+	for _, ip := range f[host] {
+		out = append(out, net.IPAddr{IP: ip})
+	}
+	return out, nil
 }

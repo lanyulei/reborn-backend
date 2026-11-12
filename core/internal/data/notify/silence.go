@@ -32,7 +32,7 @@ func NewSilenceRepo(data *basedata.Data) *silenceRepo {
 }
 
 // silenceSelectColumns 是静默查询列序，与 scanSilence 对应。
-const silenceSelectColumns = "id, biz_id, event_pattern, severity_max, time_window, enabled, create_time, update_time"
+const silenceSelectColumns = "id, biz_id, event_pattern, severity_max, time_window, enabled, create_time, update_time, name, description"
 
 // scanSilence 按列序扫描一行静默数据并解码为 DO（time_window 经字节中转
 // 反序列化）。
@@ -43,9 +43,10 @@ func scanSilence(scan func(dest ...any) error) (*biz.Silence, error) {
 		windowRaw               []byte
 		enabled                 bool
 		createTime, updateTime  time.Time
+		name, description       string
 	)
 	if err := scan(&id, &bizID, &eventPattern, &severityMax, &windowRaw,
-		&enabled, &createTime, &updateTime); err != nil {
+		&enabled, &createTime, &updateTime, &name, &description); err != nil {
 		return nil, err
 	}
 	silence := &biz.Silence{
@@ -53,6 +54,8 @@ func scanSilence(scan func(dest ...any) error) (*biz.Silence, error) {
 		BizID:   bizID,
 		Enabled: enabled,
 		SilenceRule: biz.SilenceRule{
+			Name:         name,
+			Description:  description,
 			EventPattern: eventPattern,
 			SeverityMax:  severityMax,
 		},
@@ -86,11 +89,11 @@ func (r *silenceRepo) CreateSilence(ctx context.Context, silence *biz.Silence) e
 	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO notify_silence
-			     (id, biz_id, event_pattern, severity_max, time_window, enabled, create_time, update_time)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+			     (id, biz_id, event_pattern, severity_max, time_window, enabled, create_time, update_time, create_user, update_user, name, description)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $10, $11)`,
 			silence.ID, silence.BizID, silence.EventPattern, silence.SeverityMax,
 			encodeSilenceWindow(silence.Window), silence.Enabled,
-			silence.CreateTime, silence.UpdateTime); err != nil {
+			silence.CreateTime, silence.UpdateTime, operatorArg(ctx), silence.Name, silence.Description); err != nil {
 			return fmt.Errorf("insert silence: %w", err)
 		}
 		return bumpCfgVersion(ctx, tx, "notify_silence")
@@ -110,6 +113,8 @@ func (r *silenceRepo) UpdateSilence(ctx context.Context, id string, upd biz.Sile
 		add("event_pattern", upd.Rule.EventPattern)
 		add("severity_max", upd.Rule.SeverityMax)
 		add("time_window", encodeSilenceWindow(upd.Rule.Window))
+		add("name", upd.Rule.Name)
+		add("description", upd.Rule.Description)
 	}
 	if upd.Enabled != nil {
 		add("enabled", *upd.Enabled)
@@ -117,6 +122,7 @@ func (r *silenceRepo) UpdateSilence(ctx context.Context, id string, upd biz.Sile
 	if len(sets) == 0 {
 		return nil
 	}
+	add("update_user", operatorArg(ctx))
 	args = append(args, id)
 	query := "UPDATE notify_silence SET " + strings.Join(sets, ", ") +
 		", update_time = now() WHERE id = $" + strconv.Itoa(len(args)) + " AND delete_time IS NULL"
@@ -136,8 +142,8 @@ func (r *silenceRepo) UpdateSilence(ctx context.Context, id string, upd biz.Sile
 func (r *silenceRepo) DeleteSilence(ctx context.Context, id string) error {
 	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx,
-			"UPDATE notify_silence SET delete_time = now(), update_time = now()"+
-				" WHERE id = $1 AND delete_time IS NULL", id)
+			"UPDATE notify_silence SET delete_time = now(), update_time = now(), delete_user = $2"+
+				" WHERE id = $1 AND delete_time IS NULL", id, operatorArg(ctx))
 		if err != nil {
 			return fmt.Errorf("soft delete silence: %w", err)
 		}
@@ -172,7 +178,7 @@ func (r *silenceRepo) ListSilences(ctx context.Context, filter biz.SilenceFilter
 	}
 	if filter.Keyword != "" {
 		args = append(args, dbx.LikeContains(filter.Keyword))
-		where = append(where, "event_pattern ILIKE $"+strconv.Itoa(len(args)))
+		where = append(where, "(event_pattern ILIKE $"+strconv.Itoa(len(args))+" OR name ILIKE $"+strconv.Itoa(len(args))+")")
 	}
 	if filter.Enabled != nil {
 		args = append(args, *filter.Enabled)
@@ -208,4 +214,23 @@ func (r *silenceRepo) ListSilences(ctx context.Context, filter biz.SilenceFilter
 		silences = append(silences, silence)
 	}
 	return silences, total, rows.Err()
+}
+
+// ListSilencesByBiz implements biz 仓储接口：biz 内全部未删除行（不分页，配置表规模；路由试算用）。
+func (r *silenceRepo) ListSilencesByBiz(ctx context.Context, bizID string) ([]*biz.Silence, error) {
+	rows, err := r.data.Pool.Query(ctx,
+		"SELECT "+silenceSelectColumns+" FROM notify_silence WHERE biz_id = $1 AND delete_time IS NULL ORDER BY create_time", bizID)
+	if err != nil {
+		return nil, fmt.Errorf("list silences by biz: %w", err)
+	}
+	defer rows.Close()
+	var out []*biz.Silence
+	for rows.Next() {
+		item, err := scanSilence(rows.Scan)
+		if err != nil {
+			return nil, fmt.Errorf("scan silence: %w", err)
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
 }

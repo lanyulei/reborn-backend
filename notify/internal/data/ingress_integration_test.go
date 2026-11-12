@@ -4,10 +4,12 @@ package data
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/lanyulei/reborn/backend/notify/internal/biz"
+	"github.com/lanyulei/reborn/backend/notify/internal/conf"
 )
 
 func TestIntegration_IngressDedupGate(t *testing.T) {
@@ -70,6 +72,10 @@ func TestIntegration_DlqReplay(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// 死 dispatch 带已渲染快照 + 聚合上下文：重放须保留 agg、丢弃渲染正文。
+	exec(`INSERT INTO notify_dispatch (id, event_id, channel_id, recipient, content, status, attempts, next_retry_time, send_key, create_time)
+		VALUES ('018f3e1a-1002-7000-8000-000000000001', $1, $2, 'ops@example.com',
+		        '{"subject":"old","body":"old","template_id":"018f3e1a-0a02-7000-8000-000000000001","agg":{"count":9,"digest":true}}', 5, 6, NULL, 'k', now() - interval '1 minute')`, ev, idChanHook)
 	exec(`INSERT INTO notify_dlq (id, dispatch_id, event_id, channel_id, recipient, last_error, attempts, replay_state) VALUES
 		('018f3e1a-1002-7000-8000-000000000001', '018f3e1a-1002-7000-8000-000000000001', $1, $2, 'ops@example.com', 'boom', 6, 2),
 		('018f3e1a-1002-7000-8000-000000000002', '018f3e1a-1002-7000-8000-000000000002', $1, $2, 'ops@example.com', 'boom', 6, 1)`, ev, idChanHook)
@@ -85,8 +91,12 @@ func TestIntegration_DlqReplay(t *testing.T) {
 		t.Fatal("replay must create a fresh pending dispatch")
 	}
 	// 新 dispatch 的 send_key 与死信源不同（刻意再投）。
-	if count(t, d, "SELECT count(*) FROM notify_dispatch WHERE send_key = 'k'") != 0 {
+	if count(t, d, "SELECT count(*) FROM notify_dispatch WHERE send_key = 'k' AND status = 1") != 0 {
 		t.Fatal("replayed dispatch must carry a new send_key")
+	}
+	if count(t, d, `SELECT count(*) FROM notify_dispatch WHERE event_id = $1 AND status = 1
+		AND content->'agg'->>'count' = '9' AND content->>'subject' IS NULL AND template_id IS NULL`, ev) != 1 {
+		t.Fatal("replayed dispatch must keep aggregate context and drop the rendered snapshot")
 	}
 	if n, _ := uc.ReplayOnce(ctx, 10); n != 0 {
 		t.Fatal("replay must be idempotent")
@@ -144,5 +154,47 @@ func TestIntegration_PartitionMaintenance(t *testing.T) {
 	// 清理：本测试新建的未来分区删掉，避免影响他测/本地库形态。
 	for _, table := range biz.PartitionedTables {
 		_, _ = d.Pool.Exec(ctx, "DROP TABLE IF EXISTS "+partitionName(table, target))
+	}
+}
+
+// TestIntegration_PartitionBoundsIgnoreSessionTimeZone 分区边界必须是 UTC 月初的绝对
+// 时刻：通过 TimeZone=Asia/Shanghai 的连接建分区，边界仍须与迁移（UTC）一致，否则与
+// 相邻分区重叠 8 小时、ATTACH 永久失败。
+func TestIntegration_PartitionBoundsIgnoreSessionTimeZone(t *testing.T) {
+	newIntegrationData(t)
+	dsn := os.Getenv("TEST_DATABASE_SOURCE") + " TimeZone=Asia/Shanghai"
+	d, cleanup, err := NewData(&conf.Data{Database: &conf.Data_Database{Source: dsn}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(cleanup)
+	ctx := context.Background()
+	var tz string
+	if err := d.Pool.QueryRow(ctx, "SHOW timezone").Scan(&tz); err != nil || tz != "Asia/Shanghai" {
+		t.Fatalf("session timezone = %q, %v", tz, err)
+	}
+	now := time.Now().UTC()
+	target := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, 5, 0)
+	name := partitionName("notify_delivery_log", target)
+	_, _ = d.Pool.Exec(ctx, "DROP TABLE IF EXISTS "+name)
+	t.Cleanup(func() { _, _ = d.Pool.Exec(context.Background(), "DROP TABLE IF EXISTS "+name) })
+	if err := NewMaintenanceRepo(d).EnsurePartition(ctx, "notify_delivery_log", target); err != nil {
+		t.Fatalf("EnsurePartition() error = %v", err)
+	}
+	var bound string
+	tx, err := d.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, "SET LOCAL timezone = 'UTC'"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.QueryRow(ctx, "SELECT pg_get_expr(relpartbound, oid) FROM pg_class WHERE oid = to_regclass($1)", name).Scan(&bound); err != nil {
+		t.Fatal(err)
+	}
+	want := "FOR VALUES FROM ('" + target.Format("2006-01-02 15:04:05") + "+00') TO ('" + target.AddDate(0, 1, 0).Format("2006-01-02 15:04:05") + "+00')"
+	if bound != want {
+		t.Fatalf("partition bound = %q, want %q (session TimeZone must not shift bounds)", bound, want)
 	}
 }

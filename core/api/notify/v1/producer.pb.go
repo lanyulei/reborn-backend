@@ -420,9 +420,11 @@ func (x *UpdateProducerRequest) GetEnabled() bool {
 	return false
 }
 
-// UpdateProducerResponse 更新生产者响应。
+// UpdateProducerResponse 更新生产者响应：返回更新后的生产者（不含 token）。
 type UpdateProducerResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// producer 更新后的生产者。
+	Producer      *NotifyProducer `protobuf:"bytes,1,opt,name=producer,proto3" json:"producer,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -455,6 +457,13 @@ func (x *UpdateProducerResponse) ProtoReflect() protoreflect.Message {
 // Deprecated: Use UpdateProducerResponse.ProtoReflect.Descriptor instead.
 func (*UpdateProducerResponse) Descriptor() ([]byte, []int) {
 	return file_notify_v1_producer_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *UpdateProducerResponse) GetProducer() *NotifyProducer {
+	if x != nil {
+		return x.Producer
+	}
+	return nil
 }
 
 // RotateProducerTokenRequest 轮换令牌请求。
@@ -919,8 +928,9 @@ const file_notify_v1_producer_proto_rawDesc = "" +
 	" notify.producer.update.non_empty\x120at least one of spec or enabled must be provided\x1a#has(this.spec) || has(this.enabled)B\a\n" +
 	"\x05_specB\n" +
 	"\n" +
-	"\b_enabled\"\x18\n" +
-	"\x16UpdateProducerResponse\"6\n" +
+	"\b_enabled\"O\n" +
+	"\x16UpdateProducerResponse\x125\n" +
+	"\bproducer\x18\x01 \x01(\v2\x19.notify.v1.NotifyProducerR\bproducer\"6\n" +
 	"\x1aRotateProducerTokenRequest\x12\x18\n" +
 	"\x02id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\"j\n" +
 	"\x1bRotateProducerTokenResponse\x125\n" +
@@ -993,26 +1003,27 @@ var file_notify_v1_producer_proto_depIdxs = []int32{
 	0,  // 4: notify.v1.CreateProducerRequest.spec:type_name -> notify.v1.ProducerSpec
 	1,  // 5: notify.v1.CreateProducerResponse.producer:type_name -> notify.v1.NotifyProducer
 	0,  // 6: notify.v1.UpdateProducerRequest.spec:type_name -> notify.v1.ProducerSpec
-	1,  // 7: notify.v1.RotateProducerTokenResponse.producer:type_name -> notify.v1.NotifyProducer
-	1,  // 8: notify.v1.GetProducerResponse.producer:type_name -> notify.v1.NotifyProducer
-	1,  // 9: notify.v1.ListProducersResponse.items:type_name -> notify.v1.NotifyProducer
-	2,  // 10: notify.v1.NotifyProducerService.CreateProducer:input_type -> notify.v1.CreateProducerRequest
-	4,  // 11: notify.v1.NotifyProducerService.UpdateProducer:input_type -> notify.v1.UpdateProducerRequest
-	6,  // 12: notify.v1.NotifyProducerService.RotateProducerToken:input_type -> notify.v1.RotateProducerTokenRequest
-	8,  // 13: notify.v1.NotifyProducerService.DeleteProducer:input_type -> notify.v1.DeleteProducerRequest
-	10, // 14: notify.v1.NotifyProducerService.GetProducer:input_type -> notify.v1.GetProducerRequest
-	12, // 15: notify.v1.NotifyProducerService.ListProducers:input_type -> notify.v1.ListProducersRequest
-	3,  // 16: notify.v1.NotifyProducerService.CreateProducer:output_type -> notify.v1.CreateProducerResponse
-	5,  // 17: notify.v1.NotifyProducerService.UpdateProducer:output_type -> notify.v1.UpdateProducerResponse
-	7,  // 18: notify.v1.NotifyProducerService.RotateProducerToken:output_type -> notify.v1.RotateProducerTokenResponse
-	9,  // 19: notify.v1.NotifyProducerService.DeleteProducer:output_type -> notify.v1.DeleteProducerResponse
-	11, // 20: notify.v1.NotifyProducerService.GetProducer:output_type -> notify.v1.GetProducerResponse
-	13, // 21: notify.v1.NotifyProducerService.ListProducers:output_type -> notify.v1.ListProducersResponse
-	16, // [16:22] is the sub-list for method output_type
-	10, // [10:16] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	1,  // 7: notify.v1.UpdateProducerResponse.producer:type_name -> notify.v1.NotifyProducer
+	1,  // 8: notify.v1.RotateProducerTokenResponse.producer:type_name -> notify.v1.NotifyProducer
+	1,  // 9: notify.v1.GetProducerResponse.producer:type_name -> notify.v1.NotifyProducer
+	1,  // 10: notify.v1.ListProducersResponse.items:type_name -> notify.v1.NotifyProducer
+	2,  // 11: notify.v1.NotifyProducerService.CreateProducer:input_type -> notify.v1.CreateProducerRequest
+	4,  // 12: notify.v1.NotifyProducerService.UpdateProducer:input_type -> notify.v1.UpdateProducerRequest
+	6,  // 13: notify.v1.NotifyProducerService.RotateProducerToken:input_type -> notify.v1.RotateProducerTokenRequest
+	8,  // 14: notify.v1.NotifyProducerService.DeleteProducer:input_type -> notify.v1.DeleteProducerRequest
+	10, // 15: notify.v1.NotifyProducerService.GetProducer:input_type -> notify.v1.GetProducerRequest
+	12, // 16: notify.v1.NotifyProducerService.ListProducers:input_type -> notify.v1.ListProducersRequest
+	3,  // 17: notify.v1.NotifyProducerService.CreateProducer:output_type -> notify.v1.CreateProducerResponse
+	5,  // 18: notify.v1.NotifyProducerService.UpdateProducer:output_type -> notify.v1.UpdateProducerResponse
+	7,  // 19: notify.v1.NotifyProducerService.RotateProducerToken:output_type -> notify.v1.RotateProducerTokenResponse
+	9,  // 20: notify.v1.NotifyProducerService.DeleteProducer:output_type -> notify.v1.DeleteProducerResponse
+	11, // 21: notify.v1.NotifyProducerService.GetProducer:output_type -> notify.v1.GetProducerResponse
+	13, // 22: notify.v1.NotifyProducerService.ListProducers:output_type -> notify.v1.ListProducersResponse
+	17, // [17:23] is the sub-list for method output_type
+	11, // [11:17] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_notify_v1_producer_proto_init() }

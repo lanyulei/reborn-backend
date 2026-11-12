@@ -3,6 +3,7 @@ package biz
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // RenderedMessage 已渲染的待发送消息（渠道适配器入参）。
@@ -14,6 +15,9 @@ type RenderedMessage struct {
 	Title     string
 	Subject   string
 	Body      string
+	// Format 生效输出格式（notifycontract.TemplateFormat*，已按渠道降级）：email html 走
+	// multipart/alternative；机器人 card 走卡片消息；其余按各渠道既有格式。
+	Format    string
 	Payload   []byte
 	Recipient string
 	SendKey   string
@@ -25,6 +29,8 @@ type RenderedMessage struct {
 type SendResult struct {
 	ProviderMsgID string
 	Retryable     bool
+	// RetryAfter 对端建议的重试间隔（HTTP Retry-After；0 = 无建议），仅 Retryable 时有意义。
+	RetryAfter time.Duration
 }
 
 // ChannelSender 渠道适配器窄接口（设计 §4.6）：biz 定义，data/channel 实现；

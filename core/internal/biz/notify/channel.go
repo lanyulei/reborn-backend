@@ -6,7 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lanyulei/reborn/backend/kit/notifycontract"
@@ -111,7 +113,13 @@ var (
 	// ErrChannelInUse 渠道仍被未删除路由引用，须先解绑；否则路由携带悬挂
 	// channel_id 被管道静默跳过，通知"看起来配了、实际不发"。
 	ErrChannelInUse = errors.Conflict(notifyv1.ErrorReason_NOTIFY_CHANNEL_IN_USE.String(), "channel is referenced by routes")
+	// ErrChannelTestTooFrequent 同一渠道连通性测试间隔小于 TestEventCooldown。
+	ErrChannelTestTooFrequent = errors.New(429, notifyv1.ErrorReason_NOTIFY_TEST_TOO_FREQUENT.String(), "test event too frequent for channel")
 )
+
+// TestEventCooldown 同一渠道两次连通性测试的最小间隔：测试事件真实投递到任意
+// 收件人，不节流即成免费发信口。进程内状态（多副本各自计数；人工按钮场景足够）。
+const TestEventCooldown = 10 * time.Second
 
 // ChannelReferenceChecker 渠道引用计数窄接口（路由仓储实现）：删除渠道前
 // 确认无未删除路由绑定它。
@@ -143,11 +151,46 @@ type ChannelUsecase struct {
 	repo   ChannelRepo
 	events EventWriter
 	refs   ChannelReferenceChecker
+
+	now          func() time.Time
+	testCooldown time.Duration
+	testMu       sync.Mutex
+	lastTest     map[string]time.Time // channel → 上次测试事件时间（冷却）
 }
 
 // NewChannelUsecase new a ChannelUsecase.
 func NewChannelUsecase(repo ChannelRepo, events EventWriter, refs ChannelReferenceChecker) *ChannelUsecase {
-	return &ChannelUsecase{repo: repo, events: events, refs: refs}
+	return &ChannelUsecase{
+		repo: repo, events: events, refs: refs,
+		now: time.Now, testCooldown: TestEventCooldown, lastTest: map[string]time.Time{},
+	}
+}
+
+// WithTestEventCooldown 覆盖连通性测试冷却（≤0 关闭；集成测试用）。
+func (uc *ChannelUsecase) WithTestEventCooldown(d time.Duration) *ChannelUsecase {
+	uc.testCooldown = d
+	return uc
+}
+
+// reserveTestSlot 按渠道冷却：间隔不足返回 ErrChannelTestTooFrequent，否则占用
+// 本次名额；顺带清掉已过冷却期的旧条目（map 不随渠道数无界增长）。
+func (uc *ChannelUsecase) reserveTestSlot(channelID string) error {
+	if uc.testCooldown <= 0 {
+		return nil
+	}
+	uc.testMu.Lock()
+	defer uc.testMu.Unlock()
+	now := uc.now()
+	if last, ok := uc.lastTest[channelID]; ok && now.Sub(last) < uc.testCooldown {
+		return fmt.Errorf("%w: retry after %s", ErrChannelTestTooFrequent, (uc.testCooldown - now.Sub(last)).Round(time.Second))
+	}
+	for id, at := range uc.lastTest {
+		if now.Sub(at) >= uc.testCooldown {
+			delete(uc.lastTest, id)
+		}
+	}
+	uc.lastTest[channelID] = now
+	return nil
 }
 
 // secretRequired 报告渠道类型是否必须携带 secret（webhook 的 HMAC 签名密钥可选）。
@@ -177,7 +220,32 @@ func validateConfigKind(channelType string, cfg *ChannelConfig) error {
 		return fmt.Errorf("%w: config kind mismatch for type %q", ErrChannelConfigInvalid, channelType)
 	}
 	if cfg.Webhook != nil {
+		if err := validateWebhookURL(cfg.Webhook.URL); err != nil {
+			return err
+		}
 		return validateWebhookHeaders(cfg.Webhook.Headers)
+	}
+	if cfg.Robot != nil {
+		if cfg.Robot.CardURL != "" {
+			if err := validateWebhookURL(cfg.Robot.CardURL); err != nil {
+				return err
+			}
+		} else if cfg.Robot.CardButton != "" {
+			return fmt.Errorf("%w: card_button requires card_url", ErrChannelConfigInvalid)
+		}
+	}
+	return nil
+}
+
+// validateWebhookURL 拒绝指向本机/私网的字面量目标（SSRF 第一道门，与管道连接时
+// 对解析地址的校验同一规则 kit/notifycontract.UnsafeWebhookHost）。
+func validateWebhookURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() == "" {
+		return fmt.Errorf("%w: invalid webhook url %q", ErrChannelConfigInvalid, raw)
+	}
+	if notifycontract.UnsafeWebhookHost(u.Hostname()) {
+		return fmt.Errorf("%w: webhook host %q is local/private (SSRF)", ErrChannelConfigInvalid, u.Hostname())
 	}
 	return nil
 }
@@ -340,6 +408,10 @@ func (uc *ChannelUsecase) SendTestEvent(ctx context.Context, channelID string, s
 	}
 	payload, err := testEventPayload(channelID, spec.Payload)
 	if err != nil {
+		return nil, err
+	}
+	// 入参全部合法后才占用冷却名额（校验失败不消耗）。
+	if err := uc.reserveTestSlot(channelID); err != nil {
 		return nil, err
 	}
 	id, err := idgen.NewID()

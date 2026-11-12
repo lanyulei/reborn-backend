@@ -121,29 +121,54 @@ func (uc *MaintenanceUsecase) RunOnce(ctx context.Context, now time.Time) error 
 			uc.log.InfoContext(ctx, "expired partitions dropped", "table", table, "count", n)
 		}
 	}
-	const batch = 5000
-	if _, err := uc.repo.DeleteExpiredDedup(ctx, batch); err != nil {
-		keep(fmt.Errorf("delete expired dedup: %w", err))
+	// 行级清理按批循环直到不足一批（单轮上限 cleanupMaxRounds 批）：原先每轮只删
+	// 一批 5000 行，风暴期 notify_dedup（主机×规则的 dedup_key）增长远快于 1.4 行/s 的清理。
+	sweep := func(name string, del func(limit int) (int, error)) {
+		total := 0
+		for round := 0; round < cleanupMaxRounds && ctx.Err() == nil; round++ {
+			n, err := del(cleanupBatch)
+			if err != nil {
+				keep(fmt.Errorf("%s: %w", name, err))
+				return
+			}
+			total += n
+			if n < cleanupBatch {
+				break
+			}
+		}
+		if total > 0 {
+			uc.log.InfoContext(ctx, "expired rows cleaned", "step", name, "count", total)
+		}
 	}
-	if _, err := uc.repo.DeleteOldDlq(ctx, now.Add(-uc.retention.Dlq), batch); err != nil {
-		keep(fmt.Errorf("delete old dlq: %w", err))
-	}
-	if _, err := uc.repo.DeleteClosedAggGroups(ctx, now.Add(-uc.retention.AggGroup), batch); err != nil {
-		keep(fmt.Errorf("delete closed agg groups: %w", err))
-	}
-	if _, err := uc.repo.DeleteStaleChannelHealth(ctx, now.Add(-uc.retention.AggGroup), batch); err != nil {
-		keep(fmt.Errorf("delete stale channel health: %w", err))
-	}
+	sweep("delete expired dedup", func(limit int) (int, error) { return uc.repo.DeleteExpiredDedup(ctx, limit) })
+	sweep("delete old dlq", func(limit int) (int, error) { return uc.repo.DeleteOldDlq(ctx, now.Add(-uc.retention.Dlq), limit) })
+	sweep("delete closed agg groups", func(limit int) (int, error) {
+		return uc.repo.DeleteClosedAggGroups(ctx, now.Add(-uc.retention.AggGroup), limit)
+	})
+	sweep("delete stale channel health", func(limit int) (int, error) {
+		return uc.repo.DeleteStaleChannelHealth(ctx, now.Add(-uc.retention.AggGroup), limit)
+	})
 	return first
 }
+
+// 行级清理批大小与单轮批数上限（5000 × 100 = 50 万行/轮）。
+const (
+	cleanupBatch     = 5000
+	cleanupMaxRounds = 100
+)
 
 // DedupTTL 门闩有效期（ingress 写 expire_time 用）。
 func (uc *MaintenanceUsecase) DedupTTL() time.Duration { return uc.retention.Dedup }
 
-// Backlog 积压快照（指标观测）。
+// BacklogCap 积压计数上限：读数达到该值表示"至少这么多"（计数查询有界扫描）。
+const BacklogCap = 10001
+
+// Backlog 积压快照（指标观测）。OldestPending / OldestDue 为最早到期时刻（零值 = 无积压）。
 type Backlog struct {
 	PendingEvents int64
 	DueDispatches int64
+	OldestPending time.Time
+	OldestDue     time.Time
 }
 
 // BacklogRepo 积压查询（部分索引上的 count，指标抓取时执行）。

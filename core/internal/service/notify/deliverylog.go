@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"time"
 
 	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/notify"
@@ -48,14 +49,11 @@ func (s *NotifyDeliveryLogService) ListDeliveryLogs(ctx context.Context, req *no
 		ChannelID:  req.GetChannelId(),
 		OK:         req.Ok,
 	}
-	if ts := req.GetCreateTimeStart(); ts != nil {
-		t := ts.AsTime()
-		filter.CreateTimeStart = &t
+	start, end, err := listTimeRange(req.GetCreateTimeStart(), req.GetCreateTimeEnd(), time.Now())
+	if err != nil {
+		return nil, err
 	}
-	if ts := req.GetCreateTimeEnd(); ts != nil {
-		t := ts.AsTime()
-		filter.CreateTimeEnd = &t
-	}
+	filter.CreateTimeStart, filter.CreateTimeEnd = start, end
 	logs, total, err := s.uc.List(ctx, filter, req.GetPage(), int64(req.GetPageSize()))
 	if err != nil {
 		return nil, err

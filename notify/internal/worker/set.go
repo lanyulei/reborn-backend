@@ -19,6 +19,7 @@ var ProviderSet = wire.NewSet(NewSet)
 // Set 全部后台循环（按角色由 server 层挑选装配）。
 type Set struct {
 	ConfigRefresher *Loop
+	Relay           *Loop // 仅 NATS 骨干（pg 下为 nil）
 	Router          *Loop
 	Sweeper         *Loop
 	Sender          *Loop
@@ -43,7 +44,7 @@ func num(v int32, def int) int {
 // NewSet 构造循环并注入 conf 参数到各用例；配置快照在此同步完成首次加载
 // （失败即装配失败，禁止空配置上线）。
 func NewSet(c *conf.Pipeline, cfg *biz.ConfigCache, router *biz.RouterUsecase, sweeper *biz.SweeperUsecase,
-	sender *biz.SenderUsecase, dlq *biz.DlqUsecase, maintenance *biz.MaintenanceUsecase, locker biz.Locker,
+	sender *biz.SenderUsecase, dlq *biz.DlqUsecase, maintenance *biz.MaintenanceUsecase, relay *biz.RelayUsecase, locker biz.Locker,
 	health biz.ChannelHealthRepo, hooks *Hooks, logger *slog.Logger,
 ) (*Set, error) {
 	sender.WithHealth(health)
@@ -54,11 +55,15 @@ func NewSet(c *conf.Pipeline, cfg *biz.ConfigCache, router *biz.RouterUsecase, s
 	router.WithOptions(biz.RouterOptions{MaxRouteAttempts: rc.GetMaxRouteAttempts(), MaxAggWindow: dur(rc.GetMaxAggregateWindow(), 5*time.Minute)})
 	sender.WithOptions(biz.SenderOptions{
 		Lease: dur(sc.GetLease(), 5*time.Minute), SendTimeout: dur(sc.GetSendTimeout(), 3*time.Second),
-		RenderTimeout: dur(sc.GetRenderTimeout(), 100*time.Millisecond), Concurrency: num(sc.GetConcurrency(), 16),
+		MaxSendTimeout: dur(sc.GetMaxSendTimeout(), 10*time.Second),
+		RenderTimeout:  dur(sc.GetRenderTimeout(), 100*time.Millisecond), Concurrency: num(sc.GetConcurrency(), 16),
 		MaxAttempts: sc.GetMaxAttempts(),
 	})
 	if hooks != nil && hooks.Observer != nil {
 		sender.WithObserver(hooks.Observer)
+	}
+	if hooks != nil && hooks.OnBreaker != nil {
+		hooks.OnBreaker(sender.Breaker())
 	}
 	ret := mc.GetRetention()
 	maintenance.WithPartitionsAhead(num(mc.GetPartitionsAhead(), 2)).WithRetention(biz.Retention{
@@ -96,6 +101,13 @@ func NewSet(c *conf.Pipeline, cfg *biz.ConfigCache, router *biz.RouterUsecase, s
 	s.Sweeper = NewLoop("sweeper", dur(rc.GetSweepInterval(), time.Second), logger, hooks, func(ctx context.Context) (int, error) {
 		return sweepLeader.run(ctx, func(ctx context.Context) (int, error) { return sweeper.SweepOnce(ctx, 100) })
 	})
+	if relay != nil && relay.Enabled() {
+		nc := c.GetNats()
+		relayBatch := num(nc.GetRelayBatch(), 500)
+		s.Relay = NewLoop("relay", dur(nc.GetRelayPoll(), 200*time.Millisecond), logger, hooks, func(ctx context.Context) (int, error) {
+			return relay.RelayOnce(ctx, relayBatch)
+		})
+	}
 	maintLeader := &leaderLoop{key: biz.LockMaintenance, locker: locker, log: logger}
 	s.Maintenance = NewLoop("maintenance", dur(mc.GetInterval(), time.Hour), logger, hooks, func(ctx context.Context) (int, error) {
 		return maintLeader.run(ctx, func(ctx context.Context) (int, error) {

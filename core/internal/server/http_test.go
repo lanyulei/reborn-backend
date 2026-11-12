@@ -59,6 +59,12 @@ func newTestHTTPServerWithServices(t *testing.T) (*httptest.Server, testServices
 		svc.deadLetter,
 		svc.assistant,
 		svc.assistantChat,
+		svc.cmdbModel,
+		svc.cmdbCI,
+		svc.cmdbRelation,
+		svc.cmdbScope,
+		svc.cmdbSync,
+		svc.cmdbInsight,
 		svc.signer,
 		svc.authz,
 	)

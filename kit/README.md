@@ -9,7 +9,7 @@
 | `dbx` | pgxpool 构造 + Ping、`WithTx/WithTxOptions`、`LikeContains` 转义、`NilIfEmpty/NilIfEmptyBytes/TextArray`、advisory lock 专用连接 | **仅 data**（含 pgx 依赖，depguard 禁止 biz/service import） |
 | `secretbox` | AES-256-GCM 凭据加密（key = sha256(主密钥)，密文 nonce‖ct）；core 只用 Seal、管道只用 Open——"只写不读"靠调用面约束 | data |
 | `idgen` / `paging` | UUIDv7；分页规整（缺省 20、上限 100、页码夹紧防 OFFSET 溢出） | biz |
-| `notifycontract` | core 控制面与管道共享的**数据契约**：jsonb 结构体、状态常量、事件类型/模式正则与匹配、`notify_event` INSERT 与 `notify_dedup` 门闩 SQL | biz / data |
+| `notifycontract` | core 控制面与管道共享的**数据契约**：jsonb 结构体、状态常量、事件类型/模式正则与匹配（`MatchPattern/TagsMatch/WindowContains`）、限流语义（`RateLimit.Rate/Capacity`、按类型缺省）、模板白名单函数 `TemplateFuncs`、SSRF 判定 `PrivateIP/UnsafeWebhookHost`、`notify_event` INSERT 与 `notify_dedup` 门闩 SQL | biz / data |
 
 契约包的守护：两模块的 proto 里重复的正则字面量由各模块的守护测试与 `notifycontract` 常量比对。
 

@@ -3,6 +3,8 @@ package service
 import (
 	"testing"
 
+	"google.golang.org/protobuf/types/known/structpb"
+
 	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/notify"
 	"github.com/lanyulei/reborn/backend/core/internal/testfake"
@@ -210,5 +212,56 @@ func TestNotifyTemplateService_ListTemplates(t *testing.T) {
 	}
 	if list.GetTotal() != 3 {
 		t.Fatalf("ListTemplates(keyword subject) total = %d, want 3", list.GetTotal())
+	}
+}
+
+// TestNotifyTemplateService_RenderTemplate 模板预览：样例缺省与覆盖、count>1 注入 Samples。
+func TestNotifyTemplateService_RenderTemplate(t *testing.T) {
+	t.Parallel()
+	svc, _ := newTemplateService(t)
+	ctx := testCtx()
+	resp, err := svc.RenderTemplate(ctx, &notifyv1.RenderTemplateRequest{Subject: "[{{.BizID}}] {{.Title}}", Body: "{{.Payload.host}}/{{.Count}}{{range .Samples}}/{{.title}}{{end}}"})
+	if err != nil || resp.GetSubject() != "[default] sample" || resp.GetBody() != "sample-host/1" {
+		t.Fatalf("RenderTemplate(defaults) = %+v, %v", resp, err)
+	}
+	payload, _ := structpb.NewStruct(map[string]any{"host": "h1"})
+	two := int32(2)
+	title := "T"
+	resp, err = svc.RenderTemplate(ctx, &notifyv1.RenderTemplateRequest{
+		Subject: "{{.Title}}", Body: "{{.Payload.host}}/{{.Count}}{{range .Samples}}/{{.title}}{{end}}",
+		Sample: &notifyv1.RenderSample{Title: &title, Payload: payload, Count: &two},
+	})
+	if err != nil || resp.GetSubject() != "T" || resp.GetBody() != "h1/2/T" {
+		t.Fatalf("RenderTemplate(sample) = %+v, %v", resp, err)
+	}
+	if _, err := svc.RenderTemplate(ctx, &notifyv1.RenderTemplateRequest{Subject: "{{.Nope}}", Body: "x"}); !errors.Is(err, biz.ErrTemplateInvalid) {
+		t.Fatalf("bad template error = %v, want ErrTemplateInvalid", err)
+	}
+}
+
+// TestNotifyTemplateService_FormatRoundtrip format 经 Create/Get/Update/Render 往返。
+func TestNotifyTemplateService_FormatRoundtrip(t *testing.T) {
+	t.Parallel()
+	svc, _ := newTemplateService(t)
+	ctx := testCtx()
+	html := "html"
+	created, err := svc.CreateTemplate(ctx, &notifyv1.CreateTemplateRequest{
+		EventType: "a.b", ChannelType: "email", Subject: "s", Body: "<b>{{.Title}}</b>", Format: &html,
+	})
+	if err != nil || created.GetTemplate().GetFormat() != "html" {
+		t.Fatalf("CreateTemplate(html) = %+v, %v", created, err)
+	}
+	got, err := svc.GetTemplate(ctx, &notifyv1.GetTemplateRequest{Id: created.GetTemplate().GetId()})
+	if err != nil || got.GetTemplate().GetFormat() != "html" {
+		t.Fatalf("GetTemplate format = %+v, %v", got, err)
+	}
+	card := "card"
+	upd, err := svc.UpdateTemplate(ctx, &notifyv1.UpdateTemplateRequest{Id: created.GetTemplate().GetId(), Format: &card})
+	if err != nil || upd.GetTemplate().GetFormat() != "card" || upd.GetTemplate().GetVersion() != 2 {
+		t.Fatalf("UpdateTemplate(card) = %+v, %v", upd, err)
+	}
+	resp, err := svc.RenderTemplate(ctx, &notifyv1.RenderTemplateRequest{Subject: "s", Body: "<i>{{.Title}}</i>", Format: &html})
+	if err != nil || resp.GetBody() != "<i>sample</i>" {
+		t.Fatalf("RenderTemplate(html) = %+v, %v", resp, err)
 	}
 }

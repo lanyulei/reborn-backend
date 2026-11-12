@@ -17,10 +17,13 @@ var _ = new(context.Context)
 
 const _ = http.SupportPackageIsVersion3
 
+const OperationNotifyDeadLetterServiceGetDeadLetter = "/notify.v1.NotifyDeadLetterService/GetDeadLetter"
 const OperationNotifyDeadLetterServiceListDeadLetters = "/notify.v1.NotifyDeadLetterService/ListDeadLetters"
 const OperationNotifyDeadLetterServiceReplayDeadLetter = "/notify.v1.NotifyDeadLetterService/ReplayDeadLetter"
 
 type NotifyDeadLetterServiceHTTPServer interface {
+	// GetDeadLetter GetDeadLetter 死信详情。
+	GetDeadLetter(context.Context, *GetDeadLetterRequest) (*GetDeadLetterResponse, error)
 	// ListDeadLetters ListDeadLetters 分页查询死信，page_size 上限 100；按转入时间倒序。
 	ListDeadLetters(context.Context, *ListDeadLettersRequest) (*ListDeadLettersResponse, error)
 	// ReplayDeadLetter ReplayDeadLetter 标记死信待重放（replay_state: none → pending），返回
@@ -31,6 +34,7 @@ type NotifyDeadLetterServiceHTTPServer interface {
 func RegisterNotifyDeadLetterServiceHTTPServer(s *http.Server, srv NotifyDeadLetterServiceHTTPServer) {
 	r := s.Route("/")
 	r.Handle("GET", "/api/v1/notify/dead-letter", _NotifyDeadLetterService_ListDeadLetters0_HTTP_Handler(srv))
+	r.Handle("GET", "/api/v1/notify/dead-letter/{id}", _NotifyDeadLetterService_GetDeadLetter0_HTTP_Handler(srv))
 	r.Handle("POST", "/api/v1/notify/dead-letter/{id}:replay", _NotifyDeadLetterService_ReplayDeadLetter0_HTTP_Handler(srv))
 }
 
@@ -49,6 +53,28 @@ func _NotifyDeadLetterService_ListDeadLetters0_HTTP_Handler(srv NotifyDeadLetter
 			return err
 		}
 		reply := out.(*ListDeadLettersResponse)
+		return ctx.Result(200, reply)
+	}
+}
+
+func _NotifyDeadLetterService_GetDeadLetter0_HTTP_Handler(srv NotifyDeadLetterServiceHTTPServer) func(ctx http.Context) error {
+	return func(ctx http.Context) error {
+		var in GetDeadLetterRequest
+		if err := ctx.BindQuery(&in); err != nil {
+			return err
+		}
+		if err := ctx.BindVars(&in); err != nil {
+			return err
+		}
+		http.SetOperation(ctx, OperationNotifyDeadLetterServiceGetDeadLetter)
+		h := ctx.Middleware(func(ctx context.Context, req interface{}) (interface{}, error) {
+			return srv.GetDeadLetter(ctx, req.(*GetDeadLetterRequest))
+		})
+		out, err := h(ctx, &in)
+		if err != nil {
+			return err
+		}
+		reply := out.(*GetDeadLetterResponse)
 		return ctx.Result(200, reply)
 	}
 }
@@ -76,6 +102,8 @@ func _NotifyDeadLetterService_ReplayDeadLetter0_HTTP_Handler(srv NotifyDeadLette
 }
 
 type NotifyDeadLetterServiceHTTPClient interface {
+	// GetDeadLetter GetDeadLetter 死信详情。
+	GetDeadLetter(ctx context.Context, req *GetDeadLetterRequest, opts ...http.CallOption) (rsp *GetDeadLetterResponse, err error)
 	// ListDeadLetters ListDeadLetters 分页查询死信，page_size 上限 100；按转入时间倒序。
 	ListDeadLetters(ctx context.Context, req *ListDeadLettersRequest, opts ...http.CallOption) (rsp *ListDeadLettersResponse, err error)
 	// ReplayDeadLetter ReplayDeadLetter 标记死信待重放（replay_state: none → pending），返回
@@ -89,6 +117,23 @@ type NotifyDeadLetterServiceHTTPClientImpl struct {
 
 func NewNotifyDeadLetterServiceHTTPClient(client *http.Client) NotifyDeadLetterServiceHTTPClient {
 	return &NotifyDeadLetterServiceHTTPClientImpl{client}
+}
+
+// GetDeadLetter GetDeadLetter 死信详情。
+func (c *NotifyDeadLetterServiceHTTPClientImpl) GetDeadLetter(ctx context.Context, in *GetDeadLetterRequest, opts ...http.CallOption) (*GetDeadLetterResponse, error) {
+	var out GetDeadLetterResponse
+	pattern := "/api/v1/notify/dead-letter/{id}"
+	path := http.BuildPath(pattern, in, http.WithQueryParams())
+	opts = append([]http.CallOption{
+		http.Accept("application/protojson"),
+		http.Operation(OperationNotifyDeadLetterServiceGetDeadLetter),
+		http.PathTemplate(pattern),
+	}, opts...)
+	err := c.cc.Invoke(ctx, "GET", path, nil, &out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // ListDeadLetters ListDeadLetters 分页查询死信，page_size 上限 100；按转入时间倒序。

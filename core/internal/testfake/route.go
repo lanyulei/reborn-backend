@@ -116,7 +116,7 @@ func (s *Store) ListRoutes(_ context.Context, filter biz.RouteFilter, page, page
 		if filter.BizID != "" && e.route.BizID != filter.BizID {
 			continue
 		}
-		if filter.Keyword != "" && !strings.Contains(e.route.EventPattern, filter.Keyword) {
+		if filter.Keyword != "" && !strings.Contains(e.route.EventPattern, filter.Keyword) && !strings.Contains(e.route.Name, filter.Keyword) {
 			continue
 		}
 		if filter.Enabled != nil && e.route.Enabled != *filter.Enabled {
@@ -158,4 +158,19 @@ func (s *Store) CountRoutesUsingChannel(_ context.Context, channelID string) (in
 		}
 	}
 	return n, nil
+}
+
+// ListRoutesByBiz implements biz 仓储接口：biz 内全部未删除行。
+func (s *Store) ListRoutesByBiz(_ context.Context, bizID string) ([]*biz.Route, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []*biz.Route
+	for _, e := range s.routes {
+		if e.deleted || e.route.BizID != bizID {
+			continue
+		}
+		out = append(out, cloneRoute(e.route))
+	}
+	slices.SortFunc(out, func(a, b *biz.Route) int { return strings.Compare(a.ID, b.ID) })
+	return out, nil
 }

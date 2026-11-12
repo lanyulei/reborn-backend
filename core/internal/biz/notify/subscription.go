@@ -52,6 +52,7 @@ type Subscription struct {
 // 代管解析结果，服务层保证非空），指针为 nil 表示不过滤。
 type SubscriptionFilter struct {
 	UserID  string
+	BizID   string // 空 = 不过滤（代管路径受限用户由 service 层强制携带）
 	Keyword string
 	Enabled *bool
 }

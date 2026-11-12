@@ -91,6 +91,15 @@ func (r *healthRepo) ClaimProbe(ctx context.Context, channelID string) (bool, bo
 	return false, false, nil
 }
 
+// CancelProbe implements biz.ChannelHealthRepo：仅在本行仍为探测中时归还名额。
+func (r *healthRepo) CancelProbe(ctx context.Context, channelID string) error {
+	if _, err := r.data.Pool.Exec(ctx,
+		"UPDATE notify_channel_health SET probing = false, update_time = now() WHERE channel_id = $1 AND probing", channelID); err != nil {
+		return fmt.Errorf("cancel breaker probe: %w", err)
+	}
+	return nil
+}
+
 // ListOpen implements biz.ChannelHealthRepo：打开中及刚到期待探测（60s 内）的渠道。
 func (r *healthRepo) ListOpen(ctx context.Context) (map[string]time.Time, error) {
 	rows, err := r.data.Pool.Query(ctx,

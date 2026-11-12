@@ -1,0 +1,339 @@
+syntax = "proto3";
+
+package cmdb.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "buf/validate/validate.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/cmdb/v1;v1";
+
+// CmdbSyncService 同步控制面：采集源（云账号 / 虚拟化平台）配置、手动触发、运行记录。
+// 采集与对账由独立的数据面进程（backend/cmdb）执行；本服务只写配置与任务、读结果。
+service CmdbSyncService {
+  // ListSources 分页查询采集源。
+  rpc ListSources(ListSourcesRequest) returns (ListSourcesResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/cmdb/sync/source"
+    };
+    option (system.v1.title) = "查询采集源列表";
+  }
+  // GetSource 查询采集源详情（不含凭据）。
+  rpc GetSource(GetSourceRequest) returns (GetSourceResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/cmdb/sync/source/{id}"
+    };
+    option (system.v1.title) = "查询采集源详情";
+  }
+  // CreateSource 创建采集源；凭据 AES-256-GCM 加密落库，任何响应不返回。
+  rpc CreateSource(CreateSourceRequest) returns (CreateSourceResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/cmdb/sync/source"
+      body: "*"
+    };
+    option (system.v1.title) = "创建采集源";
+  }
+  // UpdateSource 更新采集源（provider 不可改）；credential 不传 = 保留旧密文。
+  rpc UpdateSource(UpdateSourceRequest) returns (UpdateSourceResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/cmdb/sync/source/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "更新采集源";
+  }
+  // DeleteSource 删除采集源（软删；已同步的资源保留，来源标记不变）。
+  rpc DeleteSource(DeleteSourceRequest) returns (DeleteSourceResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/cmdb/sync/source/{id}"
+    };
+    option (system.v1.title) = "删除采集源";
+  }
+  // TriggerSync 手动触发一次同步（同一采集源已有未完成任务时返回 409）。
+  rpc TriggerSync(TriggerSyncRequest) returns (TriggerSyncResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/cmdb/sync/source/{id}:trigger"
+      body: "*"
+    };
+    option (system.v1.title) = "触发同步";
+  }
+  // ListRuns 分页查询采集源的运行记录（时间倒序）。
+  rpc ListRuns(ListRunsRequest) returns (ListRunsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/cmdb/sync/source/{id}/run"
+    };
+    option (system.v1.title) = "查询同步运行记录";
+  }
+  // RotateWebhook 生成/轮换回调令牌：明文只在本响应返回一次，库中只存哈希。
+  rpc RotateWebhook(RotateWebhookRequest) returns (RotateWebhookResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/cmdb/sync/source/{id}/webhook"
+      body: "*"
+    };
+    option (system.v1.title) = "轮换回调令牌";
+  }
+  // DisableWebhook 停用回调（清除令牌）。
+  rpc DisableWebhook(DisableWebhookRequest) returns (DisableWebhookResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/cmdb/sync/source/{id}/webhook"
+    };
+    option (system.v1.title) = "停用回调";
+  }
+}
+
+// SyncSource 采集源（出参；凭据永不返回）。
+message SyncSource {
+  // id 采集源标识。
+  string id = 1;
+  // name 名称。
+  string name = 2;
+  // provider 提供方：aliyun / vmware。
+  string provider = 3;
+  // config 提供方配置（不含凭据）。
+  google.protobuf.Struct config = 4;
+  // has_credential 是否已配置凭据。
+  bool has_credential = 5;
+  // env 写入资源的缺省环境标识。
+  string env = 6;
+  // interval_seconds 同步周期（秒）。
+  int32 interval_seconds = 7;
+  // grace_period_seconds 消失宽限期（秒）。
+  int32 grace_period_seconds = 8;
+  // enabled 是否启用。
+  bool enabled = 9;
+  // next_run_time 下次计划运行时间。
+  google.protobuf.Timestamp next_run_time = 10;
+  // last_run_time 最近运行时间。
+  google.protobuf.Timestamp last_run_time = 11;
+  // last_status 最近运行状态：never / running / succeeded / failed。
+  string last_status = 12;
+  // active_task 是否有未完成任务（排队或运行中）。
+  bool active_task = 13;
+  // version 乐观锁版本号。
+  int64 version = 14;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 15;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 16;
+  // webhook_enabled 是否已配置回调令牌。
+  bool webhook_enabled = 17;
+  // webhook_path 数据面回调路径（拼接数据面公网地址使用）。
+  string webhook_path = 18;
+}
+
+// SyncRun 同步运行记录。
+message SyncRun {
+  // id 运行标识。
+  string id = 1;
+  // source_id 采集源标识。
+  string source_id = 2;
+  // task_id 任务标识。
+  string task_id = 3;
+  // status 状态：running / succeeded / failed。
+  string status = 4;
+  // discovered 采集到的资源数。
+  int32 discovered = 5;
+  // created 新建数。
+  int32 created = 6;
+  // updated 更新数。
+  int32 updated = 7;
+  // unchanged 无变化数。
+  int32 unchanged = 8;
+  // disappeared 本次标记消失数。
+  int32 disappeared = 9;
+  // retired 超过宽限期退役数。
+  int32 retired = 10;
+  // failed 写入失败数（名称/唯一键与人工数据冲突等）。
+  int32 failed = 11;
+  // error 运行级错误（采集失败等）。
+  string error = 12;
+  // errors 行级错误样本。
+  repeated google.protobuf.Struct errors = 13;
+  // start_time 开始时间。
+  google.protobuf.Timestamp start_time = 14;
+  // finish_time 结束时间。
+  google.protobuf.Timestamp finish_time = 15;
+}
+
+// ListSourcesRequest 查询采集源列表请求。
+message ListSourcesRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // keyword 名称模糊匹配，可选。
+  optional string keyword = 3 [(buf.validate.field).string.max_len = 64];
+  // provider 提供方过滤，可选。
+  optional string provider = 4 [(buf.validate.field).string.max_len = 16];
+}
+
+// ListSourcesResponse 查询采集源列表响应。
+message ListSourcesResponse {
+  // items 当前页数据。
+  repeated SyncSource items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// GetSourceRequest 查询采集源详情请求。
+message GetSourceRequest {
+  // id 采集源标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetSourceResponse 查询采集源详情响应。
+message GetSourceResponse {
+  // source 采集源。
+  SyncSource source = 1;
+}
+
+// CreateSourceRequest 创建采集源请求。
+message CreateSourceRequest {
+  // name 名称，1-64。
+  string name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // provider 提供方：aliyun / vmware。
+  string provider = 2 [(buf.validate.field).string = {
+    in: ["aliyun", "vmware"]
+  }];
+  // config 提供方配置（结构随 provider，见 kit/cmdbcontract；不含凭据）。
+  google.protobuf.Struct config = 3 [(buf.validate.field).required = true];
+  // credential 凭据明文（阿里云 AccessKeySecret / vCenter 密码），≤512；加密落库，任何响应不返回。
+  string credential = 4 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 512
+  }];
+  // env 写入资源的缺省环境标识，可选。
+  optional string env = 5 [(buf.validate.field).string.max_len = 32];
+  // interval_seconds 同步周期（秒），300-604800，缺省 3600。
+  optional int32 interval_seconds = 6 [(buf.validate.field).int32 = {
+    gte: 300
+    lte: 604800
+  }];
+  // grace_period_seconds 消失宽限期（秒），0-2592000，缺省 86400。
+  optional int32 grace_period_seconds = 7 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 2592000
+  }];
+  // enabled 是否启用，缺省 true。
+  optional bool enabled = 8;
+}
+
+// CreateSourceResponse 创建采集源响应。
+message CreateSourceResponse {
+  // source 创建后的采集源。
+  SyncSource source = 1;
+}
+
+// UpdateSourceRequest 更新采集源请求（整体替换配置；credential 不传 = 保留）。
+message UpdateSourceRequest {
+  // id 采集源标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // version 乐观锁版本号（须与当前一致）。
+  int64 version = 2 [(buf.validate.field).int64.gte = 1];
+  // name 名称，1-64。
+  string name = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // config 提供方配置。
+  google.protobuf.Struct config = 4 [(buf.validate.field).required = true];
+  // credential 新凭据，可选：不传保留旧密文。
+  optional string credential = 5 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 512
+  }];
+  // env 缺省环境标识。
+  string env = 6 [(buf.validate.field).string.max_len = 32];
+  // interval_seconds 同步周期（秒）。
+  int32 interval_seconds = 7 [(buf.validate.field).int32 = {
+    gte: 300
+    lte: 604800
+  }];
+  // grace_period_seconds 消失宽限期（秒）。
+  int32 grace_period_seconds = 8 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 2592000
+  }];
+  // enabled 是否启用。
+  bool enabled = 9;
+}
+
+// UpdateSourceResponse 更新采集源响应。
+message UpdateSourceResponse {
+  // source 更新后的采集源。
+  SyncSource source = 1;
+}
+
+// DeleteSourceRequest 删除采集源请求。
+message DeleteSourceRequest {
+  // id 采集源标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteSourceResponse 删除采集源响应。
+message DeleteSourceResponse {}
+
+// TriggerSyncRequest 触发同步请求。
+message TriggerSyncRequest {
+  // id 采集源标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// TriggerSyncResponse 触发同步响应。
+message TriggerSyncResponse {
+  // task_id 任务标识。
+  string task_id = 1;
+}
+
+// ListRunsRequest 查询运行记录请求。
+message ListRunsRequest {
+  // id 采集源标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // page 页码，从 1 开始。
+  int64 page = 2 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 3 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+}
+
+// ListRunsResponse 查询运行记录响应。
+message ListRunsResponse {
+  // items 当前页数据。
+  repeated SyncRun items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// RotateWebhookRequest 轮换回调令牌请求。
+message RotateWebhookRequest {
+  // id 采集源标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// RotateWebhookResponse 轮换回调令牌响应（令牌明文仅此一次）。
+message RotateWebhookResponse {
+  // token 令牌明文。
+  string token = 1;
+  // path 数据面回调路径。
+  string path = 2;
+  // header 携带令牌的请求头名。
+  string header = 3;
+}
+
+// DisableWebhookRequest 停用回调请求。
+message DisableWebhookRequest {
+  // id 采集源标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DisableWebhookResponse 停用回调响应。
+message DisableWebhookResponse {}

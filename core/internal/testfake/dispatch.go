@@ -24,6 +24,9 @@ func (s *Store) ListDispatches(_ context.Context, filter biz.DispatchFilter, pag
 		if filter.Status != nil && dispatch.Status != *filter.Status {
 			continue
 		}
+		if filter.Recipient != "" && dispatch.Recipient != filter.Recipient {
+			continue
+		}
 		if filter.CreateTimeStart != nil && dispatch.CreateTime.Before(*filter.CreateTimeStart) {
 			continue
 		}
@@ -47,6 +50,18 @@ func (s *Store) ListDispatches(_ context.Context, filter biz.DispatchFilter, pag
 	}
 	end := min(start+pageSize, total)
 	return items[start:end], total, nil
+}
+
+// GetDispatch implements biz.DispatchRepo。
+func (s *Store) GetDispatch(_ context.Context, id string) (*biz.Dispatch, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, dispatch := range s.dispatches {
+		if dispatch.ID == id {
+			return cloneDispatch(dispatch), nil
+		}
+	}
+	return nil, biz.ErrDispatchNotFound
 }
 
 // cloneDispatch 深拷贝发送任务 DO（Content 为引用类型、NextRetry 为指针）。

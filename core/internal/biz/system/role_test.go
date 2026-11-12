@@ -115,3 +115,22 @@ func TestRoleUsecase_GetAndList(t *testing.T) {
 		t.Fatalf("List() total = %d, len = %d, want 1/1", total, len(roles))
 	}
 }
+
+// TestRoleUsecase_DeleteBuiltin 内置角色不可删除（不区分操作者身份），且绑定/授权不受影响。
+func TestRoleUsecase_DeleteBuiltin(t *testing.T) {
+	t.Parallel()
+	stub := newUserStoreStub()
+	uc := NewRoleUsecase(stub, stub, newTestAuthorizer(t, &policyStoreStub{}, time.Minute))
+	stub.roles["role-default"] = &Role{ID: "role-default", Code: "default", Builtin: true}
+	stub.bindings["u1"] = []string{"role-default"}
+
+	if err := uc.Delete(context.Background(), "role-default"); !errors.Is(err, ErrRoleBuiltin) {
+		t.Fatalf("Delete(builtin) error = %v, want ErrRoleBuiltin", err)
+	}
+	if _, ok := stub.roles["role-default"]; !ok {
+		t.Fatal("Delete(builtin) removed the role")
+	}
+	if got := stub.bindings["u1"]; len(got) != 1 {
+		t.Fatalf("Delete(builtin) touched bindings: %v", got)
+	}
+}

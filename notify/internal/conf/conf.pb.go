@@ -191,12 +191,12 @@ func (x *Data) GetDatabase() *Data_Database {
 // Pipeline 是管道组件参数。全部 Duration 采用 protojson 秒格式（如 0.2s）。
 type Pipeline struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// roles 启用的组件角色：api / router / sender / dlqworker / maintenance
-	// （relay 保留给 NATS 骨干）；环境变量 SERVER_ROLES（逗号分隔）优先于本项；
-	// 两者皆空 = 全部角色。
+	// roles 启用的组件角色：api / router / sender / dlqworker / maintenance / relay
+	// （relay 仅 backbone=nats 时有意义）；环境变量 SERVER_ROLES（逗号分隔）优先于本项；
+	// 两者皆空 = 全部角色（nats 下含 relay）。
 	Roles []string `protobuf:"bytes,1,rep,name=roles,proto3" json:"roles,omitempty"`
-	// backbone 消息骨干：pg（缺省，事件/任务经 PostgreSQL SKIP LOCKED 流转）；
-	// nats 保留给后续实现。
+	// backbone 消息骨干：pg（缺省，事件/任务经 PostgreSQL SKIP LOCKED 流转）或 nats
+	// （JetStream 作队列游标，PG 仍为事实源与状态机）；其它取值装配失败。
 	Backbone string `protobuf:"bytes,2,opt,name=backbone,proto3" json:"backbone,omitempty"`
 	// router 路由参数。
 	Router *Pipeline_Router `protobuf:"bytes,3,opt,name=router,proto3" json:"router,omitempty"`
@@ -207,7 +207,9 @@ type Pipeline struct {
 	// maintenance 维护 job 参数。
 	Maintenance *Pipeline_Maintenance `protobuf:"bytes,6,opt,name=maintenance,proto3" json:"maintenance,omitempty"`
 	// ingress 接入参数。
-	Ingress       *Pipeline_Ingress `protobuf:"bytes,7,opt,name=ingress,proto3" json:"ingress,omitempty"`
+	Ingress *Pipeline_Ingress `protobuf:"bytes,7,opt,name=ingress,proto3" json:"ingress,omitempty"`
+	// nats JetStream 骨干参数。
+	Nats          *Pipeline_Nats `protobuf:"bytes,8,opt,name=nats,proto3" json:"nats,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -287,6 +289,13 @@ func (x *Pipeline) GetMaintenance() *Pipeline_Maintenance {
 func (x *Pipeline) GetIngress() *Pipeline_Ingress {
 	if x != nil {
 		return x.Ingress
+	}
+	return nil
+}
+
+func (x *Pipeline) GetNats() *Pipeline_Nats {
+	if x != nil {
+		return x.Nats
 	}
 	return nil
 }
@@ -583,9 +592,12 @@ type Pipeline_Sender struct {
 	// reap_interval 租约过期回收扫描周期，缺省 30s。
 	ReapInterval *durationpb.Duration `protobuf:"bytes,7,opt,name=reap_interval,json=reapInterval,proto3" json:"reap_interval,omitempty"`
 	// max_attempts 最大尝试次数（首发 + 5 次重试 = 6），超出转死信，缺省 6。
-	MaxAttempts   int32 `protobuf:"varint,8,opt,name=max_attempts,json=maxAttempts,proto3" json:"max_attempts,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	MaxAttempts int32 `protobuf:"varint,8,opt,name=max_attempts,json=maxAttempts,proto3" json:"max_attempts,omitempty"`
+	// max_send_timeout 渠道显式超时（webhook timeout_s）的上限，缺省 10s：
+	// 渠道未配置取 send_timeout，配置了取 min(timeout_s, max_send_timeout)。
+	MaxSendTimeout *durationpb.Duration `protobuf:"bytes,9,opt,name=max_send_timeout,json=maxSendTimeout,proto3" json:"max_send_timeout,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *Pipeline_Sender) Reset() {
@@ -672,6 +684,13 @@ func (x *Pipeline_Sender) GetMaxAttempts() int32 {
 		return x.MaxAttempts
 	}
 	return 0
+}
+
+func (x *Pipeline_Sender) GetMaxSendTimeout() *durationpb.Duration {
+	if x != nil {
+		return x.MaxSendTimeout
+	}
+	return nil
 }
 
 // Dlq 死信重放 worker 参数。
@@ -930,6 +949,115 @@ func (x *Pipeline_Ingress) GetClockSkew() *durationpb.Duration {
 	return nil
 }
 
+// Nats JetStream 骨干参数（backbone=nats 时生效）。
+type Pipeline_Nats struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// url 连接地址，缺省 nats://127.0.0.1:4222。
+	Url string `protobuf:"bytes,1,opt,name=url,proto3" json:"url,omitempty"`
+	// token 连接令牌（yaml 用 ${KRATOS_NATS_TOKEN} 占位，不落文件）。
+	Token string `protobuf:"bytes,2,opt,name=token,proto3" json:"token,omitempty"`
+	// stream_prefix 流名前缀（<prefix>_EVENTS / <prefix>_DISPATCHES），缺省 NOTIFY。
+	StreamPrefix string `protobuf:"bytes,3,opt,name=stream_prefix,json=streamPrefix,proto3" json:"stream_prefix,omitempty"`
+	// ack_wait 消费者 AckWait（须 > 单批处理时长），缺省 2m。
+	AckWait *durationpb.Duration `protobuf:"bytes,4,opt,name=ack_wait,json=ackWait,proto3" json:"ack_wait,omitempty"`
+	// max_deliver 单条消息最大投递次数（耗尽后由 relay 超期重发兜底），缺省 20。
+	MaxDeliver int32 `protobuf:"varint,5,opt,name=max_deliver,json=maxDeliver,proto3" json:"max_deliver,omitempty"`
+	// relay_poll relay 扫描周期，缺省 200ms。
+	RelayPoll *durationpb.Duration `protobuf:"bytes,6,opt,name=relay_poll,json=relayPoll,proto3" json:"relay_poll,omitempty"`
+	// relay_batch relay 单轮发布上限，缺省 500。
+	RelayBatch int32 `protobuf:"varint,7,opt,name=relay_batch,json=relayBatch,proto3" json:"relay_batch,omitempty"`
+	// replicas 流副本数（生产 3），缺省 1。
+	Replicas      int32 `protobuf:"varint,8,opt,name=replicas,proto3" json:"replicas,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Pipeline_Nats) Reset() {
+	*x = Pipeline_Nats{}
+	mi := &file_conf_conf_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Pipeline_Nats) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Pipeline_Nats) ProtoMessage() {}
+
+func (x *Pipeline_Nats) ProtoReflect() protoreflect.Message {
+	mi := &file_conf_conf_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Pipeline_Nats.ProtoReflect.Descriptor instead.
+func (*Pipeline_Nats) Descriptor() ([]byte, []int) {
+	return file_conf_conf_proto_rawDescGZIP(), []int{3, 6}
+}
+
+func (x *Pipeline_Nats) GetUrl() string {
+	if x != nil {
+		return x.Url
+	}
+	return ""
+}
+
+func (x *Pipeline_Nats) GetToken() string {
+	if x != nil {
+		return x.Token
+	}
+	return ""
+}
+
+func (x *Pipeline_Nats) GetStreamPrefix() string {
+	if x != nil {
+		return x.StreamPrefix
+	}
+	return ""
+}
+
+func (x *Pipeline_Nats) GetAckWait() *durationpb.Duration {
+	if x != nil {
+		return x.AckWait
+	}
+	return nil
+}
+
+func (x *Pipeline_Nats) GetMaxDeliver() int32 {
+	if x != nil {
+		return x.MaxDeliver
+	}
+	return 0
+}
+
+func (x *Pipeline_Nats) GetRelayPoll() *durationpb.Duration {
+	if x != nil {
+		return x.RelayPoll
+	}
+	return nil
+}
+
+func (x *Pipeline_Nats) GetRelayBatch() int32 {
+	if x != nil {
+		return x.RelayBatch
+	}
+	return 0
+}
+
+func (x *Pipeline_Nats) GetReplicas() int32 {
+	if x != nil {
+		return x.Replicas
+	}
+	return 0
+}
+
 // Master 是渠道凭据加密主密钥配置（与 core 完全一致）。
 type Notify_Master struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -944,7 +1072,7 @@ type Notify_Master struct {
 
 func (x *Notify_Master) Reset() {
 	*x = Notify_Master{}
-	mi := &file_conf_conf_proto_msgTypes[13]
+	mi := &file_conf_conf_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -956,7 +1084,7 @@ func (x *Notify_Master) String() string {
 func (*Notify_Master) ProtoMessage() {}
 
 func (x *Notify_Master) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[13]
+	mi := &file_conf_conf_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1002,7 +1130,7 @@ const file_conf_conf_proto_rawDesc = "" +
 	"\x06source\x18\x01 \x01(\tR\x06source\x12\x1b\n" +
 	"\tmax_conns\x18\x02 \x01(\x05R\bmaxConns\x12\x1b\n" +
 	"\tmin_conns\x18\x03 \x01(\x05R\bminConns\x12F\n" +
-	"\x12max_conn_idle_time\x18\x04 \x01(\v2\x19.google.protobuf.DurationR\x0fmaxConnIdleTime\"\xd2\r\n" +
+	"\x12max_conn_idle_time\x18\x04 \x01(\v2\x19.google.protobuf.DurationR\x0fmaxConnIdleTime\"\xe4\x10\n" +
 	"\bPipeline\x12\x14\n" +
 	"\x05roles\x18\x01 \x03(\tR\x05roles\x12\x1a\n" +
 	"\bbackbone\x18\x02 \x01(\tR\bbackbone\x12-\n" +
@@ -1010,7 +1138,8 @@ const file_conf_conf_proto_rawDesc = "" +
 	"\x06sender\x18\x04 \x01(\v2\x15.conf.Pipeline.SenderR\x06sender\x12$\n" +
 	"\x03dlq\x18\x05 \x01(\v2\x12.conf.Pipeline.DlqR\x03dlq\x12<\n" +
 	"\vmaintenance\x18\x06 \x01(\v2\x1a.conf.Pipeline.MaintenanceR\vmaintenance\x120\n" +
-	"\aingress\x18\a \x01(\v2\x16.conf.Pipeline.IngressR\aingress\x1a\xe0\x02\n" +
+	"\aingress\x18\a \x01(\v2\x16.conf.Pipeline.IngressR\aingress\x12'\n" +
+	"\x04nats\x18\b \x01(\v2\x13.conf.Pipeline.NatsR\x04nats\x1a\xe0\x02\n" +
 	"\x06Router\x12>\n" +
 	"\rpoll_interval\x18\x01 \x01(\v2\x19.google.protobuf.DurationR\fpollInterval\x12\x1d\n" +
 	"\n" +
@@ -1019,7 +1148,7 @@ const file_conf_conf_proto_rawDesc = "" +
 	"configPoll\x12@\n" +
 	"\x0esweep_interval\x18\x04 \x01(\v2\x19.google.protobuf.DurationR\rsweepInterval\x12K\n" +
 	"\x14max_aggregate_window\x18\x05 \x01(\v2\x19.google.protobuf.DurationR\x12maxAggregateWindow\x12,\n" +
-	"\x12max_route_attempts\x18\x06 \x01(\x05R\x10maxRouteAttempts\x1a\x9d\x03\n" +
+	"\x12max_route_attempts\x18\x06 \x01(\x05R\x10maxRouteAttempts\x1a\xe2\x03\n" +
 	"\x06Sender\x12>\n" +
 	"\rpoll_interval\x18\x01 \x01(\v2\x19.google.protobuf.DurationR\fpollInterval\x12\x1d\n" +
 	"\n" +
@@ -1029,7 +1158,8 @@ const file_conf_conf_proto_rawDesc = "" +
 	"\fsend_timeout\x18\x05 \x01(\v2\x19.google.protobuf.DurationR\vsendTimeout\x12@\n" +
 	"\x0erender_timeout\x18\x06 \x01(\v2\x19.google.protobuf.DurationR\rrenderTimeout\x12>\n" +
 	"\rreap_interval\x18\a \x01(\v2\x19.google.protobuf.DurationR\freapInterval\x12!\n" +
-	"\fmax_attempts\x18\b \x01(\x05R\vmaxAttempts\x1ad\n" +
+	"\fmax_attempts\x18\b \x01(\x05R\vmaxAttempts\x12C\n" +
+	"\x10max_send_timeout\x18\t \x01(\v2\x19.google.protobuf.DurationR\x0emaxSendTimeout\x1ad\n" +
 	"\x03Dlq\x12>\n" +
 	"\rpoll_interval\x18\x01 \x01(\v2\x19.google.protobuf.DurationR\fpollInterval\x12\x1d\n" +
 	"\n" +
@@ -1047,7 +1177,19 @@ const file_conf_conf_proto_rawDesc = "" +
 	"\tretention\x18\x03 \x01(\v2\x18.conf.Pipeline.RetentionR\tretention\x1aC\n" +
 	"\aIngress\x128\n" +
 	"\n" +
-	"clock_skew\x18\x01 \x01(\v2\x19.google.protobuf.DurationR\tclockSkew\"Q\n" +
+	"clock_skew\x18\x01 \x01(\v2\x19.google.protobuf.DurationR\tclockSkew\x1a\xa1\x02\n" +
+	"\x04Nats\x12\x10\n" +
+	"\x03url\x18\x01 \x01(\tR\x03url\x12\x14\n" +
+	"\x05token\x18\x02 \x01(\tR\x05token\x12#\n" +
+	"\rstream_prefix\x18\x03 \x01(\tR\fstreamPrefix\x124\n" +
+	"\back_wait\x18\x04 \x01(\v2\x19.google.protobuf.DurationR\aackWait\x12\x1f\n" +
+	"\vmax_deliver\x18\x05 \x01(\x05R\n" +
+	"maxDeliver\x128\n" +
+	"\n" +
+	"relay_poll\x18\x06 \x01(\v2\x19.google.protobuf.DurationR\trelayPoll\x12\x1f\n" +
+	"\vrelay_batch\x18\a \x01(\x05R\n" +
+	"relayBatch\x12\x1a\n" +
+	"\breplicas\x18\b \x01(\x05R\breplicas\"Q\n" +
 	"\x06Notify\x12+\n" +
 	"\x06master\x18\x01 \x01(\v2\x13.conf.Notify.MasterR\x06master\x1a\x1a\n" +
 	"\x06Master\x12\x10\n" +
@@ -1065,7 +1207,7 @@ func file_conf_conf_proto_rawDescGZIP() []byte {
 	return file_conf_conf_proto_rawDescData
 }
 
-var file_conf_conf_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_conf_conf_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_conf_conf_proto_goTypes = []any{
 	(*Bootstrap)(nil),            // 0: conf.Bootstrap
 	(*Server)(nil),               // 1: conf.Server
@@ -1080,8 +1222,9 @@ var file_conf_conf_proto_goTypes = []any{
 	(*Pipeline_Retention)(nil),   // 10: conf.Pipeline.Retention
 	(*Pipeline_Maintenance)(nil), // 11: conf.Pipeline.Maintenance
 	(*Pipeline_Ingress)(nil),     // 12: conf.Pipeline.Ingress
-	(*Notify_Master)(nil),        // 13: conf.Notify.Master
-	(*durationpb.Duration)(nil),  // 14: google.protobuf.Duration
+	(*Pipeline_Nats)(nil),        // 13: conf.Pipeline.Nats
+	(*Notify_Master)(nil),        // 14: conf.Notify.Master
+	(*durationpb.Duration)(nil),  // 15: google.protobuf.Duration
 }
 var file_conf_conf_proto_depIdxs = []int32{
 	1,  // 0: conf.Bootstrap.server:type_name -> conf.Server
@@ -1095,33 +1238,37 @@ var file_conf_conf_proto_depIdxs = []int32{
 	9,  // 8: conf.Pipeline.dlq:type_name -> conf.Pipeline.Dlq
 	11, // 9: conf.Pipeline.maintenance:type_name -> conf.Pipeline.Maintenance
 	12, // 10: conf.Pipeline.ingress:type_name -> conf.Pipeline.Ingress
-	13, // 11: conf.Notify.master:type_name -> conf.Notify.Master
-	14, // 12: conf.Server.HTTP.timeout:type_name -> google.protobuf.Duration
-	14, // 13: conf.Data.Database.max_conn_idle_time:type_name -> google.protobuf.Duration
-	14, // 14: conf.Pipeline.Router.poll_interval:type_name -> google.protobuf.Duration
-	14, // 15: conf.Pipeline.Router.config_poll:type_name -> google.protobuf.Duration
-	14, // 16: conf.Pipeline.Router.sweep_interval:type_name -> google.protobuf.Duration
-	14, // 17: conf.Pipeline.Router.max_aggregate_window:type_name -> google.protobuf.Duration
-	14, // 18: conf.Pipeline.Sender.poll_interval:type_name -> google.protobuf.Duration
-	14, // 19: conf.Pipeline.Sender.lease:type_name -> google.protobuf.Duration
-	14, // 20: conf.Pipeline.Sender.send_timeout:type_name -> google.protobuf.Duration
-	14, // 21: conf.Pipeline.Sender.render_timeout:type_name -> google.protobuf.Duration
-	14, // 22: conf.Pipeline.Sender.reap_interval:type_name -> google.protobuf.Duration
-	14, // 23: conf.Pipeline.Dlq.poll_interval:type_name -> google.protobuf.Duration
-	14, // 24: conf.Pipeline.Retention.event:type_name -> google.protobuf.Duration
-	14, // 25: conf.Pipeline.Retention.dispatch:type_name -> google.protobuf.Duration
-	14, // 26: conf.Pipeline.Retention.delivery_log:type_name -> google.protobuf.Duration
-	14, // 27: conf.Pipeline.Retention.dlq:type_name -> google.protobuf.Duration
-	14, // 28: conf.Pipeline.Retention.dedup:type_name -> google.protobuf.Duration
-	14, // 29: conf.Pipeline.Retention.agg_group:type_name -> google.protobuf.Duration
-	14, // 30: conf.Pipeline.Maintenance.interval:type_name -> google.protobuf.Duration
-	10, // 31: conf.Pipeline.Maintenance.retention:type_name -> conf.Pipeline.Retention
-	14, // 32: conf.Pipeline.Ingress.clock_skew:type_name -> google.protobuf.Duration
-	33, // [33:33] is the sub-list for method output_type
-	33, // [33:33] is the sub-list for method input_type
-	33, // [33:33] is the sub-list for extension type_name
-	33, // [33:33] is the sub-list for extension extendee
-	0,  // [0:33] is the sub-list for field type_name
+	13, // 11: conf.Pipeline.nats:type_name -> conf.Pipeline.Nats
+	14, // 12: conf.Notify.master:type_name -> conf.Notify.Master
+	15, // 13: conf.Server.HTTP.timeout:type_name -> google.protobuf.Duration
+	15, // 14: conf.Data.Database.max_conn_idle_time:type_name -> google.protobuf.Duration
+	15, // 15: conf.Pipeline.Router.poll_interval:type_name -> google.protobuf.Duration
+	15, // 16: conf.Pipeline.Router.config_poll:type_name -> google.protobuf.Duration
+	15, // 17: conf.Pipeline.Router.sweep_interval:type_name -> google.protobuf.Duration
+	15, // 18: conf.Pipeline.Router.max_aggregate_window:type_name -> google.protobuf.Duration
+	15, // 19: conf.Pipeline.Sender.poll_interval:type_name -> google.protobuf.Duration
+	15, // 20: conf.Pipeline.Sender.lease:type_name -> google.protobuf.Duration
+	15, // 21: conf.Pipeline.Sender.send_timeout:type_name -> google.protobuf.Duration
+	15, // 22: conf.Pipeline.Sender.render_timeout:type_name -> google.protobuf.Duration
+	15, // 23: conf.Pipeline.Sender.reap_interval:type_name -> google.protobuf.Duration
+	15, // 24: conf.Pipeline.Sender.max_send_timeout:type_name -> google.protobuf.Duration
+	15, // 25: conf.Pipeline.Dlq.poll_interval:type_name -> google.protobuf.Duration
+	15, // 26: conf.Pipeline.Retention.event:type_name -> google.protobuf.Duration
+	15, // 27: conf.Pipeline.Retention.dispatch:type_name -> google.protobuf.Duration
+	15, // 28: conf.Pipeline.Retention.delivery_log:type_name -> google.protobuf.Duration
+	15, // 29: conf.Pipeline.Retention.dlq:type_name -> google.protobuf.Duration
+	15, // 30: conf.Pipeline.Retention.dedup:type_name -> google.protobuf.Duration
+	15, // 31: conf.Pipeline.Retention.agg_group:type_name -> google.protobuf.Duration
+	15, // 32: conf.Pipeline.Maintenance.interval:type_name -> google.protobuf.Duration
+	10, // 33: conf.Pipeline.Maintenance.retention:type_name -> conf.Pipeline.Retention
+	15, // 34: conf.Pipeline.Ingress.clock_skew:type_name -> google.protobuf.Duration
+	15, // 35: conf.Pipeline.Nats.ack_wait:type_name -> google.protobuf.Duration
+	15, // 36: conf.Pipeline.Nats.relay_poll:type_name -> google.protobuf.Duration
+	37, // [37:37] is the sub-list for method output_type
+	37, // [37:37] is the sub-list for method input_type
+	37, // [37:37] is the sub-list for extension type_name
+	37, // [37:37] is the sub-list for extension extendee
+	0,  // [0:37] is the sub-list for field type_name
 }
 
 func init() { file_conf_conf_proto_init() }
@@ -1135,7 +1282,7 @@ func file_conf_conf_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_conf_conf_proto_rawDesc), len(file_conf_conf_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   14,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

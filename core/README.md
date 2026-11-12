@@ -68,8 +68,10 @@
 - 业务表软删除（`delete_time` 置位），唯一约束（username/email/phone/code）只约束未删除行；
 - 关联表仅保留 create_time/create_user，解绑即物理删除；
 - 审计字段：`create_time, update_time, delete_time, create_user, update_user, delete_user`
-  （关联表仅前两者中的 create_time/create_user）；认证中间件已上线，但 system_permission/
-  system_grant/system_user_role 写路径尚未注入操作者 ID，create_user 当前为 NULL（待补）。
+  （关联表仅前两者中的 create_time/create_user）。操作者 ID 由鉴权后的 `operatorMiddleware`
+  注入中性上下文 `internal/pkg/operator`（data 层 `operator.FromContext` 读取，不触碰 claims）：
+  notify 域六张配置表的写路径已落库；system_permission/system_grant/system_user_role 写路径
+  尚未接入（create_user 仍为 NULL，待补）。
 
 ## 快速开始
 
@@ -109,8 +111,8 @@ make migrate-force VERSION=23
 # 3. 生成代码（修改 .proto 或 provider 后必须执行）
 make gen
 
-# 4. 本地运行（必须用 kratos CLI）
-kratos run
+# 4. 本地运行（make run = kratos run 指向 cmd/server；cmd/ 下另有 migrate 子命令，裸 kratos run 会交互询问）
+make run
 
 # 5. 静态检查 + 安全扫描（提交前必须全绿）
 golangci-lint run ./...
@@ -177,7 +179,12 @@ go test ./...               -race -shuffle=on
   DELETE /api/v1/notify/channel/{id}             删除（软删，名称可复用；仍被未删除路由引用返回 409 NOTIFY_CHANNEL_IN_USE）
   GET    /api/v1/notify/channel/{id}             详情（不含 secret）
   GET    /api/v1/notify/channel                  分页列表（keyword 模糊/type/enabled 过滤，page_size ≤ 100）
+  GET    /api/v1/notify/channel-health           渠道健康（共享熔断状态只读视图：打开/探测中/60s 滑窗样本与失败数；迁移 0031 授 SELECT；受限用户须带 biz_id）
+  （六类配置资源的 PUT 更新均返回更新后的实体，免二次 GET；路由/静默 spec 新增 name/description，keyword 同时匹配 name；
+  webhook URL 拒绝本机/私网字面量（SSRF，管道连接时再校验解析地址）；rate_limit 新增 per_minute（qps=0 时生效，
+  两者皆 0 按类型缺省：钉钉/企微 20/min、飞书 100/min）；模板可用函数 fmtTime/severity/json/trunc/upper/lower）
   POST   /api/v1/notify/channel/{id}:test        发送测试事件（须启用；直插 source=internal 事件，类型/标题/收件/载荷可覆盖，
+                                                   同一渠道 10s 冷却，过频 429 NOTIFY_TEST_TOO_FREQUENT；
                                                缺省 notify.test；投递结果经事件/任务/明细查询异步跟踪，链路随管道 P1 生效）
 
 通知模板（notify 域；biz × event_type × channel_type 三维覆盖，'*' 通配，渲染解析链精确 > 通配）：
@@ -185,6 +192,10 @@ go test ./...               -race -shuffle=on
   PUT    /api/v1/notify/template/{id}            部分更新（恒 version+1；spec 可改，组合仍须唯一）
   DELETE /api/v1/notify/template/{id}            删除（软删，组合可复用）
   GET    /api/v1/notify/template/{id}            详情
+  POST   /api/v1/notify/template:render          模板预览（只读：按管道口径渲染给定样例，白名单函数/顶层变量严格/载荷宽松/≤64KB；可带 format）
+  模板 format（迁移 0037）：text（缺省）/ markdown / html / card；html 走 html/template 自动转义并发 multipart/alternative 邮件；
+  渠道按能力降级：email 只认 html，群机器人 card→卡片（钉钉 actionCard / 企微 template_card / 飞书 interactive，需渠道 config.card_url；
+  钉钉/企微缺 card_url 降级 markdown）、markdown/html→markdown、text→各平台既有格式；webhook 透传 body.format。
   GET    /api/v1/notify/template                 分页列表（keyword 模糊/eventType/channelType/enabled 过滤，page_size ≤ 100）
 
 通知路由（notify 域；事件→通知任务的分发决策：模式+严重级+标签匹配，多路由重叠由 priority 决胜）：
@@ -192,6 +203,7 @@ go test ./...               -race -shuffle=on
   PUT    /api/v1/notify/route/{id}               更新（spec 整组替换规则字段；enabled 独立启停，至少传其一）
   DELETE /api/v1/notify/route/{id}               删除（软删；在途 dispatch 照常完成）
   GET    /api/v1/notify/route/{id}               详情
+  POST   /api/v1/notify/route:preview            路由试算（只读：静默 → 选路 → 渠道实例 + 模板解析 + 是否聚合，与管道同一匹配实现 kit/notifycontract）
   GET    /api/v1/notify/route                    分页列表（keyword 模糊匹配 event_pattern/enabled 过滤，page_size ≤ 100）
 
 通知静默（notify 域；免打扰：命中即抑制为 suppressed，多条静默可重叠，任一命中即生效）：
@@ -202,10 +214,12 @@ go test ./...               -race -shuffle=on
   GET    /api/v1/notify/silence                  分页列表（keyword 模糊匹配 event_pattern/enabled 过滤，page_size ≤ 100）
 
 订阅中心（notify 域；用户自助 + admin 代管：user_id 缺省=操作者本人，指定他人须 is_admin；
-  自然键 user×biz×event_pattern，同键保存=替换偏好与启停；偏好 key 限 email/dingtalk/wecom/feishu）：
+  自然键 user×biz×event_pattern，同键保存=替换偏好与启停；偏好 key 限 email/dingtalk/wecom/feishu；
+  角色 biz_scope 只约束**代管路径**：代管写/删目标 biz 须在范围内（403），代管列表受限用户须带 biz_id（400）；
+  本人自助不受限）：
   POST   /api/v1/notify/subscription             保存订阅（Upsert；偏好值 subscribed 开关 / target 目标群恰其一）
   DELETE /api/v1/notify/subscription/{id}        删除（软删，同键可重建；仅本人或 admin）
-  GET    /api/v1/notify/subscription             分页列表（user_id 缺省=本人；keyword 模糊匹配 event_pattern/enabled 过滤）
+  GET    /api/v1/notify/subscription             分页列表（user_id 缺省=本人；keyword 模糊匹配 event_pattern/enabled/biz_id 过滤）
 
 生产者管理（notify 域；事件接入凭据：token 明文仅签发响应出现一次，库存 SHA-256；
   数据面 HMAC 鉴权属管道 ingress，spec 整组替换 + enabled 独立启停，Disable/Rotate ≤10s 生效）：
@@ -219,11 +233,14 @@ go test ./...               -race -shuffle=on
 事件查询（notify 域；只读运行表 notify_event——管道写 / core 读，事件 append-only 无管理写路径；
   全量排障视图含 status/publish_state/publish_attempts；payload 原生 JSON 对象渲染）：
   GET    /api/v1/notify/event                     分页列表（biz/event_type 精确 + status + 落库时间区间过滤，
+  GET    /api/v1/notify/event/{id}              事件下钻：事件 + 发送任务（≤100）+ 每任务最近一次投递明细
+  POST   /api/v1/notify/event/{id}:replay       事件级重发（新事件 source=internal、新 id、不带 dedup_key；独立 RBAC 元素 notify.event.replay）
                                                   page_size ≤ 100，落库时间倒序）
 
 发送任务查询（notify 域；只读运行表 notify_dispatch——管道 router 生成 / core 读；
   一行 = 事件 × 渠道 × 收件人的一个发送任务，含重试/死信状态与渲染快照排障视图）：
   GET    /api/v1/notify/dispatch                  分页列表（event_id 事件下钻/channel_id/status + 生成时间
+  GET    /api/v1/notify/dispatch/{id}           发送任务详情（含渲染快照）
                                                   区间过滤，page_size ≤ 100，生成时间倒序）
 
 投递明细查询（notify 域；只读运行表 notify_delivery_log——管道 sender 每次尝试后追加 /
@@ -235,6 +252,7 @@ go test ./...               -race -shuffle=on
   控制台唯一写动作：标记 replay_state none→pending，dlq worker（管道 P1）轮询后重新
   生成 dispatch 并置 replayed；仅 none 可标记，重复/终态标记返回 409）：
   GET    /api/v1/notify/dead-letter               分页列表（event_id/channel_id/replay_state + 转入
+  GET    /api/v1/notify/dead-letter/{id}        死信详情
                                                   时间区间过滤，page_size ≤ 100，转入时间倒序）
   POST   /api/v1/notify/dead-letter/{id}:replay   标记待重放（返回更新后的行；独立 RBAC 元素）
 ```
@@ -296,6 +314,13 @@ api/openapi.swagger.json   # 62 个接口（auth 4 + system 23 + notify 35），
 6. **路由注册**：`internal/server/http.go` 加构造参数与一行 Register（Kratos 显式注册惯例）；中间件顺序固定 recovery → tracing → logging → validate → rate-limit → auth → authz，无需改动。
 7. **豁免清单（仅匿名接口需要）**：`internal/server/auth.go` 的 `authExempt`（免认证）与 `internal/service/system/operations.go` 的 `authzExemptOperations`（免授权）两处同步——守护测试 `TestAuthExemptWithinAuthzExempt` 强制前者 ⊆ 后者。
 8. **收尾**：`make gen` 重生成 wire → `make check`（format + lint + vuln + test）全绿后提交。
+
+### 运行表（事件/任务/明细/死信）查询口径
+
+- 列表缺省只回看 **7 天**（`create_time_start` 缺省 = 有效 `create_time_end` − 7d），跨度上限 **90 天**
+  （400 `NOTIFY_TIME_RANGE_INVALID`）：运行表按月分区，无界 `count(*)` + 排序会扫全部分区。
+- 索引（迁移 0030）：任务/明细/死信 `(channel_id, create_time DESC)`（受限用户必填 channel_id 的查询路径），
+  事件 `(status, create_time DESC) WHERE status IN (3,4)`（无 biz 的失败/抑制排障）。
 
 ### 共享工具提取规则
 

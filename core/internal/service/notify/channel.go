@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"time"
 
 	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/notify"
@@ -15,13 +16,14 @@ import (
 
 // NotifyChannelService 实现 api/notify/v1 生成的 NotifyChannelServiceServer。
 type NotifyChannelService struct {
-	uc    *biz.ChannelUsecase
-	guard bizGuard
+	uc     *biz.ChannelUsecase
+	health *biz.ChannelHealthUsecase
+	guard  bizGuard
 }
 
 // NewNotifyChannelService new a NotifyChannelService.
-func NewNotifyChannelService(uc *biz.ChannelUsecase, scope biz.BizScopeResolver) *NotifyChannelService {
-	return &NotifyChannelService{uc: uc, guard: newBizGuard(scope)}
+func NewNotifyChannelService(uc *biz.ChannelUsecase, health *biz.ChannelHealthUsecase, scope biz.BizScopeResolver) *NotifyChannelService {
+	return &NotifyChannelService{uc: uc, health: health, guard: newBizGuard(scope)}
 }
 
 // channelTypeEnum 是 proto 枚举 → 落库类型字符串映射。
@@ -78,7 +80,7 @@ func robotFromProto(p *notifyv1.RobotChannelConfig) *biz.RobotConfig {
 	if p == nil {
 		return nil
 	}
-	return &biz.RobotConfig{AtMobiles: p.GetAtMobiles()}
+	return &biz.RobotConfig{AtMobiles: p.GetAtMobiles(), CardURL: p.GetCardUrl(), CardButton: p.GetCardButton()}
 }
 
 // emailToProto 将 DO 邮件配置转为 proto。
@@ -113,7 +115,14 @@ func robotToProto(c *biz.RobotConfig) *notifyv1.RobotChannelConfig {
 	if c == nil {
 		return nil
 	}
-	return &notifyv1.RobotChannelConfig{AtMobiles: c.AtMobiles}
+	out := &notifyv1.RobotChannelConfig{AtMobiles: c.AtMobiles}
+	if c.CardURL != "" {
+		out.CardUrl = &c.CardURL
+	}
+	if c.CardButton != "" {
+		out.CardButton = &c.CardButton
+	}
+	return out
 }
 
 // configFromCreateDetail 将创建请求的类型化 oneof 转为 DO 配置；
@@ -148,7 +157,7 @@ func rateLimitFromProto(p *notifyv1.NotifyRateLimit) *biz.RateLimit {
 	if p == nil {
 		return nil
 	}
-	return &biz.RateLimit{QPS: p.GetQps(), Burst: p.GetBurst()}
+	return &biz.RateLimit{QPS: p.GetQps(), Burst: p.GetBurst(), PerMinute: p.GetPerMinute()}
 }
 
 // toProtoChannel 将 DO 显式转换为 proto 实体（secret 不存在出参语义）。
@@ -158,7 +167,7 @@ func toProtoChannel(ch *biz.Channel) *notifyv1.NotifyChannel {
 		BizId:      ch.BizID,
 		Type:       channelTypeString[ch.Type],
 		Name:       ch.Name,
-		RateLimit:  &notifyv1.NotifyRateLimit{Qps: ch.RateLimit.QPS, Burst: ch.RateLimit.Burst},
+		RateLimit:  &notifyv1.NotifyRateLimit{Qps: ch.RateLimit.QPS, Burst: ch.RateLimit.Burst, PerMinute: ch.RateLimit.PerMinute},
 		Enabled:    ch.Enabled,
 		CreateTime: timestamppb.New(ch.CreateTime),
 		UpdateTime: timestamppb.New(ch.UpdateTime),
@@ -219,7 +228,11 @@ func (s *NotifyChannelService) UpdateChannel(ctx context.Context, req *notifyv1.
 	if err := s.uc.Update(ctx, req.GetId(), upd); err != nil {
 		return nil, err
 	}
-	return &notifyv1.UpdateChannelResponse{}, nil
+	ch, err := s.uc.Get(ctx, req.GetId())
+	if err != nil {
+		return nil, err
+	}
+	return &notifyv1.UpdateChannelResponse{Channel: toProtoChannel(ch)}, nil
 }
 
 // DeleteChannel implements proto NotifyChannelService/DeleteChannel。
@@ -317,4 +330,30 @@ func (s *NotifyChannelService) bizOf(ctx context.Context, id string) func() (str
 		}
 		return ch.BizID, nil
 	}
+}
+
+// ListChannelHealth implements proto NotifyChannelService/ListChannelHealth：受限
+// 用户须携带 biz_id 且在范围内（与列表同口径）。
+func (s *NotifyChannelService) ListChannelHealth(ctx context.Context, req *notifyv1.ListChannelHealthRequest) (*notifyv1.ListChannelHealthResponse, error) {
+	bizID, err := s.guard.listBiz(ctx, req.BizId)
+	if err != nil {
+		return nil, err
+	}
+	items, err := s.health.List(ctx, bizID)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	resp := &notifyv1.ListChannelHealthResponse{Items: make([]*notifyv1.NotifyChannelHealth, 0, len(items))}
+	for _, h := range items {
+		item := &notifyv1.NotifyChannelHealth{
+			ChannelId: h.ChannelID, ChannelName: h.ChannelName, ChannelType: h.ChannelType, BizId: h.BizID,
+			Samples: h.Samples, Failures: h.Failures, Open: h.Open(now), Probing: h.Probing, UpdateTime: timestamppb.New(h.UpdateTime),
+		}
+		if h.OpenUntil != nil {
+			item.OpenUntil = timestamppb.New(*h.OpenUntil)
+		}
+		resp.Items = append(resp.Items, item)
+	}
+	return resp, nil
 }

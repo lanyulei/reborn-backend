@@ -394,3 +394,63 @@ func IsNotifyBizRequired(err error) bool {
 func ErrorNotifyBizRequired(format string, args ...interface{}) *errors.Error {
 	return errors.New(400, ErrorReason_NOTIFY_BIZ_REQUIRED.String(), fmt.Sprintf(format, args...))
 }
+
+// NOTIFY_TEST_TOO_FREQUENT 同一渠道连通性测试过于频繁（测试事件真实投递，
+// 按渠道 10s 冷却），映射 HTTP 429。
+func IsNotifyTestTooFrequent(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := errors.FromError(err)
+	return e.Reason == ErrorReason_NOTIFY_TEST_TOO_FREQUENT.String() && e.Code == 429
+}
+
+// NOTIFY_TEST_TOO_FREQUENT 同一渠道连通性测试过于频繁（测试事件真实投递，
+// 按渠道 10s 冷却），映射 HTTP 429。
+func ErrorNotifyTestTooFrequent(format string, args ...interface{}) *errors.Error {
+	return errors.New(429, ErrorReason_NOTIFY_TEST_TOO_FREQUENT.String(), fmt.Sprintf(format, args...))
+}
+
+// NOTIFY_TIME_RANGE_INVALID 运行表列表时间跨度超过 90 天（分区表按时间裁剪，
+// 更早的数据请分段查询），映射 HTTP 400。
+func IsNotifyTimeRangeInvalid(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := errors.FromError(err)
+	return e.Reason == ErrorReason_NOTIFY_TIME_RANGE_INVALID.String() && e.Code == 400
+}
+
+// NOTIFY_TIME_RANGE_INVALID 运行表列表时间跨度超过 90 天（分区表按时间裁剪，
+// 更早的数据请分段查询），映射 HTTP 400。
+func ErrorNotifyTimeRangeInvalid(format string, args ...interface{}) *errors.Error {
+	return errors.New(400, ErrorReason_NOTIFY_TIME_RANGE_INVALID.String(), fmt.Sprintf(format, args...))
+}
+
+// NOTIFY_EVENT_NOT_FOUND 目标事件不存在（或已按保留期清理），映射 HTTP 404。
+func IsNotifyEventNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := errors.FromError(err)
+	return e.Reason == ErrorReason_NOTIFY_EVENT_NOT_FOUND.String() && e.Code == 404
+}
+
+// NOTIFY_EVENT_NOT_FOUND 目标事件不存在（或已按保留期清理），映射 HTTP 404。
+func ErrorNotifyEventNotFound(format string, args ...interface{}) *errors.Error {
+	return errors.New(404, ErrorReason_NOTIFY_EVENT_NOT_FOUND.String(), fmt.Sprintf(format, args...))
+}
+
+// NOTIFY_DISPATCH_NOT_FOUND 目标发送任务不存在，映射 HTTP 404。
+func IsNotifyDispatchNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := errors.FromError(err)
+	return e.Reason == ErrorReason_NOTIFY_DISPATCH_NOT_FOUND.String() && e.Code == 404
+}
+
+// NOTIFY_DISPATCH_NOT_FOUND 目标发送任务不存在，映射 HTTP 404。
+func ErrorNotifyDispatchNotFound(format string, args ...interface{}) *errors.Error {
+	return errors.New(404, ErrorReason_NOTIFY_DISPATCH_NOT_FOUND.String(), fmt.Sprintf(format, args...))
+}

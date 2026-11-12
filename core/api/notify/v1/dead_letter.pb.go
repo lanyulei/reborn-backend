@@ -166,6 +166,9 @@ type ListDeadLettersRequest struct {
 	ChannelId *string `protobuf:"bytes,4,opt,name=channel_id,json=channelId,proto3,oneof" json:"channel_id,omitempty"`
 	// replay_state 重放状态过滤，可选：1 none / 2 pending / 3 replayed。
 	ReplayState *int32 `protobuf:"varint,5,opt,name=replay_state,json=replayState,proto3,oneof" json:"replay_state,omitempty"`
+	// 时间窗口：create_time_start 缺省 = (create_time_end 或当前时间) 往前 7 天；
+	// 两者跨度上限 90 天（400 NOTIFY_TIME_RANGE_INVALID）。分区表按时间裁剪，无界
+	// 查询会扫全部分区。
 	// create_time_start 转入时间下界（含），可选。
 	CreateTimeStart *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=create_time_start,json=createTimeStart,proto3,oneof" json:"create_time_start,omitempty"`
 	// create_time_end 转入时间上界（含），可选。
@@ -400,6 +403,98 @@ func (x *ReplayDeadLetterResponse) GetDeadLetter() *NotifyDeadLetter {
 	return nil
 }
 
+// GetDeadLetterRequest 死信详情请求。
+type GetDeadLetterRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// id 死信 ID。
+	Id            string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetDeadLetterRequest) Reset() {
+	*x = GetDeadLetterRequest{}
+	mi := &file_notify_v1_dead_letter_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetDeadLetterRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetDeadLetterRequest) ProtoMessage() {}
+
+func (x *GetDeadLetterRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_notify_v1_dead_letter_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetDeadLetterRequest.ProtoReflect.Descriptor instead.
+func (*GetDeadLetterRequest) Descriptor() ([]byte, []int) {
+	return file_notify_v1_dead_letter_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *GetDeadLetterRequest) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+// GetDeadLetterResponse 死信详情响应。
+type GetDeadLetterResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// dead_letter 死信。
+	DeadLetter    *NotifyDeadLetter `protobuf:"bytes,1,opt,name=dead_letter,json=deadLetter,proto3" json:"dead_letter,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetDeadLetterResponse) Reset() {
+	*x = GetDeadLetterResponse{}
+	mi := &file_notify_v1_dead_letter_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetDeadLetterResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetDeadLetterResponse) ProtoMessage() {}
+
+func (x *GetDeadLetterResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_notify_v1_dead_letter_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetDeadLetterResponse.ProtoReflect.Descriptor instead.
+func (*GetDeadLetterResponse) Descriptor() ([]byte, []int) {
+	return file_notify_v1_dead_letter_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *GetDeadLetterResponse) GetDeadLetter() *NotifyDeadLetter {
+	if x != nil {
+		return x.DeadLetter
+	}
+	return nil
+}
+
 var File_notify_v1_dead_letter_proto protoreflect.FileDescriptor
 
 const file_notify_v1_dead_letter_proto_rawDesc = "" +
@@ -444,9 +539,15 @@ const file_notify_v1_dead_letter_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\"X\n" +
 	"\x18ReplayDeadLetterResponse\x12<\n" +
 	"\vdead_letter\x18\x01 \x01(\v2\x1b.notify.v1.NotifyDeadLetterR\n" +
-	"deadLetter2\xdb\x02\n" +
+	"deadLetter\"0\n" +
+	"\x14GetDeadLetterRequest\x12\x18\n" +
+	"\x02id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\"U\n" +
+	"\x15GetDeadLetterResponse\x12<\n" +
+	"\vdead_letter\x18\x01 \x01(\v2\x1b.notify.v1.NotifyDeadLetterR\n" +
+	"deadLetter2\xf5\x03\n" +
 	"\x17NotifyDeadLetterService\x12\x98\x01\n" +
-	"\x0fListDeadLetters\x12!.notify.v1.ListDeadLettersRequest\x1a\".notify.v1.ListDeadLettersResponse\">\xc2\xf3\x18\x18查询通知死信列表\x82\xd3\xe4\x93\x02\x1c\x12\x1a/api/v1/notify/dead-letter\x12\xa4\x01\n" +
+	"\x0fListDeadLetters\x12!.notify.v1.ListDeadLettersRequest\x1a\".notify.v1.ListDeadLettersResponse\">\xc2\xf3\x18\x18查询通知死信列表\x82\xd3\xe4\x93\x02\x1c\x12\x1a/api/v1/notify/dead-letter\x12\x97\x01\n" +
+	"\rGetDeadLetter\x12\x1f.notify.v1.GetDeadLetterRequest\x1a .notify.v1.GetDeadLetterResponse\"C\xc2\xf3\x18\x18查询通知死信详情\x82\xd3\xe4\x93\x02!\x12\x1f/api/v1/notify/dead-letter/{id}\x12\xa4\x01\n" +
 	"\x10ReplayDeadLetter\x12\".notify.v1.ReplayDeadLetterRequest\x1a#.notify.v1.ReplayDeadLetterResponse\"G\xc2\xf3\x18\x12标记死信重放\x82\xd3\xe4\x93\x02+:\x01*\"&/api/v1/notify/dead-letter/{id}:replayB:Z8github.com/lanyulei/reborn/backend/core/api/notify/v1;v1b\x06proto3"
 
 var (
@@ -461,31 +562,36 @@ func file_notify_v1_dead_letter_proto_rawDescGZIP() []byte {
 	return file_notify_v1_dead_letter_proto_rawDescData
 }
 
-var file_notify_v1_dead_letter_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_notify_v1_dead_letter_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_notify_v1_dead_letter_proto_goTypes = []any{
 	(*NotifyDeadLetter)(nil),         // 0: notify.v1.NotifyDeadLetter
 	(*ListDeadLettersRequest)(nil),   // 1: notify.v1.ListDeadLettersRequest
 	(*ListDeadLettersResponse)(nil),  // 2: notify.v1.ListDeadLettersResponse
 	(*ReplayDeadLetterRequest)(nil),  // 3: notify.v1.ReplayDeadLetterRequest
 	(*ReplayDeadLetterResponse)(nil), // 4: notify.v1.ReplayDeadLetterResponse
-	(*timestamppb.Timestamp)(nil),    // 5: google.protobuf.Timestamp
+	(*GetDeadLetterRequest)(nil),     // 5: notify.v1.GetDeadLetterRequest
+	(*GetDeadLetterResponse)(nil),    // 6: notify.v1.GetDeadLetterResponse
+	(*timestamppb.Timestamp)(nil),    // 7: google.protobuf.Timestamp
 }
 var file_notify_v1_dead_letter_proto_depIdxs = []int32{
-	5, // 0: notify.v1.NotifyDeadLetter.create_time:type_name -> google.protobuf.Timestamp
-	5, // 1: notify.v1.NotifyDeadLetter.update_time:type_name -> google.protobuf.Timestamp
-	5, // 2: notify.v1.ListDeadLettersRequest.create_time_start:type_name -> google.protobuf.Timestamp
-	5, // 3: notify.v1.ListDeadLettersRequest.create_time_end:type_name -> google.protobuf.Timestamp
-	0, // 4: notify.v1.ListDeadLettersResponse.items:type_name -> notify.v1.NotifyDeadLetter
-	0, // 5: notify.v1.ReplayDeadLetterResponse.dead_letter:type_name -> notify.v1.NotifyDeadLetter
-	1, // 6: notify.v1.NotifyDeadLetterService.ListDeadLetters:input_type -> notify.v1.ListDeadLettersRequest
-	3, // 7: notify.v1.NotifyDeadLetterService.ReplayDeadLetter:input_type -> notify.v1.ReplayDeadLetterRequest
-	2, // 8: notify.v1.NotifyDeadLetterService.ListDeadLetters:output_type -> notify.v1.ListDeadLettersResponse
-	4, // 9: notify.v1.NotifyDeadLetterService.ReplayDeadLetter:output_type -> notify.v1.ReplayDeadLetterResponse
-	8, // [8:10] is the sub-list for method output_type
-	6, // [6:8] is the sub-list for method input_type
-	6, // [6:6] is the sub-list for extension type_name
-	6, // [6:6] is the sub-list for extension extendee
-	0, // [0:6] is the sub-list for field type_name
+	7,  // 0: notify.v1.NotifyDeadLetter.create_time:type_name -> google.protobuf.Timestamp
+	7,  // 1: notify.v1.NotifyDeadLetter.update_time:type_name -> google.protobuf.Timestamp
+	7,  // 2: notify.v1.ListDeadLettersRequest.create_time_start:type_name -> google.protobuf.Timestamp
+	7,  // 3: notify.v1.ListDeadLettersRequest.create_time_end:type_name -> google.protobuf.Timestamp
+	0,  // 4: notify.v1.ListDeadLettersResponse.items:type_name -> notify.v1.NotifyDeadLetter
+	0,  // 5: notify.v1.ReplayDeadLetterResponse.dead_letter:type_name -> notify.v1.NotifyDeadLetter
+	0,  // 6: notify.v1.GetDeadLetterResponse.dead_letter:type_name -> notify.v1.NotifyDeadLetter
+	1,  // 7: notify.v1.NotifyDeadLetterService.ListDeadLetters:input_type -> notify.v1.ListDeadLettersRequest
+	5,  // 8: notify.v1.NotifyDeadLetterService.GetDeadLetter:input_type -> notify.v1.GetDeadLetterRequest
+	3,  // 9: notify.v1.NotifyDeadLetterService.ReplayDeadLetter:input_type -> notify.v1.ReplayDeadLetterRequest
+	2,  // 10: notify.v1.NotifyDeadLetterService.ListDeadLetters:output_type -> notify.v1.ListDeadLettersResponse
+	6,  // 11: notify.v1.NotifyDeadLetterService.GetDeadLetter:output_type -> notify.v1.GetDeadLetterResponse
+	4,  // 12: notify.v1.NotifyDeadLetterService.ReplayDeadLetter:output_type -> notify.v1.ReplayDeadLetterResponse
+	10, // [10:13] is the sub-list for method output_type
+	7,  // [7:10] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_notify_v1_dead_letter_proto_init() }
@@ -500,7 +606,7 @@ func file_notify_v1_dead_letter_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_notify_v1_dead_letter_proto_rawDesc), len(file_notify_v1_dead_letter_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   5,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

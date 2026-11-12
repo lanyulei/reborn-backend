@@ -118,7 +118,7 @@ func TestUserService_BindAndListRoles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("testfake.NewAuthorizer() error = %v", err)
 	}
-	roleSvc := NewRoleService(biz.NewRoleUsecase(store, store, authorizer), biz.NewPermissionUsecase(store, store, authorizer, biznotify.NewNotificationUsecase(store, nil), testfake.NewTxManager()))
+	roleSvc := NewRoleService(biz.NewRoleUsecase(store, store, authorizer), biz.NewPermissionUsecase(store, store, authorizer, biznotify.NewNotificationUsecase(store, nil), testfake.NewTxManager()), userSvc.uc)
 	ctx := context.Background()
 
 	user, err := userSvc.CreateUser(ctx, &v1.CreateUserRequest{

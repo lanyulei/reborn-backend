@@ -53,4 +53,8 @@ enum ErrorReason {
   // USER_SELF_OPERATION 不允许对当前登录账号自身执行的管理操作（停用/删除/
   // 变更超管标记），映射 HTTP 400；防止操作者把自己锁在系统之外。
   USER_SELF_OPERATION = 17 [(errors.code) = 400];
+  // ROLE_BUILTIN_PROTECTED 内置角色不可删除（删除即破坏新建用户默认关联），映射 HTTP 400。
+  ROLE_BUILTIN_PROTECTED = 18 [(errors.code) = 400];
+  // AVATAR_NOT_FOUND 用户未设置头像（未配置语义，非错误状态），映射 HTTP 404。
+  AVATAR_NOT_FOUND = 19 [(errors.code) = 404];
 }

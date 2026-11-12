@@ -3,6 +3,7 @@ syntax = "proto3";
 package system.v1;
 
 import "google/api/annotations.proto";
+import "google/api/httpbody.proto";
 import "buf/validate/validate.proto";
 import "system/v1/role.proto";
 import "system/v1/user.proto";
@@ -39,6 +40,21 @@ service AuthService {
   rpc GetLoginProfile(GetLoginProfileRequest) returns (GetLoginProfileResponse) {
     option (google.api.http) = {
       get: "/api/v1/me"
+    };
+  }
+  // UploadMyAvatar 上传当前登录用户的头像（自助接口，免授权）：图片落盘后把带内容
+  // 指纹的访问地址写入用户 avatar 字段并返回。
+  rpc UploadMyAvatar(UploadMyAvatarRequest) returns (UploadMyAvatarResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/me/avatar"
+      body: "*"
+    };
+  }
+  // GetUserAvatar 以原始字节流返回用户头像（HttpBody），供 <img> 直载；匿名可读
+  // （静态资源语义，路径含不可枚举的用户 UUID）。未设置返回 AVATAR_NOT_FOUND。
+  rpc GetUserAvatar(GetUserAvatarRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {
+      get: "/api/v1/user/{id}/avatar"
     };
   }
 }
@@ -118,4 +134,26 @@ message GetLoginProfileResponse {
   repeated string biz_scope = 6;
   // biz_unrestricted 通知 biz 不受限（超管或任一启用角色 scope 为空）。
   bool biz_unrestricted = 7;
+}
+
+// UploadMyAvatarRequest 上传头像请求。
+message UploadMyAvatarRequest {
+  // data 图片二进制内容，1B-1MB。
+  bytes data = 1 [(buf.validate.field).bytes = { min_len: 1, max_len: 1048576 }];
+  // mime 图片 MIME 类型，白名单三种（不含 SVG：用户上传内容不允许可执行脚本的格式）。
+  string mime = 2 [(buf.validate.field).string = {
+    in: ["image/png", "image/jpeg", "image/webp"]
+  }];
+}
+
+// UploadMyAvatarResponse 上传头像响应。
+message UploadMyAvatarResponse {
+  // url 带内容指纹的头像访问地址（已写入用户 avatar 字段）。
+  string url = 1;
+}
+
+// GetUserAvatarRequest 查看头像请求。
+message GetUserAvatarRequest {
+  // id 用户唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
 }

@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package cmdb.webhook.v1;
+
+import "errors/errors.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/cmdb/api/webhook/v1;v1";
+
+// ErrorReason 回调接入错误码。
+enum ErrorReason {
+  // 缺省 HTTP 状态码。
+  option (errors.default_code) = 500;
+
+  // ERROR_REASON_UNSPECIFIED 未指定。
+  ERROR_REASON_UNSPECIFIED = 0;
+  // WEBHOOK_UNAUTHORIZED 令牌缺失或不匹配，映射 HTTP 401。
+  WEBHOOK_UNAUTHORIZED = 1 [(errors.code) = 401];
+  // WEBHOOK_SOURCE_NOT_FOUND 采集源不存在、已删除、已停用或未启用回调，映射 HTTP 404。
+  WEBHOOK_SOURCE_NOT_FOUND = 2 [(errors.code) = 404];
+  // WEBHOOK_RATE_LIMITED 同源 60s 内已触发过，映射 HTTP 429。
+  WEBHOOK_RATE_LIMITED = 3 [(errors.code) = 429];
+}

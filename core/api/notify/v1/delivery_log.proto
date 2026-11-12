@@ -67,6 +67,9 @@ message ListDeliveryLogsRequest {
   optional string channel_id = 4 [(buf.validate.field).string.uuid = true];
   // ok 投递结果过滤，可选：true 仅成功 / false 仅失败。
   optional bool ok = 5;
+  // 时间窗口：create_time_start 缺省 = (create_time_end 或当前时间) 往前 7 天；
+  // 两者跨度上限 90 天（400 NOTIFY_TIME_RANGE_INVALID）。分区表按时间裁剪，无界
+  // 查询会扫全部分区。
   // create_time_start 落库时间下界（含），可选。
   optional google.protobuf.Timestamp create_time_start = 6;
   // create_time_end 落库时间上界（含），可选。

@@ -9,15 +9,46 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// AdminResolver 判定操作者是否超管（由 biz.UserUsecase 实现，wire 自动注入）。
+type AdminResolver interface {
+	IsAdminUser(ctx context.Context, id string) (bool, error)
+}
+
 // RoleService 实现 api/system/v1 生成的 RoleServiceServer。
 type RoleService struct {
-	uc   *biz.RoleUsecase
-	perm *biz.PermissionUsecase
+	uc    *biz.RoleUsecase
+	perm  *biz.PermissionUsecase
+	admin AdminResolver
 }
 
 // NewRoleService new a RoleService.
-func NewRoleService(uc *biz.RoleUsecase, perm *biz.PermissionUsecase) *RoleService {
-	return &RoleService{uc: uc, perm: perm}
+func NewRoleService(uc *biz.RoleUsecase, perm *biz.PermissionUsecase, admin AdminResolver) *RoleService {
+	return &RoleService{uc: uc, perm: perm, admin: admin}
+}
+
+// guardBuiltinWrite 内置角色写操作守卫：目标为内置角色时要求操作者为超管
+// （缺少身份按无效令牌拒绝；操作者不存在按仓储错误透传，fail closed）。
+// 非内置角色不做额外限制，沿用接口级 RBAC。
+func (s *RoleService) guardBuiltinWrite(ctx context.Context, roleID string) error {
+	role, err := s.uc.Get(ctx, roleID)
+	if err != nil {
+		return err
+	}
+	if !role.Builtin {
+		return nil
+	}
+	operator, err := UserIDFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	isAdmin, err := s.admin.IsAdminUser(ctx, operator)
+	if err != nil {
+		return err
+	}
+	if !isAdmin {
+		return v1.ErrorPermissionDenied("only administrators may manage the built-in role")
+	}
+	return nil
 }
 
 // CreateRole implements proto RoleService/CreateRole.
@@ -40,6 +71,9 @@ func (s *RoleService) CreateRole(ctx context.Context, req *v1.CreateRoleRequest)
 
 // UpdateRole implements proto RoleService/UpdateRole.
 func (s *RoleService) UpdateRole(ctx context.Context, req *v1.UpdateRoleRequest) (*v1.UpdateRoleResponse, error) {
+	if err := s.guardBuiltinWrite(ctx, req.GetId()); err != nil {
+		return nil, err
+	}
 	upd := biz.RoleUpdate{Name: req.Name, Status: req.Status}
 	if req.BizScope != nil {
 		scope := req.GetBizScope().GetItems()
@@ -109,6 +143,9 @@ func (s *RoleService) GetRolePermissions(ctx context.Context, req *v1.GetRolePer
 // 最后刷新策略快照。操作者取自 JWT claims（本端点必经鉴权中间件；提取
 // 失败按空处理，事件载荷省略 operator 字段）。
 func (s *RoleService) SetRolePermissions(ctx context.Context, req *v1.SetRolePermissionsRequest) (*v1.SetRolePermissionsResponse, error) {
+	if err := s.guardBuiltinWrite(ctx, req.GetId()); err != nil {
+		return nil, err
+	}
 	if err := validateOperations(req.GetApis()); err != nil {
 		return nil, err
 	}
@@ -195,6 +232,7 @@ func toProtoRole(r *biz.Role) *v1.Role {
 		Code:       r.Code,
 		Status:     r.Status,
 		BizScope:   r.BizScope,
+		Builtin:    r.Builtin,
 		CreateTime: timestamppb.New(r.CreateTime),
 		UpdateTime: timestamppb.New(r.UpdateTime),
 	}

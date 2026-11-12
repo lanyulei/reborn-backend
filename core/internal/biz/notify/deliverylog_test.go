@@ -114,3 +114,21 @@ func TestDeliveryLogUsecase_ListPagingNormalize(t *testing.T) {
 		t.Fatalf("List(other dispatch) = (%v, %d, %v), want nil/0", items, total, err)
 	}
 }
+
+func (s *deliveryLogRepoStub) LatestByDispatchIDs(_ context.Context, ids []string) ([]*DeliveryLog, error) {
+	latest := map[string]*DeliveryLog{}
+	for _, l := range s.logs {
+		for _, id := range ids {
+			if l.DispatchID == id && (latest[id] == nil || l.CreateTime.After(latest[id].CreateTime)) {
+				latest[id] = l
+			}
+		}
+	}
+	var out []*DeliveryLog
+	for _, id := range ids {
+		if l, ok := latest[id]; ok {
+			out = append(out, l)
+		}
+	}
+	return out, nil
+}

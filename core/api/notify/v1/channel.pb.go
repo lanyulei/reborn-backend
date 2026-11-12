@@ -98,7 +98,11 @@ type NotifyRateLimit struct {
 	// qps 每秒补充令牌速率，0 表示不限。
 	Qps int64 `protobuf:"varint,1,opt,name=qps,proto3" json:"qps,omitempty"`
 	// burst 令牌桶容量（突发上限），0 表示不限。
-	Burst         int64 `protobuf:"varint,2,opt,name=burst,proto3" json:"burst,omitempty"`
+	Burst int64 `protobuf:"varint,2,opt,name=burst,proto3" json:"burst,omitempty"`
+	// per_minute 每分钟配额（qps=0 时生效）：群机器人平台按"每分钟 N 条"限制（钉钉/企微
+	// 20/min），整数 qps 表达不了。两者皆 0 时按渠道类型缺省（dingtalk/wecom 20/min、
+	// feishu 100/min；email/webhook 不限）。
+	PerMinute     int64 `protobuf:"varint,3,opt,name=per_minute,json=perMinute,proto3" json:"per_minute,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -143,6 +147,13 @@ func (x *NotifyRateLimit) GetQps() int64 {
 func (x *NotifyRateLimit) GetBurst() int64 {
 	if x != nil {
 		return x.Burst
+	}
+	return 0
+}
+
+func (x *NotifyRateLimit) GetPerMinute() int64 {
+	if x != nil {
+		return x.PerMinute
 	}
 	return 0
 }
@@ -239,8 +250,9 @@ type WebhookChannelConfig struct {
 	Method string `protobuf:"bytes,2,opt,name=method,proto3" json:"method,omitempty"`
 	// headers 附加请求头（如鉴权头）。
 	Headers map[string]string `protobuf:"bytes,3,rep,name=headers,proto3" json:"headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	// timeout_s 出站超时秒数，1-10；可选，未指定默认 5（core 落库时补齐，
-	// 管道按该值设置请求超时）。
+	// timeout_s 出站超时秒数，1-10；可选，未指定默认 5（core 落库时补齐）。
+	// 管道按 min(timeout_s, sender.max_send_timeout) 设置请求超时（管道缺省上限
+	// 10s；未配置时取 sender.send_timeout 缺省 3s）。
 	TimeoutS      *int32 `protobuf:"varint,4,opt,name=timeout_s,json=timeoutS,proto3,oneof" json:"timeout_s,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -309,7 +321,12 @@ func (x *WebhookChannelConfig) GetTimeoutS() int32 {
 type RobotChannelConfig struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// at_mobiles 需要 @ 提醒的手机号列表，可选。
-	AtMobiles     []string `protobuf:"bytes,1,rep,name=at_mobiles,json=atMobiles,proto3" json:"at_mobiles,omitempty"`
+	AtMobiles []string `protobuf:"bytes,1,rep,name=at_mobiles,json=atMobiles,proto3" json:"at_mobiles,omitempty"`
+	// card_url 卡片消息（模板 format=card）的跳转链接，可选，须 https 且非本机/私网；
+	// 为空时钉钉/企微降级为 markdown，飞书卡片无按钮。
+	CardUrl *string `protobuf:"bytes,2,opt,name=card_url,json=cardUrl,proto3,oneof" json:"card_url,omitempty"`
+	// card_button 卡片按钮文字，可选（≤32，缺省"查看详情"）；须同时配置 card_url。
+	CardButton    *string `protobuf:"bytes,3,opt,name=card_button,json=cardButton,proto3,oneof" json:"card_button,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -349,6 +366,20 @@ func (x *RobotChannelConfig) GetAtMobiles() []string {
 		return x.AtMobiles
 	}
 	return nil
+}
+
+func (x *RobotChannelConfig) GetCardUrl() string {
+	if x != nil && x.CardUrl != nil {
+		return *x.CardUrl
+	}
+	return ""
+}
+
+func (x *RobotChannelConfig) GetCardButton() string {
+	if x != nil && x.CardButton != nil {
+		return *x.CardButton
+	}
+	return ""
 }
 
 // NotifyChannel 渠道实体（出参；secret 永不返回）。
@@ -901,9 +932,11 @@ func (*UpdateChannelRequest_Webhook) isUpdateChannelRequest_Detail() {}
 
 func (*UpdateChannelRequest_Robot) isUpdateChannelRequest_Detail() {}
 
-// UpdateChannelResponse 更新渠道响应。
+// UpdateChannelResponse 更新渠道响应：返回更新后的渠道（不含 secret，免二次 GET）。
 type UpdateChannelResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// channel 更新后的渠道。
+	Channel       *NotifyChannel `protobuf:"bytes,1,opt,name=channel,proto3" json:"channel,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -936,6 +969,13 @@ func (x *UpdateChannelResponse) ProtoReflect() protoreflect.Message {
 // Deprecated: Use UpdateChannelResponse.ProtoReflect.Descriptor instead.
 func (*UpdateChannelResponse) Descriptor() ([]byte, []int) {
 	return file_notify_v1_channel_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *UpdateChannelResponse) GetChannel() *NotifyChannel {
+	if x != nil {
+		return x.Channel
+	}
+	return nil
 }
 
 // DeleteChannelRequest 删除渠道请求。
@@ -1391,14 +1431,235 @@ func (x *SendTestEventResponse) GetEvent() *NotifyEvent {
 	return nil
 }
 
+// ListChannelHealthRequest 渠道健康查询请求。
+type ListChannelHealthRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// biz_id 业务过滤，可选；受限用户必须携带（400 NOTIFY_BIZ_REQUIRED）。
+	BizId         *string `protobuf:"bytes,1,opt,name=biz_id,json=bizId,proto3,oneof" json:"biz_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListChannelHealthRequest) Reset() {
+	*x = ListChannelHealthRequest{}
+	mi := &file_notify_v1_channel_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListChannelHealthRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListChannelHealthRequest) ProtoMessage() {}
+
+func (x *ListChannelHealthRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_notify_v1_channel_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListChannelHealthRequest.ProtoReflect.Descriptor instead.
+func (*ListChannelHealthRequest) Descriptor() ([]byte, []int) {
+	return file_notify_v1_channel_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *ListChannelHealthRequest) GetBizId() string {
+	if x != nil && x.BizId != nil {
+		return *x.BizId
+	}
+	return ""
+}
+
+// NotifyChannelHealth 渠道健康行（notify_channel_health ⋈ notify_channel）。
+type NotifyChannelHealth struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// channel_id 渠道 ID。
+	ChannelId string `protobuf:"bytes,1,opt,name=channel_id,json=channelId,proto3" json:"channel_id,omitempty"`
+	// channel_name 渠道名。
+	ChannelName string `protobuf:"bytes,2,opt,name=channel_name,json=channelName,proto3" json:"channel_name,omitempty"`
+	// channel_type 渠道类型。
+	ChannelType string `protobuf:"bytes,3,opt,name=channel_type,json=channelType,proto3" json:"channel_type,omitempty"`
+	// biz_id 渠道所属业务。
+	BizId string `protobuf:"bytes,4,opt,name=biz_id,json=bizId,proto3" json:"biz_id,omitempty"`
+	// samples 当前 60s 滑窗样本数。
+	Samples int32 `protobuf:"varint,5,opt,name=samples,proto3" json:"samples,omitempty"`
+	// failures 当前 60s 滑窗失败数。
+	Failures int32 `protobuf:"varint,6,opt,name=failures,proto3" json:"failures,omitempty"`
+	// open 熔断是否打开（open_until 在未来）。
+	Open bool `protobuf:"varint,7,opt,name=open,proto3" json:"open,omitempty"`
+	// open_until 打开截止（未打开时省略）。
+	OpenUntil *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=open_until,json=openUntil,proto3" json:"open_until,omitempty"`
+	// probing 半开探测已被某副本领取。
+	Probing bool `protobuf:"varint,9,opt,name=probing,proto3" json:"probing,omitempty"`
+	// update_time 最近一次发送结果时间。
+	UpdateTime    *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=update_time,json=updateTime,proto3" json:"update_time,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NotifyChannelHealth) Reset() {
+	*x = NotifyChannelHealth{}
+	mi := &file_notify_v1_channel_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NotifyChannelHealth) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NotifyChannelHealth) ProtoMessage() {}
+
+func (x *NotifyChannelHealth) ProtoReflect() protoreflect.Message {
+	mi := &file_notify_v1_channel_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NotifyChannelHealth.ProtoReflect.Descriptor instead.
+func (*NotifyChannelHealth) Descriptor() ([]byte, []int) {
+	return file_notify_v1_channel_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *NotifyChannelHealth) GetChannelId() string {
+	if x != nil {
+		return x.ChannelId
+	}
+	return ""
+}
+
+func (x *NotifyChannelHealth) GetChannelName() string {
+	if x != nil {
+		return x.ChannelName
+	}
+	return ""
+}
+
+func (x *NotifyChannelHealth) GetChannelType() string {
+	if x != nil {
+		return x.ChannelType
+	}
+	return ""
+}
+
+func (x *NotifyChannelHealth) GetBizId() string {
+	if x != nil {
+		return x.BizId
+	}
+	return ""
+}
+
+func (x *NotifyChannelHealth) GetSamples() int32 {
+	if x != nil {
+		return x.Samples
+	}
+	return 0
+}
+
+func (x *NotifyChannelHealth) GetFailures() int32 {
+	if x != nil {
+		return x.Failures
+	}
+	return 0
+}
+
+func (x *NotifyChannelHealth) GetOpen() bool {
+	if x != nil {
+		return x.Open
+	}
+	return false
+}
+
+func (x *NotifyChannelHealth) GetOpenUntil() *timestamppb.Timestamp {
+	if x != nil {
+		return x.OpenUntil
+	}
+	return nil
+}
+
+func (x *NotifyChannelHealth) GetProbing() bool {
+	if x != nil {
+		return x.Probing
+	}
+	return false
+}
+
+func (x *NotifyChannelHealth) GetUpdateTime() *timestamppb.Timestamp {
+	if x != nil {
+		return x.UpdateTime
+	}
+	return nil
+}
+
+// ListChannelHealthResponse 渠道健康查询响应（按打开优先、最近更新倒序）。
+type ListChannelHealthResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// items 健康行（无发送记录的渠道无条目）。
+	Items         []*NotifyChannelHealth `protobuf:"bytes,1,rep,name=items,proto3" json:"items,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListChannelHealthResponse) Reset() {
+	*x = ListChannelHealthResponse{}
+	mi := &file_notify_v1_channel_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListChannelHealthResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListChannelHealthResponse) ProtoMessage() {}
+
+func (x *ListChannelHealthResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_notify_v1_channel_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListChannelHealthResponse.ProtoReflect.Descriptor instead.
+func (*ListChannelHealthResponse) Descriptor() ([]byte, []int) {
+	return file_notify_v1_channel_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *ListChannelHealthResponse) GetItems() []*NotifyChannelHealth {
+	if x != nil {
+		return x.Items
+	}
+	return nil
+}
+
 var File_notify_v1_channel_proto protoreflect.FileDescriptor
 
 const file_notify_v1_channel_proto_rawDesc = "" +
 	"\n" +
-	"\x17notify/v1/channel.proto\x12\tnotify.v1\x1a\x1cgoogle/api/annotations.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1bbuf/validate/validate.proto\x1a\x15notify/v1/event.proto\x1a\x1bsystem/v1/annotations.proto\"K\n" +
+	"\x17notify/v1/channel.proto\x12\tnotify.v1\x1a\x1cgoogle/api/annotations.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1bbuf/validate/validate.proto\x1a\x15notify/v1/event.proto\x1a\x1bsystem/v1/annotations.proto\"s\n" +
 	"\x0fNotifyRateLimit\x12\x19\n" +
 	"\x03qps\x18\x01 \x01(\x03B\a\xbaH\x04\"\x02(\x00R\x03qps\x12\x1d\n" +
-	"\x05burst\x18\x02 \x01(\x03B\a\xbaH\x04\"\x02(\x00R\x05burst\"\xc1\x01\n" +
+	"\x05burst\x18\x02 \x01(\x03B\a\xbaH\x04\"\x02(\x00R\x05burst\x12&\n" +
+	"\n" +
+	"per_minute\x18\x03 \x01(\x03B\a\xbaH\x04\"\x02(\x00R\tperMinute\"\xc1\x01\n" +
 	"\x12EmailChannelConfig\x12\x1e\n" +
 	"\x04host\x18\x01 \x01(\tB\n" +
 	"\xbaH\ar\x05\x10\x01\x18\xfd\x01R\x04host\x12\x1f\n" +
@@ -1416,11 +1677,16 @@ const file_notify_v1_channel_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\f\n" +
 	"\n" +
-	"_timeout_s\"E\n" +
+	"_timeout_s\"\xc6\x01\n" +
 	"\x12RobotChannelConfig\x12/\n" +
 	"\n" +
 	"at_mobiles\x18\x01 \x03(\tB\x10\xbaH\r\x92\x01\n" +
-	"\x10\x14\"\x06r\x04\x10\x05\x18 R\tatMobiles\"\x80\x04\n" +
+	"\x10\x14\"\x06r\x04\x10\x05\x18 R\tatMobiles\x123\n" +
+	"\bcard_url\x18\x02 \x01(\tB\x13\xbaH\x10r\x0e\x18\x80\x102\t^https://H\x00R\acardUrl\x88\x01\x01\x12-\n" +
+	"\vcard_button\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x18 H\x01R\n" +
+	"cardButton\x88\x01\x01B\v\n" +
+	"\t_card_urlB\x0e\n" +
+	"\f_card_button\"\x80\x04\n" +
 	"\rNotifyChannel\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x15\n" +
 	"\x06biz_id\x18\x02 \x01(\tR\x05bizId\x120\n" +
@@ -1487,8 +1753,9 @@ const file_notify_v1_channel_proto_rawDesc = "" +
 	"\n" +
 	"\b_enabledB\t\n" +
 	"\a_secretB\x0e\n" +
-	"\f_sign_secret\"\x17\n" +
-	"\x15UpdateChannelResponse\"0\n" +
+	"\f_sign_secret\"K\n" +
+	"\x15UpdateChannelResponse\x122\n" +
+	"\achannel\x18\x01 \x01(\v2\x18.notify.v1.NotifyChannelR\achannel\"0\n" +
 	"\x14DeleteChannelRequest\x12\x18\n" +
 	"\x02id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\"\x17\n" +
 	"\x15DeleteChannelResponse\"-\n" +
@@ -1526,14 +1793,34 @@ const file_notify_v1_channel_proto_rawDesc = "" +
 	"\v_event_typeB\b\n" +
 	"\x06_title\"E\n" +
 	"\x15SendTestEventResponse\x12,\n" +
-	"\x05event\x18\x01 \x01(\v2\x16.notify.v1.NotifyEventR\x05event*\xd9\x01\n" +
+	"\x05event\x18\x01 \x01(\v2\x16.notify.v1.NotifyEventR\x05event\"`\n" +
+	"\x18ListChannelHealthRequest\x129\n" +
+	"\x06biz_id\x18\x01 \x01(\tB\x1d\xbaH\x1ar\x18\x10\x01\x18@2\x12^[a-z0-9_-]{1,64}$H\x00R\x05bizId\x88\x01\x01B\t\n" +
+	"\a_biz_id\"\xed\x02\n" +
+	"\x13NotifyChannelHealth\x12\x1d\n" +
+	"\n" +
+	"channel_id\x18\x01 \x01(\tR\tchannelId\x12!\n" +
+	"\fchannel_name\x18\x02 \x01(\tR\vchannelName\x12!\n" +
+	"\fchannel_type\x18\x03 \x01(\tR\vchannelType\x12\x15\n" +
+	"\x06biz_id\x18\x04 \x01(\tR\x05bizId\x12\x18\n" +
+	"\asamples\x18\x05 \x01(\x05R\asamples\x12\x1a\n" +
+	"\bfailures\x18\x06 \x01(\x05R\bfailures\x12\x12\n" +
+	"\x04open\x18\a \x01(\bR\x04open\x129\n" +
+	"\n" +
+	"open_until\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\topenUntil\x12\x18\n" +
+	"\aprobing\x18\t \x01(\bR\aprobing\x12;\n" +
+	"\vupdate_time\x18\n" +
+	" \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"updateTime\"Q\n" +
+	"\x19ListChannelHealthResponse\x124\n" +
+	"\x05items\x18\x01 \x03(\v2\x1e.notify.v1.NotifyChannelHealthR\x05items*\xd9\x01\n" +
 	"\x11NotifyChannelType\x12#\n" +
 	"\x1fNOTIFY_CHANNEL_TYPE_UNSPECIFIED\x10\x00\x12\x1d\n" +
 	"\x19NOTIFY_CHANNEL_TYPE_EMAIL\x10\x01\x12\x1f\n" +
 	"\x1bNOTIFY_CHANNEL_TYPE_WEBHOOK\x10\x02\x12 \n" +
 	"\x1cNOTIFY_CHANNEL_TYPE_DINGTALK\x10\x03\x12\x1d\n" +
 	"\x19NOTIFY_CHANNEL_TYPE_WECOM\x10\x04\x12\x1e\n" +
-	"\x1aNOTIFY_CHANNEL_TYPE_FEISHU\x10\x052\xfa\x06\n" +
+	"\x1aNOTIFY_CHANNEL_TYPE_FEISHU\x10\x052\x98\b\n" +
 	"\x14NotifyChannelService\x12\x8b\x01\n" +
 	"\rCreateChannel\x12\x1f.notify.v1.CreateChannelRequest\x1a .notify.v1.CreateChannelResponse\"7\xc2\xf3\x18\x12创建通知渠道\x82\xd3\xe4\x93\x02\x1b:\x01*\"\x16/api/v1/notify/channel\x12\x90\x01\n" +
 	"\rUpdateChannel\x12\x1f.notify.v1.UpdateChannelRequest\x1a .notify.v1.UpdateChannelResponse\"<\xc2\xf3\x18\x12更新通知渠道\x82\xd3\xe4\x93\x02 :\x01*\x1a\x1b/api/v1/notify/channel/{id}\x12\x8d\x01\n" +
@@ -1541,7 +1828,8 @@ const file_notify_v1_channel_proto_rawDesc = "" +
 	"\n" +
 	"GetChannel\x12\x1c.notify.v1.GetChannelRequest\x1a\x1d.notify.v1.GetChannelResponse\"9\xc2\xf3\x18\x12查询通知渠道\x82\xd3\xe4\x93\x02\x1d\x12\x1b/api/v1/notify/channel/{id}\x12\x8b\x01\n" +
 	"\fListChannels\x12\x1e.notify.v1.ListChannelsRequest\x1a\x1f.notify.v1.ListChannelsResponse\":\xc2\xf3\x18\x18查询通知渠道列表\x82\xd3\xe4\x93\x02\x18\x12\x16/api/v1/notify/channel\x12\x9b\x01\n" +
-	"\rSendTestEvent\x12\x1f.notify.v1.SendTestEventRequest\x1a .notify.v1.SendTestEventResponse\"G\xc2\xf3\x18\x18发送渠道测试事件\x82\xd3\xe4\x93\x02%:\x01*\" /api/v1/notify/channel/{id}:testB:Z8github.com/lanyulei/reborn/backend/core/api/notify/v1;v1b\x06proto3"
+	"\rSendTestEvent\x12\x1f.notify.v1.SendTestEventRequest\x1a .notify.v1.SendTestEventResponse\"G\xc2\xf3\x18\x18发送渠道测试事件\x82\xd3\xe4\x93\x02%:\x01*\" /api/v1/notify/channel/{id}:test\x12\x9b\x01\n" +
+	"\x11ListChannelHealth\x12#.notify.v1.ListChannelHealthRequest\x1a$.notify.v1.ListChannelHealthResponse\";\xc2\xf3\x18\x12查询渠道健康\x82\xd3\xe4\x93\x02\x1f\x12\x1d/api/v1/notify/channel-healthB:Z8github.com/lanyulei/reborn/backend/core/api/notify/v1;v1b\x06proto3"
 
 var (
 	file_notify_v1_channel_proto_rawDescOnce sync.Once
@@ -1556,40 +1844,43 @@ func file_notify_v1_channel_proto_rawDescGZIP() []byte {
 }
 
 var file_notify_v1_channel_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_notify_v1_channel_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
+var file_notify_v1_channel_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
 var file_notify_v1_channel_proto_goTypes = []any{
-	(NotifyChannelType)(0),        // 0: notify.v1.NotifyChannelType
-	(*NotifyRateLimit)(nil),       // 1: notify.v1.NotifyRateLimit
-	(*EmailChannelConfig)(nil),    // 2: notify.v1.EmailChannelConfig
-	(*WebhookChannelConfig)(nil),  // 3: notify.v1.WebhookChannelConfig
-	(*RobotChannelConfig)(nil),    // 4: notify.v1.RobotChannelConfig
-	(*NotifyChannel)(nil),         // 5: notify.v1.NotifyChannel
-	(*CreateChannelRequest)(nil),  // 6: notify.v1.CreateChannelRequest
-	(*CreateChannelResponse)(nil), // 7: notify.v1.CreateChannelResponse
-	(*UpdateChannelRequest)(nil),  // 8: notify.v1.UpdateChannelRequest
-	(*UpdateChannelResponse)(nil), // 9: notify.v1.UpdateChannelResponse
-	(*DeleteChannelRequest)(nil),  // 10: notify.v1.DeleteChannelRequest
-	(*DeleteChannelResponse)(nil), // 11: notify.v1.DeleteChannelResponse
-	(*GetChannelRequest)(nil),     // 12: notify.v1.GetChannelRequest
-	(*GetChannelResponse)(nil),    // 13: notify.v1.GetChannelResponse
-	(*ListChannelsRequest)(nil),   // 14: notify.v1.ListChannelsRequest
-	(*ListChannelsResponse)(nil),  // 15: notify.v1.ListChannelsResponse
-	(*SendTestEventRequest)(nil),  // 16: notify.v1.SendTestEventRequest
-	(*SendTestEventResponse)(nil), // 17: notify.v1.SendTestEventResponse
-	nil,                           // 18: notify.v1.WebhookChannelConfig.HeadersEntry
-	(*timestamppb.Timestamp)(nil), // 19: google.protobuf.Timestamp
-	(*structpb.Struct)(nil),       // 20: google.protobuf.Struct
-	(*NotifyEvent)(nil),           // 21: notify.v1.NotifyEvent
+	(NotifyChannelType)(0),            // 0: notify.v1.NotifyChannelType
+	(*NotifyRateLimit)(nil),           // 1: notify.v1.NotifyRateLimit
+	(*EmailChannelConfig)(nil),        // 2: notify.v1.EmailChannelConfig
+	(*WebhookChannelConfig)(nil),      // 3: notify.v1.WebhookChannelConfig
+	(*RobotChannelConfig)(nil),        // 4: notify.v1.RobotChannelConfig
+	(*NotifyChannel)(nil),             // 5: notify.v1.NotifyChannel
+	(*CreateChannelRequest)(nil),      // 6: notify.v1.CreateChannelRequest
+	(*CreateChannelResponse)(nil),     // 7: notify.v1.CreateChannelResponse
+	(*UpdateChannelRequest)(nil),      // 8: notify.v1.UpdateChannelRequest
+	(*UpdateChannelResponse)(nil),     // 9: notify.v1.UpdateChannelResponse
+	(*DeleteChannelRequest)(nil),      // 10: notify.v1.DeleteChannelRequest
+	(*DeleteChannelResponse)(nil),     // 11: notify.v1.DeleteChannelResponse
+	(*GetChannelRequest)(nil),         // 12: notify.v1.GetChannelRequest
+	(*GetChannelResponse)(nil),        // 13: notify.v1.GetChannelResponse
+	(*ListChannelsRequest)(nil),       // 14: notify.v1.ListChannelsRequest
+	(*ListChannelsResponse)(nil),      // 15: notify.v1.ListChannelsResponse
+	(*SendTestEventRequest)(nil),      // 16: notify.v1.SendTestEventRequest
+	(*SendTestEventResponse)(nil),     // 17: notify.v1.SendTestEventResponse
+	(*ListChannelHealthRequest)(nil),  // 18: notify.v1.ListChannelHealthRequest
+	(*NotifyChannelHealth)(nil),       // 19: notify.v1.NotifyChannelHealth
+	(*ListChannelHealthResponse)(nil), // 20: notify.v1.ListChannelHealthResponse
+	nil,                               // 21: notify.v1.WebhookChannelConfig.HeadersEntry
+	(*timestamppb.Timestamp)(nil),     // 22: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),           // 23: google.protobuf.Struct
+	(*NotifyEvent)(nil),               // 24: notify.v1.NotifyEvent
 }
 var file_notify_v1_channel_proto_depIdxs = []int32{
-	18, // 0: notify.v1.WebhookChannelConfig.headers:type_name -> notify.v1.WebhookChannelConfig.HeadersEntry
+	21, // 0: notify.v1.WebhookChannelConfig.headers:type_name -> notify.v1.WebhookChannelConfig.HeadersEntry
 	0,  // 1: notify.v1.NotifyChannel.type:type_name -> notify.v1.NotifyChannelType
 	2,  // 2: notify.v1.NotifyChannel.email:type_name -> notify.v1.EmailChannelConfig
 	3,  // 3: notify.v1.NotifyChannel.webhook:type_name -> notify.v1.WebhookChannelConfig
 	4,  // 4: notify.v1.NotifyChannel.robot:type_name -> notify.v1.RobotChannelConfig
 	1,  // 5: notify.v1.NotifyChannel.rate_limit:type_name -> notify.v1.NotifyRateLimit
-	19, // 6: notify.v1.NotifyChannel.create_time:type_name -> google.protobuf.Timestamp
-	19, // 7: notify.v1.NotifyChannel.update_time:type_name -> google.protobuf.Timestamp
+	22, // 6: notify.v1.NotifyChannel.create_time:type_name -> google.protobuf.Timestamp
+	22, // 7: notify.v1.NotifyChannel.update_time:type_name -> google.protobuf.Timestamp
 	0,  // 8: notify.v1.CreateChannelRequest.type:type_name -> notify.v1.NotifyChannelType
 	2,  // 9: notify.v1.CreateChannelRequest.email:type_name -> notify.v1.EmailChannelConfig
 	3,  // 10: notify.v1.CreateChannelRequest.webhook:type_name -> notify.v1.WebhookChannelConfig
@@ -1600,28 +1891,34 @@ var file_notify_v1_channel_proto_depIdxs = []int32{
 	3,  // 15: notify.v1.UpdateChannelRequest.webhook:type_name -> notify.v1.WebhookChannelConfig
 	4,  // 16: notify.v1.UpdateChannelRequest.robot:type_name -> notify.v1.RobotChannelConfig
 	1,  // 17: notify.v1.UpdateChannelRequest.rate_limit:type_name -> notify.v1.NotifyRateLimit
-	5,  // 18: notify.v1.GetChannelResponse.channel:type_name -> notify.v1.NotifyChannel
-	0,  // 19: notify.v1.ListChannelsRequest.type:type_name -> notify.v1.NotifyChannelType
-	5,  // 20: notify.v1.ListChannelsResponse.items:type_name -> notify.v1.NotifyChannel
-	20, // 21: notify.v1.SendTestEventRequest.payload:type_name -> google.protobuf.Struct
-	21, // 22: notify.v1.SendTestEventResponse.event:type_name -> notify.v1.NotifyEvent
-	6,  // 23: notify.v1.NotifyChannelService.CreateChannel:input_type -> notify.v1.CreateChannelRequest
-	8,  // 24: notify.v1.NotifyChannelService.UpdateChannel:input_type -> notify.v1.UpdateChannelRequest
-	10, // 25: notify.v1.NotifyChannelService.DeleteChannel:input_type -> notify.v1.DeleteChannelRequest
-	12, // 26: notify.v1.NotifyChannelService.GetChannel:input_type -> notify.v1.GetChannelRequest
-	14, // 27: notify.v1.NotifyChannelService.ListChannels:input_type -> notify.v1.ListChannelsRequest
-	16, // 28: notify.v1.NotifyChannelService.SendTestEvent:input_type -> notify.v1.SendTestEventRequest
-	7,  // 29: notify.v1.NotifyChannelService.CreateChannel:output_type -> notify.v1.CreateChannelResponse
-	9,  // 30: notify.v1.NotifyChannelService.UpdateChannel:output_type -> notify.v1.UpdateChannelResponse
-	11, // 31: notify.v1.NotifyChannelService.DeleteChannel:output_type -> notify.v1.DeleteChannelResponse
-	13, // 32: notify.v1.NotifyChannelService.GetChannel:output_type -> notify.v1.GetChannelResponse
-	15, // 33: notify.v1.NotifyChannelService.ListChannels:output_type -> notify.v1.ListChannelsResponse
-	17, // 34: notify.v1.NotifyChannelService.SendTestEvent:output_type -> notify.v1.SendTestEventResponse
-	29, // [29:35] is the sub-list for method output_type
-	23, // [23:29] is the sub-list for method input_type
-	23, // [23:23] is the sub-list for extension type_name
-	23, // [23:23] is the sub-list for extension extendee
-	0,  // [0:23] is the sub-list for field type_name
+	5,  // 18: notify.v1.UpdateChannelResponse.channel:type_name -> notify.v1.NotifyChannel
+	5,  // 19: notify.v1.GetChannelResponse.channel:type_name -> notify.v1.NotifyChannel
+	0,  // 20: notify.v1.ListChannelsRequest.type:type_name -> notify.v1.NotifyChannelType
+	5,  // 21: notify.v1.ListChannelsResponse.items:type_name -> notify.v1.NotifyChannel
+	23, // 22: notify.v1.SendTestEventRequest.payload:type_name -> google.protobuf.Struct
+	24, // 23: notify.v1.SendTestEventResponse.event:type_name -> notify.v1.NotifyEvent
+	22, // 24: notify.v1.NotifyChannelHealth.open_until:type_name -> google.protobuf.Timestamp
+	22, // 25: notify.v1.NotifyChannelHealth.update_time:type_name -> google.protobuf.Timestamp
+	19, // 26: notify.v1.ListChannelHealthResponse.items:type_name -> notify.v1.NotifyChannelHealth
+	6,  // 27: notify.v1.NotifyChannelService.CreateChannel:input_type -> notify.v1.CreateChannelRequest
+	8,  // 28: notify.v1.NotifyChannelService.UpdateChannel:input_type -> notify.v1.UpdateChannelRequest
+	10, // 29: notify.v1.NotifyChannelService.DeleteChannel:input_type -> notify.v1.DeleteChannelRequest
+	12, // 30: notify.v1.NotifyChannelService.GetChannel:input_type -> notify.v1.GetChannelRequest
+	14, // 31: notify.v1.NotifyChannelService.ListChannels:input_type -> notify.v1.ListChannelsRequest
+	16, // 32: notify.v1.NotifyChannelService.SendTestEvent:input_type -> notify.v1.SendTestEventRequest
+	18, // 33: notify.v1.NotifyChannelService.ListChannelHealth:input_type -> notify.v1.ListChannelHealthRequest
+	7,  // 34: notify.v1.NotifyChannelService.CreateChannel:output_type -> notify.v1.CreateChannelResponse
+	9,  // 35: notify.v1.NotifyChannelService.UpdateChannel:output_type -> notify.v1.UpdateChannelResponse
+	11, // 36: notify.v1.NotifyChannelService.DeleteChannel:output_type -> notify.v1.DeleteChannelResponse
+	13, // 37: notify.v1.NotifyChannelService.GetChannel:output_type -> notify.v1.GetChannelResponse
+	15, // 38: notify.v1.NotifyChannelService.ListChannels:output_type -> notify.v1.ListChannelsResponse
+	17, // 39: notify.v1.NotifyChannelService.SendTestEvent:output_type -> notify.v1.SendTestEventResponse
+	20, // 40: notify.v1.NotifyChannelService.ListChannelHealth:output_type -> notify.v1.ListChannelHealthResponse
+	34, // [34:41] is the sub-list for method output_type
+	27, // [27:34] is the sub-list for method input_type
+	27, // [27:27] is the sub-list for extension type_name
+	27, // [27:27] is the sub-list for extension extendee
+	0,  // [0:27] is the sub-list for field type_name
 }
 
 func init() { file_notify_v1_channel_proto_init() }
@@ -1631,6 +1928,7 @@ func file_notify_v1_channel_proto_init() {
 	}
 	file_notify_v1_event_proto_init()
 	file_notify_v1_channel_proto_msgTypes[2].OneofWrappers = []any{}
+	file_notify_v1_channel_proto_msgTypes[3].OneofWrappers = []any{}
 	file_notify_v1_channel_proto_msgTypes[4].OneofWrappers = []any{
 		(*NotifyChannel_Email)(nil),
 		(*NotifyChannel_Webhook)(nil),
@@ -1648,13 +1946,14 @@ func file_notify_v1_channel_proto_init() {
 	}
 	file_notify_v1_channel_proto_msgTypes[13].OneofWrappers = []any{}
 	file_notify_v1_channel_proto_msgTypes[15].OneofWrappers = []any{}
+	file_notify_v1_channel_proto_msgTypes[17].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_notify_v1_channel_proto_rawDesc), len(file_notify_v1_channel_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   18,
+			NumMessages:   21,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -41,6 +41,8 @@ type DeliveryLogRepo interface {
 	// ListDeliveryLogs 分页查询投递明细；page 从 1 起，pageSize 上限 100，
 	// 按落库时间倒序（查询索引 idx_notify_delivery_query）。
 	ListDeliveryLogs(ctx context.Context, filter DeliveryLogFilter, page, pageSize int64) ([]*DeliveryLog, int64, error)
+	// LatestByDispatchIDs 每个发送任务最近一次投递明细（无尝试的任务无条目）。
+	LatestByDispatchIDs(ctx context.Context, dispatchIDs []string) ([]*DeliveryLog, error)
 }
 
 // DeliveryLogUsecase 投递明细查询用例：纯读编排（分页规整后委托仓储）。
@@ -51,6 +53,14 @@ type DeliveryLogUsecase struct {
 // NewDeliveryLogUsecase new a DeliveryLogUsecase.
 func NewDeliveryLogUsecase(repo DeliveryLogRepo) *DeliveryLogUsecase {
 	return &DeliveryLogUsecase{repo: repo}
+}
+
+// Latest 每个发送任务最近一次投递明细（事件下钻）。
+func (uc *DeliveryLogUsecase) Latest(ctx context.Context, dispatchIDs []string) ([]*DeliveryLog, error) {
+	if len(dispatchIDs) == 0 {
+		return nil, nil
+	}
+	return uc.repo.LatestByDispatchIDs(ctx, dispatchIDs)
 }
 
 // List 分页查询投递明细；分页参数先规整再委托仓储。

@@ -50,19 +50,17 @@ func TestIntegration_DispatchLeaseAndFence(t *testing.T) {
 	if hook.ChannelID != idChanHook {
 		hook, mail = mail, hook
 	}
-	// 渲染快照 + 成功落账。
-	if err := repo.SaveContent(ctx, hook, []byte(`{"subject":"s","body":"b"}`), idTpl); err != nil {
+	// 成功落账 + 首次渲染快照同事务写入（template_id 回填）。
+	if err := repo.Finish(ctx, hook, biz.FinishResult{OK: true, ProviderMsgID: "p", LatencyMs: 12, Content: []byte(`{"subject":"s","body":"b"}`), TemplateID: idTpl}, 6); err != nil {
 		t.Fatal(err)
 	}
-	if count(t, d, "SELECT count(*) FROM notify_dispatch WHERE id = $1 AND template_id = $2", hook.ID, idTpl) != 1 {
-		t.Fatal("template_id column must be backfilled")
-	}
-	if err := repo.Finish(ctx, hook, biz.FinishResult{OK: true, ProviderMsgID: "p", LatencyMs: 12}, 6); err != nil {
-		t.Fatal(err)
-	}
-	if count(t, d, "SELECT count(*) FROM notify_dispatch WHERE id = $1 AND status = 3 AND next_retry_time IS NULL", hook.ID) != 1 ||
+	if count(t, d, "SELECT count(*) FROM notify_dispatch WHERE id = $1 AND status = 3 AND next_retry_time IS NULL AND template_id = $2 AND content->>'subject' = 's'", hook.ID, idTpl) != 1 ||
 		count(t, d, "SELECT count(*) FROM notify_delivery_log WHERE dispatch_id = $1 AND ok AND attempt = 1", hook.ID) != 1 {
-		t.Fatal("sent dispatch / delivery log not persisted")
+		t.Fatal("sent dispatch / snapshot / delivery log not persisted")
+	}
+	// 批量取事件：按 id 集合 + create_time 上界。
+	if evs, err := repo.GetEvents(ctx, []string{hook.EventID, "018f3e1a-0000-7000-8000-000000000000"}, hook.CreateTime); err != nil || len(evs) != 1 || evs[hook.EventID] == nil {
+		t.Fatalf("GetEvents = %v, %v", evs, err)
 	}
 	// 围栏：已终态的旧持有者再写被拒。
 	if err := repo.Finish(ctx, hook, biz.FinishResult{OK: true}, 6); !errors.Is(err, biz.ErrStaleClaim) {
@@ -85,7 +83,7 @@ func TestIntegration_DispatchLeaseAndFence(t *testing.T) {
 		t.Fatalf("reclaim = %d", len(claimed))
 	}
 	mail = claimed[0]
-	if err := repo.Finish(ctx, mail, biz.FinishResult{Retryable: true, Error: "timeout", NextRetry: time.Now().Add(time.Hour)}, 6); err != nil {
+	if err := repo.Finish(ctx, mail, biz.FinishResult{Retryable: true, Error: "timeout", RetryAfter: time.Hour}, 6); err != nil {
 		t.Fatal(err)
 	}
 	if count(t, d, "SELECT count(*) FROM notify_dispatch WHERE id = $1 AND status = 4 AND last_error = 'timeout' AND next_retry_time > now() + interval '50 minutes'", mail.ID) != 1 {
@@ -97,7 +95,7 @@ func TestIntegration_DispatchLeaseAndFence(t *testing.T) {
 	if mail.Attempts != 6 {
 		t.Fatalf("attempts = %d, want 6", mail.Attempts)
 	}
-	if err := repo.Finish(ctx, mail, biz.FinishResult{Retryable: true, Error: "still failing", NextRetry: time.Now()}, 6); err != nil {
+	if err := repo.Finish(ctx, mail, biz.FinishResult{Retryable: true, Error: "still failing", RetryAfter: 0}, 6); err != nil {
 		t.Fatal(err)
 	}
 	if count(t, d, "SELECT count(*) FROM notify_dispatch WHERE id = $1 AND status = 5", mail.ID) != 1 ||

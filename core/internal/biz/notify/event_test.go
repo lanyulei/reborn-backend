@@ -54,7 +54,7 @@ func TestEventUsecase_ListPagingNormalize(t *testing.T) {
 			CreateTime: base.Add(time.Duration(i) * time.Minute),
 		})
 	}
-	uc := NewEventUsecase(stub)
+	uc := NewEventUsecase(stub, new(eventWriterStub))
 	ctx := context.Background()
 
 	// 非法分页参数规整为默认值。
@@ -103,5 +103,40 @@ func TestEventUsecase_ListPagingNormalize(t *testing.T) {
 	}
 	if total != 1 || len(items) != 1 || items[0].ID != "c" {
 		t.Fatalf("List(filters hit) = %+v, total %d, want only row c", items, total)
+	}
+}
+
+func (s *eventRepoStub) GetEvent(_ context.Context, id string) (*Event, error) {
+	for _, ev := range s.events {
+		if ev.ID == id {
+			cp := *ev
+			return &cp, nil
+		}
+	}
+	return nil, ErrEventNotFound
+}
+
+// TestEventUsecase_Replay 事件级重发：新 id、source=internal、不带 dedup_key，其余
+// 字段复制自源事件。
+func TestEventUsecase_Replay(t *testing.T) {
+	t.Parallel()
+	writer := &eventWriterStub{}
+	uc := NewEventUsecase(&eventRepoStub{}, writer)
+	src := &Event{
+		ID: "018f3e1a-0000-7000-8000-000000000001", BizID: "monitor", EventType: "monitor.alert.firing", Severity: 3,
+		Title: "cpu", Payload: []byte(`{"host":"a"}`), DedupKey: "d1", GroupKey: "g1", Recipients: []string{"ops@example.com"}, Source: EventSourceAPI,
+	}
+	out, err := uc.Replay(context.Background(), src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.ID == src.ID || out.ID == "" || out.Source != EventSourceInternal || out.DedupKey != "" || out.Status != EventStatusReceived || out.PublishState != 0 {
+		t.Fatalf("replayed = %+v", out)
+	}
+	if out.EventType != src.EventType || out.Severity != 3 || out.Title != "cpu" || string(out.Payload) != `{"host":"a"}` || out.GroupKey != "g1" || len(out.Recipients) != 1 {
+		t.Fatalf("replayed must copy routing-relevant fields: %+v", out)
+	}
+	if len(writer.inserted) != 1 || writer.inserted[0].ID != out.ID {
+		t.Fatalf("inserted = %+v", writer.inserted)
 	}
 }

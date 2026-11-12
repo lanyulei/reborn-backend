@@ -21,4 +21,5 @@ var ProviderSet = wire.NewSet(
 	NewMaintenanceUsecase,
 	NewIngressUsecase,
 	NewProducerAuth,
+	NewRelayUsecase,
 )

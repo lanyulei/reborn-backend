@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"time"
 
 	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/notify"
@@ -50,14 +51,11 @@ func (s *NotifyDeadLetterService) ListDeadLetters(ctx context.Context, req *noti
 		ChannelID:   req.GetChannelId(),
 		ReplayState: req.ReplayState,
 	}
-	if ts := req.GetCreateTimeStart(); ts != nil {
-		t := ts.AsTime()
-		filter.CreateTimeStart = &t
+	start, end, err := listTimeRange(req.GetCreateTimeStart(), req.GetCreateTimeEnd(), time.Now())
+	if err != nil {
+		return nil, err
 	}
-	if ts := req.GetCreateTimeEnd(); ts != nil {
-		t := ts.AsTime()
-		filter.CreateTimeEnd = &t
-	}
+	filter.CreateTimeStart, filter.CreateTimeEnd = start, end
 	letters, total, err := s.uc.List(ctx, filter, req.GetPage(), int64(req.GetPageSize()))
 	if err != nil {
 		return nil, err
@@ -93,4 +91,23 @@ func (s *NotifyDeadLetterService) ReplayDeadLetter(ctx context.Context, req *not
 		return nil, err
 	}
 	return &notifyv1.ReplayDeadLetterResponse{DeadLetter: toProtoDeadLetter(letter)}, nil
+}
+
+// GetDeadLetter implements proto NotifyDeadLetterService/GetDeadLetter：受限用户须
+// 死信所属渠道的 biz 在范围内。
+func (s *NotifyDeadLetterService) GetDeadLetter(ctx context.Context, req *notifyv1.GetDeadLetterRequest) (*notifyv1.GetDeadLetterResponse, error) {
+	letter, err := s.uc.Get(ctx, req.GetId())
+	if err != nil {
+		return nil, err
+	}
+	if err := s.guard.requireRow(ctx, func() (string, error) {
+		ch, err := s.channels.Get(ctx, letter.ChannelID)
+		if err != nil {
+			return "", err
+		}
+		return ch.BizID, nil
+	}); err != nil {
+		return nil, err
+	}
+	return &notifyv1.GetDeadLetterResponse{DeadLetter: toProtoDeadLetter(letter)}, nil
 }

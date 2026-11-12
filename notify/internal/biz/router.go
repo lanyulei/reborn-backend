@@ -14,8 +14,9 @@ import (
 // RouterTx 是 router 批事务内可用的写原语（data 层以 pgx.Tx 实现）：批内全部
 // 写与事件声明同事务，崩溃即整体回滚、事件仍 pending（无租约、零丢失）。
 type RouterTx interface {
-	// MarkEvent 事件终态：publish_state=1 + status（routed/suppressed/failed）。
-	MarkEvent(ctx context.Context, eventID string, createTime time.Time, status int32) error
+	// MarkEvents 一批事件终态：publish_state=1 + status（routed/suppressed/failed），
+	// 单语句。
+	MarkEvents(ctx context.Context, marks []EventMark) error
 	// DeferEvent 瞬时错误：publish_attempts+1、next_publish_time 后移，事件仍 pending。
 	DeferEvent(ctx context.Context, eventID string, createTime time.Time, next time.Time) error
 	// InsertDispatches 批量插入发送任务（next_retry_time=now()，立即可领）。
@@ -33,6 +34,13 @@ type RouterTx interface {
 // 后续按同接口接入。
 type EventSource interface {
 	ProcessPending(ctx context.Context, limit int, fn func(ctx context.Context, tx RouterTx, events []*Event) error) (int, error)
+}
+
+// EventMark 事件终态标记（批末一次性提交）。
+type EventMark struct {
+	ID         string
+	CreateTime time.Time
+	Status     int32
 }
 
 // AggIncrement 聚合组一次批内增量（同键事件合并后）。
@@ -140,21 +148,21 @@ func (uc *RouterUsecase) processBatch(ctx context.Context, tx RouterTx, snap *Sn
 
 	var dispatches []*Dispatch
 	aggs := make(map[string]*AggIncrement)
-	aggEvents := make(map[string][]*Event) // key → 本批归入该组的事件（等 upsert 裁决后定状态）
+	aggEvents := make(map[string][]*Event)     // key → 本批归入该组的事件（等 upsert 裁决后定状态）
+	marks := make([]EventMark, 0, len(events)) // 终态批末单语句提交
+	mark := func(ev *Event, status int32) {
+		marks = append(marks, EventMark{ID: ev.ID, CreateTime: ev.CreateTime, Status: status})
+	}
 
 	for _, ev := range events {
 		if snap.Silenced(ev.BizID, ev.EventType, ev.Severity, now) {
-			if err := tx.MarkEvent(ctx, ev.ID, ev.CreateTime, EventStatusSuppressed); err != nil {
-				return err
-			}
+			mark(ev, EventStatusSuppressed)
 			continue
 		}
 		route := snap.MatchRoute(ev.BizID, ev.EventType, ev.Severity, ev.PayloadObject())
 		if route == nil {
 			uc.log.WarnContext(ctx, "event has no matching route", "event_id", ev.ID, "biz", ev.BizID, "event_type", ev.EventType)
-			if err := tx.MarkEvent(ctx, ev.ID, ev.CreateTime, EventStatusFailed); err != nil {
-				return err
-			}
+			mark(ev, EventStatusFailed)
 			continue
 		}
 		if route.AggregateWindowS > 0 && ev.GroupKey != "" {
@@ -179,7 +187,7 @@ func (uc *RouterUsecase) processBatch(ctx context.Context, tx RouterTx, snap *Sn
 		if route.Recipient.Subscription {
 			var err error
 			if subs, err = loadSubscribers(ev.BizID, ev.EventType); err != nil {
-				if derr := uc.deferEvent(ctx, tx, ev, now, err); derr != nil {
+				if derr := uc.deferEvent(ctx, tx, ev, now, err, mark); derr != nil {
 					return derr
 				}
 				continue
@@ -192,9 +200,7 @@ func (uc *RouterUsecase) processBatch(ctx context.Context, tx RouterTx, snap *Sn
 		targets := ResolveTargets(snap, route, explicit, subs)
 		if len(targets) == 0 {
 			uc.log.WarnContext(ctx, "route resolved no targets", "event_id", ev.ID, "route_id", route.ID)
-			if err := tx.MarkEvent(ctx, ev.ID, ev.CreateTime, EventStatusFailed); err != nil {
-				return err
-			}
+			mark(ev, EventStatusFailed)
 			continue
 		}
 		ds, err := buildDispatches(ev.ID, targets, now, nil)
@@ -202,9 +208,7 @@ func (uc *RouterUsecase) processBatch(ctx context.Context, tx RouterTx, snap *Sn
 			return err
 		}
 		dispatches = append(dispatches, ds...)
-		if err := tx.MarkEvent(ctx, ev.ID, ev.CreateTime, EventStatusRouted); err != nil {
-			return err
-		}
+		mark(ev, EventStatusRouted)
 	}
 
 	if len(aggs) > 0 {
@@ -227,9 +231,7 @@ func (uc *RouterUsecase) processBatch(ctx context.Context, tx RouterTx, snap *Sn
 				status = EventStatusSuppressed
 			}
 			for _, ev := range aggEvents[k] {
-				if err := tx.MarkEvent(ctx, ev.ID, ev.CreateTime, status); err != nil {
-					return err
-				}
+				mark(ev, status)
 			}
 		}
 	}
@@ -238,14 +240,15 @@ func (uc *RouterUsecase) processBatch(ctx context.Context, tx RouterTx, snap *Sn
 			return err
 		}
 	}
-	return nil
+	return tx.MarkEvents(ctx, marks)
 }
 
-// deferEvent 瞬时错误延后：publish_attempts ≥ 上限转 failed。
-func (uc *RouterUsecase) deferEvent(ctx context.Context, tx RouterTx, ev *Event, now time.Time, cause error) error {
+// deferEvent 瞬时错误延后：publish_attempts ≥ 上限转 failed（经 mark 批末提交）。
+func (uc *RouterUsecase) deferEvent(ctx context.Context, tx RouterTx, ev *Event, now time.Time, cause error, mark func(*Event, int32)) error {
 	if ev.PublishAttempts+1 >= uc.opts.MaxRouteAttempts {
 		uc.log.ErrorContext(ctx, "event routing failed after retries", "event_id", ev.ID, "error", cause)
-		return tx.MarkEvent(ctx, ev.ID, ev.CreateTime, EventStatusFailed)
+		mark(ev, EventStatusFailed)
+		return nil
 	}
 	shift := min(max(ev.PublishAttempts, 0), 4)
 	backoff := time.Duration(1<<shift) * 5 * time.Second // 5s,10s,20s,40s,80s

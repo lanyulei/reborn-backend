@@ -30,6 +30,7 @@ type rolePO struct {
 	code       string
 	status     int16
 	bizScope   []string
+	builtin    bool
 	createTime time.Time
 	updateTime time.Time
 }
@@ -42,6 +43,7 @@ func (p rolePO) toEntity() biz.Role {
 		Code:       p.code,
 		Status:     int32(p.status),
 		BizScope:   p.bizScope,
+		Builtin:    p.builtin,
 		CreateTime: p.createTime,
 		UpdateTime: p.updateTime,
 	}
@@ -50,7 +52,7 @@ func (p rolePO) toEntity() biz.Role {
 // scanRole 按列序扫描一行角色数据。
 func scanRole(scan func(dest ...any) error) (*biz.Role, error) {
 	var p rolePO
-	if err := scan(&p.id, &p.name, &p.code, &p.status, &p.bizScope, &p.createTime, &p.updateTime); err != nil {
+	if err := scan(&p.id, &p.name, &p.code, &p.status, &p.bizScope, &p.builtin, &p.createTime, &p.updateTime); err != nil {
 		return nil, err
 	}
 	r := p.toEntity()
@@ -58,7 +60,7 @@ func scanRole(scan func(dest ...any) error) (*biz.Role, error) {
 }
 
 // roleSelectColumns 是角色查询列序，与 scanRole 一一对应。
-const roleSelectColumns = "id, name, code, status, biz_scope, create_time, update_time"
+const roleSelectColumns = "id, name, code, status, biz_scope, builtin, create_time, update_time"
 
 // roleRepo 是角色仓储的 PostgreSQL 实现。
 type roleRepo struct {
@@ -181,6 +183,25 @@ func uniqueStrings(items []string) []string {
 		out = append(out, item)
 	}
 	return out
+}
+
+// ListBuiltinRoleIDs implements biz.RoleReader：全部未删除内置角色 ID（当前仅迁移预置的 default）。
+func (r *roleRepo) ListBuiltinRoleIDs(ctx context.Context) ([]string, error) {
+	rows, err := r.data.Pool.Query(ctx,
+		"SELECT id FROM system_role WHERE builtin AND delete_time IS NULL ORDER BY code")
+	if err != nil {
+		return nil, fmt.Errorf("list builtin roles: %w", err)
+	}
+	defer rows.Close()
+	ids := make([]string, 0, 1)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan builtin role id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 // CreateRole implements biz.RoleWriter：审计时间由用例统一生成并显式落库。

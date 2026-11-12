@@ -15,6 +15,9 @@ type ChannelHealthRepo interface {
 	// ClaimProbe 打开到期后领取半开探测名额：claimed=true 本副本发 1 条探测；
 	// closed=true 表示已被他人关闭（直接放行）；两者皆 false = 他人正在探测。
 	ClaimProbe(ctx context.Context, channelID string) (claimed, closed bool, err error)
+	// CancelProbe 归还本副本领取但未真正发送的探测名额（probing → false），让
+	// 其他副本或下一轮立即可再领取，而非等 30s 失联接管。
+	CancelProbe(ctx context.Context, channelID string) error
 	// ListOpen 列出打开中（含刚到期待探测）的渠道及其截止时间。
 	ListOpen(ctx context.Context) (map[string]time.Time, error)
 }
@@ -128,6 +131,59 @@ func (b *SharedBreaker) Record(ctx context.Context, channelID string, ok bool) {
 	} else {
 		b.open[channelID] = until
 	}
+}
+
+// CancelProbe 归还半开探测名额（本地 + 共享；共享侧失败只记日志，30s 失联接管兜底）。
+func (b *SharedBreaker) CancelProbe(ctx context.Context, channelID string) {
+	b.local.CancelProbe(channelID)
+	if b.repo == nil {
+		return
+	}
+	b.mu.Lock()
+	degraded := b.degraded
+	b.mu.Unlock()
+	if degraded {
+		return
+	}
+	if err := b.repo.CancelProbe(ctx, channelID); err != nil {
+		b.log.WarnContext(ctx, "cancel breaker probe failed", "channel_id", channelID, "error", err)
+	}
+}
+
+// BreakerView 熔断只读视图（指标）。
+type BreakerView interface {
+	OpenChannels() map[string]time.Time
+}
+
+// OpenChannels 当前打开中的渠道（本地视图；已到期待探测的不计）。
+func (b *SharedBreaker) OpenChannels() map[string]time.Time {
+	if b.repo == nil {
+		return b.local.OpenChannels()
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	now := b.now()
+	out := make(map[string]time.Time, len(b.open))
+	for id, until := range b.open {
+		if now.Before(until) {
+			out[id] = until
+		}
+	}
+	return out
+}
+
+// OpenUntil 返回打开截止（本地视图；零值 = 未打开或已到期）。
+func (b *SharedBreaker) OpenUntil(channelID string) time.Time {
+	if b.repo == nil {
+		return b.local.OpenUntil(channelID)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	until, ok := b.open[channelID]
+	if !ok || !b.now().Before(until) {
+		return time.Time{}
+	}
+	return until
 }
 
 // Open 报告渠道是否处于打开状态（本地视图）。

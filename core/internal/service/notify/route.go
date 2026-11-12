@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"time"
 
 	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/notify"
@@ -14,13 +15,14 @@ import (
 // severity_min=1、priority=5、aggregate_window_s=0、suppress_threshold=500、
 // suppress_duration_m=30、enabled=true）。
 type NotifyRouteService struct {
-	uc    *biz.RouteUsecase
-	guard bizGuard
+	uc      *biz.RouteUsecase
+	preview *biz.PreviewUsecase
+	guard   bizGuard
 }
 
 // NewNotifyRouteService new a NotifyRouteService.
-func NewNotifyRouteService(uc *biz.RouteUsecase, scope biz.BizScopeResolver) *NotifyRouteService {
-	return &NotifyRouteService{uc: uc, guard: newBizGuard(scope)}
+func NewNotifyRouteService(uc *biz.RouteUsecase, preview *biz.PreviewUsecase, scope biz.BizScopeResolver) *NotifyRouteService {
+	return &NotifyRouteService{uc: uc, preview: preview, guard: newBizGuard(scope)}
 }
 
 // 路由规则调优项默认值（与 proto 注释一致）。
@@ -35,6 +37,8 @@ const (
 // （nil 字段走 GetXxx 零值，此处显式兜底）。
 func ruleFromProto(spec *notifyv1.RouteSpec) *biz.RouteRule {
 	rule := &biz.RouteRule{
+		Name:              spec.GetName(),
+		Description:       spec.GetDescription(),
 		EventPattern:      spec.GetEventPattern(),
 		SeverityMin:       spec.GetSeverityMin(),
 		TagMatch:          spec.GetTagMatch(),
@@ -71,6 +75,8 @@ func toProtoRoute(route *biz.Route) *notifyv1.NotifyRoute {
 	return &notifyv1.NotifyRoute{
 		Id:           route.ID,
 		BizId:        route.BizID,
+		Name:         route.Name,
+		Description:  route.Description,
 		EventPattern: route.EventPattern,
 		SeverityMin:  route.SeverityMin,
 		TagMatch:     route.TagMatch,
@@ -123,7 +129,11 @@ func (s *NotifyRouteService) UpdateRoute(ctx context.Context, req *notifyv1.Upda
 	if err := s.uc.Update(ctx, req.GetId(), upd); err != nil {
 		return nil, err
 	}
-	return &notifyv1.UpdateRouteResponse{}, nil
+	route, err := s.uc.Get(ctx, req.GetId())
+	if err != nil {
+		return nil, err
+	}
+	return &notifyv1.UpdateRouteResponse{Route: toProtoRoute(route)}, nil
 }
 
 // DeleteRoute implements proto NotifyRouteService/DeleteRoute。
@@ -183,4 +193,35 @@ func (s *NotifyRouteService) bizOf(ctx context.Context, id string) func() (strin
 		}
 		return row.BizID, nil
 	}
+}
+
+// PreviewRouting implements proto NotifyRouteService/PreviewRouting：只读试算；
+// 受限用户须目标 biz 在范围内。
+func (s *NotifyRouteService) PreviewRouting(ctx context.Context, req *notifyv1.PreviewRoutingRequest) (*notifyv1.PreviewRoutingResponse, error) {
+	if err := s.guard.requireBiz(ctx, req.GetBizId()); err != nil {
+		return nil, err
+	}
+	in := biz.PreviewInput{
+		BizID: req.GetBizId(), EventType: req.GetEventType(), Severity: req.GetSeverity(), GroupKey: req.GetGroupKey(),
+	}
+	if p := req.GetPayload(); p != nil {
+		in.Payload = p.AsMap()
+	}
+	out, err := s.preview.Preview(ctx, in, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	resp := &notifyv1.PreviewRoutingResponse{Silenced: out.Silenced, SilenceIds: out.SilenceIDs, Aggregate: out.Aggregate}
+	if out.Matched != nil {
+		resp.Matched = toProtoRoute(out.Matched)
+	}
+	for _, r := range out.Candidates {
+		resp.Candidates = append(resp.Candidates, toProtoRoute(r))
+	}
+	for _, pc := range out.Channels {
+		resp.Channels = append(resp.Channels, &notifyv1.PreviewChannel{
+			Id: pc.Channel.ID, Name: pc.Channel.Name, Type: pc.Channel.Type, Enabled: pc.Channel.Enabled, TemplateId: pc.TemplateID,
+		})
+	}
+	return resp, nil
 }

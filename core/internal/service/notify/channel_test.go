@@ -3,6 +3,7 @@ package service
 import (
 	"strings"
 	"testing"
+	"time"
 
 	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/notify"
@@ -16,7 +17,7 @@ import (
 func newChannelService(t *testing.T) (*NotifyChannelService, *testfake.Store) {
 	t.Helper()
 	store := testfake.NewStore()
-	return NewNotifyChannelService(biz.NewChannelUsecase(store, store, store), testfake.Unrestricted()), store
+	return NewNotifyChannelService(biz.NewChannelUsecase(store, store, store).WithTestEventCooldown(0), biz.NewChannelHealthUsecase(store), testfake.Unrestricted()), store
 }
 
 // sptr 返回字符串指针（proto optional 字段赋值辅助）。
@@ -383,5 +384,38 @@ func TestNotifyChannelService_WebhookTimeoutDefault(t *testing.T) {
 	detail, ok := resp.GetChannel().GetDetail().(*notifyv1.NotifyChannel_Webhook)
 	if !ok || detail.Webhook.GetTimeoutS() != biz.DefaultWebhookTimeoutS {
 		t.Fatalf("CreateChannel(webhook without timeout) detail = %+v, want timeout %d", resp.GetChannel().GetDetail(), biz.DefaultWebhookTimeoutS)
+	}
+}
+
+// TestNotifyChannelService_ListChannelHealth 渠道健康只读视图：打开优先、受限用户须带 biz。
+func TestNotifyChannelService_ListChannelHealth(t *testing.T) {
+	t.Parallel()
+	svc, store := newChannelService(t)
+	ctx := testCtx()
+	mk := func(name string) string {
+		resp, err := svc.CreateChannel(ctx, newEmailCreate(name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp.GetChannel().GetId()
+	}
+	a, b := mk("email-a"), mk("email-b")
+	until := time.Now().Add(30 * time.Second)
+	store.SeedChannelHealth(&biz.ChannelHealth{ChannelID: a, Samples: 12, Failures: 2, UpdateTime: time.Now()})
+	store.SeedChannelHealth(&biz.ChannelHealth{ChannelID: b, Samples: 10, Failures: 9, OpenUntil: &until, Probing: false, UpdateTime: time.Now().Add(-time.Minute)})
+	resp, err := svc.ListChannelHealth(ctx, &notifyv1.ListChannelHealthRequest{})
+	if err != nil {
+		t.Fatalf("ListChannelHealth() error = %v", err)
+	}
+	if len(resp.GetItems()) != 2 || resp.GetItems()[0].GetChannelId() != b || !resp.GetItems()[0].GetOpen() || resp.GetItems()[0].GetOpenUntil() == nil ||
+		resp.GetItems()[1].GetOpen() || resp.GetItems()[1].GetChannelName() != "email-a" || resp.GetItems()[1].GetChannelType() != biz.ChannelTypeEmail {
+		t.Fatalf("ListChannelHealth() = %+v", resp.GetItems())
+	}
+	scoped := NewNotifyChannelService(biz.NewChannelUsecase(store, store, store), biz.NewChannelHealthUsecase(store), testfake.Scoped("ops"))
+	if _, err := scoped.ListChannelHealth(ctx, &notifyv1.ListChannelHealthRequest{}); !errors.Is(err, biz.ErrBizRequired) {
+		t.Fatalf("scoped without biz error = %v, want ErrBizRequired", err)
+	}
+	if resp, err := scoped.ListChannelHealth(ctx, &notifyv1.ListChannelHealthRequest{BizId: sptr("ops")}); err != nil || len(resp.GetItems()) != 0 {
+		t.Fatalf("scoped in-range list = %+v, %v", resp, err)
 	}
 }

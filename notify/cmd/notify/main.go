@@ -5,6 +5,7 @@ import (
 	"flag"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/lanyulei/reborn/backend/kit/httpx"
 	"github.com/lanyulei/reborn/backend/notify/internal/conf"
@@ -35,6 +36,10 @@ func init() {
 	flag.StringVar(&flagconf, "conf", "../../configs", "config path, eg: -conf config.yaml")
 }
 
+// stopTimeout 停机总时限：worker 循环在此窗口内跑完在途迭代（sender 一批最坏
+// ≈ batch/concurrency × max_send_timeout），超时才硬中止；kratos 缺省无界。
+const stopTimeout = 30 * time.Second
+
 // newApp 组装 kratos.App：servers 已按角色门控（server.NewServers）。
 func newApp(logger *slog.Logger, servers []transport.Server) *kratos.App {
 	return kratos.New(
@@ -44,6 +49,7 @@ func newApp(logger *slog.Logger, servers []transport.Server) *kratos.App {
 		kratos.Metadata(map[string]string{}),
 		kratos.Logger(logger),
 		kratos.Server(servers...),
+		kratos.StopTimeout(stopTimeout),
 	)
 }
 

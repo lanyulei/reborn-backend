@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/lanyulei/reborn/backend/kit/notifycontract"
 	"github.com/lanyulei/reborn/backend/notify/internal/biz"
 
 	"github.com/jackc/pgx/v5"
@@ -30,20 +31,18 @@ func (r *rateBucketRepo) SyncBuckets(ctx context.Context, channels []*biz.Channe
 	batch := &pgx.Batch{}
 	n := 0
 	for _, ch := range channels {
-		if ch.RateLimit.QPS <= 0 {
+		// 生效限流 = 显式配置，否则按类型缺省（钉钉/企微 20/min、飞书 100/min；邮件/webhook 不限）。
+		rl := notifycontract.EffectiveRateLimit(ch.Type, ch.RateLimit)
+		if rl.Rate() <= 0 {
 			batch.Queue("DELETE FROM notify_rate_bucket WHERE channel_id = $1", ch.ID)
 			n++
 			continue
-		}
-		capacity := float64(ch.RateLimit.Burst)
-		if capacity < 1 {
-			capacity = float64(ch.RateLimit.QPS)
 		}
 		batch.Queue(
 			`INSERT INTO notify_rate_bucket (channel_id, tokens, capacity, rate, last_refill) VALUES ($1, $2, $2, $3, now())
 			 ON CONFLICT (channel_id) DO UPDATE SET capacity = EXCLUDED.capacity, rate = EXCLUDED.rate,
 			   tokens = LEAST(notify_rate_bucket.tokens, EXCLUDED.capacity)`,
-			ch.ID, capacity, float64(ch.RateLimit.QPS))
+			ch.ID, rl.Capacity(), rl.Rate())
 		n++
 	}
 	if n == 0 {
@@ -62,7 +61,7 @@ func (r *rateBucketRepo) SyncBuckets(ctx context.Context, channels []*biz.Channe
 // Take implements biz.RateLimiter：按经过时间补充后扣 1 令牌；0 行 = 无令牌或无桶。
 // 无桶（qps=0）直接放行；有桶无令牌按 (1-tokens)/rate 给出等待建议。
 func (r *rateBucketRepo) Take(ctx context.Context, ch *biz.Channel) (bool, time.Duration, error) {
-	if ch.RateLimit.QPS <= 0 {
+	if notifycontract.EffectiveRateLimit(ch.Type, ch.RateLimit).Rate() <= 0 {
 		return true, 0, nil
 	}
 	var tokens float64

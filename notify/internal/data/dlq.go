@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/lanyulei/reborn/backend/kit/dbx"
@@ -28,14 +29,14 @@ func (r *dlqRepo) Replay(ctx context.Context, limit int, build func(dl *biz.Dead
 		rows, err := tx.Query(ctx,
 			`UPDATE notify_dlq SET replay_state = 3, update_time = now()
 			 WHERE id IN (SELECT id FROM notify_dlq WHERE replay_state = 2 ORDER BY update_time LIMIT $1 FOR UPDATE SKIP LOCKED)
-			 RETURNING id, dispatch_id, event_id, channel_id, recipient, COALESCE(last_error, ''), attempts`, limit)
+			 RETURNING id, dispatch_id, event_id, channel_id, recipient, COALESCE(last_error, ''), attempts, create_time`, limit)
 		if err != nil {
 			return fmt.Errorf("claim dead letters: %w", err)
 		}
 		var dls []*biz.DeadLetter
 		for rows.Next() {
 			var dl biz.DeadLetter
-			if err := rows.Scan(&dl.ID, &dl.DispatchID, &dl.EventID, &dl.ChannelID, &dl.Recipient, &dl.LastError, &dl.Attempts); err != nil {
+			if err := rows.Scan(&dl.ID, &dl.DispatchID, &dl.EventID, &dl.ChannelID, &dl.Recipient, &dl.LastError, &dl.Attempts, &dl.CreateTime); err != nil {
 				rows.Close()
 				return fmt.Errorf("scan dead letter: %w", err)
 			}
@@ -47,6 +48,12 @@ func (r *dlqRepo) Replay(ctx context.Context, limit int, build func(dl *biz.Dead
 		}
 		dispatches := make([]*biz.Dispatch, 0, len(dls))
 		for _, dl := range dls {
+			// 取死 dispatch 的 content 快照（聚合上下文）；死信时间 ≥ dispatch 创建时间，
+			// 以此做分区剪枝；源分区已清理 → 无行，按单事件重放。
+			if err := tx.QueryRow(ctx, "SELECT content FROM notify_dispatch WHERE id = $1 AND create_time <= $2",
+				dl.DispatchID, dl.CreateTime).Scan(&dl.Content); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return fmt.Errorf("load dead dispatch content: %w", err)
+			}
 			d, err := build(dl)
 			if err != nil {
 				return err

@@ -86,6 +86,9 @@ message Pipeline {
     google.protobuf.Duration reap_interval = 7;
     // max_attempts 最大尝试次数（首发 + 5 次重试 = 6），超出转死信，缺省 6。
     int32 max_attempts = 8;
+    // max_send_timeout 渠道显式超时（webhook timeout_s）的上限，缺省 10s：
+    // 渠道未配置取 send_timeout，配置了取 min(timeout_s, max_send_timeout)。
+    google.protobuf.Duration max_send_timeout = 9;
   }
   // Dlq 死信重放 worker 参数。
   message Dlq {
@@ -123,12 +126,31 @@ message Pipeline {
     // clock_skew HMAC 时间戳允许偏差（防重放窗口），缺省 5m。
     google.protobuf.Duration clock_skew = 1;
   }
-  // roles 启用的组件角色：api / router / sender / dlqworker / maintenance
-  // （relay 保留给 NATS 骨干）；环境变量 SERVER_ROLES（逗号分隔）优先于本项；
-  // 两者皆空 = 全部角色。
+  // Nats JetStream 骨干参数（backbone=nats 时生效）。
+  message Nats {
+    // url 连接地址，缺省 nats://127.0.0.1:4222。
+    string url = 1;
+    // token 连接令牌（yaml 用 ${KRATOS_NATS_TOKEN} 占位，不落文件）。
+    string token = 2;
+    // stream_prefix 流名前缀（<prefix>_EVENTS / <prefix>_DISPATCHES），缺省 NOTIFY。
+    string stream_prefix = 3;
+    // ack_wait 消费者 AckWait（须 > 单批处理时长），缺省 2m。
+    google.protobuf.Duration ack_wait = 4;
+    // max_deliver 单条消息最大投递次数（耗尽后由 relay 超期重发兜底），缺省 20。
+    int32 max_deliver = 5;
+    // relay_poll relay 扫描周期，缺省 200ms。
+    google.protobuf.Duration relay_poll = 6;
+    // relay_batch relay 单轮发布上限，缺省 500。
+    int32 relay_batch = 7;
+    // replicas 流副本数（生产 3），缺省 1。
+    int32 replicas = 8;
+  }
+  // roles 启用的组件角色：api / router / sender / dlqworker / maintenance / relay
+  // （relay 仅 backbone=nats 时有意义）；环境变量 SERVER_ROLES（逗号分隔）优先于本项；
+  // 两者皆空 = 全部角色（nats 下含 relay）。
   repeated string roles = 1;
-  // backbone 消息骨干：pg（缺省，事件/任务经 PostgreSQL SKIP LOCKED 流转）；
-  // nats 保留给后续实现。
+  // backbone 消息骨干：pg（缺省，事件/任务经 PostgreSQL SKIP LOCKED 流转）或 nats
+  // （JetStream 作队列游标，PG 仍为事实源与状态机）；其它取值装配失败。
   string backbone = 2;
   // router 路由参数。
   Router router = 3;
@@ -140,6 +162,8 @@ message Pipeline {
   Maintenance maintenance = 6;
   // ingress 接入参数。
   Ingress ingress = 7;
+  // nats JetStream 骨干参数。
+  Nats nats = 8;
 }
 
 // Notify 是渠道凭据解密配置。

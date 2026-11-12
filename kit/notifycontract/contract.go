@@ -5,8 +5,12 @@
 package notifycontract
 
 import (
+	"encoding/json"
+	"fmt"
+	"net"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // DefaultBizID 默认业务命名空间。
@@ -22,6 +26,39 @@ const (
 )
 
 // 模板维度通配值。
+// 模板输出格式（notify_template.format）；渠道按能力降级见 EffectiveFormat。
+const (
+	TemplateFormatText     = "text"
+	TemplateFormatMarkdown = "markdown"
+	TemplateFormatHTML     = "html"
+	TemplateFormatCard     = "card"
+)
+
+// EffectiveFormat 渠道生效格式：email 只认 html（其余纯文本）；群机器人 card→card、
+// markdown/html→markdown、text→text；webhook 原样透传；空/未知按 text。
+func EffectiveFormat(channelType, format string) string {
+	switch channelType {
+	case ChannelTypeEmail:
+		if format == TemplateFormatHTML {
+			return TemplateFormatHTML
+		}
+		return TemplateFormatText
+	case ChannelTypeDingtalk, ChannelTypeWecom, ChannelTypeFeishu:
+		switch format {
+		case TemplateFormatCard:
+			return TemplateFormatCard
+		case TemplateFormatMarkdown, TemplateFormatHTML:
+			return TemplateFormatMarkdown
+		}
+		return TemplateFormatText
+	}
+	switch format {
+	case TemplateFormatMarkdown, TemplateFormatHTML, TemplateFormatCard:
+		return format
+	}
+	return TemplateFormatText
+}
+
 const (
 	TemplateChannelAny   = "*"
 	TemplateEventTypeAny = "*"
@@ -90,11 +127,19 @@ type (
 	// RobotConfig notify_channel.config（type=dingtalk/wecom/feishu）。
 	RobotConfig struct {
 		AtMobiles []string `json:"at_mobiles"`
+		// CardURL 卡片消息的跳转链接（format=card 时钉钉 actionCard / 企微 template_card /
+		// 飞书 interactive 的按钮目标；空 = 钉钉/企微降级 markdown、飞书卡片无按钮）。
+		CardURL string `json:"card_url,omitempty"`
+		// CardButton 卡片按钮文字（缺省"查看详情"）。
+		CardButton string `json:"card_button,omitempty"`
 	}
 	// RateLimit notify_channel.rate_limit；QPS=0 不限。
 	RateLimit struct {
 		QPS   int64 `json:"qps"`
 		Burst int64 `json:"burst"`
+		// PerMinute 每分钟配额（QPS=0 时生效）：群机器人平台限制以"每分钟 N 条"计
+		// （钉钉/企微 20/min），整数 qps 表达不了 < 1/s 的速率。
+		PerMinute int64 `json:"per_minute,omitempty"`
 	}
 	// RouteRecipient notify_route.recipient_policy。
 	RouteRecipient struct {
@@ -167,3 +212,230 @@ const DedupGateSQL = `INSERT INTO notify_dedup (biz_id, dedup_key, event_id, exp
 	  event_id = CASE WHEN notify_dedup.expire_time < now() THEN EXCLUDED.event_id ELSE notify_dedup.event_id END,
 	  expire_time = CASE WHEN notify_dedup.expire_time < now() THEN EXCLUDED.expire_time ELSE notify_dedup.expire_time END
 	RETURNING event_id::text`
+
+// TagsMatch 路由 tag_match 判定（管道选路与控制面试算同一实现）：tags 为空无条件；
+// 否则 payload 须为对象且每个键的字面值相等（数字/布尔按 JSON 文本比较）。键先按
+// 顶层字面键查找，未命中再按点分路径下钻嵌套对象（"labels.env" → payload.labels.env）。
+func TagsMatch(tags map[string]string, payload map[string]any) bool {
+	if len(tags) == 0 {
+		return true
+	}
+	if payload == nil {
+		return false
+	}
+	for k, want := range tags {
+		v, ok := lookupPath(payload, k)
+		if !ok {
+			return false
+		}
+		if ScalarString(v) != want {
+			return false
+		}
+	}
+	return true
+}
+
+// lookupPath 顶层字面键优先；否则按 "." 逐级进入嵌套 map。
+func lookupPath(payload map[string]any, key string) (any, bool) {
+	if v, ok := payload[key]; ok {
+		return v, true
+	}
+	if !strings.Contains(key, ".") {
+		return nil, false
+	}
+	var cur any = payload
+	for _, part := range strings.Split(key, ".") {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		if cur, ok = m[part]; !ok {
+			return nil, false
+		}
+	}
+	return cur, true
+}
+
+// ScalarString JSON 标量的文本形态（tag_match 比较口径：3 与 "3"、true 与 "true" 等价）。
+func ScalarString(v any) string {
+	switch x := v.(type) {
+	case string:
+		return x
+	case bool:
+		if x {
+			return "true"
+		}
+		return "false"
+	case float64:
+		if x == float64(int64(x)) {
+			return fmt.Sprintf("%d", int64(x))
+		}
+		return fmt.Sprintf("%g", x)
+	case nil:
+		return "null"
+	default:
+		return fmt.Sprintf("%v", x)
+	}
+}
+
+// WindowContains 静默时间窗判定：按 tz 本地时间（非法 tz 按 UTC）；start > end 跨午夜；
+// 时刻解析失败视为不命中（宁放行不误静默）。
+func WindowContains(w SilenceWindow, now time.Time) bool {
+	loc := time.UTC
+	if w.Tz != "" {
+		if l, err := time.LoadLocation(w.Tz); err == nil {
+			loc = l
+		}
+	}
+	start, ok1 := parseClock(w.Start)
+	end, ok2 := parseClock(w.End)
+	if !ok1 || !ok2 {
+		return false
+	}
+	t := now.In(loc)
+	cur := t.Hour()*60 + t.Minute()
+	if start <= end {
+		return cur >= start && cur < end
+	}
+	return cur >= start || cur < end // 跨午夜
+}
+
+func parseClock(s string) (int, bool) {
+	var h, m int
+	if _, err := fmt.Sscanf(s, "%d:%d", &h, &m); err != nil || h < 0 || h > 23 || m < 0 || m > 59 {
+		return 0, false
+	}
+	return h*60 + m, true
+}
+
+// Rate 令牌补充速率（tokens/s）：QPS 优先，否则 PerMinute/60；两者皆 0 = 不限。
+func (r RateLimit) Rate() float64 {
+	if r.QPS > 0 {
+		return float64(r.QPS)
+	}
+	if r.PerMinute > 0 {
+		return float64(r.PerMinute) / 60
+	}
+	return 0
+}
+
+// Capacity 令牌桶容量：Burst > 0 取 Burst，否则 max(1, 速率)。
+func (r RateLimit) Capacity() float64 {
+	if r.Burst > 0 {
+		return float64(r.Burst)
+	}
+	if rate := r.Rate(); rate > 1 {
+		return rate
+	}
+	return 1
+}
+
+// DefaultRateLimit 渠道类型缺省限流（渠道未配置时生效）：群机器人按平台公开限制——
+// 钉钉/企微 20 条/分钟（容量 1：严格匀速，平台按分钟窗口计数，突发必被 130101/45009
+// 拒绝）、飞书 100 条/分钟（容量 5）；邮件/webhook 不限。
+func DefaultRateLimit(channelType string) RateLimit {
+	switch channelType {
+	case ChannelTypeDingtalk, ChannelTypeWecom:
+		return RateLimit{PerMinute: 20, Burst: 1}
+	case ChannelTypeFeishu:
+		return RateLimit{PerMinute: 100, Burst: 5}
+	}
+	return RateLimit{}
+}
+
+// EffectiveRateLimit 渠道生效限流：显式配置优先，否则类型缺省。
+func EffectiveRateLimit(channelType string, configured RateLimit) RateLimit {
+	if configured.Rate() > 0 {
+		return configured
+	}
+	return DefaultRateLimit(channelType)
+}
+
+// TemplateFuncs 模板白名单函数（core 写入校验与管道渲染同一集合注册，两端一致）：
+// 全部为纯函数、无 IO、无反射逃逸——沙箱约束不变。
+//   - fmtTime t "2006-01-02 15:04:05"：按布局格式化时间（布局可省略）
+//   - severity n：1-4 → info/warning/error/critical
+//   - json v：紧凑 JSON 文本（载荷/样本打印）
+//   - trunc s n：按 rune 截断并追加 …
+//   - upper / lower
+func TemplateFuncs() map[string]any {
+	return map[string]any{
+		"fmtTime":  fmtTime,
+		"severity": SeverityLabel,
+		"json":     jsonText,
+		"trunc":    truncRunes,
+		"upper":    strings.ToUpper,
+		"lower":    strings.ToLower,
+	}
+}
+
+// SeverityLabel 严重级文本（1-4 → info/warning/error/critical，越界原样数字）。
+func SeverityLabel(n int32) string {
+	switch n {
+	case 1:
+		return "info"
+	case 2:
+		return "warning"
+	case 3:
+		return "error"
+	case 4:
+		return "critical"
+	}
+	return fmt.Sprintf("%d", n)
+}
+
+func fmtTime(t time.Time, layout ...string) string {
+	l := "2006-01-02 15:04:05"
+	if len(layout) > 0 && layout[0] != "" {
+		l = layout[0]
+	}
+	return t.Format(l)
+}
+
+func jsonText(v any) string {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprintf("%v", v)
+	}
+	return string(raw)
+}
+
+func truncRunes(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
+}
+
+// PrivateIP 报告地址是否为回环/私网/链路本地/ULA/CGNAT/未指定/组播（webhook 出站
+// SSRF 防护：控制面校验字面量，管道在解析后对真实连接地址再校验，免疫 DNS 重绑定）。
+func PrivateIP(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsMulticast() || ip.IsUnspecified() || ip.IsInterfaceLocalMulticast() {
+		return true
+	}
+	if v4 := ip.To4(); v4 != nil {
+		return v4[0] == 100 && v4[1]&0xc0 == 64 // 100.64.0.0/10 CGNAT
+	}
+	return false
+}
+
+// UnsafeWebhookHost 控制面侧的字面量校验：localhost / 字面 IP 为私网。主机名不解析
+// （解析交给管道连接时校验）。
+func UnsafeWebhookHost(host string) bool {
+	h := strings.ToLower(strings.TrimSuffix(host, "."))
+	if h == "" || h == "localhost" || strings.HasSuffix(h, ".localhost") {
+		return true
+	}
+	if ip := net.ParseIP(strings.Trim(h, "[]")); ip != nil {
+		return PrivateIP(ip)
+	}
+	return false
+}

@@ -2,12 +2,15 @@ package data
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/notify"
+
+	"github.com/jackc/pgx/v5"
 	basedata "github.com/lanyulei/reborn/backend/core/internal/data"
 )
 
@@ -86,6 +89,9 @@ func (r *dispatchRepo) ListDispatches(ctx context.Context, filter biz.DispatchFi
 	if filter.Status != nil {
 		add("status = %s", *filter.Status)
 	}
+	if filter.Recipient != "" {
+		add("recipient = %s", filter.Recipient)
+	}
 	if filter.CreateTimeStart != nil {
 		add("create_time >= %s", *filter.CreateTimeStart)
 	}
@@ -122,4 +128,17 @@ func (r *dispatchRepo) ListDispatches(ctx context.Context, filter biz.DispatchFi
 		dispatches = append(dispatches, dispatch)
 	}
 	return dispatches, total, rows.Err()
+}
+
+// GetDispatch implements biz.DispatchRepo（分区表按主键逐分区探查，单行详情可接受）。
+func (r *dispatchRepo) GetDispatch(ctx context.Context, id string) (*biz.Dispatch, error) {
+	row := r.data.Pool.QueryRow(ctx, "SELECT "+dispatchSelectColumns+" FROM notify_dispatch WHERE id = $1", id)
+	dispatch, err := scanDispatch(row.Scan)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, biz.ErrDispatchNotFound
+		}
+		return nil, fmt.Errorf("get dispatch: %w", err)
+	}
+	return dispatch, nil
 }

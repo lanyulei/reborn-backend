@@ -445,7 +445,10 @@ type ListSubscriptionsRequest struct {
 	// keyword 关键字，可选；模糊匹配 event_pattern。
 	Keyword *string `protobuf:"bytes,4,opt,name=keyword,proto3,oneof" json:"keyword,omitempty"`
 	// enabled 启用状态过滤，可选。
-	Enabled       *bool `protobuf:"varint,5,opt,name=enabled,proto3,oneof" json:"enabled,omitempty"`
+	Enabled *bool `protobuf:"varint,5,opt,name=enabled,proto3,oneof" json:"enabled,omitempty"`
+	// biz_id 业务过滤，可选；管理员代管他人（user_id 指定他人）且角色 biz_scope
+	// 受限时必须携带且在范围内（400 NOTIFY_BIZ_REQUIRED / 403 NOTIFY_BIZ_FORBIDDEN）。
+	BizId         *string `protobuf:"bytes,6,opt,name=biz_id,json=bizId,proto3,oneof" json:"biz_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -513,6 +516,13 @@ func (x *ListSubscriptionsRequest) GetEnabled() bool {
 		return *x.Enabled
 	}
 	return false
+}
+
+func (x *ListSubscriptionsRequest) GetBizId() string {
+	if x != nil && x.BizId != nil {
+		return *x.BizId
+	}
+	return ""
 }
 
 // ListSubscriptionsResponse 分页查询订阅响应。
@@ -613,19 +623,21 @@ const file_notify_v1_subscription_proto_rawDesc = "" +
 	"\fsubscription\x18\x01 \x01(\v2\x1d.notify.v1.NotifySubscriptionR\fsubscription\"5\n" +
 	"\x19DeleteSubscriptionRequest\x12\x18\n" +
 	"\x02id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\"\x1c\n" +
-	"\x1aDeleteSubscriptionResponse\"\xf2\x01\n" +
+	"\x1aDeleteSubscriptionResponse\"\xb8\x02\n" +
 	"\x18ListSubscriptionsRequest\x12&\n" +
 	"\auser_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01H\x00R\x06userId\x88\x01\x01\x12\x1b\n" +
 	"\x04page\x18\x02 \x01(\x03B\a\xbaH\x04\"\x02(\x01R\x04page\x12&\n" +
 	"\tpage_size\x18\x03 \x01(\x05B\t\xbaH\x06\x1a\x04\x18d(\x01R\bpageSize\x12&\n" +
 	"\akeyword\x18\x04 \x01(\tB\a\xbaH\x04r\x02\x18@H\x01R\akeyword\x88\x01\x01\x12\x1d\n" +
-	"\aenabled\x18\x05 \x01(\bH\x02R\aenabled\x88\x01\x01B\n" +
+	"\aenabled\x18\x05 \x01(\bH\x02R\aenabled\x88\x01\x01\x129\n" +
+	"\x06biz_id\x18\x06 \x01(\tB\x1d\xbaH\x1ar\x18\x10\x01\x18@2\x12^[a-z0-9_-]{1,64}$H\x03R\x05bizId\x88\x01\x01B\n" +
 	"\n" +
 	"\b_user_idB\n" +
 	"\n" +
 	"\b_keywordB\n" +
 	"\n" +
-	"\b_enabled\"f\n" +
+	"\b_enabledB\t\n" +
+	"\a_biz_id\"f\n" +
 	"\x19ListSubscriptionsResponse\x123\n" +
 	"\x05items\x18\x01 \x03(\v2\x1d.notify.v1.NotifySubscriptionR\x05items\x12\x14\n" +
 	"\x05total\x18\x02 \x01(\x03R\x05total2\xf1\x03\n" +

@@ -1,0 +1,550 @@
+syntax = "proto3";
+
+package cmdb.v1;
+
+import "google/api/annotations.proto";
+import "google/api/httpbody.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "buf/validate/validate.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/cmdb/v1;v1";
+
+// CmdbCIService 资源（配置项）管理：按类型字段定义校验属性，乐观锁更新，
+// 状态机流转，全量变更历史。
+service CmdbCIService {
+  // ListCIs 分页查询资源：按类型、关键字、状态、环境、标签与属性等值过滤。
+  rpc ListCIs(ListCIsRequest) returns (ListCIsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/cmdb/ci"
+    };
+    option (system.v1.title) = "查询资源列表";
+  }
+  // GetCI 查询资源详情（含各关系类型的关联统计）。
+  rpc GetCI(GetCIRequest) returns (GetCIResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/cmdb/ci/{id}"
+    };
+    option (system.v1.title) = "查询资源详情";
+  }
+  // CreateCI 创建资源；attrs 按类型字段定义校验。
+  rpc CreateCI(CreateCIRequest) returns (CreateCIResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/cmdb/ci"
+      body: "*"
+    };
+    option (system.v1.title) = "创建资源";
+  }
+  // UpdateCI 更新资源（携带 version 乐观锁；attrs 按键合并，显式 null 清空）。
+  rpc UpdateCI(UpdateCIRequest) returns (UpdateCIResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/cmdb/ci/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "更新资源";
+  }
+  // TransitionCI 资源状态流转（planning → active → maintenance ⇄ active → retired）。
+  rpc TransitionCI(TransitionCIRequest) returns (TransitionCIResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/cmdb/ci/{id}:transition"
+      body: "*"
+    };
+    option (system.v1.title) = "变更资源状态";
+  }
+  // DeleteCI 删除资源（软删；仍有关系时 409）。
+  rpc DeleteCI(DeleteCIRequest) returns (DeleteCIResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/cmdb/ci/{id}"
+    };
+    option (system.v1.title) = "删除资源";
+  }
+  // ListCIHistory 分页查询资源变更历史（倒序）。
+  rpc ListCIHistory(ListCIHistoryRequest) returns (ListCIHistoryResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/cmdb/ci/{id}/history"
+    };
+    option (system.v1.title) = "查询资源变更历史";
+  }
+  // ImportCIs 批量导入（按名称 upsert）：dry_run=true 只校验并给出每行将执行的动作，
+  // 不落库；正式导入逐行独立提交，失败行不影响其它行。
+  rpc ImportCIs(ImportCIsRequest) returns (ImportCIsResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/cmdb/ci:import"
+      body: "*"
+    };
+    option (system.v1.title) = "导入资源";
+  }
+  // ExportCIs 导出某类型资源为 CSV（固定列 + 全部未废弃字段），最多 10000 行。
+  rpc ExportCIs(ExportCIsRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {
+      get: "/api/v1/cmdb/ci:export"
+    };
+    option (system.v1.title) = "导出资源";
+  }
+  // SearchCIs 全局搜索：名称 / 外部标识 / 标签 / 任意属性值模糊匹配，跨类型返回前 N 条。
+  rpc SearchCIs(SearchCIsRequest) returns (SearchCIsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/cmdb/ci:search"
+    };
+    option (system.v1.title) = "全局搜索资源";
+  }
+  // ListHistory 全局变更审计：跨资源按类型 / 动作 / 操作者 / 时间检索。
+  rpc ListHistory(ListHistoryRequest) returns (ListHistoryResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/cmdb/history"
+    };
+    option (system.v1.title) = "查询变更审计";
+  }
+}
+
+// ImportRow 导入行。
+message ImportRow {
+  // name 资源名称（同类型内唯一，upsert 锚点）。
+  string name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+  // status 初始状态（仅新建生效），缺省 active。
+  optional string status = 2 [(buf.validate.field).string = {
+    in: ["planning", "active", "maintenance"]
+  }];
+  // env 环境。
+  optional string env = 3 [(buf.validate.field).string.max_len = 32];
+  // owner 负责人。
+  optional string owner = 4 [(buf.validate.field).string.max_len = 64];
+  // tags 标签。
+  repeated string tags = 5 [(buf.validate.field).repeated = {
+    max_items: 32
+    items: {
+      string: {
+        min_len: 1
+        max_len: 64
+      }
+    }
+  }];
+  // external_id 外部标识。
+  optional string external_id = 6 [(buf.validate.field).string.max_len = 128];
+  // attrs 属性。
+  google.protobuf.Struct attrs = 7;
+  // relations 关系列：按对端类型 + 名称匹配后建立（已存在跳过），≤16。
+  repeated ImportRelation relations = 8 [(buf.validate.field).repeated.max_items = 16];
+}
+
+// ImportRelation 导入行的关系声明。
+message ImportRelation {
+  // relation_type 关系类型编码。
+  string relation_type = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // direction 方向：outgoing / incoming。
+  string direction = 2 [(buf.validate.field).string = {
+    in: ["outgoing", "incoming"]
+  }];
+  // target_model 对端类型编码（关系端为通配时必填，否则可省略）。
+  optional string target_model = 3 [(buf.validate.field).string.max_len = 64];
+  // target_name 对端资源名称。
+  string target_name = 4 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+}
+
+// ImportCIsRequest 导入请求。
+message ImportCIsRequest {
+  // model_code 目标类型。
+  string model_code = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // dry_run 试运行：只校验与预览动作，不写入。
+  bool dry_run = 2;
+  // rows 导入行，1-1000。
+  repeated ImportRow rows = 3 [(buf.validate.field).repeated = {
+    min_items: 1
+    max_items: 1000
+  }];
+}
+
+// ImportRowResult 单行结果。
+message ImportRowResult {
+  // row 行号（从 1 开始）。
+  int32 row = 1;
+  // name 资源名称。
+  string name = 2;
+  // action 动作：create / update / skip（无变化）/ error。
+  string action = 3;
+  // message 错误原因（action=error）。
+  string message = 4;
+  // ci_id 资源标识（已存在或已创建）。
+  string ci_id = 5;
+}
+
+// ImportCIsResponse 导入响应。
+message ImportCIsResponse {
+  // dry_run 是否试运行。
+  bool dry_run = 1;
+  // created / updated / skipped / failed 统计。
+  int32 created = 2;
+  int32 updated = 3;
+  int32 skipped = 4;
+  int32 failed = 5;
+  // results 逐行结果。
+  repeated ImportRowResult results = 6;
+}
+
+// ExportCIsRequest 导出请求。
+message ExportCIsRequest {
+  // model_code 目标类型。
+  string model_code = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // keyword 名称/外部标识模糊匹配，可选。
+  optional string keyword = 2 [(buf.validate.field).string.max_len = 128];
+  // status 状态过滤，可选。
+  optional string status = 3 [(buf.validate.field).string = {
+    in: ["planning", "active", "maintenance", "retired"]
+  }];
+  // env 环境过滤，可选。
+  optional string env = 4 [(buf.validate.field).string.max_len = 32];
+  // format 导出格式：csv（缺省）/ json。
+  optional string format = 20 [(buf.validate.field).string = {
+    in: ["csv", "json"]
+  }];
+}
+
+// CmdbCI 资源实体。
+message CmdbCI {
+  // id 资源标识。
+  string id = 1;
+  // model_code 资源类型编码。
+  string model_code = 2;
+  // model_name 资源类型名。
+  string model_name = 3;
+  // name 资源名称（同类型内唯一）。
+  string name = 4;
+  // status 生命周期：planning / active / maintenance / retired。
+  string status = 5;
+  // env 环境标识（prod/test/dev 等自由文本）。
+  string env = 6;
+  // owner 负责人。
+  string owner = 7;
+  // tags 标签。
+  repeated string tags = 8;
+  // source 来源：manual 或 sync:<采集源 ID>。
+  string source = 9;
+  // external_id 外部系统标识（同步对账锚点）。
+  string external_id = 10;
+  // attrs 动态属性（键为字段编码）。
+  google.protobuf.Struct attrs = 11;
+  // last_synced_at 最近同步时间；人工资源为空。
+  google.protobuf.Timestamp last_synced_at = 12;
+  // stale 是否陈旧（超过同步周期未更新）。
+  bool stale = 13;
+  // version 乐观锁版本号，更新时须回传。
+  int64 version = 14;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 15;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 16;
+  // source_name 同步来源的采集源名称（source=manual 时为空）。
+  string source_name = 17;
+  // source_deleted 同步来源的采集源已删除。
+  bool source_deleted = 18;
+}
+
+// RelationSummary 资源在某个关系类型某个方向上的关联统计（详情页面板头）。
+message RelationSummary {
+  // relation_type 关系类型编码。
+  string relation_type = 1;
+  // direction 方向：outgoing（本资源为 src）/ incoming（本资源为 dst）。
+  string direction = 2;
+  // name 面板名（outgoing 取 forward_name，incoming 取 backward_name）。
+  string name = 3;
+  // target_model 对端类型编码（* 表示任意）。
+  string target_model = 4;
+  // count 关联数。
+  int64 count = 5;
+}
+
+// CmdbHistory 变更历史。
+message CmdbHistory {
+  // id 记录标识。
+  string id = 1;
+  // ci_id 资源标识。
+  string ci_id = 2;
+  // action 动作：create / update / transition / delete / link / unlink。
+  string action = 3;
+  // diff 差异：{before:{...}, after:{...}}。
+  google.protobuf.Struct diff = 4;
+  // operator 操作者用户 ID；同步任务为 system。
+  string operator = 5;
+  // source 来源：manual / sync:<id> / assistant。
+  string source = 6;
+  // request_id 请求 ID。
+  string request_id = 7;
+  // create_time 发生时间。
+  google.protobuf.Timestamp create_time = 8;
+  // ci_name 资源名称（全局审计列表用）。
+  string ci_name = 9;
+  // model_code 资源类型编码（全局审计列表用）。
+  string model_code = 10;
+}
+
+// ListHistoryRequest 全局变更审计查询请求。
+message ListHistoryRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // model_code 类型过滤，可选。
+  optional string model_code = 3 [(buf.validate.field).string.max_len = 64];
+  // action 动作过滤，可选。
+  optional string action = 4 [(buf.validate.field).string = {
+    in: ["create", "update", "transition", "delete", "link", "unlink"]
+  }];
+  // operator 操作者（用户 ID）过滤，可选。
+  optional string operator = 5 [(buf.validate.field).string.max_len = 64];
+  // keyword 资源名称模糊匹配，可选。
+  optional string keyword = 6 [(buf.validate.field).string.max_len = 128];
+  // from / to 发生时间范围，可选。
+  optional google.protobuf.Timestamp from = 7;
+  optional google.protobuf.Timestamp to = 8;
+}
+
+// ListHistoryResponse 全局变更审计查询响应。
+message ListHistoryResponse {
+  // items 当前页数据。
+  repeated CmdbHistory items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// ListCIsRequest 分页查询资源请求。
+message ListCIsRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // model_code 资源类型过滤，可选。
+  optional string model_code = 3 [(buf.validate.field).string.max_len = 64];
+  // keyword 名称/外部标识模糊匹配，可选。
+  optional string keyword = 4 [(buf.validate.field).string.max_len = 128];
+  // status 状态过滤，可选。
+  optional string status = 5 [(buf.validate.field).string = {
+    in: ["planning", "active", "maintenance", "retired"]
+  }];
+  // env 环境过滤，可选。
+  optional string env = 6 [(buf.validate.field).string.max_len = 32];
+  // tag 标签过滤（包含），可选。
+  optional string tag = 7 [(buf.validate.field).string.max_len = 64];
+  // attrs 属性等值过滤（键为字段编码），可选。
+  google.protobuf.Struct attrs = 8;
+  // rel_type 关联条件：关系类型编码（与 rel_direction 配合），可选。
+  optional string rel_type = 9 [(buf.validate.field).string.max_len = 64];
+  // rel_direction 关联方向：outgoing / incoming。
+  optional string rel_direction = 10 [(buf.validate.field).string = {
+    in: ["outgoing", "incoming"]
+  }];
+  // rel_target_id 关联到指定资源；为空时按 rel_none 判定"有/无关联"。
+  optional string rel_target_id = 11 [(buf.validate.field).string.uuid = true];
+  // rel_none 为真 = 筛选该关系方向上没有任何关联的资源。
+  optional bool rel_none = 12;
+  // cursor 游标分页：上一页返回的 next_cursor；提供时忽略 page。
+  optional string cursor = 13 [(buf.validate.field).string.max_len = 128];
+}
+
+// ListCIsResponse 分页查询资源响应。
+message ListCIsResponse {
+  // items 当前页数据。
+  repeated CmdbCI items = 1;
+  // total 总数。
+  int64 total = 2;
+  // next_cursor 下一页游标；空 = 无更多。
+  string next_cursor = 3;
+}
+
+// GetCIRequest 查询资源详情请求。
+message GetCIRequest {
+  // id 资源标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetCIResponse 查询资源详情响应。
+message GetCIResponse {
+  // ci 资源。
+  CmdbCI ci = 1;
+  // relations 各关系类型两个方向上的关联统计（仅适用于该类型的关系）。
+  repeated RelationSummary relations = 2;
+}
+
+// CreateCIRequest 创建资源请求。
+message CreateCIRequest {
+  // model_code 资源类型。
+  string model_code = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // name 资源名称，1-128 位。
+  string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+  // status 初始状态，缺省 active。
+  optional string status = 3 [(buf.validate.field).string = {
+    in: ["planning", "active", "maintenance"]
+  }];
+  // env 环境，可选。
+  optional string env = 4 [(buf.validate.field).string.max_len = 32];
+  // owner 负责人，可选。
+  optional string owner = 5 [(buf.validate.field).string.max_len = 64];
+  // tags 标签，≤32 项。
+  repeated string tags = 6 [(buf.validate.field).repeated = {
+    max_items: 32
+    items: {
+      string: {
+        min_len: 1
+        max_len: 64
+      }
+    }
+  }];
+  // external_id 外部标识，可选。
+  optional string external_id = 7 [(buf.validate.field).string.max_len = 128];
+  // attrs 动态属性。
+  google.protobuf.Struct attrs = 8;
+}
+
+// CreateCIResponse 创建资源响应。
+message CreateCIResponse {
+  // ci 创建后的资源。
+  CmdbCI ci = 1;
+}
+
+// UpdateCIRequest 更新资源请求；未传字段不更新。
+message UpdateCIRequest {
+  // id 资源标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // version 当前版本号（乐观锁）。
+  int64 version = 2 [(buf.validate.field).int64.gte = 1];
+  // name 名称。
+  optional string name = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+  // env 环境。
+  optional string env = 4 [(buf.validate.field).string.max_len = 32];
+  // owner 负责人。
+  optional string owner = 5 [(buf.validate.field).string.max_len = 64];
+  // tags 标签整组替换；不传不改。
+  TagList tags = 6;
+  // external_id 外部标识。
+  optional string external_id = 7 [(buf.validate.field).string.max_len = 128];
+  // attrs 属性按键合并：出现的键覆盖，值为 null 的键清空；未出现的键不变。
+  google.protobuf.Struct attrs = 8;
+}
+
+// TagList 标签整组替换载体（区分"不传"与"清空"）。
+message TagList {
+  // items 标签。
+  repeated string items = 1 [(buf.validate.field).repeated = {
+    max_items: 32
+    items: {
+      string: {
+        min_len: 1
+        max_len: 64
+      }
+    }
+  }];
+}
+
+// UpdateCIResponse 更新资源响应。
+message UpdateCIResponse {
+  // ci 更新后的资源。
+  CmdbCI ci = 1;
+}
+
+// TransitionCIRequest 状态流转请求。
+message TransitionCIRequest {
+  // id 资源标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // version 当前版本号（乐观锁）。
+  int64 version = 2 [(buf.validate.field).int64.gte = 1];
+  // status 目标状态。
+  string status = 3 [(buf.validate.field).string = {
+    in: ["planning", "active", "maintenance", "retired"]
+  }];
+}
+
+// TransitionCIResponse 状态流转响应。
+message TransitionCIResponse {
+  // ci 流转后的资源。
+  CmdbCI ci = 1;
+}
+
+// DeleteCIRequest 删除资源请求。
+message DeleteCIRequest {
+  // id 资源标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteCIResponse 删除资源响应。
+message DeleteCIResponse {}
+
+// ListCIHistoryRequest 查询变更历史请求。
+message ListCIHistoryRequest {
+  // id 资源标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // page 页码，从 1 开始。
+  int64 page = 2 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 3 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+}
+
+// ListCIHistoryResponse 查询变更历史响应。
+message ListCIHistoryResponse {
+  // items 当前页数据（时间倒序）。
+  repeated CmdbHistory items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// SearchCIsRequest 全局搜索请求。
+message SearchCIsRequest {
+  // q 关键字（子串匹配，不区分大小写），1-128。
+  string q = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+  // limit 返回条数上限，1-100，缺省 20。
+  optional int32 limit = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+}
+
+// SearchHit 搜索命中。
+message SearchHit {
+  // ci 资源。
+  CmdbCI ci = 1;
+  // matched_field 命中字段：name / externalId / tags / 属性字段编码。
+  string matched_field = 2;
+  // matched_value 命中值。
+  string matched_value = 3;
+}
+
+// SearchCIsResponse 全局搜索响应（名称命中优先，其次按更新时间倒序）。
+message SearchCIsResponse {
+  // items 命中列表。
+  repeated SearchHit items = 1;
+}

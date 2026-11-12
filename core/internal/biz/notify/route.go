@@ -42,6 +42,8 @@ type RouteRecipient = notifycontract.RouteRecipient
 // RouteRule 路由规则：匹配（pattern/severity/标签）与分发（渠道/收件/聚合）
 // 决策互为整体，创建与整组替换更新共用同一校验。
 type RouteRule struct {
+	Name              string // 可读名称（空 = 未命名）
+	Description       string
 	EventPattern      string
 	SeverityMin       int32
 	TagMatch          map[string]string // nil = 无条件
@@ -98,6 +100,8 @@ type RouteRepo interface {
 	DeleteRoute(ctx context.Context, id string) error
 	// GetRoute 按 ID 查询未删除路由；不存在返回 ErrRouteNotFound。
 	GetRoute(ctx context.Context, id string) (*Route, error)
+	// ListRoutesByBiz 取 biz 内全部未删除路由（不分页；路由试算用，配置表规模）。
+	ListRoutesByBiz(ctx context.Context, bizID string) ([]*Route, error)
 	// ListRoutes 分页查询未删除路由；page 从 1 起，pageSize 上限 100，按创建时间倒序。
 	ListRoutes(ctx context.Context, filter RouteFilter, page, pageSize int64) ([]*Route, int64, error)
 }

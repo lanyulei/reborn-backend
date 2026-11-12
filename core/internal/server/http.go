@@ -4,11 +4,13 @@ import (
 	"log/slog"
 
 	assistantv1 "github.com/lanyulei/reborn/backend/core/api/assistant/v1"
+	cmdbv1 "github.com/lanyulei/reborn/backend/core/api/cmdb/v1"
 	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
 	v1 "github.com/lanyulei/reborn/backend/core/api/system/v1"
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
 	"github.com/lanyulei/reborn/backend/core/internal/conf"
 	assistantservice "github.com/lanyulei/reborn/backend/core/internal/service/assistant"
+	cmdbservice "github.com/lanyulei/reborn/backend/core/internal/service/cmdb"
 	notifyservice "github.com/lanyulei/reborn/backend/core/internal/service/notify"
 	service "github.com/lanyulei/reborn/backend/core/internal/service/system"
 	"github.com/lanyulei/reborn/backend/kit/httpx"
@@ -38,6 +40,8 @@ func NewHTTPServer(c *conf.Server, logger *slog.Logger, user *service.UserServic
 	deliveryLog *notifyservice.NotifyDeliveryLogService,
 	deadLetter *notifyservice.NotifyDeadLetterService,
 	assistant *assistantservice.AssistantService, assistantChat *assistantservice.AssistantChatService,
+	cmdbModel *cmdbservice.CmdbModelService, cmdbCI *cmdbservice.CmdbCIService, cmdbRelation *cmdbservice.CmdbRelationService,
+	cmdbScope *cmdbservice.CmdbScopeService, cmdbSync *cmdbservice.CmdbSyncService, cmdbInsight *cmdbservice.CmdbInsightService,
 	signer *biz.TokenSigner, authzUC *biz.AuthzUsecase,
 ) *http.Server {
 	opts := []http.ServerOption{
@@ -48,6 +52,7 @@ func NewHTTPServer(c *conf.Server, logger *slog.Logger, user *service.UserServic
 			validate.Validator(httpx.ProtoValidate),
 			ratelimit.Server(),
 			authMiddleware(signer),
+			operatorMiddleware(),
 			authzMiddleware(authzUC, logger),
 		),
 		// body 8MiB 上限在路由前包裹；proto.Message 的 JSON 请求/响应统一走 protojson（kit/httpx）。
@@ -84,5 +89,11 @@ func NewHTTPServer(c *conf.Server, logger *slog.Logger, user *service.UserServic
 	assistantv1.RegisterAssistantServiceHTTPServer(srv, assistant)
 	// AssistantChatService 的 Chat/Confirm 为 SSE 流式，不走生成注册（见 assistant.go）。
 	registerAssistantStream(srv, assistantChat)
+	cmdbv1.RegisterCmdbModelServiceHTTPServer(srv, cmdbModel)
+	cmdbv1.RegisterCmdbCIServiceHTTPServer(srv, cmdbCI)
+	cmdbv1.RegisterCmdbRelationServiceHTTPServer(srv, cmdbRelation)
+	cmdbv1.RegisterCmdbScopeServiceHTTPServer(srv, cmdbScope)
+	cmdbv1.RegisterCmdbSyncServiceHTTPServer(srv, cmdbSync)
+	cmdbv1.RegisterCmdbInsightServiceHTTPServer(srv, cmdbInsight)
 	return srv
 }

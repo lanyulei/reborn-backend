@@ -17,7 +17,7 @@ func TestNilHelpers(t *testing.T) {
 	if NilIfEmpty("") != nil || NilIfEmpty("x") != "x" || NilIfEmptyBytes(nil) != nil || len(TextArray(nil)) != 0 || TextArray([]string{"a"})[0] != "a" {
 		t.Fatal("nil helpers misbehave")
 	}
-	if LockID("a") == LockID("b") || LockID("a") != LockID("a") {
+	if LockID("a") == LockID("b") || LockID("a") != LockID("a"+"") {
 		t.Fatal("lock id must be deterministic and distinct")
 	}
 }

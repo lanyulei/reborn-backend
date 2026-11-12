@@ -25,8 +25,10 @@ func newRouterTxStub() *routerTxStub {
 	return &routerTxStub{marked: map[string]int32{}, deferred: map[string]time.Time{}, suppressed: map[string]bool{}}
 }
 
-func (s *routerTxStub) MarkEvent(_ context.Context, id string, _ time.Time, status int32) error {
-	s.marked[id] = status
+func (s *routerTxStub) MarkEvents(_ context.Context, marks []EventMark) error {
+	for _, m := range marks {
+		s.marked[m.ID] = m.Status
+	}
 	return nil
 }
 

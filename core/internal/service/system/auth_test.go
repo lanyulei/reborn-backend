@@ -43,7 +43,7 @@ func newAuthService(t *testing.T) (*AuthService, *biz.AuthUsecase, *testfake.Sto
 		t.Fatalf("testfake.NewAuthorizer() error = %v", err)
 	}
 	authz := biz.NewAuthzUsecase(store, store, store, authorizer)
-	return NewAuthService(uc, authz), uc, store, authorizer
+	return NewAuthService(uc, authz, biz.NewAvatarUsecase(store, store, testfake.NewAvatarStore())), uc, store, authorizer
 }
 
 // seedAuthUser 预置可登录用户（真实 Argon2id 哈希）。

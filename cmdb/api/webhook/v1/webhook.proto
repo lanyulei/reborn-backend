@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package cmdb.webhook.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/struct.proto";
+import "buf/validate/validate.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/cmdb/api/webhook/v1;v1";
+
+// CmdbWebhookService CMDB 数据面回调接入：云厂商事件（EventBridge / 云监控 / vCenter 告警等）
+// 回调本接口即时触发一次同步。鉴权：请求头 X-Cmdb-Webhook-Token 与采集源令牌（core 轮换、
+// 库中只存 SHA-256）比对；同源 60s 内最多触发一次；已有未完成任务时返回 queued=false。
+// 请求体为厂商任意 JSON（只做记录，不解析语义）。
+service CmdbWebhookService {
+  // Trigger 触发采集源同步。
+  rpc Trigger(TriggerRequest) returns (TriggerResponse) {
+    option (google.api.http) = {
+      post: "/webhook/v1/cmdb/sync/{source_id}"
+      body: "payload"
+    };
+  }
+}
+
+// TriggerRequest 回调请求。
+message TriggerRequest {
+  // source_id 采集源标识（路径参数）。
+  string source_id = 1 [(buf.validate.field).string.uuid = true];
+  // payload 厂商回调体（任意 JSON；可为空）。
+  google.protobuf.Struct payload = 2;
+}
+
+// TriggerResponse 回调响应。
+message TriggerResponse {
+  // task_id 已入队的任务标识（queued=false 时为当前未完成任务）。
+  string task_id = 1;
+  // queued 本次是否新入队（false = 该源已有排队或运行中的任务）。
+  bool queued = 2;
+}

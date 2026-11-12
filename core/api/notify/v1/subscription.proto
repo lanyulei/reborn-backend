@@ -133,6 +133,13 @@ message ListSubscriptionsRequest {
   optional string keyword = 4 [(buf.validate.field).string.max_len = 64];
   // enabled 启用状态过滤，可选。
   optional bool enabled = 5;
+  // biz_id 业务过滤，可选；管理员代管他人（user_id 指定他人）且角色 biz_scope
+  // 受限时必须携带且在范围内（400 NOTIFY_BIZ_REQUIRED / 403 NOTIFY_BIZ_FORBIDDEN）。
+  optional string biz_id = 6 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+    pattern: "^[a-z0-9_-]{1,64}$"
+  }];
 }
 
 // ListSubscriptionsResponse 分页查询订阅响应。

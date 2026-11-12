@@ -1,0 +1,75 @@
+syntax = "proto3";
+
+package cmdb.v1;
+
+import "errors/errors.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/cmdb/v1;v1";
+
+// ErrorReason 是 CMDB 域的业务错误码枚举，由 protoc-gen-go-errors 生成带 code 的
+// 错误构造器。枚举值沿用 Kratos 错误码惯例（域前缀），豁免 ENUM_VALUE_PREFIX。
+enum ErrorReason {
+  option (errors.default_code) = 500;
+  // CMDB_UNSPECIFIED 未指定的 CMDB 错误。
+  CMDB_UNSPECIFIED = 0;
+  // CMDB_MODEL_NOT_FOUND 资源类型不存在，映射 HTTP 404。
+  CMDB_MODEL_NOT_FOUND = 1 [(errors.code) = 404];
+  // CMDB_MODEL_CODE_EXISTS 资源类型编码已被占用，映射 HTTP 409。
+  CMDB_MODEL_CODE_EXISTS = 2 [(errors.code) = 409];
+  // CMDB_MODEL_IN_USE 资源类型下仍有资源或关系定义，不可删除，映射 HTTP 409。
+  CMDB_MODEL_IN_USE = 3 [(errors.code) = 409];
+  // CMDB_FIELD_NOT_FOUND 字段定义不存在，映射 HTTP 404。
+  CMDB_FIELD_NOT_FOUND = 4 [(errors.code) = 404];
+  // CMDB_FIELD_CODE_EXISTS 同一类型内字段编码已被占用，映射 HTTP 409。
+  CMDB_FIELD_CODE_EXISTS = 5 [(errors.code) = 409];
+  // CMDB_FIELD_INVALID 字段定义不合法（类型与规则不匹配、引用类型不存在等），映射 HTTP 400。
+  CMDB_FIELD_INVALID = 6 [(errors.code) = 400];
+  // CMDB_RELATION_TYPE_NOT_FOUND 关系类型不存在，映射 HTTP 404。
+  CMDB_RELATION_TYPE_NOT_FOUND = 7 [(errors.code) = 404];
+  // CMDB_RELATION_TYPE_CODE_EXISTS 关系类型编码已被占用，映射 HTTP 409。
+  CMDB_RELATION_TYPE_CODE_EXISTS = 8 [(errors.code) = 409];
+  // CMDB_RELATION_TYPE_IN_USE 关系类型下仍有关系实例，不可删除，映射 HTTP 409。
+  CMDB_RELATION_TYPE_IN_USE = 9 [(errors.code) = 409];
+  // CMDB_CI_NOT_FOUND 资源不存在，映射 HTTP 404。
+  CMDB_CI_NOT_FOUND = 10 [(errors.code) = 404];
+  // CMDB_CI_INVALID 资源属性不符合类型字段定义（必填/类型/枚举/规则），映射 HTTP 400。
+  CMDB_CI_INVALID = 11 [(errors.code) = 400];
+  // CMDB_CI_DUPLICATE 资源名称或唯一键在同类型内重复，映射 HTTP 409。
+  CMDB_CI_DUPLICATE = 12 [(errors.code) = 409];
+  // CMDB_CI_VERSION_CONFLICT 乐观锁冲突（资源已被他人修改），映射 HTTP 409。
+  CMDB_CI_VERSION_CONFLICT = 13 [(errors.code) = 409];
+  // CMDB_CI_TRANSITION_INVALID 状态流转不被状态机允许，映射 HTTP 400。
+  CMDB_CI_TRANSITION_INVALID = 14 [(errors.code) = 400];
+  // CMDB_CI_IN_USE 资源仍有关系，不可删除，映射 HTTP 409。
+  CMDB_CI_IN_USE = 15 [(errors.code) = 409];
+  // CMDB_RELATION_NOT_ALLOWED 关系类型不允许该两类资源相连，映射 HTTP 400。
+  CMDB_RELATION_NOT_ALLOWED = 16 [(errors.code) = 400];
+  // CMDB_RELATION_EXISTS 关系已存在，映射 HTTP 409。
+  CMDB_RELATION_EXISTS = 17 [(errors.code) = 409];
+  // CMDB_RELATION_NOT_FOUND 关系不存在，映射 HTTP 404。
+  CMDB_RELATION_NOT_FOUND = 18 [(errors.code) = 404];
+  // CMDB_RELATION_CARDINALITY 关系基数约束冲突（如配件已安装在其它主机），映射 HTTP 409。
+  CMDB_RELATION_CARDINALITY = 19 [(errors.code) = 409];
+  // CMDB_VIEW_INVALID 详情布局配置不合法（引用不存在的字段/关系），映射 HTTP 400。
+  CMDB_VIEW_INVALID = 20 [(errors.code) = 400];
+  // CMDB_SCOPE_FORBIDDEN 目标资源的类型或环境不在当前用户的数据范围内，映射 HTTP 403。
+  CMDB_SCOPE_FORBIDDEN = 21 [(errors.code) = 403];
+  // CMDB_SOURCE_NOT_FOUND 采集源不存在，映射 HTTP 404。
+  CMDB_SOURCE_NOT_FOUND = 22 [(errors.code) = 404];
+  // CMDB_SOURCE_NAME_EXISTS 采集源名称已被占用，映射 HTTP 409。
+  CMDB_SOURCE_NAME_EXISTS = 23 [(errors.code) = 409];
+  // CMDB_SOURCE_INVALID 采集源配置不符合提供方要求，映射 HTTP 400。
+  CMDB_SOURCE_INVALID = 24 [(errors.code) = 400];
+  // CMDB_SOURCE_VERSION_CONFLICT 采集源乐观锁冲突，映射 HTTP 409。
+  CMDB_SOURCE_VERSION_CONFLICT = 25 [(errors.code) = 409];
+  // CMDB_SYNC_BUSY 该采集源已有排队或运行中的同步任务，映射 HTTP 409。
+  CMDB_SYNC_BUSY = 26 [(errors.code) = 409];
+  // CMDB_SECRET_UNAVAILABLE 未配置凭据加密主密钥，无法保存采集源凭据，映射 HTTP 503。
+  CMDB_SECRET_UNAVAILABLE = 27 [(errors.code) = 503];
+  // CMDB_GROUP_NOT_FOUND 模型分组不存在，映射 HTTP 404。
+  CMDB_GROUP_NOT_FOUND = 28 [(errors.code) = 404];
+  // CMDB_GROUP_CODE_EXISTS 模型分组编码已被占用，映射 HTTP 409。
+  CMDB_GROUP_CODE_EXISTS = 29 [(errors.code) = 409];
+  // CMDB_GROUP_IN_USE 模型分组为内置分组或其下仍有模型，不可删除，映射 HTTP 409。
+  CMDB_GROUP_IN_USE = 30 [(errors.code) = 409];
+}

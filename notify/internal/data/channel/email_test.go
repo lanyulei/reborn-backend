@@ -15,12 +15,14 @@ import (
 
 // fakeSMTP 进程内最小 SMTP 服务：记录认证与邮件正文；RCPT reject@ 返回 550。
 type fakeSMTP struct {
-	ln   net.Listener
-	mu   sync.Mutex
-	auth string
-	mail []string
-	rcpt []string
-	data []string
+	authMech string // EHLO 通告的 AUTH 机制（空 = PLAIN）
+	greylist bool   // RCPT 返回 450（临时拒绝）
+	ln       net.Listener
+	mu       sync.Mutex
+	auth     string
+	mail     []string
+	rcpt     []string
+	data     []string
 }
 
 func newFakeSMTP(t *testing.T) *fakeSMTP {
@@ -58,10 +60,23 @@ func (f *fakeSMTP) serve(c net.Conn) {
 		switch {
 		case strings.HasPrefix(cmd, "EHLO"):
 			w("250-fake")
-			w("250 AUTH PLAIN")
+			if f.authMech != "" {
+				w("250 AUTH " + f.authMech)
+			} else {
+				w("250 AUTH PLAIN")
+			}
 		case strings.HasPrefix(cmd, "AUTH PLAIN"):
 			f.mu.Lock()
 			f.auth = strings.TrimSpace(line[len("AUTH PLAIN"):])
+			f.mu.Unlock()
+			w("235 ok")
+		case cmd == "AUTH LOGIN":
+			w("334 VXNlcm5hbWU6") // "Username:"
+			u, _ := r.ReadString('\n')
+			w("334 UGFzc3dvcmQ6") // "Password:"
+			pw, _ := r.ReadString('\n')
+			f.mu.Lock()
+			f.auth = "LOGIN " + strings.TrimSpace(u) + " " + strings.TrimSpace(pw)
 			f.mu.Unlock()
 			w("235 ok")
 		case strings.HasPrefix(cmd, "MAIL FROM"):
@@ -72,6 +87,10 @@ func (f *fakeSMTP) serve(c net.Conn) {
 		case strings.HasPrefix(cmd, "RCPT TO"):
 			if strings.Contains(line, "reject@") {
 				w("550 no such user")
+				continue
+			}
+			if f.greylist {
+				w("450 4.7.1 greylisted, try again later")
 				continue
 			}
 			f.mu.Lock()
@@ -165,5 +184,76 @@ func TestEmailSender_Failures(t *testing.T) {
 	res, err = s.Send(context.Background(), tlsCh, biz.RenderedMessage{Recipient: "x@example.com", SendKey: "k"})
 	if err == nil || res.Retryable {
 		t.Fatalf("starttls unsupported: %+v %v", res, err)
+	}
+}
+
+// TestEmailSender_LoginAuthAndGreylist 服务器只通告 AUTH LOGIN 时走 LOGIN 机制；RCPT 450
+// （灰名单）按 4xx 可重试，而非像 550 一样死信。
+func TestEmailSender_LoginAuthAndGreylist(t *testing.T) {
+	t.Parallel()
+	f := newFakeSMTP(t)
+	f.authMech = "LOGIN"
+	host, port := f.hostPort()
+	ch := &biz.Channel{Type: biz.ChannelTypeEmail, Secret: "pw", Email: &biz.EmailConfig{Host: host, Port: port, Username: "u", FromAddr: "noreply@corp.example"}}
+	msg := biz.RenderedMessage{Subject: "S", Body: "B", Recipient: "ops@example.com", SendKey: "k", EventID: "e"}
+	if res, err := NewEmailSender().Send(context.Background(), ch, msg); err != nil || res.ProviderMsgID != "k" {
+		t.Fatalf("Send(LOGIN) = %+v, %v", res, err)
+	}
+	f.mu.Lock()
+	auth, data := f.auth, strings.Join(f.data, "")
+	f.mu.Unlock()
+	if !strings.HasPrefix(auth, "LOGIN dQ== cHc=") {
+		t.Fatalf("auth = %q, want base64 LOGIN exchange", auth)
+	}
+	if !strings.Contains(data, "Message-ID: <k@corp.example>") {
+		t.Fatalf("Message-ID domain must follow from_addr: %q", data)
+	}
+	f.greylist = true
+	res, err := NewEmailSender().Send(context.Background(), ch, msg)
+	if err == nil || !res.Retryable {
+		t.Fatalf("450 greylist must be retryable: %+v %v", res, err)
+	}
+	f.greylist = false
+	res, err = NewEmailSender().Send(context.Background(), ch, biz.RenderedMessage{Subject: "S", Body: "B", Recipient: "reject@example.com"})
+	if err == nil || res.Retryable {
+		t.Fatalf("550 must stay non-retryable: %+v %v", res, err)
+	}
+}
+
+// TestEmailSender_HTML format=html → multipart/alternative（text/plain 降级 + text/html，
+// quoted-printable）；text 路径的报文结构不变。
+func TestEmailSender_HTML(t *testing.T) {
+	t.Parallel()
+	srv := newFakeSMTP(t)
+	host, port := srv.hostPort()
+	ch := &biz.Channel{Type: biz.ChannelTypeEmail, Secret: "pw", Email: &biz.EmailConfig{Host: host, Port: port, Username: "u", FromAddr: "noreply@example.com"}}
+	msg := biz.RenderedMessage{EventID: "e1", Subject: "S", Body: "<h1>告警</h1><p>主机 &amp; 失联</p><style>x{}</style>", Format: "html", Recipient: "ops@example.com", SendKey: "k-html"}
+	if _, err := NewEmailSender().Send(context.Background(), ch, msg); err != nil {
+		t.Fatal(err)
+	}
+	srv.mu.Lock()
+	data := srv.data[0]
+	srv.mu.Unlock()
+	for _, want := range []string{"Content-Type: multipart/alternative; boundary=", "Content-Type: text/plain; charset=utf-8", "Content-Type: text/html; charset=utf-8", "Content-Transfer-Encoding: quoted-printable", "<h1>"} {
+		if !strings.Contains(data, want) {
+			t.Fatalf("html message missing %q:\n%s", want, data)
+		}
+	}
+	if strings.Index(data, "text/plain") > strings.Index(data, "text/html") {
+		t.Fatal("text/plain alternative must come first")
+	}
+	if got := htmlToText(msg.Body); got != "告警\n\n主机 & 失联" {
+		t.Fatalf("htmlToText = %q", got)
+	}
+	// text 路径不变。
+	plain := biz.RenderedMessage{EventID: "e2", Subject: "S", Body: "line", Recipient: "ops@example.com", SendKey: "k-text"}
+	if _, err := NewEmailSender().Send(context.Background(), ch, plain); err != nil {
+		t.Fatal(err)
+	}
+	srv.mu.Lock()
+	data = srv.data[1]
+	srv.mu.Unlock()
+	if !strings.Contains(data, "Content-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 8bit") || strings.Contains(data, "multipart") {
+		t.Fatalf("text message changed: %s", data)
 	}
 }

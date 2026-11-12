@@ -49,6 +49,17 @@ func (uc *IngressUsecase) WithDedupTTL(d time.Duration) *IngressUsecase {
 	return uc
 }
 
+// IngressObserver 接入观测钩子（指标）：按事件计数，result ∈ accepted / deduplicated。
+type IngressObserver interface {
+	ObserveIngress(result string, n int)
+}
+
+// 接入观测取值。
+const (
+	ObserveIngressAccepted     = "accepted"
+	ObserveIngressDeduplicated = "deduplicated"
+)
+
 // Accept 校验并落库一批事件（≤500，单事务）；任一校验失败整批拒绝。
 func (uc *IngressUsecase) Accept(ctx context.Context, producer *Producer, events []*Event) ([]IngressResult, error) {
 	now := time.Now().UTC()

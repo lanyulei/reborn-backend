@@ -162,6 +162,16 @@ func (s *userStoreStub) ListRolesByIDs(_ context.Context, ids []string) ([]*Role
 	return roles, nil
 }
 
+func (s *userStoreStub) ListBuiltinRoleIDs(_ context.Context) ([]string, error) {
+	ids := make([]string, 0, 1)
+	for _, r := range s.roles {
+		if r.Builtin {
+			ids = append(ids, r.ID)
+		}
+	}
+	return ids, nil
+}
+
 func (s *userStoreStub) CreateRole(_ context.Context, role *Role) error {
 	for _, r := range s.roles {
 		if r.Code == role.Code {
@@ -486,5 +496,38 @@ func TestNormalizePageClamp(t *testing.T) {
 	page, size := paging.Normalize(1<<62, 100)
 	if page != paging.MaxPage || size != 100 || (page-1)*size < 0 {
 		t.Fatalf("paging.Normalize(huge) = (%d, %d), offset %d", page, size, (page-1)*size)
+	}
+}
+
+// TestUserUsecase_BuiltinRoleBinding 内置角色绑定不变量：新建用户自动绑定全部
+// 内置角色；BindRoles 无论入参如何（含空集合）落库集合始终并入内置角色且去重。
+func TestUserUsecase_BuiltinRoleBinding(t *testing.T) {
+	t.Parallel()
+	uc, stub := newUserUsecase(t)
+	ctx := context.Background()
+	builtin := &Role{ID: "role-default", Code: "default", Builtin: true}
+	other := &Role{ID: "role-ops", Code: "ops"}
+	stub.roles[builtin.ID], stub.roles[other.ID] = builtin, other
+
+	user, err := uc.Create(ctx, &User{Username: "alice", Password: "plain-secret", Gender: GenderUnknown})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if got := stub.bindings[user.ID]; len(got) != 1 || got[0] != builtin.ID {
+		t.Fatalf("Create() bindings = %v, want [role-default]", got)
+	}
+	// 绑定其他角色：内置角色保留且不重复。
+	if err := uc.BindRoles(ctx, user.ID, []string{other.ID, builtin.ID}); err != nil {
+		t.Fatalf("BindRoles() error = %v", err)
+	}
+	if got := stub.bindings[user.ID]; len(got) != 2 || got[0] != other.ID || got[1] != builtin.ID {
+		t.Fatalf("bindings = %v, want [role-ops role-default]", got)
+	}
+	// 空集合「清空」：内置角色仍在。
+	if err := uc.BindRoles(ctx, user.ID, nil); err != nil {
+		t.Fatalf("BindRoles(clear) error = %v", err)
+	}
+	if got := stub.bindings[user.ID]; len(got) != 1 || got[0] != builtin.ID {
+		t.Fatalf("bindings after clear = %v, want [role-default]", got)
 	}
 }

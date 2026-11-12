@@ -2,11 +2,15 @@ package biz
 
 import (
 	"context"
+	"fmt"
 	"time"
 
+	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
+	"github.com/lanyulei/reborn/backend/kit/idgen"
 	"github.com/lanyulei/reborn/backend/kit/notifycontract"
-
 	"github.com/lanyulei/reborn/backend/kit/paging"
+
+	"github.com/go-kratos/kratos/v3/errors"
 )
 
 // 事件来源与状态常量（与 notify_event 列注释对齐，管道状态机的字面量口径）。
@@ -25,6 +29,12 @@ const (
 	// EventStatusFailed 无匹配路由等终态失败。
 	EventStatusFailed = notifycontract.EventStatusFailed
 )
+
+// ErrTimeRangeInvalid 运行表列表时间跨度超过上限。
+var ErrTimeRangeInvalid = errors.BadRequest(notifyv1.ErrorReason_NOTIFY_TIME_RANGE_INVALID.String(), "time range exceeds 90 days")
+
+// ErrEventNotFound 目标事件不存在（或已按保留期清理）。
+var ErrEventNotFound = errors.NotFound(notifyv1.ErrorReason_NOTIFY_EVENT_NOT_FOUND.String(), "event not found")
 
 // Event 事件领域模型（DO）：notify_event 运行表一行的排障视图（管道写 /
 // core 读，设计 §5.2）。Payload 为原始 JSON 字节（nil=无载荷），由 service
@@ -57,6 +67,10 @@ type EventFilter struct {
 	BizID           string
 	EventType       string
 	Status          *int32
+	Severity        *int32
+	Source          string // 空 = 不过滤
+	Keyword         string // 标题模糊
+	GroupKey        string // 精确
 	CreateTimeStart *time.Time
 	CreateTimeEnd   *time.Time
 }
@@ -68,6 +82,8 @@ type EventRepo interface {
 	// ListEvents 分页查询事件；page 从 1 起，pageSize 上限 100，按落库
 	// 时间倒序（查询索引 idx_notify_event_query）。
 	ListEvents(ctx context.Context, filter EventFilter, page, pageSize int64) ([]*Event, int64, error)
+	// GetEvent 按 ID 查询事件；不存在返回 ErrEventNotFound。
+	GetEvent(ctx context.Context, id string) (*Event, error)
 }
 
 // EventWriter 事件落库窄接口（设计 §5.3：core 对 notify_event 仅 INSERT，
@@ -81,14 +97,49 @@ type EventWriter interface {
 	InsertEvent(ctx context.Context, event *Event) error
 }
 
-// EventUsecase 事件查询用例：纯读编排（分页规整后委托仓储）。
+// EventUsecase 事件用例：查询编排 + 事件级重发（经 EventWriter 直插新事件）。
 type EventUsecase struct {
-	repo EventRepo
+	repo   EventRepo
+	writer EventWriter
 }
 
 // NewEventUsecase new an EventUsecase.
-func NewEventUsecase(repo EventRepo) *EventUsecase {
-	return &EventUsecase{repo: repo}
+func NewEventUsecase(repo EventRepo, writer EventWriter) *EventUsecase {
+	return &EventUsecase{repo: repo, writer: writer}
+}
+
+// Get 查询事件详情。
+func (uc *EventUsecase) Get(ctx context.Context, id string) (*Event, error) {
+	return uc.repo.GetEvent(ctx, id)
+}
+
+// Replay 事件级重发：以源事件的类型/级别/标题/载荷/收件/分组直插一条新事件
+// （新 id、source=internal、不带 dedup_key——刻意再投，走完整路由链路）。
+func (uc *EventUsecase) Replay(ctx context.Context, source *Event) (*Event, error) {
+	id, err := idgen.NewID()
+	if err != nil {
+		return nil, fmt.Errorf("generate replay event id: %w", err)
+	}
+	now := time.Now().UTC()
+	event := &Event{
+		ID:              id,
+		BizID:           source.BizID,
+		EventType:       source.EventType,
+		Severity:        source.Severity,
+		Title:           source.Title,
+		Payload:         append([]byte(nil), source.Payload...),
+		GroupKey:        source.GroupKey,
+		Recipients:      append([]string(nil), source.Recipients...),
+		Source:          EventSourceInternal,
+		Status:          EventStatusReceived,
+		PublishState:    0,
+		NextPublishTime: now,
+		CreateTime:      now,
+	}
+	if err := uc.writer.InsertEvent(ctx, event); err != nil {
+		return nil, err
+	}
+	return event, nil
 }
 
 // List 分页查询事件；分页参数先规整再委托仓储。

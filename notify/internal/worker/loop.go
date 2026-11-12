@@ -21,6 +21,8 @@ type Hooks struct {
 	Runs     metric.Int64Counter
 	Items    metric.Int64Counter
 	Observer biz.SendObserver
+	// OnBreaker sender 装配后回注熔断只读视图（熔断打开 gauge）。
+	OnBreaker func(biz.BreakerView)
 }
 
 func (h *Hooks) record(ctx context.Context, loop string, items int, err error) {
@@ -39,6 +41,11 @@ func (h *Hooks) record(ctx context.Context, loop string, items int, err error) {
 
 // Loop 周期循环：fn 返回处理条数；>0 立即进入下一轮（忙），否则等待 interval；
 // 出错按 errorBackoff 退避（最大 10×interval，封顶 30s）。
+//
+// 停机口径（设计 §8「处理完在途 → 退出」）：Stop 只关闭准入（不再开始新迭代），
+// 在途迭代继续在**不受 Stop 取消的 ctx** 上跑完——sender 一批里已经发出去的消息
+// 必须落账，否则行停在 sending 直到租约到期被回收重发（重复投递）。Stop ctx
+// 超时才硬中止在途迭代（abort），作为最后兜底。
 type Loop struct {
 	name     string
 	interval time.Duration
@@ -47,9 +54,13 @@ type Loop struct {
 	hooks    *Hooks
 
 	mu     sync.Mutex
-	cancel context.CancelFunc
+	cancel context.CancelFunc // 关闭准入：不再开始新迭代
+	abort  context.CancelFunc // 硬中止在途迭代（仅 Stop 超时后）
 	done   chan struct{}
 }
+
+// abortGrace 硬中止后再等在途迭代退出的时限。
+const abortGrace = 2 * time.Second
 
 // NewLoop new a Loop.
 func NewLoop(name string, interval time.Duration, log *slog.Logger, hooks *Hooks, fn func(ctx context.Context) (int, error)) *Loop {
@@ -62,24 +73,27 @@ func NewLoop(name string, interval time.Duration, log *slog.Logger, hooks *Hooks
 // Start implements transport.Server：阻塞运行直至 Stop。
 func (l *Loop) Start(ctx context.Context) error {
 	l.mu.Lock()
-	ctx, l.cancel = context.WithCancel(context.WithoutCancel(ctx))
-	l.done = make(chan struct{})
+	base := context.WithoutCancel(ctx)
+	admit, cancel := context.WithCancel(base)
+	run, abort := context.WithCancel(base)
+	l.cancel, l.abort, l.done = cancel, abort, make(chan struct{})
 	done := l.done
 	l.mu.Unlock()
 	defer close(done)
+	defer abort()
 	l.log.Info("worker loop started", "loop", l.name, "interval", l.interval)
 	failures := 0
 	for {
-		n, err := l.fn(ctx)
-		l.hooks.record(ctx, l.name, n, err)
+		n, err := l.fn(run)
+		l.hooks.record(run, l.name, n, err)
 		wait := l.interval
 		if err != nil {
-			if ctx.Err() != nil {
+			if admit.Err() != nil || run.Err() != nil {
 				return nil
 			}
 			failures++
 			wait = min(l.interval*time.Duration(1<<min(failures, 5)), 30*time.Second)
-			l.log.ErrorContext(ctx, "worker loop iteration failed", "loop", l.name, "error", err, "retry_in", wait)
+			l.log.ErrorContext(run, "worker loop iteration failed", "loop", l.name, "error", err, "retry_in", wait)
 		} else {
 			failures = 0
 			if n > 0 {
@@ -87,23 +101,24 @@ func (l *Loop) Start(ctx context.Context) error {
 			}
 		}
 		if wait == 0 {
-			if ctx.Err() != nil {
+			if admit.Err() != nil {
 				return nil
 			}
 			continue
 		}
 		select {
-		case <-ctx.Done():
+		case <-admit.Done():
 			return nil
 		case <-time.After(wait):
 		}
 	}
 }
 
-// Stop implements transport.Server：取消并等待在途迭代完成（受 ctx 限时）。
+// Stop implements transport.Server：关闭准入并等待在途迭代自然完成；ctx 超时才
+// 硬中止在途迭代（再给 abortGrace 退出时限）。
 func (l *Loop) Stop(ctx context.Context) error {
 	l.mu.Lock()
-	cancel, done := l.cancel, l.done
+	cancel, abort, done := l.cancel, l.abort, l.done
 	l.mu.Unlock()
 	if cancel == nil {
 		return nil
@@ -112,7 +127,13 @@ func (l *Loop) Stop(ctx context.Context) error {
 	select {
 	case <-done:
 	case <-ctx.Done():
-		l.log.Warn("worker loop stop timed out", "loop", l.name)
+		l.log.Warn("worker loop drain timed out, aborting in-flight iteration", "loop", l.name)
+		abort()
+		select {
+		case <-done:
+		case <-time.After(abortGrace):
+			l.log.Error("worker loop did not exit after abort", "loop", l.name)
+		}
 	}
 	l.log.Info("worker loop stopped", "loop", l.name)
 	return nil

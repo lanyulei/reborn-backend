@@ -157,6 +157,7 @@ var permissionCatalog = []MenuSpec{
 		Name: "通知渠道",
 		DefaultOps: []string{
 			"/notify.v1.NotifyChannelService/ListChannels",
+			"/notify.v1.NotifyChannelService/ListChannelHealth",
 		},
 		Elements: []ElementSpec{
 			{
@@ -189,6 +190,7 @@ var permissionCatalog = []MenuSpec{
 		Name: "通知模板",
 		DefaultOps: []string{
 			"/notify.v1.NotifyTemplateService/ListTemplates",
+			"/notify.v1.NotifyTemplateService/RenderTemplate",
 		},
 		Elements: []ElementSpec{
 			{
@@ -216,6 +218,7 @@ var permissionCatalog = []MenuSpec{
 		Name: "通知路由",
 		DefaultOps: []string{
 			"/notify.v1.NotifyRouteService/ListRoutes",
+			"/notify.v1.NotifyRouteService/PreviewRouting",
 		},
 		Elements: []ElementSpec{
 			{
@@ -323,10 +326,18 @@ var permissionCatalog = []MenuSpec{
 	{
 		Code: "notify.event",
 		Name: "事件查询",
-		// 纯排障查询页：事件是 append-only 运行数据（管道写 / core 读），
-		// 无管理写接口，页内无功能元素（同 system.login_log 先例）。
+		// 排障查询页：事件是 append-only 运行数据（管道写 / core 读）；下钻为只读，
+		// 事件级重发会真实再投递——单独元素授权（同 notify.dlq.replay 先例）。
 		DefaultOps: []string{
 			"/notify.v1.NotifyEventService/ListEvents",
+			"/notify.v1.NotifyEventService/GetEvent",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "notify.event.replay",
+				Name: "重发事件",
+				Ops:  []string{"/notify.v1.NotifyEventService/ReplayEvent"},
+			},
 		},
 	},
 	{
@@ -337,6 +348,7 @@ var permissionCatalog = []MenuSpec{
 		// 元素（同 system.login_log / notify.event 先例）。
 		DefaultOps: []string{
 			"/notify.v1.NotifyDispatchService/ListDispatches",
+			"/notify.v1.NotifyDispatchService/GetDispatch",
 		},
 	},
 	{
@@ -357,6 +369,7 @@ var permissionCatalog = []MenuSpec{
 		// notify.producer.rotate 先例），仅 none 状态可标记（§4.7 状态机）。
 		DefaultOps: []string{
 			"/notify.v1.NotifyDeadLetterService/ListDeadLetters",
+			"/notify.v1.NotifyDeadLetterService/GetDeadLetter",
 		},
 		Elements: []ElementSpec{
 			{
@@ -375,6 +388,123 @@ var permissionCatalog = []MenuSpec{
 			"/assistant.v1.AssistantService/ListConversations",
 			"/assistant.v1.AssistantService/ListMessages",
 			"/assistant.v1.AssistantService/DeleteConversation",
+		},
+	},
+	{
+		Code: "cmdb.model",
+		Name: "资源模型",
+		DefaultOps: []string{
+			"/cmdb.v1.CmdbModelService/ListModels",
+			"/cmdb.v1.CmdbModelService/GetModel",
+			"/cmdb.v1.CmdbModelService/ListRelationTypes",
+			"/cmdb.v1.CmdbModelService/GetModelView",
+			"/cmdb.v1.CmdbInsightService/ListModelGroups",
+		},
+		Elements: []ElementSpec{
+			{Code: "cmdb.model.create", Name: "新建资源类型", Ops: []string{"/cmdb.v1.CmdbModelService/CreateModel", "/cmdb.v1.CmdbInsightService/CreateModelGroup"}},
+			{Code: "cmdb.model.view", Name: "配置详情布局", Ops: []string{"/cmdb.v1.CmdbModelService/UpdateModelView"}},
+			{
+				Code: "cmdb.model.scope",
+				Name: "配置数据范围",
+				Ops: []string{
+					"/cmdb.v1.CmdbScopeService/ListRoleScopes",
+					"/cmdb.v1.CmdbScopeService/SetRoleScope",
+				},
+			},
+			{Code: "cmdb.model.edit", Name: "编辑资源类型", Ops: []string{"/cmdb.v1.CmdbModelService/UpdateModel", "/cmdb.v1.CmdbInsightService/UpdateModelGroup"}},
+			{Code: "cmdb.model.delete", Name: "删除资源类型", Ops: []string{"/cmdb.v1.CmdbModelService/DeleteModel", "/cmdb.v1.CmdbInsightService/DeleteModelGroup"}},
+			{
+				Code: "cmdb.model.field",
+				Name: "维护类型字段",
+				Ops: []string{
+					"/cmdb.v1.CmdbModelService/CreateField",
+					"/cmdb.v1.CmdbModelService/UpdateField",
+					"/cmdb.v1.CmdbModelService/DeleteField",
+				},
+			},
+			{
+				Code: "cmdb.model.relation_type",
+				Name: "维护关系类型",
+				Ops: []string{
+					"/cmdb.v1.CmdbModelService/CreateRelationType",
+					"/cmdb.v1.CmdbModelService/UpdateRelationType",
+					"/cmdb.v1.CmdbModelService/DeleteRelationType",
+				},
+			},
+		},
+	},
+	{
+		Code: "cmdb.ci",
+		Name: "资源管理",
+		DefaultOps: []string{
+			"/cmdb.v1.CmdbCIService/ListCIs",
+			"/cmdb.v1.CmdbCIService/GetCI",
+			"/cmdb.v1.CmdbCIService/ListCIHistory",
+			"/cmdb.v1.CmdbCIService/SearchCIs",
+			"/cmdb.v1.CmdbRelationService/ListRelated",
+			"/cmdb.v1.CmdbRelationService/Neighbors",
+			"/cmdb.v1.CmdbModelService/ListModels",
+			"/cmdb.v1.CmdbModelService/GetModel",
+			"/cmdb.v1.CmdbModelService/ListRelationTypes",
+			"/cmdb.v1.CmdbModelService/GetModelView",
+			"/cmdb.v1.CmdbScopeService/GetMyScope",
+			"/cmdb.v1.CmdbInsightService/ListModelGroups",
+			"/cmdb.v1.CmdbInsightService/ListFavorites",
+			"/cmdb.v1.CmdbInsightService/SetFavorite",
+			"/cmdb.v1.CmdbInsightService/GetOverview",
+		},
+		Elements: []ElementSpec{
+			{Code: "cmdb.ci.create", Name: "新建资源", Ops: []string{"/cmdb.v1.CmdbCIService/CreateCI"}},
+			{Code: "cmdb.ci.edit", Name: "编辑资源", Ops: []string{"/cmdb.v1.CmdbCIService/UpdateCI"}},
+			{Code: "cmdb.ci.transition", Name: "变更资源状态", Ops: []string{"/cmdb.v1.CmdbCIService/TransitionCI"}},
+			{Code: "cmdb.ci.delete", Name: "删除资源", Ops: []string{"/cmdb.v1.CmdbCIService/DeleteCI"}},
+			{Code: "cmdb.ci.import", Name: "导入资源", Ops: []string{"/cmdb.v1.CmdbCIService/ImportCIs"}},
+			{Code: "cmdb.ci.export", Name: "导出资源", Ops: []string{"/cmdb.v1.CmdbCIService/ExportCIs"}},
+			{
+				Code: "cmdb.ci.link",
+				Name: "维护资源关联",
+				Ops: []string{
+					"/cmdb.v1.CmdbRelationService/LinkCIs",
+					"/cmdb.v1.CmdbRelationService/UnlinkCI",
+					"/cmdb.v1.CmdbRelationService/MoveCI",
+				},
+			},
+		},
+	},
+	{
+		Code: "cmdb.sync",
+		Name: "资源同步",
+		DefaultOps: []string{
+			"/cmdb.v1.CmdbSyncService/ListSources",
+			"/cmdb.v1.CmdbSyncService/GetSource",
+			"/cmdb.v1.CmdbSyncService/ListRuns",
+			"/cmdb.v1.CmdbModelService/ListModels",
+		},
+		Elements: []ElementSpec{
+			{Code: "cmdb.sync.create", Name: "新建采集源", Ops: []string{"/cmdb.v1.CmdbSyncService/CreateSource"}},
+			{Code: "cmdb.sync.edit", Name: "编辑采集源", Ops: []string{"/cmdb.v1.CmdbSyncService/UpdateSource"}},
+			{Code: "cmdb.sync.delete", Name: "删除采集源", Ops: []string{"/cmdb.v1.CmdbSyncService/DeleteSource"}},
+			{Code: "cmdb.sync.trigger", Name: "触发同步", Ops: []string{"/cmdb.v1.CmdbSyncService/TriggerSync"}},
+			{
+				Code: "cmdb.sync.webhook",
+				Name: "管理回调令牌",
+				Ops: []string{
+					"/cmdb.v1.CmdbSyncService/RotateWebhook",
+					"/cmdb.v1.CmdbSyncService/DisableWebhook",
+				},
+			},
+		},
+	},
+	{
+		Code: "cmdb.audit",
+		Name: "变更审计",
+		DefaultOps: []string{
+			"/cmdb.v1.CmdbCIService/ListHistory",
+			"/cmdb.v1.CmdbCIService/GetCI",
+			"/cmdb.v1.CmdbModelService/ListModels",
+			"/cmdb.v1.CmdbInsightService/ListSchemaAudit",
+			"/cmdb.v1.CmdbInsightService/GetOverview",
+			"/cmdb.v1.CmdbInsightService/ListModelGroups",
 		},
 	},
 }

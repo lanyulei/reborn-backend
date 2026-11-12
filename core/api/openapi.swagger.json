@@ -15,6 +15,38 @@
       "description": "AssistantService 智能助手会话管理：会话列表、历史消息、删除；仅限本人会话。"
     },
     {
+      "name": "CmdbCIService",
+      "description": "CmdbCIService 资源（配置项）管理：按类型字段定义校验属性，乐观锁更新，\n状态机流转，全量变更历史。"
+    },
+    {
+      "name": "CmdbInsightService",
+      "description": "CmdbInsightService 资源目录与运营视角的辅助能力：模型分组、模型收藏、\n运营概览统计、模型变更审计。"
+    },
+    {
+      "name": "CmdbModelService",
+      "description": "CmdbModelService 资源模型管理：资源类型、类型字段、关系类型（元数据）。\n新增一类基础设施 = 新建类型 + 定义字段 + 配置关系，无需改代码。"
+    },
+    {
+      "name": "CmdbScopeService",
+      "description": "CmdbScopeService 数据范围：按角色限制可见的资源类型与环境（接口权限之外的第二道门）。"
+    },
+    {
+      "name": "CmdbRelationService",
+      "description": "CmdbRelationService 资源关联：在当前资源上完成关联已有、解除、迁移与关联数据查询；\n关系类型元数据决定允许的两端类型与基数，冲突返回可读原因。"
+    },
+    {
+      "name": "CmdbSyncService",
+      "description": "CmdbSyncService 同步控制面：采集源（云账号 / 虚拟化平台）配置、手动触发、运行记录。\n采集与对账由独立的数据面进程（backend/cmdb）执行；本服务只写配置与任务、读结果。"
+    },
+    {
+      "name": "NotifyDeliveryLogService",
+      "description": "NotifyDeliveryLogService 投递明细查询服务：只读运行表 notify_delivery_log\n（管道写 / core 读，设计 §5.2）。一行 = 发送任务的一次投递尝试结果\n（append-only，sender 每次尝试后追加，含成功/失败、耗时与渠道侧消息\n标识）；本服务仅提供控制台排障检索，无写路径。"
+    },
+    {
+      "name": "NotifyDispatchService",
+      "description": "NotifyDispatchService 通知发送任务查询服务：只读运行表 notify_dispatch\n（管道写 / core 读，设计 §5.2）。一行 = 路由命中后生成的一个发送任务\n（事件 × 渠道 × 收件人），状态机由管道 sender 推进（含退避重试与死信\n转移）；本服务仅提供控制台排障检索，无写路径。"
+    },
+    {
       "name": "NotifyEventService",
       "description": "NotifyEventService 通知事件查询服务：只读运行表 notify_event（管道写 /\ncore 读，设计 §5.2）。事件是 append-only 运行数据——先落库后应答（§7.1\n不丢闭环），无管理写路径；本服务仅提供控制台排障检索。"
     },
@@ -25,14 +57,6 @@
     {
       "name": "NotifyDeadLetterService",
       "description": "NotifyDeadLetterService 死信重放服务（设计 §4.7/§5.2）：查询运行表\nnotify_dlq（sender 在 dispatch 重试超限后写入），并标记重放。\n重放是控制台唯一的写动作：replay_state 仅允许 none → pending（条件\nUPDATE 保证状态机）；dlq worker（管道 P1）轮询 pending 行重新生成\ndispatch 后置 replayed。core 不改错误详情、不删除行（§5.3 列级授权）。"
-    },
-    {
-      "name": "NotifyDeliveryLogService",
-      "description": "NotifyDeliveryLogService 投递明细查询服务：只读运行表 notify_delivery_log\n（管道写 / core 读，设计 §5.2）。一行 = 发送任务的一次投递尝试结果\n（append-only，sender 每次尝试后追加，含成功/失败、耗时与渠道侧消息\n标识）；本服务仅提供控制台排障检索，无写路径。"
-    },
-    {
-      "name": "NotifyDispatchService",
-      "description": "NotifyDispatchService 通知发送任务查询服务：只读运行表 notify_dispatch\n（管道写 / core 读，设计 §5.2）。一行 = 路由命中后生成的一个发送任务\n（事件 × 渠道 × 收件人），状态机由管道 sender 推进（含退避重试与死信\n转移）；本服务仅提供控制台排障检索，无写路径。"
     },
     {
       "name": "NotifyProducerService",
@@ -253,6 +277,2059 @@
         ]
       }
     },
+    "/api/v1/cmdb/ci": {
+      "get": {
+        "summary": "ListCIs 分页查询资源：按类型、关键字、状态、环境、标签与属性等值过滤。",
+        "operationId": "CmdbCIService_ListCIs",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListCIsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "page",
+            "description": "page 页码，从 1 开始。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "page_size 每页数量，1-100。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "modelCode",
+            "description": "model_code 资源类型过滤，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "keyword",
+            "description": "keyword 名称/外部标识模糊匹配，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "status",
+            "description": "status 状态过滤，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "env",
+            "description": "env 环境过滤，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "tag",
+            "description": "tag 标签过滤（包含），可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "attrs",
+            "description": "attrs 属性等值过滤（键为字段编码），可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "relType",
+            "description": "rel_type 关联条件：关系类型编码（与 rel_direction 配合），可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "relDirection",
+            "description": "rel_direction 关联方向：outgoing / incoming。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "relTargetId",
+            "description": "rel_target_id 关联到指定资源；为空时按 rel_none 判定\"有/无关联\"。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "relNone",
+            "description": "rel_none 为真 = 筛选该关系方向上没有任何关联的资源。",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "cursor",
+            "description": "cursor 游标分页：上一页返回的 next_cursor；提供时忽略 page。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "CmdbCIService"
+        ]
+      },
+      "post": {
+        "summary": "CreateCI 创建资源；attrs 按类型字段定义校验。",
+        "operationId": "CmdbCIService_CreateCI",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/CreateCIResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/CreateCIRequest"
+            }
+          }
+        ],
+        "tags": [
+          "CmdbCIService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/ci/{ciId}/neighbors": {
+      "get": {
+        "summary": "Neighbors 资源拓扑：以当前资源为中心按层展开关联（层数 ≤3、节点 ≤500）。",
+        "operationId": "CmdbRelationService_Neighbors",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/NeighborsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "ciId",
+            "description": "ci_id 中心资源。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "depth",
+            "description": "depth 展开层数，1-3，缺省 2。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "maxNodes",
+            "description": "max_nodes 节点上限，1-500，缺省 200。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "CmdbRelationService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/ci/{ciId}/related": {
+      "get": {
+        "summary": "ListRelated 分页查询当前资源在某关系类型某方向上的关联资源（含对端资源属性）。",
+        "operationId": "CmdbRelationService_ListRelated",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListRelatedResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "ciId",
+            "description": "ci_id 当前资源。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "relationType",
+            "description": "relation_type 关系类型编码。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "direction",
+            "description": "direction 方向。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "keyword",
+            "description": "keyword 对端名称模糊匹配，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "page",
+            "description": "page 页码，从 1 开始。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "page_size 每页数量，1-100。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "CmdbRelationService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/ci/{ciId}/relation": {
+      "post": {
+        "summary": "LinkCIs 把当前资源与若干目标资源建立关系（批量）；任一目标不合规整体失败。",
+        "operationId": "CmdbRelationService_LinkCIs",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/LinkCIsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "ciId",
+            "description": "ci_id 当前资源。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/LinkCIsBody"
+            }
+          }
+        ],
+        "tags": [
+          "CmdbRelationService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/ci/{ciId}/relation:move": {
+      "post": {
+        "summary": "MoveCI 关系迁移：解除与 from 的关系并与 to 建立关系，同一事务，一条历史。",
+        "operationId": "CmdbRelationService_MoveCI",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/MoveCIResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "ciId",
+            "description": "ci_id 当前资源。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/MoveCIBody"
+            }
+          }
+        ],
+        "tags": [
+          "CmdbRelationService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/ci/{ciId}/relation:unlink": {
+      "post": {
+        "summary": "UnlinkCI 解除当前资源与目标资源的关系（只解关系，不删资源）。",
+        "operationId": "CmdbRelationService_UnlinkCI",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UnlinkCIResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "ciId",
+            "description": "ci_id 当前资源。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UnlinkCIBody"
+            }
+          }
+        ],
+        "tags": [
+          "CmdbRelationService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/ci/{id}": {
+      "get": {
+        "summary": "GetCI 查询资源详情（含各关系类型的关联统计）。",
+        "operationId": "CmdbCIService_GetCI",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetCIResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 资源标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "CmdbCIService"
+        ]
+      },
+      "delete": {
+        "summary": "DeleteCI 删除资源（软删；仍有关系时 409）。",
+        "operationId": "CmdbCIService_DeleteCI",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/DeleteCIResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 资源标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "CmdbCIService"
+        ]
+      },
+      "put": {
+        "summary": "UpdateCI 更新资源（携带 version 乐观锁；attrs 按键合并，显式 null 清空）。",
+        "operationId": "CmdbCIService_UpdateCI",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UpdateCIResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 资源标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UpdateCIBody"
+            }
+          }
+        ],
+        "tags": [
+          "CmdbCIService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/ci/{id}/history": {
+      "get": {
+        "summary": "ListCIHistory 分页查询资源变更历史（倒序）。",
+        "operationId": "CmdbCIService_ListCIHistory",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListCIHistoryResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 资源标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "page",
+            "description": "page 页码，从 1 开始。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "page_size 每页数量，1-100。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "CmdbCIService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/ci/{id}:transition": {
+      "post": {
+        "summary": "TransitionCI 资源状态流转（planning → active → maintenance ⇄ active → retired）。",
+        "operationId": "CmdbCIService_TransitionCI",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/TransitionCIResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 资源标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/TransitionCIBody"
+            }
+          }
+        ],
+        "tags": [
+          "CmdbCIService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/ci:export": {
+      "get": {
+        "summary": "ExportCIs 导出某类型资源为 CSV（固定列 + 全部未废弃字段），最多 10000 行。",
+        "operationId": "CmdbCIService_ExportCIs",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/HttpBody"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "modelCode",
+            "description": "model_code 目标类型。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "keyword",
+            "description": "keyword 名称/外部标识模糊匹配，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "status",
+            "description": "status 状态过滤，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "env",
+            "description": "env 环境过滤，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "format",
+            "description": "format 导出格式：csv（缺省）/ json。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "CmdbCIService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/ci:import": {
+      "post": {
+        "summary": "ImportCIs 批量导入（按名称 upsert）：dry_run=true 只校验并给出每行将执行的动作，\n不落库；正式导入逐行独立提交，失败行不影响其它行。",
+        "operationId": "CmdbCIService_ImportCIs",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ImportCIsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/ImportCIsRequest"
+            }
+          }
+        ],
+        "tags": [
+          "CmdbCIService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/ci:search": {
+      "get": {
+        "summary": "SearchCIs 全局搜索：名称 / 外部标识 / 标签 / 任意属性值模糊匹配，跨类型返回前 N 条。",
+        "operationId": "CmdbCIService_SearchCIs",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/SearchCIsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "q",
+            "description": "q 关键字（子串匹配，不区分大小写），1-128。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "limit",
+            "description": "limit 返回条数上限，1-100，缺省 20。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "CmdbCIService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/favorite": {
+      "get": {
+        "summary": "ListFavorites 查询当前用户收藏的模型编码。",
+        "operationId": "CmdbInsightService_ListFavorites",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListFavoritesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "tags": [
+          "CmdbInsightService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/favorite/{modelCode}": {
+      "put": {
+        "summary": "SetFavorite 收藏或取消收藏模型（幂等）。",
+        "operationId": "CmdbInsightService_SetFavorite",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/SetFavoriteResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "modelCode",
+            "description": "model_code 模型编码。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/SetFavoriteBody"
+            }
+          }
+        ],
+        "tags": [
+          "CmdbInsightService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/history": {
+      "get": {
+        "summary": "ListHistory 全局变更审计：跨资源按类型 / 动作 / 操作者 / 时间检索。",
+        "operationId": "CmdbCIService_ListHistory",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListHistoryResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "page",
+            "description": "page 页码，从 1 开始。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "page_size 每页数量，1-100。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "modelCode",
+            "description": "model_code 类型过滤，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "action",
+            "description": "action 动作过滤，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "description": "operator 操作者（用户 ID）过滤，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "keyword",
+            "description": "keyword 资源名称模糊匹配，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "from",
+            "description": "from / to 发生时间范围，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          }
+        ],
+        "tags": [
+          "CmdbCIService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/model": {
+      "get": {
+        "summary": "ListModels 分页查询资源类型。",
+        "operationId": "CmdbModelService_ListModels",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListModelsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "page",
+            "description": "page 页码，从 1 开始。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "page_size 每页数量，1-100。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "keyword",
+            "description": "keyword 编码/名称模糊匹配，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "category",
+            "description": "category 分类过滤，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "status",
+            "description": "status 状态过滤，可选：1 启用 / 2 停用。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "CmdbModelService"
+        ]
+      },
+      "post": {
+        "summary": "CreateModel 创建资源类型。",
+        "operationId": "CmdbModelService_CreateModel",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/CreateModelResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/CreateModelRequest"
+            }
+          }
+        ],
+        "tags": [
+          "CmdbModelService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/model-group": {
+      "get": {
+        "summary": "ListModelGroups 查询全部模型分组（按 sort、编码升序，含各分组的模型数）。",
+        "operationId": "CmdbInsightService_ListModelGroups",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListModelGroupsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "tags": [
+          "CmdbInsightService"
+        ]
+      },
+      "post": {
+        "summary": "CreateModelGroup 创建模型分组。",
+        "operationId": "CmdbInsightService_CreateModelGroup",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/CreateModelGroupResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/CreateModelGroupRequest"
+            }
+          }
+        ],
+        "tags": [
+          "CmdbInsightService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/model-group/{code}": {
+      "delete": {
+        "summary": "DeleteModelGroup 删除模型分组（内置分组或分组下仍有模型时 409）。",
+        "operationId": "CmdbInsightService_DeleteModelGroup",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/DeleteModelGroupResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "code",
+            "description": "code 目标分组编码。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "CmdbInsightService"
+        ]
+      },
+      "put": {
+        "summary": "UpdateModelGroup 更新模型分组的名称与顺序（编码不可改）。",
+        "operationId": "CmdbInsightService_UpdateModelGroup",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UpdateModelGroupResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "code",
+            "description": "code 目标分组编码。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UpdateModelGroupBody"
+            }
+          }
+        ],
+        "tags": [
+          "CmdbInsightService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/model/{code}": {
+      "get": {
+        "summary": "GetModel 查询资源类型详情（含字段定义与适用的关系类型）。",
+        "operationId": "CmdbModelService_GetModel",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetModelResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "code",
+            "description": "code 类型编码。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "CmdbModelService"
+        ]
+      },
+      "delete": {
+        "summary": "DeleteModel 删除资源类型（软删；仍有资源或关系类型引用时 409）。",
+        "operationId": "CmdbModelService_DeleteModel",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/DeleteModelResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "code",
+            "description": "code 目标类型编码。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "CmdbModelService"
+        ]
+      },
+      "put": {
+        "summary": "UpdateModel 更新资源类型（编码不可改）。",
+        "operationId": "CmdbModelService_UpdateModel",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UpdateModelResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "code",
+            "description": "code 目标类型编码。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UpdateModelBody"
+            }
+          }
+        ],
+        "tags": [
+          "CmdbModelService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/model/{modelCode}/field": {
+      "post": {
+        "summary": "CreateField 为资源类型新增字段。",
+        "operationId": "CmdbModelService_CreateField",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/CreateFieldResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "modelCode",
+            "description": "model_code 所属类型。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/CreateFieldBody"
+            }
+          }
+        ],
+        "tags": [
+          "CmdbModelService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/model/{modelCode}/field/{id}": {
+      "delete": {
+        "summary": "DeleteField 废弃字段（标记 deprecated，不删除已有数据）。",
+        "operationId": "CmdbModelService_DeleteField",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/DeleteFieldResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "modelCode",
+            "description": "model_code 所属类型。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "description": "id 字段标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "CmdbModelService"
+        ]
+      },
+      "put": {
+        "summary": "UpdateField 更新字段定义（编码与数据类型不可改，保证历史数据可解释）。",
+        "operationId": "CmdbModelService_UpdateField",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UpdateFieldResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "modelCode",
+            "description": "model_code 所属类型。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "description": "id 字段标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UpdateFieldBody"
+            }
+          }
+        ],
+        "tags": [
+          "CmdbModelService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/model/{modelCode}/view": {
+      "get": {
+        "summary": "GetModelView 查询类型的详情页布局；未配置时返回按字段与适用关系生成的缺省布局。",
+        "operationId": "CmdbModelService_GetModelView",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetModelViewResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "modelCode",
+            "description": "model_code 类型编码。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "CmdbModelService"
+        ]
+      },
+      "put": {
+        "summary": "UpdateModelView 整体替换类型的详情页布局；引用的字段与关系必须存在。",
+        "operationId": "CmdbModelService_UpdateModelView",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UpdateModelViewResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "modelCode",
+            "description": "model_code 类型编码。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UpdateModelViewBody"
+            }
+          }
+        ],
+        "tags": [
+          "CmdbModelService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/overview": {
+      "get": {
+        "summary": "GetOverview 运营概览：模型 / 资源 / 关系总数，按模型、状态、环境、来源的资源分布，\n以及近 N 天的变更趋势；受当前用户数据范围约束。",
+        "operationId": "CmdbInsightService_GetOverview",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetOverviewResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "days",
+            "description": "days 变更趋势回看天数，1-90，缺省 30。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "CmdbInsightService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/relation-type": {
+      "get": {
+        "summary": "ListRelationTypes 查询关系类型（可按资源类型过滤出适用的关系）。",
+        "operationId": "CmdbModelService_ListRelationTypes",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListRelationTypesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "modelCode",
+            "description": "model_code 按资源类型过滤出适用的关系（任一端匹配或通配），可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "CmdbModelService"
+        ]
+      },
+      "post": {
+        "summary": "CreateRelationType 创建关系类型。",
+        "operationId": "CmdbModelService_CreateRelationType",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/CreateRelationTypeResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/CreateRelationTypeRequest"
+            }
+          }
+        ],
+        "tags": [
+          "CmdbModelService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/relation-type/{code}": {
+      "delete": {
+        "summary": "DeleteRelationType 删除关系类型（软删；仍有关系实例时 409）。",
+        "operationId": "CmdbModelService_DeleteRelationType",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/DeleteRelationTypeResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "code",
+            "description": "code 目标关系编码。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "CmdbModelService"
+        ]
+      },
+      "put": {
+        "summary": "UpdateRelationType 更新关系类型（编码与两端类型不可改）。",
+        "operationId": "CmdbModelService_UpdateRelationType",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UpdateRelationTypeResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "code",
+            "description": "code 目标关系编码。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UpdateRelationTypeBody"
+            }
+          }
+        ],
+        "tags": [
+          "CmdbModelService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/schema-audit": {
+      "get": {
+        "summary": "ListSchemaAudit 模型变更审计：分组 / 模型 / 字段 / 关系类型的增删改记录（倒序）。",
+        "operationId": "CmdbInsightService_ListSchemaAudit",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListSchemaAuditResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "page",
+            "description": "page 页码，从 1 开始。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "page_size 每页数量，1-100。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "targetType",
+            "description": "target_type 对象类型过滤，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "modelCode",
+            "description": "model_code 所属模型过滤，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "action",
+            "description": "action 动作过滤，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "description": "operator 操作者（用户 ID）过滤，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "keyword",
+            "description": "keyword 对象编码 / 名称模糊匹配，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "from",
+            "description": "from / to 发生时间范围，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          }
+        ],
+        "tags": [
+          "CmdbInsightService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/scope/me": {
+      "get": {
+        "summary": "GetMyScope 当前用户的有效数据范围（前端据此隐藏不可见类型）。",
+        "operationId": "CmdbScopeService_GetMyScope",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetMyScopeResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "tags": [
+          "CmdbScopeService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/scope/role": {
+      "get": {
+        "summary": "ListRoleScopes 列出全部角色及其 CMDB 数据范围（未配置 = 不限）。",
+        "operationId": "CmdbScopeService_ListRoleScopes",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListRoleScopesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "tags": [
+          "CmdbScopeService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/scope/role/{roleId}": {
+      "put": {
+        "summary": "SetRoleScope 设置角色数据范围（整体替换；两者皆空 = 不限）。",
+        "operationId": "CmdbScopeService_SetRoleScope",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/SetRoleScopeResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "roleId",
+            "description": "role_id 角色 ID。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/SetRoleScopeBody"
+            }
+          }
+        ],
+        "tags": [
+          "CmdbScopeService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/sync/source": {
+      "get": {
+        "summary": "ListSources 分页查询采集源。",
+        "operationId": "CmdbSyncService_ListSources",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListSourcesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "page",
+            "description": "page 页码，从 1 开始。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "page_size 每页数量，1-100。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "keyword",
+            "description": "keyword 名称模糊匹配，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "provider",
+            "description": "provider 提供方过滤，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "CmdbSyncService"
+        ]
+      },
+      "post": {
+        "summary": "CreateSource 创建采集源；凭据 AES-256-GCM 加密落库，任何响应不返回。",
+        "operationId": "CmdbSyncService_CreateSource",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/CreateSourceResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/CreateSourceRequest"
+            }
+          }
+        ],
+        "tags": [
+          "CmdbSyncService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/sync/source/{id}": {
+      "get": {
+        "summary": "GetSource 查询采集源详情（不含凭据）。",
+        "operationId": "CmdbSyncService_GetSource",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetSourceResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 采集源标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "CmdbSyncService"
+        ]
+      },
+      "delete": {
+        "summary": "DeleteSource 删除采集源（软删；已同步的资源保留，来源标记不变）。",
+        "operationId": "CmdbSyncService_DeleteSource",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/DeleteSourceResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 采集源标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "CmdbSyncService"
+        ]
+      },
+      "put": {
+        "summary": "UpdateSource 更新采集源（provider 不可改）；credential 不传 = 保留旧密文。",
+        "operationId": "CmdbSyncService_UpdateSource",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UpdateSourceResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 采集源标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UpdateSourceBody"
+            }
+          }
+        ],
+        "tags": [
+          "CmdbSyncService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/sync/source/{id}/run": {
+      "get": {
+        "summary": "ListRuns 分页查询采集源的运行记录（时间倒序）。",
+        "operationId": "CmdbSyncService_ListRuns",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListRunsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 采集源标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "page",
+            "description": "page 页码，从 1 开始。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "page_size 每页数量，1-100。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "CmdbSyncService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/sync/source/{id}/webhook": {
+      "delete": {
+        "summary": "DisableWebhook 停用回调（清除令牌）。",
+        "operationId": "CmdbSyncService_DisableWebhook",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/DisableWebhookResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 采集源标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "CmdbSyncService"
+        ]
+      },
+      "post": {
+        "summary": "RotateWebhook 生成/轮换回调令牌：明文只在本响应返回一次，库中只存哈希。",
+        "operationId": "CmdbSyncService_RotateWebhook",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/RotateWebhookResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 采集源标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/RotateWebhookBody"
+            }
+          }
+        ],
+        "tags": [
+          "CmdbSyncService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/sync/source/{id}:trigger": {
+      "post": {
+        "summary": "TriggerSync 手动触发一次同步（同一采集源已有未完成任务时返回 409）。",
+        "operationId": "CmdbSyncService_TriggerSync",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/TriggerSyncResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 采集源标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/TriggerSyncBody"
+            }
+          }
+        ],
+        "tags": [
+          "CmdbSyncService"
+        ]
+      }
+    },
     "/api/v1/login": {
       "post": {
         "summary": "Login 登录：校验用户名密码，签发 access + refresh 双令牌。\n用户不存在与密码错误统一返回 INVALID_CREDENTIALS，不区分口径以防枚举。",
@@ -337,6 +2414,39 @@
             }
           }
         },
+        "tags": [
+          "AuthService"
+        ]
+      }
+    },
+    "/api/v1/me/avatar": {
+      "post": {
+        "summary": "UploadMyAvatar 上传当前登录用户的头像（自助接口，免授权）：图片落盘后把带内容\n指纹的访问地址写入用户 avatar 字段并返回。",
+        "operationId": "AuthService_UploadMyAvatar",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UploadMyAvatarResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UploadMyAvatarRequest"
+            }
+          }
+        ],
         "tags": [
           "AuthService"
         ]
@@ -444,6 +2554,38 @@
             "schema": {
               "$ref": "#/definitions/CreateChannelRequest"
             }
+          }
+        ],
+        "tags": [
+          "NotifyChannelService"
+        ]
+      }
+    },
+    "/api/v1/notify/channel-health": {
+      "get": {
+        "summary": "ListChannelHealth 渠道健康（跨实例共享熔断状态，管道 sender 每次发送结果\nupsert）：打开/探测中/60s 滑窗样本与失败数；只读视图（迁移 0031 授予\nnotify_core_role SELECT），受限用户须带 biz_id。",
+        "operationId": "NotifyChannelService_ListChannelHealth",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListChannelHealthResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "bizId",
+            "description": "biz_id 业务过滤，可选；受限用户必须携带（400 NOTIFY_BIZ_REQUIRED）。",
+            "in": "query",
+            "required": false,
+            "type": "string"
           }
         ],
         "tags": [
@@ -650,7 +2792,7 @@
           },
           {
             "name": "createTimeStart",
-            "description": "create_time_start 转入时间下界（含），可选。",
+            "description": "时间窗口：create_time_start 缺省 = (create_time_end 或当前时间) 往前 7 天；\n两者跨度上限 90 天（400 NOTIFY_TIME_RANGE_INVALID）。分区表按时间裁剪，无界\n查询会扫全部分区。\ncreate_time_start 转入时间下界（含），可选。",
             "in": "query",
             "required": false,
             "type": "string",
@@ -663,6 +2805,38 @@
             "required": false,
             "type": "string",
             "format": "date-time"
+          }
+        ],
+        "tags": [
+          "NotifyDeadLetterService"
+        ]
+      }
+    },
+    "/api/v1/notify/dead-letter/{id}": {
+      "get": {
+        "summary": "GetDeadLetter 死信详情。",
+        "operationId": "NotifyDeadLetterService_GetDeadLetter",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetDeadLetterResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 死信 ID。",
+            "in": "path",
+            "required": true,
+            "type": "string"
           }
         ],
         "tags": [
@@ -768,7 +2942,7 @@
           },
           {
             "name": "createTimeStart",
-            "description": "create_time_start 落库时间下界（含），可选。",
+            "description": "时间窗口：create_time_start 缺省 = (create_time_end 或当前时间) 往前 7 天；\n两者跨度上限 90 天（400 NOTIFY_TIME_RANGE_INVALID）。分区表按时间裁剪，无界\n查询会扫全部分区。\ncreate_time_start 落库时间下界（含），可选。",
             "in": "query",
             "required": false,
             "type": "string",
@@ -847,7 +3021,7 @@
           },
           {
             "name": "createTimeStart",
-            "description": "create_time_start 生成时间下界（含），可选。",
+            "description": "时间窗口：create_time_start 缺省 = (create_time_end 或当前时间) 往前 7 天；\n两者跨度上限 90 天（400 NOTIFY_TIME_RANGE_INVALID）。分区表按时间裁剪，无界\n查询会扫全部分区。\ncreate_time_start 生成时间下界（含），可选。",
             "in": "query",
             "required": false,
             "type": "string",
@@ -860,6 +3034,45 @@
             "required": false,
             "type": "string",
             "format": "date-time"
+          },
+          {
+            "name": "recipient",
+            "description": "recipient 收件人精确过滤，可选（邮箱 / $群标识 / webhook URL）。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "NotifyDispatchService"
+        ]
+      }
+    },
+    "/api/v1/notify/dispatch/{id}": {
+      "get": {
+        "summary": "GetDispatch 发送任务详情（含渲染快照）。",
+        "operationId": "NotifyDispatchService_GetDispatch",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetDispatchResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 发送任务 ID。",
+            "in": "path",
+            "required": true,
+            "type": "string"
           }
         ],
         "tags": [
@@ -926,7 +3139,7 @@
           },
           {
             "name": "createTimeStart",
-            "description": "create_time_start 落库时间下界（含），可选。",
+            "description": "时间窗口：create_time_start 缺省 = (create_time_end 或当前时间) 往前 7 天；\n两者跨度上限 90 天（400 NOTIFY_TIME_RANGE_INVALID）。分区表按时间裁剪，无界\n查询会扫全部分区。\ncreate_time_start 落库时间下界（含），可选。",
             "in": "query",
             "required": false,
             "type": "string",
@@ -939,6 +3152,107 @@
             "required": false,
             "type": "string",
             "format": "date-time"
+          },
+          {
+            "name": "severity",
+            "description": "severity 严重级精确过滤，可选（1-4）。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "source",
+            "description": "source 来源过滤，可选：api（管道接入）/ internal（core 直插）。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "keyword",
+            "description": "keyword 标题关键字，可选；模糊匹配 title。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "groupKey",
+            "description": "group_key 分组键精确过滤，可选（聚合排障）。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "NotifyEventService"
+        ]
+      }
+    },
+    "/api/v1/notify/event/{id}": {
+      "get": {
+        "summary": "GetEvent 事件下钻：事件 + 其全部发送任务（≤100）+ 每个任务最近一次投递明细，\n一次调用覆盖控制台\"这条通知到底发到哪了\"的排障路径。",
+        "operationId": "NotifyEventService_GetEvent",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetEventResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 事件 ID。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "NotifyEventService"
+        ]
+      }
+    },
+    "/api/v1/notify/event/{id}:replay": {
+      "post": {
+        "summary": "ReplayEvent 事件级重发：以原事件的类型/级别/标题/载荷/收件/分组重新直插一条\nsource=internal 的新事件（新 id，不带 dedup_key——刻意再投），走完整路由链路；\n用于路由/模板修复后整条重发（死信重放只重发单个失败任务）。",
+        "operationId": "NotifyEventService_ReplayEvent",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ReplayEventResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 源事件 ID。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/ReplayEventBody"
+            }
           }
         ],
         "tags": [
@@ -1216,7 +3530,7 @@
           },
           {
             "name": "keyword",
-            "description": "keyword 关键字，可选；模糊匹配 event_pattern。",
+            "description": "keyword 关键字，可选；模糊匹配 name / event_pattern。",
             "in": "query",
             "required": false,
             "type": "string"
@@ -1372,6 +3686,39 @@
         ]
       }
     },
+    "/api/v1/notify/route:preview": {
+      "post": {
+        "summary": "PreviewRouting 路由试算（只读，不落库）：按管道同一语义（静默 → 选路：pattern 命中\n∧ severity ≥ 下限 ∧ tag_match 全等，priority → 精确度 → id 决胜）回答\"这条事件会\n被哪条路由接住、发到哪些渠道、用哪个模板、会不会被静默/聚合\"，供配好路由后\n先验证再上线。",
+        "operationId": "NotifyRouteService_PreviewRouting",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/PreviewRoutingResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/PreviewRoutingRequest"
+            }
+          }
+        ],
+        "tags": [
+          "NotifyRouteService"
+        ]
+      }
+    },
     "/api/v1/notify/silence": {
       "get": {
         "summary": "ListSilences 分页查询静默规则，page_size 上限 100。",
@@ -1409,7 +3756,7 @@
           },
           {
             "name": "keyword",
-            "description": "keyword 关键字，可选；模糊匹配 event_pattern。",
+            "description": "keyword 关键字，可选；模糊匹配 name / event_pattern。",
             "in": "query",
             "required": false,
             "type": "string"
@@ -1620,6 +3967,13 @@
             "in": "query",
             "required": false,
             "type": "boolean"
+          },
+          {
+            "name": "bizId",
+            "description": "biz_id 业务过滤，可选；管理员代管他人（user_id 指定他人）且角色 biz_scope\n受限时必须携带且在范围内（400 NOTIFY_BIZ_REQUIRED / 403 NOTIFY_BIZ_FORBIDDEN）。",
+            "in": "query",
+            "required": false,
+            "type": "string"
           }
         ],
         "tags": [
@@ -1889,6 +4243,39 @@
             "required": true,
             "schema": {
               "$ref": "#/definitions/UpdateTemplateBody"
+            }
+          }
+        ],
+        "tags": [
+          "NotifyTemplateService"
+        ]
+      }
+    },
+    "/api/v1/notify/template:render": {
+      "post": {
+        "summary": "RenderTemplate 模板预览（只读，不落库）：用给定样例按管道同一口径渲染\nsubject/body（零函数、顶层变量严格、载荷字段宽松、输出 ≤64KB）。",
+        "operationId": "NotifyTemplateService_RenderTemplate",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/RenderTemplateResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/RenderTemplateRequest"
             }
           }
         ],
@@ -2749,6 +5136,38 @@
           "AuthService"
         ]
       }
+    },
+    "/api/v1/user/{id}/avatar": {
+      "get": {
+        "summary": "GetUserAvatar 以原始字节流返回用户头像（HttpBody），供 \u003cimg\u003e 直载；匿名可读\n（静态资源语义，路径含不可枚举的用户 UUID）。未设置返回 AVATAR_NOT_FOUND。",
+        "operationId": "AuthService_GetUserAvatar",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/HttpBody"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 用户唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "AuthService"
+        ]
+      }
     }
   },
   "definitions": {
@@ -2970,6 +5389,388 @@
       "type": "object",
       "title": "ChatResponse 占位：实际响应为 SSE 事件流，本消息不会被序列化返回。"
     },
+    "CmdbCI": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 资源标识。"
+        },
+        "modelCode": {
+          "type": "string",
+          "title": "model_code 资源类型编码。"
+        },
+        "modelName": {
+          "type": "string",
+          "title": "model_name 资源类型名。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 资源名称（同类型内唯一）。"
+        },
+        "status": {
+          "type": "string",
+          "title": "status 生命周期：planning / active / maintenance / retired。"
+        },
+        "env": {
+          "type": "string",
+          "title": "env 环境标识（prod/test/dev 等自由文本）。"
+        },
+        "owner": {
+          "type": "string",
+          "title": "owner 负责人。"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "tags 标签。"
+        },
+        "source": {
+          "type": "string",
+          "title": "source 来源：manual 或 sync:\u003c采集源 ID\u003e。"
+        },
+        "externalId": {
+          "type": "string",
+          "title": "external_id 外部系统标识（同步对账锚点）。"
+        },
+        "attrs": {
+          "type": "object",
+          "title": "attrs 动态属性（键为字段编码）。"
+        },
+        "lastSyncedAt": {
+          "type": "string",
+          "format": "date-time",
+          "title": "last_synced_at 最近同步时间；人工资源为空。"
+        },
+        "stale": {
+          "type": "boolean",
+          "title": "stale 是否陈旧（超过同步周期未更新）。"
+        },
+        "version": {
+          "type": "string",
+          "format": "int64",
+          "title": "version 乐观锁版本号，更新时须回传。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 创建时间。"
+        },
+        "updateTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "update_time 更新时间。"
+        },
+        "sourceName": {
+          "type": "string",
+          "title": "source_name 同步来源的采集源名称（source=manual 时为空）。"
+        },
+        "sourceDeleted": {
+          "type": "boolean",
+          "title": "source_deleted 同步来源的采集源已删除。"
+        }
+      },
+      "title": "CmdbCI 资源实体。"
+    },
+    "CmdbField": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 字段标识。"
+        },
+        "modelCode": {
+          "type": "string",
+          "title": "model_code 所属类型。"
+        },
+        "code": {
+          "type": "string",
+          "title": "code 字段编码（attrs 中的键），创建后不可改。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 展示名。"
+        },
+        "type": {
+          "type": "string",
+          "title": "type 数据类型：string / int / float / bool / enum / datetime / json / ip / ref。"
+        },
+        "required": {
+          "type": "boolean",
+          "title": "required 必填。"
+        },
+        "unique": {
+          "type": "boolean",
+          "title": "unique 同类型内唯一（参与唯一键）。"
+        },
+        "enumValues": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "enum_values 枚举值（type=enum）。"
+        },
+        "refModel": {
+          "type": "string",
+          "title": "ref_model 引用的资源类型编码（type=ref，值为该类型资源 ID）。"
+        },
+        "rule": {
+          "$ref": "#/definitions/FieldRule",
+          "title": "rule 校验规则。"
+        },
+        "owner": {
+          "type": "string",
+          "title": "owner 字段归属：manual 人工维护 / sync 同步只读 / both 同步写入但允许人工覆盖。"
+        },
+        "listVisible": {
+          "type": "boolean",
+          "title": "list_visible 列表页默认展示。"
+        },
+        "sort": {
+          "type": "integer",
+          "format": "int32",
+          "title": "sort 排序（越小越靠前）。"
+        },
+        "description": {
+          "type": "string",
+          "title": "description 说明（表单提示）。"
+        },
+        "deprecated": {
+          "type": "boolean",
+          "title": "deprecated 已废弃（不再展示与校验，历史数据保留）。"
+        },
+        "indexed": {
+          "type": "boolean",
+          "title": "indexed 为该属性建表达式索引（高频筛选字段）。"
+        },
+        "sensitive": {
+          "type": "boolean",
+          "title": "sensitive 敏感属性：读取接口、历史与导出一律脱敏。"
+        }
+      },
+      "title": "CmdbField 类型字段定义。"
+    },
+    "CmdbHistory": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 记录标识。"
+        },
+        "ciId": {
+          "type": "string",
+          "title": "ci_id 资源标识。"
+        },
+        "action": {
+          "type": "string",
+          "title": "action 动作：create / update / transition / delete / link / unlink。"
+        },
+        "diff": {
+          "type": "object",
+          "title": "diff 差异：{before:{...}, after:{...}}。"
+        },
+        "operator": {
+          "type": "string",
+          "title": "operator 操作者用户 ID；同步任务为 system。"
+        },
+        "source": {
+          "type": "string",
+          "title": "source 来源：manual / sync:\u003cid\u003e / assistant。"
+        },
+        "requestId": {
+          "type": "string",
+          "title": "request_id 请求 ID。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 发生时间。"
+        },
+        "ciName": {
+          "type": "string",
+          "title": "ci_name 资源名称（全局审计列表用）。"
+        },
+        "modelCode": {
+          "type": "string",
+          "title": "model_code 资源类型编码（全局审计列表用）。"
+        }
+      },
+      "title": "CmdbHistory 变更历史。"
+    },
+    "CmdbModel": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "title": "code 类型编码，小写字母/数字/下划线，创建后不可改。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 展示名。"
+        },
+        "category": {
+          "type": "string",
+          "title": "category 所属分组编码（内置：compute / network / storage / cloud / component / other，可自定义）。"
+        },
+        "icon": {
+          "type": "string",
+          "title": "icon 图标标识（前端图标名）。"
+        },
+        "description": {
+          "type": "string",
+          "title": "description 说明。"
+        },
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 状态：1 启用 / 2 停用（停用后不可新建该类型资源）。"
+        },
+        "builtin": {
+          "type": "boolean",
+          "title": "builtin 是否内置类型（内置不可删除）。"
+        },
+        "ciCount": {
+          "type": "string",
+          "format": "int64",
+          "title": "ci_count 该类型下未删除资源数。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 创建时间。"
+        },
+        "updateTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "update_time 更新时间。"
+        }
+      },
+      "title": "CmdbModel 资源类型实体。"
+    },
+    "CmdbModelGroup": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "title": "code 分组编码（cmdb_model.category 的取值）。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 展示名。"
+        },
+        "sort": {
+          "type": "integer",
+          "format": "int32",
+          "title": "sort 展示顺序（升序）。"
+        },
+        "builtin": {
+          "type": "boolean",
+          "title": "builtin 是否内置分组（不可删除）。"
+        },
+        "modelCount": {
+          "type": "string",
+          "format": "int64",
+          "title": "model_count 分组下未删除的模型数。"
+        }
+      },
+      "title": "CmdbModelGroup 模型分组。"
+    },
+    "CmdbRelationType": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "title": "code 关系编码，创建后不可改。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 展示名。"
+        },
+        "forwardName": {
+          "type": "string",
+          "title": "forward_name 正向名（在 src 详情页展示，如\"安装的配件\"）。"
+        },
+        "backwardName": {
+          "type": "string",
+          "title": "backward_name 反向名（在 dst 详情页展示，如\"所属主机\"）。"
+        },
+        "srcModel": {
+          "type": "string",
+          "title": "src_model 源端资源类型编码，* 表示任意。"
+        },
+        "dstModel": {
+          "type": "string",
+          "title": "dst_model 目标端资源类型编码，* 表示任意。"
+        },
+        "cardinality": {
+          "type": "string",
+          "title": "cardinality 基数：one_to_one / one_to_many（一个 src 多个 dst，一个 dst 只属一个 src）/ many_to_many。"
+        },
+        "onDelete": {
+          "type": "string",
+          "title": "on_delete src 退役/删除时对 dst 的策略：restrict 禁止 / cascade_retire 级联退役。"
+        },
+        "description": {
+          "type": "string",
+          "title": "description 说明。"
+        },
+        "relationCount": {
+          "type": "string",
+          "format": "int64",
+          "title": "relation_count 关系实例数。"
+        }
+      },
+      "title": "CmdbRelationType 关系类型定义（有向：src → dst）。"
+    },
+    "CmdbSchemaAudit": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 记录标识。"
+        },
+        "targetType": {
+          "type": "string",
+          "title": "target_type 对象类型：group / model / field / relation_type。"
+        },
+        "targetCode": {
+          "type": "string",
+          "title": "target_code 对象编码。"
+        },
+        "targetName": {
+          "type": "string",
+          "title": "target_name 对象名称（变更时的快照）。"
+        },
+        "modelCode": {
+          "type": "string",
+          "title": "model_code 所属模型编码（模型与字段有值）。"
+        },
+        "action": {
+          "type": "string",
+          "title": "action 动作：create / update / delete。"
+        },
+        "diff": {
+          "type": "object",
+          "title": "diff 差异：{before:{...}, after:{...}}。"
+        },
+        "operator": {
+          "type": "string",
+          "title": "operator 操作者用户 ID。"
+        },
+        "requestId": {
+          "type": "string",
+          "title": "request_id 请求 ID。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 发生时间。"
+        }
+      },
+      "title": "CmdbSchemaAudit 模型变更审计记录。"
+    },
     "ConfirmRequest": {
       "type": "object",
       "properties": {
@@ -2991,6 +5792,57 @@
     "ConfirmResponse": {
       "type": "object",
       "title": "ConfirmResponse 占位：实际响应为 SSE 事件流，本消息不会被序列化返回。"
+    },
+    "CreateCIRequest": {
+      "type": "object",
+      "properties": {
+        "modelCode": {
+          "type": "string",
+          "title": "model_code 资源类型。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 资源名称，1-128 位。"
+        },
+        "status": {
+          "type": "string",
+          "title": "status 初始状态，缺省 active。"
+        },
+        "env": {
+          "type": "string",
+          "title": "env 环境，可选。"
+        },
+        "owner": {
+          "type": "string",
+          "title": "owner 负责人，可选。"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "tags 标签，≤32 项。"
+        },
+        "externalId": {
+          "type": "string",
+          "title": "external_id 外部标识，可选。"
+        },
+        "attrs": {
+          "type": "object",
+          "title": "attrs 动态属性。"
+        }
+      },
+      "title": "CreateCIRequest 创建资源请求。"
+    },
+    "CreateCIResponse": {
+      "type": "object",
+      "properties": {
+        "ci": {
+          "$ref": "#/definitions/CmdbCI",
+          "title": "ci 创建后的资源。"
+        }
+      },
+      "title": "CreateCIResponse 创建资源响应。"
     },
     "CreateChannelRequest": {
       "type": "object",
@@ -3048,6 +5900,147 @@
       },
       "title": "CreateChannelResponse 创建渠道响应。"
     },
+    "CreateFieldBody": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "title": "code 字段编码：1-64 位小写字母/数字/下划线，字母开头。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 展示名，1-64 位。"
+        },
+        "type": {
+          "type": "string",
+          "title": "type 数据类型。"
+        },
+        "required": {
+          "type": "boolean",
+          "title": "required 必填，可选。"
+        },
+        "unique": {
+          "type": "boolean",
+          "title": "unique 唯一，可选。"
+        },
+        "enumValues": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "enum_values 枚举值（type=enum 必填），每项 1-64 位，≤100 项。"
+        },
+        "refModel": {
+          "type": "string",
+          "title": "ref_model 引用类型编码（type=ref 必填）。"
+        },
+        "rule": {
+          "$ref": "#/definitions/FieldRule",
+          "title": "rule 校验规则，可选。"
+        },
+        "owner": {
+          "type": "string",
+          "title": "owner 归属：manual / sync / both，缺省 manual。"
+        },
+        "listVisible": {
+          "type": "boolean",
+          "title": "list_visible 列表默认展示，可选。"
+        },
+        "sort": {
+          "type": "integer",
+          "format": "int32",
+          "title": "sort 排序，可选。"
+        },
+        "description": {
+          "type": "string",
+          "title": "description 说明，可选。"
+        },
+        "indexed": {
+          "type": "boolean",
+          "title": "indexed 建表达式索引，可选。"
+        },
+        "sensitive": {
+          "type": "boolean",
+          "title": "sensitive 敏感属性，可选。"
+        }
+      },
+      "title": "CreateFieldRequest 新增类型字段请求。"
+    },
+    "CreateFieldResponse": {
+      "type": "object",
+      "properties": {
+        "field": {
+          "$ref": "#/definitions/CmdbField",
+          "title": "field 创建后的字段。"
+        }
+      },
+      "title": "CreateFieldResponse 新增类型字段响应。"
+    },
+    "CreateModelGroupRequest": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "title": "code 分组编码：2-64 位小写字母/数字/下划线，字母开头。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 展示名，1-64 位。"
+        },
+        "sort": {
+          "type": "integer",
+          "format": "int32",
+          "title": "sort 展示顺序，缺省 500（位于内置的“其他”之前）。"
+        }
+      },
+      "title": "CreateModelGroupRequest 创建模型分组请求。"
+    },
+    "CreateModelGroupResponse": {
+      "type": "object",
+      "properties": {
+        "group": {
+          "$ref": "#/definitions/CmdbModelGroup",
+          "title": "group 创建后的分组。"
+        }
+      },
+      "title": "CreateModelGroupResponse 创建模型分组响应。"
+    },
+    "CreateModelRequest": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "title": "code 类型编码：2-64 位小写字母/数字/下划线，字母开头。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 展示名，1-64 位。"
+        },
+        "category": {
+          "type": "string",
+          "title": "category 所属分组编码（须为已存在的模型分组，见 CmdbInsightService.ListModelGroups）。"
+        },
+        "icon": {
+          "type": "string",
+          "title": "icon 图标标识，可选。"
+        },
+        "description": {
+          "type": "string",
+          "title": "description 说明，可选。"
+        }
+      },
+      "title": "CreateModelRequest 创建资源类型请求。"
+    },
+    "CreateModelResponse": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "$ref": "#/definitions/CmdbModel",
+          "title": "model 创建后的类型。"
+        }
+      },
+      "title": "CreateModelResponse 创建资源类型响应。"
+    },
     "CreateProducerRequest": {
       "type": "object",
       "properties": {
@@ -3079,6 +6072,58 @@
         }
       },
       "title": "CreateProducerResponse 创建生产者响应。"
+    },
+    "CreateRelationTypeRequest": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "title": "code 关系编码：2-64 位小写字母/数字/下划线，字母开头。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 展示名。"
+        },
+        "forwardName": {
+          "type": "string",
+          "title": "forward_name 正向名。"
+        },
+        "backwardName": {
+          "type": "string",
+          "title": "backward_name 反向名。"
+        },
+        "srcModel": {
+          "type": "string",
+          "title": "src_model 源端类型编码或 *。"
+        },
+        "dstModel": {
+          "type": "string",
+          "title": "dst_model 目标端类型编码或 *。"
+        },
+        "cardinality": {
+          "type": "string",
+          "title": "cardinality 基数。"
+        },
+        "onDelete": {
+          "type": "string",
+          "title": "on_delete 删除策略，缺省 restrict。"
+        },
+        "description": {
+          "type": "string",
+          "title": "description 说明，可选。"
+        }
+      },
+      "title": "CreateRelationTypeRequest 创建关系类型请求。"
+    },
+    "CreateRelationTypeResponse": {
+      "type": "object",
+      "properties": {
+        "relationType": {
+          "$ref": "#/definitions/CmdbRelationType",
+          "title": "relation_type 创建后的关系类型。"
+        }
+      },
+      "title": "CreateRelationTypeResponse 创建关系类型响应。"
     },
     "CreateRoleRequest": {
       "type": "object",
@@ -3172,6 +6217,56 @@
       },
       "title": "CreateSilenceResponse 创建静默规则响应。"
     },
+    "CreateSourceRequest": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "name 名称，1-64。"
+        },
+        "provider": {
+          "type": "string",
+          "title": "provider 提供方：aliyun / vmware。"
+        },
+        "config": {
+          "type": "object",
+          "title": "config 提供方配置（结构随 provider，见 kit/cmdbcontract；不含凭据）。"
+        },
+        "credential": {
+          "type": "string",
+          "title": "credential 凭据明文（阿里云 AccessKeySecret / vCenter 密码），≤512；加密落库，任何响应不返回。"
+        },
+        "env": {
+          "type": "string",
+          "title": "env 写入资源的缺省环境标识，可选。"
+        },
+        "intervalSeconds": {
+          "type": "integer",
+          "format": "int32",
+          "title": "interval_seconds 同步周期（秒），300-604800，缺省 3600。"
+        },
+        "gracePeriodSeconds": {
+          "type": "integer",
+          "format": "int32",
+          "title": "grace_period_seconds 消失宽限期（秒），0-2592000，缺省 86400。"
+        },
+        "enabled": {
+          "type": "boolean",
+          "title": "enabled 是否启用，缺省 true。"
+        }
+      },
+      "title": "CreateSourceRequest 创建采集源请求。"
+    },
+    "CreateSourceResponse": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "$ref": "#/definitions/SyncSource",
+          "title": "source 创建后的采集源。"
+        }
+      },
+      "title": "CreateSourceResponse 创建采集源响应。"
+    },
     "CreateTemplateRequest": {
       "type": "object",
       "properties": {
@@ -3198,6 +6293,10 @@
         "enabled": {
           "type": "boolean",
           "title": "enabled 初始启用状态，可选；未指定默认启用。"
+        },
+        "format": {
+          "type": "string",
+          "title": "format 输出格式，可选，缺省 text（text/markdown/html/card）。"
         }
       },
       "title": "CreateTemplateRequest 创建模板请求。"
@@ -3261,6 +6360,10 @@
       },
       "title": "CreateUserResponse 创建用户响应。"
     },
+    "DeleteCIResponse": {
+      "type": "object",
+      "title": "DeleteCIResponse 删除资源响应。"
+    },
     "DeleteChannelResponse": {
       "type": "object",
       "title": "DeleteChannelResponse 删除渠道响应。"
@@ -3269,9 +6372,25 @@
       "type": "object",
       "title": "DeleteConversationResponse 删除会话响应。"
     },
+    "DeleteFieldResponse": {
+      "type": "object",
+      "title": "DeleteFieldResponse 废弃类型字段响应。"
+    },
+    "DeleteModelGroupResponse": {
+      "type": "object",
+      "title": "DeleteModelGroupResponse 删除模型分组响应。"
+    },
+    "DeleteModelResponse": {
+      "type": "object",
+      "title": "DeleteModelResponse 删除资源类型响应。"
+    },
     "DeleteProducerResponse": {
       "type": "object",
       "title": "DeleteProducerResponse 删除生产者响应。"
+    },
+    "DeleteRelationTypeResponse": {
+      "type": "object",
+      "title": "DeleteRelationTypeResponse 删除关系类型响应。"
     },
     "DeleteRoleResponse": {
       "type": "object",
@@ -3285,6 +6404,10 @@
       "type": "object",
       "title": "DeleteSilenceResponse 删除静默规则响应。"
     },
+    "DeleteSourceResponse": {
+      "type": "object",
+      "title": "DeleteSourceResponse 删除采集源响应。"
+    },
     "DeleteSubscriptionResponse": {
       "type": "object",
       "title": "DeleteSubscriptionResponse 删除订阅响应。"
@@ -3296,6 +6419,10 @@
     "DeleteUserResponse": {
       "type": "object",
       "title": "DeleteUserResponse 删除用户响应。"
+    },
+    "DisableWebhookResponse": {
+      "type": "object",
+      "title": "DisableWebhookResponse 停用回调响应。"
     },
     "EmailChannelConfig": {
       "type": "object",
@@ -3324,6 +6451,54 @@
       },
       "title": "EmailChannelConfig 邮件渠道配置（type=EMAIL）；secret 为 SMTP 密码（必传）。"
     },
+    "FieldRule": {
+      "type": "object",
+      "properties": {
+        "pattern": {
+          "type": "string",
+          "title": "pattern 正则（string/ip 类型）。"
+        },
+        "min": {
+          "type": "number",
+          "format": "double",
+          "title": "min 最小值（int/float）。"
+        },
+        "max": {
+          "type": "number",
+          "format": "double",
+          "title": "max 最大值（int/float）。"
+        },
+        "minLen": {
+          "type": "integer",
+          "format": "int32",
+          "title": "min_len 最小长度（string）。"
+        },
+        "maxLen": {
+          "type": "integer",
+          "format": "int32",
+          "title": "max_len 最大长度（string）。"
+        }
+      },
+      "title": "FieldRule 字段校验规则；未设置的项不校验。"
+    },
+    "GetCIResponse": {
+      "type": "object",
+      "properties": {
+        "ci": {
+          "$ref": "#/definitions/CmdbCI",
+          "title": "ci 资源。"
+        },
+        "relations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/RelationSummary"
+          },
+          "title": "relations 各关系类型两个方向上的关联统计（仅适用于该类型的关系）。"
+        }
+      },
+      "title": "GetCIResponse 查询资源详情响应。"
+    },
     "GetChannelResponse": {
       "type": "object",
       "properties": {
@@ -3333,6 +6508,52 @@
         }
       },
       "title": "GetChannelResponse 查询渠道响应。"
+    },
+    "GetDeadLetterResponse": {
+      "type": "object",
+      "properties": {
+        "deadLetter": {
+          "$ref": "#/definitions/NotifyDeadLetter",
+          "title": "dead_letter 死信。"
+        }
+      },
+      "title": "GetDeadLetterResponse 死信详情响应。"
+    },
+    "GetDispatchResponse": {
+      "type": "object",
+      "properties": {
+        "dispatch": {
+          "$ref": "#/definitions/NotifyDispatch",
+          "title": "dispatch 发送任务。"
+        }
+      },
+      "title": "GetDispatchResponse 发送任务详情响应。"
+    },
+    "GetEventResponse": {
+      "type": "object",
+      "properties": {
+        "event": {
+          "$ref": "#/definitions/NotifyEvent",
+          "title": "event 事件。"
+        },
+        "dispatches": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/NotifyDispatch"
+          },
+          "title": "dispatches 该事件生成的发送任务（按生成时间倒序，最多 100 条）。"
+        },
+        "latestLogs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/NotifyDeliveryLog"
+          },
+          "title": "latest_logs 每个发送任务最近一次投递明细（按 dispatch_id 对应；无尝试的任务无条目）。"
+        }
+      },
+      "title": "GetEventResponse 事件详情响应：事件 + 发送任务 + 每个任务最近一次投递明细。"
     },
     "GetLoginProfileResponse": {
       "type": "object",
@@ -3383,6 +6604,149 @@
         }
       },
       "title": "GetLoginProfileResponse 当前登录者信息响应。"
+    },
+    "GetModelResponse": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "$ref": "#/definitions/CmdbModel",
+          "title": "model 类型。"
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/CmdbField"
+          },
+          "title": "fields 字段定义（含已废弃，按 sort 排序）。"
+        },
+        "relationTypes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/CmdbRelationType"
+          },
+          "title": "relation_types 适用于该类型的关系类型（任一端匹配或通配）。"
+        }
+      },
+      "title": "GetModelResponse 查询资源类型详情响应。"
+    },
+    "GetModelViewResponse": {
+      "type": "object",
+      "properties": {
+        "modelCode": {
+          "type": "string",
+          "title": "model_code 类型编码。"
+        },
+        "configured": {
+          "type": "boolean",
+          "title": "configured 是否为人工配置（false = 缺省生成）。"
+        },
+        "sections": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/ViewSection"
+          },
+          "title": "sections 区块列表。"
+        }
+      },
+      "title": "GetModelViewResponse 查询详情布局响应。"
+    },
+    "GetMyScopeResponse": {
+      "type": "object",
+      "properties": {
+        "unrestricted": {
+          "type": "boolean",
+          "title": "unrestricted 不限（超管或任一启用角色未配置）。"
+        },
+        "modelCodes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "model_codes 可见资源类型（unrestricted=false 时有效）。"
+        },
+        "envs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "envs 可见环境（unrestricted=false 时有效；空 = 环境不限）。"
+        }
+      },
+      "title": "GetMyScopeResponse 查询我的数据范围响应。"
+    },
+    "GetOverviewResponse": {
+      "type": "object",
+      "properties": {
+        "modelCount": {
+          "type": "string",
+          "format": "int64",
+          "title": "model_count 可见模型数。"
+        },
+        "ciCount": {
+          "type": "string",
+          "format": "int64",
+          "title": "ci_count 可见资源总数。"
+        },
+        "relationCount": {
+          "type": "string",
+          "format": "int64",
+          "title": "relation_count 关系实例数（源端资源可见）。"
+        },
+        "changeCount": {
+          "type": "string",
+          "format": "int64",
+          "title": "change_count 回看窗口内的变更次数。"
+        },
+        "byModel": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/OverviewCount"
+          },
+          "title": "by_model 按模型的资源数（降序）。"
+        },
+        "byStatus": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/OverviewCount"
+          },
+          "title": "by_status 按状态的资源数。"
+        },
+        "byEnv": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/OverviewCount"
+          },
+          "title": "by_env 按环境的资源数（降序）。"
+        },
+        "bySource": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/OverviewCount"
+          },
+          "title": "by_source 按来源的资源数。"
+        },
+        "trend": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/OverviewTrendPoint"
+          },
+          "title": "trend 变更趋势（按日期升序）。"
+        },
+        "days": {
+          "type": "integer",
+          "format": "int32",
+          "title": "days 实际回看天数。"
+        }
+      },
+      "title": "GetOverviewResponse 查询运营概览响应（全部数字受数据范围约束）。"
     },
     "GetProducerResponse": {
       "type": "object",
@@ -3451,6 +6815,16 @@
       },
       "title": "GetSilenceResponse 查询静默规则响应。"
     },
+    "GetSourceResponse": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "$ref": "#/definitions/SyncSource",
+          "title": "source 采集源。"
+        }
+      },
+      "title": "GetSourceResponse 查询采集源详情响应。"
+    },
     "GetSystemConfigResponse": {
       "type": "object",
       "properties": {
@@ -3503,6 +6877,245 @@
         }
       },
       "description": "Message that represents an arbitrary HTTP body. It should only be used for\npayload formats that can't be represented as JSON, such as raw binary or\nan HTML page.\n\n\nThis message can be used both in streaming and non-streaming API methods in\nthe request as well as the response.\n\nIt can be used as a top-level request field, which is convenient if one\nwants to extract parameters from either the URL or HTTP template into the\nrequest fields and also want access to the raw HTTP body.\n\nExample:\n\n    message GetResourceRequest {\n      // A unique request id.\n      string request_id = 1;\n\n      // The raw HTTP body is bound to this field.\n      google.api.HttpBody http_body = 2;\n\n    }\n\n    service ResourceService {\n      rpc GetResource(GetResourceRequest)\n        returns (google.api.HttpBody);\n      rpc UpdateResource(google.api.HttpBody)\n        returns (google.protobuf.Empty);\n\n    }\n\nExample with streaming methods:\n\n    service CaldavService {\n      rpc GetCalendar(stream google.api.HttpBody)\n        returns (stream google.api.HttpBody);\n      rpc UpdateCalendar(stream google.api.HttpBody)\n        returns (stream google.api.HttpBody);\n\n    }\n\nUse of this type only changes how the request and response bodies are\nhandled, all other features will continue to work unchanged."
+    },
+    "ImportCIsRequest": {
+      "type": "object",
+      "properties": {
+        "modelCode": {
+          "type": "string",
+          "title": "model_code 目标类型。"
+        },
+        "dryRun": {
+          "type": "boolean",
+          "title": "dry_run 试运行：只校验与预览动作，不写入。"
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/ImportRow"
+          },
+          "title": "rows 导入行，1-1000。"
+        }
+      },
+      "title": "ImportCIsRequest 导入请求。"
+    },
+    "ImportCIsResponse": {
+      "type": "object",
+      "properties": {
+        "dryRun": {
+          "type": "boolean",
+          "title": "dry_run 是否试运行。"
+        },
+        "created": {
+          "type": "integer",
+          "format": "int32",
+          "title": "created / updated / skipped / failed 统计。"
+        },
+        "updated": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "skipped": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "failed": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/ImportRowResult"
+          },
+          "title": "results 逐行结果。"
+        }
+      },
+      "title": "ImportCIsResponse 导入响应。"
+    },
+    "ImportRelation": {
+      "type": "object",
+      "properties": {
+        "relationType": {
+          "type": "string",
+          "title": "relation_type 关系类型编码。"
+        },
+        "direction": {
+          "type": "string",
+          "title": "direction 方向：outgoing / incoming。"
+        },
+        "targetModel": {
+          "type": "string",
+          "title": "target_model 对端类型编码（关系端为通配时必填，否则可省略）。"
+        },
+        "targetName": {
+          "type": "string",
+          "title": "target_name 对端资源名称。"
+        }
+      },
+      "title": "ImportRelation 导入行的关系声明。"
+    },
+    "ImportRow": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "name 资源名称（同类型内唯一，upsert 锚点）。"
+        },
+        "status": {
+          "type": "string",
+          "title": "status 初始状态（仅新建生效），缺省 active。"
+        },
+        "env": {
+          "type": "string",
+          "title": "env 环境。"
+        },
+        "owner": {
+          "type": "string",
+          "title": "owner 负责人。"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "tags 标签。"
+        },
+        "externalId": {
+          "type": "string",
+          "title": "external_id 外部标识。"
+        },
+        "attrs": {
+          "type": "object",
+          "title": "attrs 属性。"
+        },
+        "relations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/ImportRelation"
+          },
+          "title": "relations 关系列：按对端类型 + 名称匹配后建立（已存在跳过），≤16。"
+        }
+      },
+      "title": "ImportRow 导入行。"
+    },
+    "ImportRowResult": {
+      "type": "object",
+      "properties": {
+        "row": {
+          "type": "integer",
+          "format": "int32",
+          "title": "row 行号（从 1 开始）。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 资源名称。"
+        },
+        "action": {
+          "type": "string",
+          "title": "action 动作：create / update / skip（无变化）/ error。"
+        },
+        "message": {
+          "type": "string",
+          "title": "message 错误原因（action=error）。"
+        },
+        "ciId": {
+          "type": "string",
+          "title": "ci_id 资源标识（已存在或已创建）。"
+        }
+      },
+      "title": "ImportRowResult 单行结果。"
+    },
+    "LinkCIsBody": {
+      "type": "object",
+      "properties": {
+        "relationType": {
+          "type": "string",
+          "title": "relation_type 关系类型编码。"
+        },
+        "direction": {
+          "type": "string",
+          "title": "direction 方向：outgoing 当前资源为 src / incoming 当前资源为 dst。"
+        },
+        "targetIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "target_ids 目标资源，1-100 个。"
+        }
+      },
+      "title": "LinkCIsRequest 建立关系请求。"
+    },
+    "LinkCIsResponse": {
+      "type": "object",
+      "properties": {
+        "linked": {
+          "type": "integer",
+          "format": "int32",
+          "title": "linked 实际新建的关系数（已存在的跳过）。"
+        }
+      },
+      "title": "LinkCIsResponse 建立关系响应。"
+    },
+    "ListCIHistoryResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/CmdbHistory"
+          },
+          "title": "items 当前页数据（时间倒序）。"
+        },
+        "total": {
+          "type": "string",
+          "format": "int64",
+          "title": "total 总数。"
+        }
+      },
+      "title": "ListCIHistoryResponse 查询变更历史响应。"
+    },
+    "ListCIsResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/CmdbCI"
+          },
+          "title": "items 当前页数据。"
+        },
+        "total": {
+          "type": "string",
+          "format": "int64",
+          "title": "total 总数。"
+        },
+        "nextCursor": {
+          "type": "string",
+          "title": "next_cursor 下一页游标；空 = 无更多。"
+        }
+      },
+      "title": "ListCIsResponse 分页查询资源响应。"
+    },
+    "ListChannelHealthResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/NotifyChannelHealth"
+          },
+          "title": "items 健康行（无发送记录的渠道无条目）。"
+        }
+      },
+      "title": "ListChannelHealthResponse 渠道健康查询响应（按打开优先、最近更新倒序）。"
     },
     "ListChannelsResponse": {
       "type": "object",
@@ -3618,6 +7231,38 @@
       },
       "title": "ListEventsResponse 分页查询事件响应。"
     },
+    "ListFavoritesResponse": {
+      "type": "object",
+      "properties": {
+        "modelCodes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "model_codes 当前用户收藏的模型编码（按收藏时间升序；已删除的模型不返回）。"
+        }
+      },
+      "title": "ListFavoritesResponse 查询收藏响应。"
+    },
+    "ListHistoryResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/CmdbHistory"
+          },
+          "title": "items 当前页数据。"
+        },
+        "total": {
+          "type": "string",
+          "format": "int64",
+          "title": "total 总数。"
+        }
+      },
+      "title": "ListHistoryResponse 全局变更审计查询响应。"
+    },
     "ListLoginLogsResponse": {
       "type": "object",
       "properties": {
@@ -3650,6 +7295,39 @@
         }
       },
       "title": "ListMessagesResponse 查询会话消息响应。"
+    },
+    "ListModelGroupsResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/CmdbModelGroup"
+          },
+          "title": "items 全部分组。"
+        }
+      },
+      "title": "ListModelGroupsResponse 查询模型分组响应。"
+    },
+    "ListModelsResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/CmdbModel"
+          },
+          "title": "items 当前页数据。"
+        },
+        "total": {
+          "type": "string",
+          "format": "int64",
+          "title": "total 总数。"
+        }
+      },
+      "title": "ListModelsResponse 分页查询资源类型响应。"
     },
     "ListOperationsResponse": {
       "type": "object",
@@ -3698,6 +7376,53 @@
       },
       "title": "ListProducersResponse 分页查询生产者响应。"
     },
+    "ListRelatedResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/RelatedCI"
+          },
+          "title": "items 当前页数据。"
+        },
+        "total": {
+          "type": "string",
+          "format": "int64",
+          "title": "total 总数。"
+        }
+      },
+      "title": "ListRelatedResponse 查询关联资源响应。"
+    },
+    "ListRelationTypesResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/CmdbRelationType"
+          },
+          "title": "items 关系类型。"
+        }
+      },
+      "title": "ListRelationTypesResponse 查询关系类型响应。"
+    },
+    "ListRoleScopesResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/RoleScope"
+          },
+          "title": "items 全部未删除角色及其范围。"
+        }
+      },
+      "title": "ListRoleScopesResponse 查询角色数据范围响应。"
+    },
     "ListRolesResponse": {
       "type": "object",
       "properties": {
@@ -3736,6 +7461,44 @@
       },
       "title": "ListRoutesResponse 分页查询路由响应。"
     },
+    "ListRunsResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/SyncRun"
+          },
+          "title": "items 当前页数据。"
+        },
+        "total": {
+          "type": "string",
+          "format": "int64",
+          "title": "total 总数。"
+        }
+      },
+      "title": "ListRunsResponse 查询运行记录响应。"
+    },
+    "ListSchemaAuditResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/CmdbSchemaAudit"
+          },
+          "title": "items 当前页数据。"
+        },
+        "total": {
+          "type": "string",
+          "format": "int64",
+          "title": "total 总数。"
+        }
+      },
+      "title": "ListSchemaAuditResponse 查询模型变更审计响应。"
+    },
     "ListSilencesResponse": {
       "type": "object",
       "properties": {
@@ -3754,6 +7517,25 @@
         }
       },
       "title": "ListSilencesResponse 分页查询静默规则响应。"
+    },
+    "ListSourcesResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/SyncSource"
+          },
+          "title": "items 当前页数据。"
+        },
+        "total": {
+          "type": "string",
+          "format": "int64",
+          "title": "total 总数。"
+        }
+      },
+      "title": "ListSourcesResponse 查询采集源列表响应。"
     },
     "ListSubscriptionsResponse": {
       "type": "object",
@@ -3907,6 +7689,58 @@
       "type": "object",
       "title": "LogoutResponse 登出响应。"
     },
+    "MoveCIBody": {
+      "type": "object",
+      "properties": {
+        "relationType": {
+          "type": "string",
+          "title": "relation_type 关系类型编码。"
+        },
+        "direction": {
+          "type": "string",
+          "title": "direction 方向。"
+        },
+        "fromId": {
+          "type": "string",
+          "title": "from_id 原目标资源。"
+        },
+        "toId": {
+          "type": "string",
+          "title": "to_id 新目标资源。"
+        }
+      },
+      "title": "MoveCIRequest 关系迁移请求（如配件从主机 A 迁到主机 B）。"
+    },
+    "MoveCIResponse": {
+      "type": "object",
+      "title": "MoveCIResponse 关系迁移响应。"
+    },
+    "NeighborsResponse": {
+      "type": "object",
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/TopologyNode"
+          },
+          "title": "nodes 节点（含中心）。"
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/TopologyEdge"
+          },
+          "title": "edges 边。"
+        },
+        "truncated": {
+          "type": "boolean",
+          "title": "truncated 因节点上限被截断。"
+        }
+      },
+      "title": "NeighborsResponse 拓扑查询响应。"
+    },
     "NotifyChannel": {
       "type": "object",
       "properties": {
@@ -3958,6 +7792,56 @@
         }
       },
       "title": "NotifyChannel 渠道实体（出参；secret 永不返回）。"
+    },
+    "NotifyChannelHealth": {
+      "type": "object",
+      "properties": {
+        "channelId": {
+          "type": "string",
+          "title": "channel_id 渠道 ID。"
+        },
+        "channelName": {
+          "type": "string",
+          "title": "channel_name 渠道名。"
+        },
+        "channelType": {
+          "type": "string",
+          "title": "channel_type 渠道类型。"
+        },
+        "bizId": {
+          "type": "string",
+          "title": "biz_id 渠道所属业务。"
+        },
+        "samples": {
+          "type": "integer",
+          "format": "int32",
+          "title": "samples 当前 60s 滑窗样本数。"
+        },
+        "failures": {
+          "type": "integer",
+          "format": "int32",
+          "title": "failures 当前 60s 滑窗失败数。"
+        },
+        "open": {
+          "type": "boolean",
+          "title": "open 熔断是否打开（open_until 在未来）。"
+        },
+        "openUntil": {
+          "type": "string",
+          "format": "date-time",
+          "title": "open_until 打开截止（未打开时省略）。"
+        },
+        "probing": {
+          "type": "boolean",
+          "title": "probing 半开探测已被某副本领取。"
+        },
+        "updateTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "update_time 最近一次发送结果时间。"
+        }
+      },
+      "title": "NotifyChannelHealth 渠道健康行（notify_channel_health ⋈ notify_channel）。"
     },
     "NotifyChannelType": {
       "type": "string",
@@ -4267,6 +8151,11 @@
           "type": "string",
           "format": "int64",
           "title": "burst 令牌桶容量（突发上限），0 表示不限。"
+        },
+        "perMinute": {
+          "type": "string",
+          "format": "int64",
+          "title": "per_minute 每分钟配额（qps=0 时生效）：群机器人平台按\"每分钟 N 条\"限制（钉钉/企微\n20/min），整数 qps 表达不了。两者皆 0 时按渠道类型缺省（dingtalk/wecom 20/min、\nfeishu 100/min；email/webhook 不限）。"
         }
       },
       "title": "NotifyRateLimit 令牌桶限流参数；qps=0 表示不限（适配器层仍受通道默认配额约束，\n如钉钉 20/min/机器人）。多实例渠道各自独立限流。"
@@ -4318,6 +8207,14 @@
           "type": "integer",
           "format": "int32",
           "title": "aggregate_window_s 聚合窗口秒数；0=不聚合，\u003e0 且事件带 group_key 时聚合微批。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 可读名称（空 = 未命名）。"
+        },
+        "description": {
+          "type": "string",
+          "title": "description 说明。"
         },
         "suppressThreshold": {
           "type": "integer",
@@ -4383,6 +8280,14 @@
           "type": "string",
           "format": "date-time",
           "title": "update_time 更新时间。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 可读名称（空 = 未命名）。"
+        },
+        "description": {
+          "type": "string",
+          "title": "description 说明。"
         }
       },
       "title": "NotifySilence 静默规则实体。"
@@ -4475,6 +8380,10 @@
           "type": "string",
           "format": "date-time",
           "title": "update_time 更新时间。"
+        },
+        "format": {
+          "type": "string",
+          "title": "format 输出格式 text/markdown/html/card：渠道按能力降级——email 仅 html 生效（其余纯文本）；\n群机器人 card→卡片、markdown/html→markdown、text→文本；webhook 透传。"
         }
       },
       "title": "NotifyTemplate 模板实体。"
@@ -4486,6 +8395,138 @@
       ],
       "default": "NULL_VALUE",
       "description": "Represents a JSON `null`.\n\n`NullValue` is a sentinel, using an enum with only one value to represent\nthe null value for the `Value` type union.\n\nA field of type `NullValue` with any value other than `0` is considered\ninvalid. Most ProtoJSON serializers will emit a `Value` with a `null_value`\nset as a JSON `null` regardless of the integer value, and so will round trip\nto a `0` value.\n\n - NULL_VALUE: Null value."
+    },
+    "OverviewCount": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "title": "key 维度取值：模型编码 / 状态 / 环境 / 来源（manual、sync、assistant…；环境未填为空串）。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 展示名（按模型统计时为模型名，其它维度为空）。"
+        },
+        "count": {
+          "type": "string",
+          "format": "int64",
+          "title": "count 资源数。"
+        }
+      },
+      "title": "OverviewCount 一个维度取值上的资源数。"
+    },
+    "OverviewTrendPoint": {
+      "type": "object",
+      "properties": {
+        "date": {
+          "type": "string",
+          "title": "date 日期（YYYY-MM-DD，数据库会话时区）。"
+        },
+        "action": {
+          "type": "string",
+          "title": "action 动作：create / update / transition / delete / link / unlink。"
+        },
+        "count": {
+          "type": "string",
+          "format": "int64",
+          "title": "count 次数。"
+        }
+      },
+      "title": "OverviewTrendPoint 某天某动作的变更次数。"
+    },
+    "PreviewChannel": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 渠道 ID。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 渠道名。"
+        },
+        "type": {
+          "type": "string",
+          "title": "type 渠道类型（email/webhook/dingtalk/wecom/feishu）。"
+        },
+        "enabled": {
+          "type": "boolean",
+          "title": "enabled 是否启用（停用实例会被管道跳过——命中也不发）。"
+        },
+        "templateId": {
+          "type": "string",
+          "title": "template_id 解析到的模板（空 = 内置默认模板）。"
+        }
+      },
+      "title": "PreviewChannel 试算命中的渠道实例及其模板解析结果。"
+    },
+    "PreviewRoutingRequest": {
+      "type": "object",
+      "properties": {
+        "bizId": {
+          "type": "string",
+          "title": "biz_id 业务标识，缺省 default。"
+        },
+        "eventType": {
+          "type": "string",
+          "title": "event_type 事件类型（小写点分事件名）。"
+        },
+        "severity": {
+          "type": "integer",
+          "format": "int32",
+          "title": "severity 严重级 1-4。"
+        },
+        "payload": {
+          "type": "object",
+          "title": "payload 载荷（tag_match 比对用），可选。"
+        },
+        "groupKey": {
+          "type": "string",
+          "title": "group_key 分组键，可选（判定是否进入聚合）。"
+        }
+      },
+      "title": "PreviewRoutingRequest 路由试算请求：一条假想事件。"
+    },
+    "PreviewRoutingResponse": {
+      "type": "object",
+      "properties": {
+        "silenced": {
+          "type": "boolean",
+          "title": "silenced 是否被静默规则抑制（为 true 时管道不会选路）。"
+        },
+        "silenceIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "silence_ids 命中的静默规则。"
+        },
+        "matched": {
+          "$ref": "#/definitions/NotifyRoute",
+          "title": "matched 生效路由（candidates 的第一条；无命中为空）。"
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/NotifyRoute"
+          },
+          "title": "candidates 全部命中路由（按决胜序：priority → 精确度 → id）。"
+        },
+        "channels": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/PreviewChannel"
+          },
+          "title": "channels 生效路由绑定的渠道实例（含停用标记与模板解析）。"
+        },
+        "aggregate": {
+          "type": "boolean",
+          "title": "aggregate 是否进入聚合窗口（路由 aggregate_window_s \u003e 0 且事件带 group_key）。"
+        }
+      },
+      "title": "PreviewRoutingResponse 路由试算结果。"
     },
     "ProducerSpec": {
       "type": "object",
@@ -4548,6 +8589,111 @@
       },
       "title": "RefreshTokenResponse 刷新令牌响应：新双令牌（旧刷新令牌已失效）。"
     },
+    "RelatedCI": {
+      "type": "object",
+      "properties": {
+        "relationId": {
+          "type": "string",
+          "title": "relation_id 关系实例标识。"
+        },
+        "ci": {
+          "$ref": "#/definitions/CmdbCI",
+          "title": "ci 对端资源。"
+        }
+      },
+      "title": "RelatedCI 关联资源条目。"
+    },
+    "RelationSummary": {
+      "type": "object",
+      "properties": {
+        "relationType": {
+          "type": "string",
+          "title": "relation_type 关系类型编码。"
+        },
+        "direction": {
+          "type": "string",
+          "title": "direction 方向：outgoing（本资源为 src）/ incoming（本资源为 dst）。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 面板名（outgoing 取 forward_name，incoming 取 backward_name）。"
+        },
+        "targetModel": {
+          "type": "string",
+          "title": "target_model 对端类型编码（* 表示任意）。"
+        },
+        "count": {
+          "type": "string",
+          "format": "int64",
+          "title": "count 关联数。"
+        }
+      },
+      "title": "RelationSummary 资源在某个关系类型某个方向上的关联统计（详情页面板头）。"
+    },
+    "RenderSample": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "title": "title 标题，缺省 \"sample\"。"
+        },
+        "payload": {
+          "type": "object",
+          "title": "payload 载荷对象，缺省 {\"host\":\"sample-host\"}。"
+        },
+        "severity": {
+          "type": "integer",
+          "format": "int32",
+          "title": "severity 严重级 1-4，缺省 2。"
+        },
+        "count": {
+          "type": "integer",
+          "format": "int32",
+          "title": "count 聚合条数，缺省 1（\u003e1 时 Samples 注入样例）。"
+        },
+        "bizId": {
+          "type": "string",
+          "title": "biz_id 业务标识，缺省 default。"
+        }
+      },
+      "title": "RenderSample 模板预览样例上下文（渲染变量 Title/Payload/Severity/Count/BizID；\nSamples 由系统生成一条样例；EventTime 取当前时间）。"
+    },
+    "RenderTemplateRequest": {
+      "type": "object",
+      "properties": {
+        "subject": {
+          "type": "string",
+          "title": "subject 标题模板。"
+        },
+        "body": {
+          "type": "string",
+          "title": "body 正文模板。"
+        },
+        "sample": {
+          "$ref": "#/definitions/RenderSample",
+          "title": "sample 样例上下文，可选。"
+        },
+        "format": {
+          "type": "string",
+          "title": "format 输出格式，可选，缺省 text；html 走 html/template（载荷自动转义）。"
+        }
+      },
+      "title": "RenderTemplateRequest 模板预览请求。"
+    },
+    "RenderTemplateResponse": {
+      "type": "object",
+      "properties": {
+        "subject": {
+          "type": "string",
+          "title": "subject 渲染后的标题。"
+        },
+        "body": {
+          "type": "string",
+          "title": "body 渲染后的正文。"
+        }
+      },
+      "title": "RenderTemplateResponse 模板预览响应。"
+    },
     "ReplayDeadLetterBody": {
       "type": "object",
       "title": "ReplayDeadLetterRequest 标记死信待重放请求。"
@@ -4561,6 +8707,20 @@
         }
       },
       "title": "ReplayDeadLetterResponse 标记死信待重放响应（更新后的行）。"
+    },
+    "ReplayEventBody": {
+      "type": "object",
+      "title": "ReplayEventRequest 事件重发请求。"
+    },
+    "ReplayEventResponse": {
+      "type": "object",
+      "properties": {
+        "event": {
+          "$ref": "#/definitions/NotifyEvent",
+          "title": "event 新事件（source=internal，新 id）。"
+        }
+      },
+      "title": "ReplayEventResponse 事件重发响应：新落库的事件。"
     },
     "ResetUserPasswordBody": {
       "type": "object",
@@ -4585,6 +8745,14 @@
             "type": "string"
           },
           "title": "at_mobiles 需要 @ 提醒的手机号列表，可选。"
+        },
+        "cardUrl": {
+          "type": "string",
+          "title": "card_url 卡片消息（模板 format=card）的跳转链接，可选，须 https 且非本机/私网；\n为空时钉钉/企微降级为 markdown，飞书卡片无按钮。"
+        },
+        "cardButton": {
+          "type": "string",
+          "title": "card_button 卡片按钮文字，可选（≤32，缺省\"查看详情\"）；须同时配置 card_url。"
         }
       },
       "title": "RobotChannelConfig 群机器人渠道配置（type=DINGTALK/WECOM/FEISHU）；\nsecret 为机器人 access_token/webhook 密钥（必传）。"
@@ -4625,9 +8793,45 @@
             "type": "string"
           },
           "title": "biz_scope 可管理的通知 biz 列表；空 = 不限（现有角色缺省）。用户可管范围\n= 启用角色 scope 并集，任一角色不限即不限；超管恒不限。"
+        },
+        "builtin": {
+          "type": "boolean",
+          "title": "builtin 是否内置角色（迁移预置）：不可删除，编辑/授权仅超管；\n新建用户自动绑定且不可解绑。"
         }
       },
       "title": "Role 角色实体（出参）。"
+    },
+    "RoleScope": {
+      "type": "object",
+      "properties": {
+        "roleId": {
+          "type": "string",
+          "title": "role_id 角色 ID。"
+        },
+        "roleName": {
+          "type": "string",
+          "title": "role_name 角色名。"
+        },
+        "roleCode": {
+          "type": "string",
+          "title": "role_code 角色编码。"
+        },
+        "modelCodes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "model_codes 可见资源类型；空 = 不限。"
+        },
+        "envs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "envs 可见环境；空 = 不限。"
+        }
+      },
+      "title": "RoleScope 角色数据范围。"
     },
     "RotateProducerTokenBody": {
       "type": "object",
@@ -4646,6 +8850,28 @@
         }
       },
       "title": "RotateProducerTokenResponse 轮换令牌响应。"
+    },
+    "RotateWebhookBody": {
+      "type": "object",
+      "title": "RotateWebhookRequest 轮换回调令牌请求。"
+    },
+    "RotateWebhookResponse": {
+      "type": "object",
+      "properties": {
+        "token": {
+          "type": "string",
+          "title": "token 令牌明文。"
+        },
+        "path": {
+          "type": "string",
+          "title": "path 数据面回调路径。"
+        },
+        "header": {
+          "type": "string",
+          "title": "header 携带令牌的请求头名。"
+        }
+      },
+      "title": "RotateWebhookResponse 轮换回调令牌响应（令牌明文仅此一次）。"
     },
     "RouteRecipient": {
       "type": "object",
@@ -4704,10 +8930,17 @@
           "format": "int32",
           "title": "aggregate_window_s 聚合窗口秒数，可选；未指定默认 0（不聚合），\u003e0 须 30-300。"
         },
+        "name": {
+          "type": "string",
+          "title": "suppress_threshold 聚合抑制阈值，可选；未指定默认 500。\nname 可读名称，可选（≤64；控制台列表展示，空则回退 event_pattern）。"
+        },
+        "description": {
+          "type": "string",
+          "title": "description 说明，可选（≤255）。"
+        },
         "suppressThreshold": {
           "type": "integer",
-          "format": "int32",
-          "title": "suppress_threshold 聚合抑制阈值，可选；未指定默认 500。"
+          "format": "int32"
         },
         "suppressDurationM": {
           "type": "integer",
@@ -4716,6 +8949,38 @@
         }
       },
       "title": "RouteSpec 路由规则载荷：一组互为整体的匹配与分发决策（创建/更新共用）；\n数值调优项可选，缺省 severity_min=1、priority=5、aggregate_window_s=0\n（不聚合）、suppress_threshold=500、suppress_duration_m=30。"
+    },
+    "SearchCIsResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/SearchHit"
+          },
+          "title": "items 命中列表。"
+        }
+      },
+      "title": "SearchCIsResponse 全局搜索响应（名称命中优先，其次按更新时间倒序）。"
+    },
+    "SearchHit": {
+      "type": "object",
+      "properties": {
+        "ci": {
+          "$ref": "#/definitions/CmdbCI",
+          "title": "ci 资源。"
+        },
+        "matchedField": {
+          "type": "string",
+          "title": "matched_field 命中字段：name / externalId / tags / 属性字段编码。"
+        },
+        "matchedValue": {
+          "type": "string",
+          "title": "matched_value 命中值。"
+        }
+      },
+      "title": "SearchHit 搜索命中。"
     },
     "SendTestEventBody": {
       "type": "object",
@@ -4752,6 +9017,20 @@
       },
       "title": "SendTestEventResponse 发送渠道测试事件响应：返回已落库的事件（异步\n链路结果经事件/任务/明细查询接口跟踪）。"
     },
+    "SetFavoriteBody": {
+      "type": "object",
+      "properties": {
+        "favorite": {
+          "type": "boolean",
+          "title": "favorite true 收藏 / false 取消。"
+        }
+      },
+      "title": "SetFavoriteRequest 收藏 / 取消收藏请求。"
+    },
+    "SetFavoriteResponse": {
+      "type": "object",
+      "title": "SetFavoriteResponse 收藏 / 取消收藏响应。"
+    },
     "SetRolePermissionsBody": {
       "type": "object",
       "properties": {
@@ -4783,6 +9062,36 @@
       "type": "object",
       "title": "SetRolePermissionsResponse 全量覆盖角色权限响应。"
     },
+    "SetRoleScopeBody": {
+      "type": "object",
+      "properties": {
+        "modelCodes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "model_codes 可见资源类型，≤200；空 = 不限。"
+        },
+        "envs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "envs 可见环境，≤100；空 = 不限。"
+        }
+      },
+      "title": "SetRoleScopeRequest 设置角色数据范围请求。"
+    },
+    "SetRoleScopeResponse": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "$ref": "#/definitions/RoleScope",
+          "title": "scope 保存后的范围。"
+        }
+      },
+      "title": "SetRoleScopeResponse 设置角色数据范围响应。"
+    },
     "SilenceSpec": {
       "type": "object",
       "properties": {
@@ -4798,6 +9107,14 @@
         "timeWindow": {
           "$ref": "#/definitions/SilenceWindow",
           "title": "time_window 免打扰时间窗，可选；缺省全程静默（更新时整组替换语义下\n不传即清除窗口）。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 可读名称，可选（≤64；控制台列表展示）。"
+        },
+        "description": {
+          "type": "string",
+          "title": "description 说明，可选（≤255）。"
         }
       },
       "title": "SilenceSpec 静默规则载荷：一组互为整体的匹配决策（创建/更新共用）；\nseverity_max 可选，缺省 2（warning 及以下）；time_window 可选，缺省全程。"
@@ -4853,6 +9170,169 @@
       },
       "title": "SubscriptionPref 单渠道订阅偏好值：恰设其一——地址类渠道（email）用\nsubscribed（true=订阅，收件地址取用户资料）；机器人渠道（钉钉/企微/飞书）\n可用 target 指定目标群（'$group:ops' 约定），或 subscribed=true 走默认绑定。"
     },
+    "SyncRun": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 运行标识。"
+        },
+        "sourceId": {
+          "type": "string",
+          "title": "source_id 采集源标识。"
+        },
+        "taskId": {
+          "type": "string",
+          "title": "task_id 任务标识。"
+        },
+        "status": {
+          "type": "string",
+          "title": "status 状态：running / succeeded / failed。"
+        },
+        "discovered": {
+          "type": "integer",
+          "format": "int32",
+          "title": "discovered 采集到的资源数。"
+        },
+        "created": {
+          "type": "integer",
+          "format": "int32",
+          "title": "created 新建数。"
+        },
+        "updated": {
+          "type": "integer",
+          "format": "int32",
+          "title": "updated 更新数。"
+        },
+        "unchanged": {
+          "type": "integer",
+          "format": "int32",
+          "title": "unchanged 无变化数。"
+        },
+        "disappeared": {
+          "type": "integer",
+          "format": "int32",
+          "title": "disappeared 本次标记消失数。"
+        },
+        "retired": {
+          "type": "integer",
+          "format": "int32",
+          "title": "retired 超过宽限期退役数。"
+        },
+        "failed": {
+          "type": "integer",
+          "format": "int32",
+          "title": "failed 写入失败数（名称/唯一键与人工数据冲突等）。"
+        },
+        "error": {
+          "type": "string",
+          "title": "error 运行级错误（采集失败等）。"
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "title": "errors 行级错误样本。"
+        },
+        "startTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "start_time 开始时间。"
+        },
+        "finishTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "finish_time 结束时间。"
+        }
+      },
+      "title": "SyncRun 同步运行记录。"
+    },
+    "SyncSource": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 采集源标识。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 名称。"
+        },
+        "provider": {
+          "type": "string",
+          "title": "provider 提供方：aliyun / vmware。"
+        },
+        "config": {
+          "type": "object",
+          "title": "config 提供方配置（不含凭据）。"
+        },
+        "hasCredential": {
+          "type": "boolean",
+          "title": "has_credential 是否已配置凭据。"
+        },
+        "env": {
+          "type": "string",
+          "title": "env 写入资源的缺省环境标识。"
+        },
+        "intervalSeconds": {
+          "type": "integer",
+          "format": "int32",
+          "title": "interval_seconds 同步周期（秒）。"
+        },
+        "gracePeriodSeconds": {
+          "type": "integer",
+          "format": "int32",
+          "title": "grace_period_seconds 消失宽限期（秒）。"
+        },
+        "enabled": {
+          "type": "boolean",
+          "title": "enabled 是否启用。"
+        },
+        "nextRunTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "next_run_time 下次计划运行时间。"
+        },
+        "lastRunTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "last_run_time 最近运行时间。"
+        },
+        "lastStatus": {
+          "type": "string",
+          "title": "last_status 最近运行状态：never / running / succeeded / failed。"
+        },
+        "activeTask": {
+          "type": "boolean",
+          "title": "active_task 是否有未完成任务（排队或运行中）。"
+        },
+        "version": {
+          "type": "string",
+          "format": "int64",
+          "title": "version 乐观锁版本号。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 创建时间。"
+        },
+        "updateTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "update_time 更新时间。"
+        },
+        "webhookEnabled": {
+          "type": "boolean",
+          "title": "webhook_enabled 是否已配置回调令牌。"
+        },
+        "webhookPath": {
+          "type": "string",
+          "title": "webhook_path 数据面回调路径（拼接数据面公网地址使用）。"
+        }
+      },
+      "title": "SyncSource 采集源（出参；凭据永不返回）。"
+    },
     "SystemConfig": {
       "type": "object",
       "properties": {
@@ -4874,6 +9354,186 @@
         }
       },
       "title": "SystemConfig 系统配置实体（出参）。"
+    },
+    "TagList": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "items 标签。"
+        }
+      },
+      "title": "TagList 标签整组替换载体（区分\"不传\"与\"清空\"）。"
+    },
+    "TopologyEdge": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 关系标识。"
+        },
+        "relationType": {
+          "type": "string",
+          "title": "relation_type 关系类型编码。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 关系正向名称。"
+        },
+        "srcId": {
+          "type": "string",
+          "title": "src_id 源端资源。"
+        },
+        "dstId": {
+          "type": "string",
+          "title": "dst_id 目标端资源。"
+        }
+      },
+      "title": "TopologyEdge 拓扑边（有向 src → dst）。"
+    },
+    "TopologyNode": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 资源标识。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 名称。"
+        },
+        "modelCode": {
+          "type": "string",
+          "title": "model_code 类型编码。"
+        },
+        "modelName": {
+          "type": "string",
+          "title": "model_name 类型名。"
+        },
+        "status": {
+          "type": "string",
+          "title": "status 状态。"
+        },
+        "env": {
+          "type": "string",
+          "title": "env 环境。"
+        },
+        "depth": {
+          "type": "integer",
+          "format": "int32",
+          "title": "depth 距中心层数（中心为 0）。"
+        }
+      },
+      "title": "TopologyNode 拓扑节点。"
+    },
+    "TransitionCIBody": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "string",
+          "format": "int64",
+          "title": "version 当前版本号（乐观锁）。"
+        },
+        "status": {
+          "type": "string",
+          "title": "status 目标状态。"
+        }
+      },
+      "title": "TransitionCIRequest 状态流转请求。"
+    },
+    "TransitionCIResponse": {
+      "type": "object",
+      "properties": {
+        "ci": {
+          "$ref": "#/definitions/CmdbCI",
+          "title": "ci 流转后的资源。"
+        }
+      },
+      "title": "TransitionCIResponse 状态流转响应。"
+    },
+    "TriggerSyncBody": {
+      "type": "object",
+      "title": "TriggerSyncRequest 触发同步请求。"
+    },
+    "TriggerSyncResponse": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string",
+          "title": "task_id 任务标识。"
+        }
+      },
+      "title": "TriggerSyncResponse 触发同步响应。"
+    },
+    "UnlinkCIBody": {
+      "type": "object",
+      "properties": {
+        "relationType": {
+          "type": "string",
+          "title": "relation_type 关系类型编码。"
+        },
+        "direction": {
+          "type": "string",
+          "title": "direction 方向。"
+        },
+        "targetId": {
+          "type": "string",
+          "title": "target_id 目标资源。"
+        }
+      },
+      "title": "UnlinkCIRequest 解除关系请求。"
+    },
+    "UnlinkCIResponse": {
+      "type": "object",
+      "title": "UnlinkCIResponse 解除关系响应。"
+    },
+    "UpdateCIBody": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "string",
+          "format": "int64",
+          "title": "version 当前版本号（乐观锁）。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 名称。"
+        },
+        "env": {
+          "type": "string",
+          "title": "env 环境。"
+        },
+        "owner": {
+          "type": "string",
+          "title": "owner 负责人。"
+        },
+        "tags": {
+          "$ref": "#/definitions/TagList",
+          "title": "tags 标签整组替换；不传不改。"
+        },
+        "externalId": {
+          "type": "string",
+          "title": "external_id 外部标识。"
+        },
+        "attrs": {
+          "type": "object",
+          "title": "attrs 属性按键合并：出现的键覆盖，值为 null 的键清空；未出现的键不变。"
+        }
+      },
+      "title": "UpdateCIRequest 更新资源请求；未传字段不更新。"
+    },
+    "UpdateCIResponse": {
+      "type": "object",
+      "properties": {
+        "ci": {
+          "$ref": "#/definitions/CmdbCI",
+          "title": "ci 更新后的资源。"
+        }
+      },
+      "title": "UpdateCIResponse 更新资源响应。"
     },
     "UpdateChannelBody": {
       "type": "object",
@@ -4915,7 +9575,167 @@
     },
     "UpdateChannelResponse": {
       "type": "object",
-      "title": "UpdateChannelResponse 更新渠道响应。"
+      "properties": {
+        "channel": {
+          "$ref": "#/definitions/NotifyChannel",
+          "title": "channel 更新后的渠道。"
+        }
+      },
+      "title": "UpdateChannelResponse 更新渠道响应：返回更新后的渠道（不含 secret，免二次 GET）。"
+    },
+    "UpdateFieldBody": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "name 展示名。"
+        },
+        "required": {
+          "type": "boolean",
+          "title": "required 必填。"
+        },
+        "unique": {
+          "type": "boolean",
+          "title": "unique 唯一。"
+        },
+        "enumValues": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "enum_values 枚举值整组替换（type=enum）。"
+        },
+        "rule": {
+          "$ref": "#/definitions/FieldRule",
+          "title": "rule 校验规则整组替换。"
+        },
+        "owner": {
+          "type": "string",
+          "title": "owner 归属。"
+        },
+        "listVisible": {
+          "type": "boolean",
+          "title": "list_visible 列表默认展示。"
+        },
+        "sort": {
+          "type": "integer",
+          "format": "int32",
+          "title": "sort 排序。"
+        },
+        "description": {
+          "type": "string",
+          "title": "description 说明。"
+        },
+        "indexed": {
+          "type": "boolean",
+          "title": "indexed 建/撤表达式索引。"
+        },
+        "sensitive": {
+          "type": "boolean",
+          "title": "sensitive 敏感属性。"
+        }
+      },
+      "title": "UpdateFieldRequest 更新类型字段请求；未传字段不更新。"
+    },
+    "UpdateFieldResponse": {
+      "type": "object",
+      "properties": {
+        "field": {
+          "$ref": "#/definitions/CmdbField",
+          "title": "field 更新后的字段。"
+        }
+      },
+      "title": "UpdateFieldResponse 更新类型字段响应。"
+    },
+    "UpdateModelBody": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "name 展示名。"
+        },
+        "category": {
+          "type": "string",
+          "title": "category 所属分组编码（须为已存在的模型分组）。"
+        },
+        "icon": {
+          "type": "string",
+          "title": "icon 图标标识。"
+        },
+        "description": {
+          "type": "string",
+          "title": "description 说明。"
+        },
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 状态：1 启用 / 2 停用。"
+        }
+      },
+      "title": "UpdateModelRequest 更新资源类型请求；未传字段不更新。"
+    },
+    "UpdateModelGroupBody": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "name 展示名。"
+        },
+        "sort": {
+          "type": "integer",
+          "format": "int32",
+          "title": "sort 展示顺序。"
+        }
+      },
+      "title": "UpdateModelGroupRequest 更新模型分组请求；未传字段不更新。"
+    },
+    "UpdateModelGroupResponse": {
+      "type": "object",
+      "properties": {
+        "group": {
+          "$ref": "#/definitions/CmdbModelGroup",
+          "title": "group 更新后的分组。"
+        }
+      },
+      "title": "UpdateModelGroupResponse 更新模型分组响应。"
+    },
+    "UpdateModelResponse": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "$ref": "#/definitions/CmdbModel",
+          "title": "model 更新后的类型。"
+        }
+      },
+      "title": "UpdateModelResponse 更新资源类型响应。"
+    },
+    "UpdateModelViewBody": {
+      "type": "object",
+      "properties": {
+        "sections": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/ViewSection"
+          },
+          "title": "sections 区块列表（整体替换），≤50。"
+        }
+      },
+      "title": "UpdateModelViewRequest 更新详情布局请求。"
+    },
+    "UpdateModelViewResponse": {
+      "type": "object",
+      "properties": {
+        "sections": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/ViewSection"
+          },
+          "title": "sections 保存后的区块列表。"
+        }
+      },
+      "title": "UpdateModelViewResponse 更新详情布局响应。"
     },
     "UpdateProducerBody": {
       "type": "object",
@@ -4933,7 +9753,49 @@
     },
     "UpdateProducerResponse": {
       "type": "object",
-      "title": "UpdateProducerResponse 更新生产者响应。"
+      "properties": {
+        "producer": {
+          "$ref": "#/definitions/NotifyProducer",
+          "title": "producer 更新后的生产者。"
+        }
+      },
+      "title": "UpdateProducerResponse 更新生产者响应：返回更新后的生产者（不含 token）。"
+    },
+    "UpdateRelationTypeBody": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "name 展示名。"
+        },
+        "forwardName": {
+          "type": "string",
+          "title": "forward_name 正向名。"
+        },
+        "backwardName": {
+          "type": "string",
+          "title": "backward_name 反向名。"
+        },
+        "onDelete": {
+          "type": "string",
+          "title": "on_delete 删除策略。"
+        },
+        "description": {
+          "type": "string",
+          "title": "description 说明。"
+        }
+      },
+      "title": "UpdateRelationTypeRequest 更新关系类型请求；未传字段不更新。"
+    },
+    "UpdateRelationTypeResponse": {
+      "type": "object",
+      "properties": {
+        "relationType": {
+          "$ref": "#/definitions/CmdbRelationType",
+          "title": "relation_type 更新后的关系类型。"
+        }
+      },
+      "title": "UpdateRelationTypeResponse 更新关系类型响应。"
     },
     "UpdateRoleBody": {
       "type": "object",
@@ -4974,7 +9836,13 @@
     },
     "UpdateRouteResponse": {
       "type": "object",
-      "title": "UpdateRouteResponse 更新路由响应。"
+      "properties": {
+        "route": {
+          "$ref": "#/definitions/NotifyRoute",
+          "title": "route 更新后的路由。"
+        }
+      },
+      "title": "UpdateRouteResponse 更新路由响应：返回更新后的路由（免二次 GET）。"
     },
     "UpdateSilenceBody": {
       "type": "object",
@@ -4992,7 +9860,64 @@
     },
     "UpdateSilenceResponse": {
       "type": "object",
-      "title": "UpdateSilenceResponse 更新静默规则响应。"
+      "properties": {
+        "silence": {
+          "$ref": "#/definitions/NotifySilence",
+          "title": "silence 更新后的静默规则。"
+        }
+      },
+      "title": "UpdateSilenceResponse 更新静默规则响应：返回更新后的规则。"
+    },
+    "UpdateSourceBody": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "string",
+          "format": "int64",
+          "title": "version 乐观锁版本号（须与当前一致）。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 名称，1-64。"
+        },
+        "config": {
+          "type": "object",
+          "title": "config 提供方配置。"
+        },
+        "credential": {
+          "type": "string",
+          "title": "credential 新凭据，可选：不传保留旧密文。"
+        },
+        "env": {
+          "type": "string",
+          "title": "env 缺省环境标识。"
+        },
+        "intervalSeconds": {
+          "type": "integer",
+          "format": "int32",
+          "title": "interval_seconds 同步周期（秒）。"
+        },
+        "gracePeriodSeconds": {
+          "type": "integer",
+          "format": "int32",
+          "title": "grace_period_seconds 消失宽限期（秒）。"
+        },
+        "enabled": {
+          "type": "boolean",
+          "title": "enabled 是否启用。"
+        }
+      },
+      "title": "UpdateSourceRequest 更新采集源请求（整体替换配置；credential 不传 = 保留）。"
+    },
+    "UpdateSourceResponse": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "$ref": "#/definitions/SyncSource",
+          "title": "source 更新后的采集源。"
+        }
+      },
+      "title": "UpdateSourceResponse 更新采集源响应。"
     },
     "UpdateSystemConfigRequest": {
       "type": "object",
@@ -5042,13 +9967,23 @@
         "enabled": {
           "type": "boolean",
           "title": "enabled 新启用状态。"
+        },
+        "format": {
+          "type": "string",
+          "title": "format 输出格式，可选（text/markdown/html/card）。"
         }
       },
       "title": "UpdateTemplateRequest 更新模板请求，可选字段传哪个改哪个，至少传一个；\nspec 可改但 (event_type, channel_type) 组合在同 biz 内仍须唯一。"
     },
     "UpdateTemplateResponse": {
       "type": "object",
-      "title": "UpdateTemplateResponse 更新模板响应。"
+      "properties": {
+        "template": {
+          "$ref": "#/definitions/NotifyTemplate",
+          "title": "template 更新后的模板。"
+        }
+      },
+      "title": "UpdateTemplateResponse 更新模板响应：返回更新后的模板（version 已 +1）。"
     },
     "UpdateUserBody": {
       "type": "object",
@@ -5094,6 +10029,31 @@
     "UpdateUserStatusResponse": {
       "type": "object",
       "title": "UpdateUserStatusResponse 变更用户状态响应。"
+    },
+    "UploadMyAvatarRequest": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "string",
+          "format": "byte",
+          "title": "data 图片二进制内容，1B-1MB。"
+        },
+        "mime": {
+          "type": "string",
+          "title": "mime 图片 MIME 类型，白名单三种（不含 SVG：用户上传内容不允许可执行脚本的格式）。"
+        }
+      },
+      "title": "UploadMyAvatarRequest 上传头像请求。"
+    },
+    "UploadMyAvatarResponse": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "title": "url 带内容指纹的头像访问地址（已写入用户 avatar 字段）。"
+        }
+      },
+      "title": "UploadMyAvatarResponse 上传头像响应。"
     },
     "UploadSystemLogoRequest": {
       "type": "object",
@@ -5204,9 +10164,53 @@
           "type": "string",
           "format": "date-time",
           "title": "update_time 更新时间。"
+        },
+        "avatar": {
+          "type": "string",
+          "title": "avatar 头像地址；空 = 未设置（前端回退首字母/图标）。"
         }
       },
       "title": "User 用户实体（出参，不含密码）。"
+    },
+    "ViewSection": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "title": "type 区块类型：attrs 属性分组 / relation 关联面板。"
+        },
+        "title": {
+          "type": "string",
+          "title": "title 区块标题；关联面板留空则取关系的正向/反向名。"
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "fields 属性分组包含的字段编码（type=attrs）。"
+        },
+        "relationType": {
+          "type": "string",
+          "title": "relation_type 关系类型编码（type=relation）。"
+        },
+        "direction": {
+          "type": "string",
+          "title": "direction 方向：outgoing / incoming（type=relation）。"
+        },
+        "columns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "columns 关联面板展示的对端字段编码；空则取对端类型的列表可见字段。"
+        },
+        "collapsed": {
+          "type": "boolean",
+          "title": "collapsed 面板默认折叠。"
+        }
+      },
+      "title": "ViewSection 详情页的一个区块：属性分组或关联面板。"
     },
     "WebhookChannelConfig": {
       "type": "object",
@@ -5229,7 +10233,7 @@
         "timeoutS": {
           "type": "integer",
           "format": "int32",
-          "title": "timeout_s 出站超时秒数，1-10；可选，未指定默认 5（core 落库时补齐，\n管道按该值设置请求超时）。"
+          "title": "timeout_s 出站超时秒数，1-10；可选，未指定默认 5（core 落库时补齐）。\n管道按 min(timeout_s, sender.max_send_timeout) 设置请求超时（管道缺省上限\n10s；未配置时取 sender.send_timeout 缺省 3s）。"
         }
       },
       "title": "WebhookChannelConfig Webhook 渠道配置（type=WEBHOOK）；仅允许 HTTPS，\nsecret 为出站 HMAC-SHA256 签名密钥（可选，未配置则不签名）。"

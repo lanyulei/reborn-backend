@@ -1,8 +1,10 @@
 package biz
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	htmltemplate "html/template"
 	"io"
 	"text/template"
 	"time"
@@ -38,6 +40,8 @@ var templateChannelTypes = map[string]struct{}{
 
 // templateVars 是渲染注入变量白名单（设计文档 §6.3；管道侧按同一集合注入，
 // 本层在写入时校验顶层引用，落库前拦截拼写错误而非渲染时静默输出空值）。
+// 可用函数为 kit/notifycontract.TemplateFuncs（fmtTime/severity/json/trunc/upper/lower），
+// 写入校验与管道渲染注册同一集合。
 var templateVars = map[string]struct{}{
 	"Title":     {},
 	"Payload":   {},
@@ -58,6 +62,7 @@ type Template struct {
 	ChannelType string
 	Subject     string
 	Body        string
+	Format      string // text/markdown/html/card（空 = text）
 	Version     int32
 	Enabled     bool
 	CreateTime  time.Time
@@ -80,7 +85,25 @@ type TemplateUpdate struct {
 	ChannelType *string
 	Subject     *string
 	Body        *string
+	Format      *string
 	Enabled     *bool
+}
+
+// templateFormats 合法输出格式。
+var templateFormats = map[string]struct{}{
+	notifycontract.TemplateFormatText: {}, notifycontract.TemplateFormatMarkdown: {},
+	notifycontract.TemplateFormatHTML: {}, notifycontract.TemplateFormatCard: {},
+}
+
+// normalizeFormat 空 → text；非法 → ErrTemplateInvalid。
+func normalizeFormat(format string) (string, error) {
+	if format == "" {
+		return notifycontract.TemplateFormatText, nil
+	}
+	if _, ok := templateFormats[format]; !ok {
+		return "", fmt.Errorf("%w: bad format %q", ErrTemplateInvalid, format)
+	}
+	return format, nil
 }
 
 // 模板哨兵错误：reason 与 api/notify/v1 的 ErrorReason 枚举对齐。
@@ -107,6 +130,8 @@ type TemplateRepo interface {
 	GetTemplate(ctx context.Context, id string) (*Template, error)
 	// ListTemplates 分页查询未删除模板；page 从 1 起，pageSize 上限 100，按创建时间倒序。
 	ListTemplates(ctx context.Context, filter TemplateFilter, page, pageSize int64) ([]*Template, int64, error)
+	// ListTemplatesByBiz 取 biz 内全部未删除模板（不分页；路由试算的模板解析用）。
+	ListTemplatesByBiz(ctx context.Context, bizID string) ([]*Template, error)
 }
 
 // TemplateUsecase 模板用例：承载 spec 合法性与模板内容校验（语法 + 变量白名单）。
@@ -137,14 +162,84 @@ func validateTemplateSpec(eventType, channelType string) error {
 // 语义，与管道渲染口径一致：顶层严格、载荷宽松）。试渲染替代了此前的解析树
 // 白名单遍历——遍历器在 with/range 重绑定域内不校验，严格性名不副实。
 func validateTemplateText(name, text string) error {
-	tpl, err := template.New(name).Option("missingkey=zero").Parse(text)
+	return validateTemplateTextFormat(name, text, notifycontract.TemplateFormatText)
+}
+
+// validateTemplateTextFormat 按输出格式选引擎：html 走 html/template（上下文感知
+// 自动转义，与管道渲染同引擎），其余 text/template。
+func validateTemplateTextFormat(name, text, format string) error {
+	exec, err := compileTemplate(name, text, format)
 	if err != nil {
-		return fmt.Errorf("%w: %s parse: %v", ErrTemplateInvalid, name, err)
+		return err
 	}
-	if err := tpl.Execute(io.Discard, trialRenderContext()); err != nil {
+	if err := exec(io.Discard, trialRenderContext()); err != nil {
 		return fmt.Errorf("%w: %s render: %v", ErrTemplateInvalid, name, err)
 	}
 	return nil
+}
+
+// compileTemplate 解析模板为执行函数（text/html 引擎由 format 决定）。
+func compileTemplate(name, text, format string) (func(w io.Writer, data any) error, error) {
+	if format == notifycontract.TemplateFormatHTML {
+		t, err := htmltemplate.New(name).Funcs(notifycontract.TemplateFuncs()).Option("missingkey=zero").Parse(text)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %s parse: %v", ErrTemplateInvalid, name, err)
+		}
+		return t.Execute, nil
+	}
+	t, err := template.New(name).Funcs(notifycontract.TemplateFuncs()).Option("missingkey=zero").Parse(text)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s parse: %v", ErrTemplateInvalid, name, err)
+	}
+	return t.Execute, nil
+}
+
+// maxRenderBytes 预览渲染输出上限（与管道渲染同口径 64KB）。
+const maxRenderBytes = 64 * 1024
+
+// limitedWriter 超上限即报错中止执行。
+type limitedWriter struct {
+	buf bytes.Buffer
+	max int
+}
+
+func (w *limitedWriter) Write(p []byte) (int, error) {
+	if w.buf.Len()+len(p) > w.max {
+		return 0, fmt.Errorf("output exceeds %d bytes", w.max)
+	}
+	return w.buf.Write(p)
+}
+
+// Render 用样例上下文渲染 subject/body（控制台预览，不落库）：与写入校验同一
+// 解析/执行口径（零函数、missingkey=zero、顶层字段严格），输出各限 64KB；
+// 错误以 ErrTemplateInvalid 呈现。
+func (uc *TemplateUsecase) Render(subject, body, format string, sample TrialRenderContext) (string, string, error) {
+	format, err := normalizeFormat(format)
+	if err != nil {
+		return "", "", err
+	}
+	// 标题恒按纯文本渲染（邮件 Subject / 卡片标题都不是 HTML 上下文）。
+	s, err := renderText("subject", subject, notifycontract.TemplateFormatText, sample)
+	if err != nil {
+		return "", "", err
+	}
+	b, err := renderText("body", body, format, sample)
+	if err != nil {
+		return "", "", err
+	}
+	return s, b, nil
+}
+
+func renderText(name, text, format string, sample TrialRenderContext) (string, error) {
+	exec, err := compileTemplate(name, text, format)
+	if err != nil {
+		return "", err
+	}
+	w := &limitedWriter{max: maxRenderBytes}
+	if err := exec(w, sample); err != nil {
+		return "", fmt.Errorf("%w: %s render: %v", ErrTemplateInvalid, name, err)
+	}
+	return w.buf.String(), nil
 }
 
 // TrialRenderContext 试渲染样例上下文：字段集 = 渲染白名单 templateVars（管道
@@ -165,7 +260,7 @@ func trialRenderContext() TrialRenderContext {
 		Payload:   map[string]any{"host": "sample-host"},
 		Severity:  2,
 		Count:     2,
-		Samples:   []map[string]any{{"event_id": "sample", "title": "sample", "severity": 2}},
+		Samples:   []map[string]any{{"event_id": "sample", "title": "sample", "severity": int32(2), "create_time": time.Unix(0, 0).UTC()}},
 		BizID:     DefaultBizID,
 		EventTime: time.Unix(0, 0).UTC(),
 	}
@@ -177,10 +272,15 @@ func (uc *TemplateUsecase) Create(ctx context.Context, tpl *Template) (*Template
 	if err := validateTemplateSpec(tpl.EventType, tpl.ChannelType); err != nil {
 		return nil, err
 	}
+	format, err := normalizeFormat(tpl.Format)
+	if err != nil {
+		return nil, err
+	}
+	tpl.Format = format
 	if err := validateTemplateText("subject", tpl.Subject); err != nil {
 		return nil, err
 	}
-	if err := validateTemplateText("body", tpl.Body); err != nil {
+	if err := validateTemplateTextFormat("body", tpl.Body, format); err != nil {
 		return nil, err
 	}
 	id, err := idgen.NewID()
@@ -200,10 +300,22 @@ func (uc *TemplateUsecase) Create(ctx context.Context, tpl *Template) (*Template
 	return tpl, nil
 }
 
-// Update 部分更新模板：提供的 spec 字段与模板文本均先校验；version 由仓储自增。
+// Update 部分更新模板：提供的 spec 字段与模板文本均先校验（正文按生效 format 的
+// 引擎校验：改 format 或改正文都要拿现有模板补齐另一半）；version 由仓储自增。
 func (uc *TemplateUsecase) Update(ctx context.Context, id string, upd TemplateUpdate) error {
+	var current *Template
+	load := func() (*Template, error) {
+		if current == nil {
+			tpl, err := uc.repo.GetTemplate(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			current = tpl
+		}
+		return current, nil
+	}
 	if upd.EventType != nil || upd.ChannelType != nil {
-		tpl, err := uc.repo.GetTemplate(ctx, id)
+		tpl, err := load()
 		if err != nil {
 			return err
 		}
@@ -218,13 +330,34 @@ func (uc *TemplateUsecase) Update(ctx context.Context, id string, upd TemplateUp
 			return err
 		}
 	}
+	if upd.Format != nil {
+		format, err := normalizeFormat(*upd.Format)
+		if err != nil {
+			return err
+		}
+		upd.Format = &format
+	}
 	if upd.Subject != nil {
 		if err := validateTemplateText("subject", *upd.Subject); err != nil {
 			return err
 		}
 	}
-	if upd.Body != nil {
-		if err := validateTemplateText("body", *upd.Body); err != nil {
+	if upd.Body != nil || upd.Format != nil {
+		tpl, err := load()
+		if err != nil {
+			return err
+		}
+		body, format := tpl.Body, tpl.Format
+		if upd.Body != nil {
+			body = *upd.Body
+		}
+		if upd.Format != nil {
+			format = *upd.Format
+		}
+		if format == "" {
+			format = notifycontract.TemplateFormatText
+		}
+		if err := validateTemplateTextFormat("body", body, format); err != nil {
 			return err
 		}
 	}

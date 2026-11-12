@@ -34,6 +34,7 @@ type userPO struct {
 	gender     string
 	isAdmin    bool
 	status     int16
+	avatar     string
 	createTime time.Time
 	updateTime time.Time
 }
@@ -47,6 +48,7 @@ func (p userPO) toEntity() biz.User {
 		Gender:     p.gender,
 		IsAdmin:    p.isAdmin,
 		Status:     int32(p.status),
+		Avatar:     p.avatar,
 		CreateTime: p.createTime,
 		UpdateTime: p.updateTime,
 	}
@@ -64,7 +66,7 @@ func (p userPO) toEntity() biz.User {
 func scanUser(scan func(dest ...any) error) (*biz.User, error) {
 	var p userPO
 	if err := scan(&p.id, &p.username, &p.nickname, &p.email, &p.phone,
-		&p.gender, &p.isAdmin, &p.status, &p.createTime, &p.updateTime); err != nil {
+		&p.gender, &p.isAdmin, &p.status, &p.avatar, &p.createTime, &p.updateTime); err != nil {
 		return nil, err
 	}
 	u := p.toEntity()
@@ -72,7 +74,7 @@ func scanUser(scan func(dest ...any) error) (*biz.User, error) {
 }
 
 // userSelectColumns 是用户查询列序，与 scanUser 一一对应。
-const userSelectColumns = "id, username, nickname, email, phone, gender, is_admin, status, create_time, update_time"
+const userSelectColumns = "id, username, nickname, email, phone, gender, is_admin, status, avatar, create_time, update_time"
 
 // userRepo 是用户仓储的 PostgreSQL 实现：手写参数化 SQL，无 ORM/反射。
 type userRepo struct {
@@ -227,6 +229,9 @@ func (r *userRepo) UpdateUser(ctx context.Context, id string, upd biz.UserUpdate
 	}
 	if upd.PasswordHash != nil {
 		add("password", *upd.PasswordHash)
+	}
+	if upd.Avatar != nil {
+		add("avatar", *upd.Avatar)
 	}
 	if len(sets) == 0 {
 		return nil

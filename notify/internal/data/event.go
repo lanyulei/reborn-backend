@@ -3,7 +3,6 @@ package data
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
@@ -91,10 +90,23 @@ func (r *eventRepo) ProcessPending(ctx context.Context, limit int, fn func(ctx c
 // routerTx implements biz.RouterTx over pgx.Tx.
 type routerTx struct{ tx pgx.Tx }
 
-func (t *routerTx) MarkEvent(ctx context.Context, id string, createTime time.Time, status int32) error {
+// MarkEvents implements biz.RouterTx：一批终态单语句（unnest 联接），此前逐事件
+// UPDATE：500 条批 = 500 条语句。
+func (t *routerTx) MarkEvents(ctx context.Context, marks []biz.EventMark) error {
+	if len(marks) == 0 {
+		return nil
+	}
+	ids := make([]string, len(marks))
+	times := make([]time.Time, len(marks))
+	statuses := make([]int16, len(marks))
+	for i, m := range marks {
+		ids[i], times[i], statuses[i] = m.ID, m.CreateTime, int16(m.Status) //nolint:gosec // 状态取值 1-4
+	}
 	if _, err := t.tx.Exec(ctx,
-		"UPDATE notify_event SET publish_state = 1, status = $3 WHERE id = $1 AND create_time = $2", id, createTime, status); err != nil {
-		return fmt.Errorf("mark event: %w", err)
+		`UPDATE notify_event e SET publish_state = 1, status = m.status
+		 FROM unnest($1::uuid[], $2::timestamptz[], $3::smallint[]) AS m(id, create_time, status)
+		 WHERE e.id = m.id AND e.create_time = m.create_time`, ids, times, statuses); err != nil {
+		return fmt.Errorf("mark events: %w", err)
 	}
 	return nil
 }
@@ -195,19 +207,4 @@ func listSubscribers(ctx context.Context, tx pgx.Tx, bizID, eventType string) ([
 		out = append(out, s)
 	}
 	return out, rows.Err()
-}
-
-// getEvent 按 id 取事件（分区表无分区键：逐分区 PK 探查，分区数有限）。
-func getEvent(ctx context.Context, q interface {
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-}, id string,
-) (*biz.Event, error) {
-	ev, err := scanEvent(q.QueryRow(ctx, "SELECT "+eventColumns+" FROM notify_event WHERE id = $1", id).Scan)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, biz.ErrEventNotFound
-		}
-		return nil, fmt.Errorf("get event: %w", err)
-	}
-	return ev, nil
 }

@@ -102,7 +102,7 @@ func (s *Store) ListSilences(_ context.Context, filter biz.SilenceFilter, page, 
 		if filter.BizID != "" && e.silence.BizID != filter.BizID {
 			continue
 		}
-		if filter.Keyword != "" && !strings.Contains(e.silence.EventPattern, filter.Keyword) {
+		if filter.Keyword != "" && !strings.Contains(e.silence.EventPattern, filter.Keyword) && !strings.Contains(e.silence.Name, filter.Keyword) {
 			continue
 		}
 		if filter.Enabled != nil && e.silence.Enabled != *filter.Enabled {
@@ -125,4 +125,19 @@ func (s *Store) ListSilences(_ context.Context, filter biz.SilenceFilter, page, 
 	}
 	end := min(start+pageSize, total)
 	return items[start:end], total, nil
+}
+
+// ListSilencesByBiz implements biz 仓储接口：biz 内全部未删除行。
+func (s *Store) ListSilencesByBiz(_ context.Context, bizID string) ([]*biz.Silence, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []*biz.Silence
+	for _, e := range s.silences {
+		if e.deleted || e.silence.BizID != bizID {
+			continue
+		}
+		out = append(out, cloneSilence(e.silence))
+	}
+	slices.SortFunc(out, func(a, b *biz.Silence) int { return strings.Compare(a.ID, b.ID) })
+	return out, nil
 }

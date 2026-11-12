@@ -9,6 +9,7 @@ package v1
 import (
 	_ "buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go/buf/validate"
 	_ "google.golang.org/genproto/googleapis/api/annotations"
+	httpbody "google.golang.org/genproto/googleapis/api/httpbody"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -478,11 +479,158 @@ func (x *GetLoginProfileResponse) GetBizUnrestricted() bool {
 	return false
 }
 
+// UploadMyAvatarRequest 上传头像请求。
+type UploadMyAvatarRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// data 图片二进制内容，1B-1MB。
+	Data []byte `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`
+	// mime 图片 MIME 类型，白名单三种（不含 SVG：用户上传内容不允许可执行脚本的格式）。
+	Mime          string `protobuf:"bytes,2,opt,name=mime,proto3" json:"mime,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UploadMyAvatarRequest) Reset() {
+	*x = UploadMyAvatarRequest{}
+	mi := &file_system_v1_auth_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UploadMyAvatarRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UploadMyAvatarRequest) ProtoMessage() {}
+
+func (x *UploadMyAvatarRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_system_v1_auth_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UploadMyAvatarRequest.ProtoReflect.Descriptor instead.
+func (*UploadMyAvatarRequest) Descriptor() ([]byte, []int) {
+	return file_system_v1_auth_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *UploadMyAvatarRequest) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+func (x *UploadMyAvatarRequest) GetMime() string {
+	if x != nil {
+		return x.Mime
+	}
+	return ""
+}
+
+// UploadMyAvatarResponse 上传头像响应。
+type UploadMyAvatarResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// url 带内容指纹的头像访问地址（已写入用户 avatar 字段）。
+	Url           string `protobuf:"bytes,1,opt,name=url,proto3" json:"url,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UploadMyAvatarResponse) Reset() {
+	*x = UploadMyAvatarResponse{}
+	mi := &file_system_v1_auth_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UploadMyAvatarResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UploadMyAvatarResponse) ProtoMessage() {}
+
+func (x *UploadMyAvatarResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_system_v1_auth_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UploadMyAvatarResponse.ProtoReflect.Descriptor instead.
+func (*UploadMyAvatarResponse) Descriptor() ([]byte, []int) {
+	return file_system_v1_auth_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *UploadMyAvatarResponse) GetUrl() string {
+	if x != nil {
+		return x.Url
+	}
+	return ""
+}
+
+// GetUserAvatarRequest 查看头像请求。
+type GetUserAvatarRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// id 用户唯一标识，取自路径参数。
+	Id            string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetUserAvatarRequest) Reset() {
+	*x = GetUserAvatarRequest{}
+	mi := &file_system_v1_auth_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetUserAvatarRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetUserAvatarRequest) ProtoMessage() {}
+
+func (x *GetUserAvatarRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_system_v1_auth_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetUserAvatarRequest.ProtoReflect.Descriptor instead.
+func (*GetUserAvatarRequest) Descriptor() ([]byte, []int) {
+	return file_system_v1_auth_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *GetUserAvatarRequest) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
 var File_system_v1_auth_proto protoreflect.FileDescriptor
 
 const file_system_v1_auth_proto_rawDesc = "" +
 	"\n" +
-	"\x14system/v1/auth.proto\x12\tsystem.v1\x1a\x1cgoogle/api/annotations.proto\x1a\x1bbuf/validate/validate.proto\x1a\x14system/v1/role.proto\x1a\x14system/v1/user.proto\"p\n" +
+	"\x14system/v1/auth.proto\x12\tsystem.v1\x1a\x1cgoogle/api/annotations.proto\x1a\x19google/api/httpbody.proto\x1a\x1bbuf/validate/validate.proto\x1a\x14system/v1/role.proto\x1a\x14system/v1/user.proto\"p\n" +
 	"\fLoginRequest\x128\n" +
 	"\busername\x18\x01 \x01(\tB\x1c\xbaH\x19r\x172\x15^[a-zA-Z0-9_-]{3,64}$R\busername\x12&\n" +
 	"\bpassword\x18\x02 \x01(\tB\n" +
@@ -511,13 +659,24 @@ const file_system_v1_auth_proto_rawDesc = "" +
 	"\x05menus\x18\x04 \x03(\tR\x05menus\x12\x1a\n" +
 	"\belements\x18\x05 \x03(\tR\belements\x12\x1b\n" +
 	"\tbiz_scope\x18\x06 \x03(\tR\bbizScope\x12)\n" +
-	"\x10biz_unrestricted\x18\a \x01(\bR\x0fbizUnrestricted2\x9e\x03\n" +
+	"\x10biz_unrestricted\x18\a \x01(\bR\x0fbizUnrestricted\"v\n" +
+	"\x15UploadMyAvatarRequest\x12\x1f\n" +
+	"\x04data\x18\x01 \x01(\fB\v\xbaH\bz\x06\x10\x01\x18\x80\x80@R\x04data\x12<\n" +
+	"\x04mime\x18\x02 \x01(\tB(\xbaH%r#R\timage/pngR\n" +
+	"image/jpegR\n" +
+	"image/webpR\x04mime\"*\n" +
+	"\x16UploadMyAvatarResponse\x12\x10\n" +
+	"\x03url\x18\x01 \x01(\tR\x03url\"0\n" +
+	"\x14GetUserAvatarRequest\x12\x18\n" +
+	"\x02id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id2\xfd\x04\n" +
 	"\vAuthService\x12T\n" +
 	"\x05Login\x12\x17.system.v1.LoginRequest\x1a\x18.system.v1.LoginResponse\"\x18\x82\xd3\xe4\x93\x02\x12:\x01*\"\r/api/v1/login\x12q\n" +
 	"\fRefreshToken\x12\x1e.system.v1.RefreshTokenRequest\x1a\x1f.system.v1.RefreshTokenResponse\" \x82\xd3\xe4\x93\x02\x1a:\x01*\"\x15/api/v1/token/refresh\x12X\n" +
 	"\x06Logout\x12\x18.system.v1.LogoutRequest\x1a\x19.system.v1.LogoutResponse\"\x19\x82\xd3\xe4\x93\x02\x13:\x01*\"\x0e/api/v1/logout\x12l\n" +
 	"\x0fGetLoginProfile\x12!.system.v1.GetLoginProfileRequest\x1a\".system.v1.GetLoginProfileResponse\"\x12\x82\xd3\xe4\x93\x02\f\x12\n" +
-	"/api/v1/meB:Z8github.com/lanyulei/reborn/backend/core/api/system/v1;v1b\x06proto3"
+	"/api/v1/me\x12s\n" +
+	"\x0eUploadMyAvatar\x12 .system.v1.UploadMyAvatarRequest\x1a!.system.v1.UploadMyAvatarResponse\"\x1c\x82\xd3\xe4\x93\x02\x16:\x01*\"\x11/api/v1/me/avatar\x12h\n" +
+	"\rGetUserAvatar\x12\x1f.system.v1.GetUserAvatarRequest\x1a\x14.google.api.HttpBody\" \x82\xd3\xe4\x93\x02\x1a\x12\x18/api/v1/user/{id}/avatarB:Z8github.com/lanyulei/reborn/backend/core/api/system/v1;v1b\x06proto3"
 
 var (
 	file_system_v1_auth_proto_rawDescOnce sync.Once
@@ -531,7 +690,7 @@ func file_system_v1_auth_proto_rawDescGZIP() []byte {
 	return file_system_v1_auth_proto_rawDescData
 }
 
-var file_system_v1_auth_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_system_v1_auth_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_system_v1_auth_proto_goTypes = []any{
 	(*LoginRequest)(nil),            // 0: system.v1.LoginRequest
 	(*LoginResponse)(nil),           // 1: system.v1.LoginResponse
@@ -541,26 +700,34 @@ var file_system_v1_auth_proto_goTypes = []any{
 	(*LogoutResponse)(nil),          // 5: system.v1.LogoutResponse
 	(*GetLoginProfileRequest)(nil),  // 6: system.v1.GetLoginProfileRequest
 	(*GetLoginProfileResponse)(nil), // 7: system.v1.GetLoginProfileResponse
-	(*User)(nil),                    // 8: system.v1.User
-	(*Role)(nil),                    // 9: system.v1.Role
+	(*UploadMyAvatarRequest)(nil),   // 8: system.v1.UploadMyAvatarRequest
+	(*UploadMyAvatarResponse)(nil),  // 9: system.v1.UploadMyAvatarResponse
+	(*GetUserAvatarRequest)(nil),    // 10: system.v1.GetUserAvatarRequest
+	(*User)(nil),                    // 11: system.v1.User
+	(*Role)(nil),                    // 12: system.v1.Role
+	(*httpbody.HttpBody)(nil),       // 13: google.api.HttpBody
 }
 var file_system_v1_auth_proto_depIdxs = []int32{
-	8, // 0: system.v1.LoginResponse.user:type_name -> system.v1.User
-	8, // 1: system.v1.GetLoginProfileResponse.user:type_name -> system.v1.User
-	9, // 2: system.v1.GetLoginProfileResponse.roles:type_name -> system.v1.Role
-	0, // 3: system.v1.AuthService.Login:input_type -> system.v1.LoginRequest
-	2, // 4: system.v1.AuthService.RefreshToken:input_type -> system.v1.RefreshTokenRequest
-	4, // 5: system.v1.AuthService.Logout:input_type -> system.v1.LogoutRequest
-	6, // 6: system.v1.AuthService.GetLoginProfile:input_type -> system.v1.GetLoginProfileRequest
-	1, // 7: system.v1.AuthService.Login:output_type -> system.v1.LoginResponse
-	3, // 8: system.v1.AuthService.RefreshToken:output_type -> system.v1.RefreshTokenResponse
-	5, // 9: system.v1.AuthService.Logout:output_type -> system.v1.LogoutResponse
-	7, // 10: system.v1.AuthService.GetLoginProfile:output_type -> system.v1.GetLoginProfileResponse
-	7, // [7:11] is the sub-list for method output_type
-	3, // [3:7] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	11, // 0: system.v1.LoginResponse.user:type_name -> system.v1.User
+	11, // 1: system.v1.GetLoginProfileResponse.user:type_name -> system.v1.User
+	12, // 2: system.v1.GetLoginProfileResponse.roles:type_name -> system.v1.Role
+	0,  // 3: system.v1.AuthService.Login:input_type -> system.v1.LoginRequest
+	2,  // 4: system.v1.AuthService.RefreshToken:input_type -> system.v1.RefreshTokenRequest
+	4,  // 5: system.v1.AuthService.Logout:input_type -> system.v1.LogoutRequest
+	6,  // 6: system.v1.AuthService.GetLoginProfile:input_type -> system.v1.GetLoginProfileRequest
+	8,  // 7: system.v1.AuthService.UploadMyAvatar:input_type -> system.v1.UploadMyAvatarRequest
+	10, // 8: system.v1.AuthService.GetUserAvatar:input_type -> system.v1.GetUserAvatarRequest
+	1,  // 9: system.v1.AuthService.Login:output_type -> system.v1.LoginResponse
+	3,  // 10: system.v1.AuthService.RefreshToken:output_type -> system.v1.RefreshTokenResponse
+	5,  // 11: system.v1.AuthService.Logout:output_type -> system.v1.LogoutResponse
+	7,  // 12: system.v1.AuthService.GetLoginProfile:output_type -> system.v1.GetLoginProfileResponse
+	9,  // 13: system.v1.AuthService.UploadMyAvatar:output_type -> system.v1.UploadMyAvatarResponse
+	13, // 14: system.v1.AuthService.GetUserAvatar:output_type -> google.api.HttpBody
+	9,  // [9:15] is the sub-list for method output_type
+	3,  // [3:9] is the sub-list for method input_type
+	3,  // [3:3] is the sub-list for extension type_name
+	3,  // [3:3] is the sub-list for extension extendee
+	0,  // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_system_v1_auth_proto_init() }
@@ -576,7 +743,7 @@ func file_system_v1_auth_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_system_v1_auth_proto_rawDesc), len(file_system_v1_auth_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

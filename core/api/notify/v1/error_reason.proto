@@ -78,4 +78,14 @@ enum ErrorReason {
   // NOTIFY_BIZ_REQUIRED biz 受限用户的列表查询必须携带 biz 过滤（渠道/模板/路由/
   // 静默/生产者/事件带 biz_id；任务/明细/死信带 channel_id），映射 HTTP 400。
   NOTIFY_BIZ_REQUIRED = 24 [(errors.code) = 400];
+  // NOTIFY_TEST_TOO_FREQUENT 同一渠道连通性测试过于频繁（测试事件真实投递，
+  // 按渠道 10s 冷却），映射 HTTP 429。
+  NOTIFY_TEST_TOO_FREQUENT = 25 [(errors.code) = 429];
+  // NOTIFY_TIME_RANGE_INVALID 运行表列表时间跨度超过 90 天（分区表按时间裁剪，
+  // 更早的数据请分段查询），映射 HTTP 400。
+  NOTIFY_TIME_RANGE_INVALID = 26 [(errors.code) = 400];
+  // NOTIFY_EVENT_NOT_FOUND 目标事件不存在（或已按保留期清理），映射 HTTP 404。
+  NOTIFY_EVENT_NOT_FOUND = 27 [(errors.code) = 404];
+  // NOTIFY_DISPATCH_NOT_FOUND 目标发送任务不存在，映射 HTTP 404。
+  NOTIFY_DISPATCH_NOT_FOUND = 28 [(errors.code) = 404];
 }

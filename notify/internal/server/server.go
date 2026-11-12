@@ -11,7 +11,7 @@ import (
 )
 
 // ProviderSet is server providers.
-var ProviderSet = wire.NewSet(NewRoles, NewMetrics, NewHooks, NewProducerResolver, NewHealth, NewHTTPServer, NewServers)
+var ProviderSet = wire.NewSet(NewRoles, NewMetrics, NewHooks, NewIngressObserver, NewProducerResolver, NewHealth, NewHTTPServer, NewServers)
 
 // NewServers 按角色装配 kratos 托管的全部 Server：HTTP 恒有（ingress 仅 api 角色
 // 注册；数据面只承诺 HTTP——HMAC 签名绑定请求体，gRPC 无法等价绑定故不暴露）；
@@ -31,7 +31,11 @@ func NewServers(roles Roles, logger *slog.Logger, hs *khttp.Server, workers *wor
 		servers = append(servers, workers.Maintenance)
 	}
 	if roles.Has(RoleRelay) {
-		logger.Warn("role relay is reserved for the NATS backbone and is a no-op under the pg backbone")
+		if workers.Relay != nil {
+			servers = append(servers, workers.Relay)
+		} else {
+			logger.Warn("role relay is a no-op under the pg backbone")
+		}
 	}
 	logger.Info("pipeline roles enabled", "roles", roles.List())
 	return servers

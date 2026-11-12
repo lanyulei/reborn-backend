@@ -9,15 +9,18 @@ package main
 import (
 	"github.com/go-kratos/kratos/v3"
 	biz3 "github.com/lanyulei/reborn/backend/core/internal/biz/assistant"
+	biz4 "github.com/lanyulei/reborn/backend/core/internal/biz/cmdb"
 	biz2 "github.com/lanyulei/reborn/backend/core/internal/biz/notify"
 	"github.com/lanyulei/reborn/backend/core/internal/biz/system"
 	"github.com/lanyulei/reborn/backend/core/internal/conf"
 	"github.com/lanyulei/reborn/backend/core/internal/data"
 	data4 "github.com/lanyulei/reborn/backend/core/internal/data/assistant"
+	data5 "github.com/lanyulei/reborn/backend/core/internal/data/cmdb"
 	data3 "github.com/lanyulei/reborn/backend/core/internal/data/notify"
 	data2 "github.com/lanyulei/reborn/backend/core/internal/data/system"
 	"github.com/lanyulei/reborn/backend/core/internal/server"
 	service3 "github.com/lanyulei/reborn/backend/core/internal/service/assistant"
+	service4 "github.com/lanyulei/reborn/backend/core/internal/service/cmdb"
 	service2 "github.com/lanyulei/reborn/backend/core/internal/service/notify"
 	"github.com/lanyulei/reborn/backend/core/internal/service/system"
 	"log/slog"
@@ -32,6 +35,7 @@ import (
 // wireApp init kratos application.
 // data 层因共享 Data 类型不能在顶层聚合各域（避免 import 环），
 // 各域 data ProviderSet 在此显式列出；biz/service 顶层已聚合。
+// service 层消费的 biz 窄接口（AdminResolver ← UserUsecase）在组合根绑定，避免 biz 反向依赖 service。
 func wireApp(confServer *conf.Server, confData *conf.Data, security *conf.Security, notify *conf.Notify, assistant *conf.Assistant, logger *slog.Logger) (*kratos.App, func(), error) {
 	dataData, cleanup, err := data.NewData(confData)
 	if err != nil {
@@ -59,7 +63,7 @@ func wireApp(confServer *conf.Server, confData *conf.Data, security *conf.Securi
 	notificationUsecase := biz2.NewNotificationUsecase(eventRepo, notify)
 	txManager := data.NewTxManager(dataData)
 	permissionUsecase := biz.NewPermissionUsecase(roleRepo, permissionRepo, authorizer, notificationUsecase, txManager)
-	roleService := service.NewRoleService(roleUsecase, permissionUsecase)
+	roleService := service.NewRoleService(roleUsecase, permissionUsecase, userUsecase)
 	tokenSigner, err := biz.NewTokenSigner(security)
 	if err != nil {
 		cleanup()
@@ -72,7 +76,9 @@ func wireApp(confServer *conf.Server, confData *conf.Data, security *conf.Securi
 		return nil, nil, err
 	}
 	authzUsecase := biz.NewAuthzUsecase(userRepo, userRoleRepo, permissionRepo, authorizer)
-	authService := service.NewAuthService(authUsecase, authzUsecase)
+	avatarStore := data2.NewAvatarStore(dataData)
+	avatarUsecase := biz.NewAvatarUsecase(userRepo, userRepo, avatarStore)
+	authService := service.NewAuthService(authUsecase, authzUsecase, avatarUsecase)
 	systemConfigRepo := data2.NewSystemConfigRepo(dataData)
 	systemConfigUsecase := biz.NewSystemConfigUsecase(systemConfigRepo)
 	systemConfigService := service.NewSystemConfigService(systemConfigUsecase)
@@ -86,28 +92,31 @@ func wireApp(confServer *conf.Server, confData *conf.Data, security *conf.Securi
 	channelRepo := data3.NewChannelRepo(dataData, secretBox)
 	routeRepo := data3.NewRouteRepo(dataData)
 	channelUsecase := biz2.NewChannelUsecase(channelRepo, eventRepo, routeRepo)
-	notifyChannelService := service2.NewNotifyChannelService(channelUsecase, authzUsecase)
+	channelHealthRepo := data3.NewChannelHealthRepo(dataData)
+	channelHealthUsecase := biz2.NewChannelHealthUsecase(channelHealthRepo)
+	notifyChannelService := service2.NewNotifyChannelService(channelUsecase, channelHealthUsecase, authzUsecase)
 	templateRepo := data3.NewTemplateRepo(dataData)
 	templateUsecase := biz2.NewTemplateUsecase(templateRepo)
 	notifyTemplateService := service2.NewNotifyTemplateService(templateUsecase, authzUsecase)
 	routeUsecase := biz2.NewRouteUsecase(routeRepo, channelRepo)
-	notifyRouteService := service2.NewNotifyRouteService(routeUsecase, authzUsecase)
 	silenceRepo := data3.NewSilenceRepo(dataData)
+	previewUsecase := biz2.NewPreviewUsecase(routeRepo, silenceRepo, channelRepo, templateRepo)
+	notifyRouteService := service2.NewNotifyRouteService(routeUsecase, previewUsecase, authzUsecase)
 	silenceUsecase := biz2.NewSilenceUsecase(silenceRepo)
 	notifySilenceService := service2.NewNotifySilenceService(silenceUsecase, authzUsecase)
 	subscriptionRepo := data3.NewSubscriptionRepo(dataData)
 	subscriptionUsecase := biz2.NewSubscriptionUsecase(subscriptionRepo)
-	notifySubscriptionService := service2.NewNotifySubscriptionService(subscriptionUsecase, userUsecase)
+	notifySubscriptionService := service2.NewNotifySubscriptionService(subscriptionUsecase, userUsecase, authzUsecase)
 	producerRepo := data3.NewProducerRepo(dataData)
 	producerUsecase := biz2.NewProducerUsecase(producerRepo)
 	notifyProducerService := service2.NewNotifyProducerService(producerUsecase, authzUsecase)
-	eventUsecase := biz2.NewEventUsecase(eventRepo)
-	notifyEventService := service2.NewNotifyEventService(eventUsecase, authzUsecase)
+	eventUsecase := biz2.NewEventUsecase(eventRepo, eventRepo)
 	dispatchRepo := data3.NewDispatchRepo(dataData)
 	dispatchUsecase := biz2.NewDispatchUsecase(dispatchRepo)
-	notifyDispatchService := service2.NewNotifyDispatchService(dispatchUsecase, channelUsecase, authzUsecase)
 	deliveryLogRepo := data3.NewDeliveryLogRepo(dataData)
 	deliveryLogUsecase := biz2.NewDeliveryLogUsecase(deliveryLogRepo)
+	notifyEventService := service2.NewNotifyEventService(eventUsecase, dispatchUsecase, deliveryLogUsecase, authzUsecase)
+	notifyDispatchService := service2.NewNotifyDispatchService(dispatchUsecase, channelUsecase, authzUsecase)
 	notifyDeliveryLogService := service2.NewNotifyDeliveryLogService(deliveryLogUsecase, channelUsecase, authzUsecase)
 	deadLetterRepo := data3.NewDeadLetterRepo(dataData)
 	deadLetterUsecase := biz2.NewDeadLetterUsecase(deadLetterRepo)
@@ -127,7 +136,40 @@ func wireApp(confServer *conf.Server, confData *conf.Data, security *conf.Securi
 	agentConfig := biz3.NewAgentConfig(assistant)
 	agentUsecase := biz3.NewAgentUsecase(conversationRepo, messageRepo, toolCallRepo, chatModelClient, loopbackInvoker, authzUsecase, userUsecase, toolCatalog, agentConfig, logger)
 	assistantChatService := service3.NewAssistantChatService(agentUsecase)
-	httpServer := server.NewHTTPServer(confServer, logger, userService, roleService, authService, systemConfigService, loginLogService, notifyChannelService, notifyTemplateService, notifyRouteService, notifySilenceService, notifySubscriptionService, notifyProducerService, notifyEventService, notifyDispatchService, notifyDeliveryLogService, notifyDeadLetterService, assistantService, assistantChatService, tokenSigner, authzUsecase)
+	modelRepo := data5.NewModelRepo(dataData)
+	fieldRepo := data5.NewFieldRepo(dataData)
+	relationTypeRepo := data5.NewRelationTypeRepo(dataData)
+	relationRepo := data5.NewRelationRepo(dataData)
+	viewRepo := data5.NewViewRepo(dataData)
+	attrIndexer := data5.NewAttrIndexer(dataData)
+	groupRepo := data5.NewGroupRepo(dataData)
+	schemaAuditRepo := data5.NewSchemaAuditRepo(dataData)
+	modelUsecase := biz4.NewModelUsecase(modelRepo, fieldRepo, relationTypeRepo, relationRepo, viewRepo, attrIndexer, groupRepo, schemaAuditRepo)
+	cmdbModelService := service4.NewCmdbModelService(modelUsecase)
+	ciRepo := data5.NewCIRepo(dataData)
+	historyRepo := data5.NewHistoryRepo(dataData)
+	relationUsecase := biz4.NewRelationUsecase(relationTypeRepo, ciRepo, relationRepo, fieldRepo)
+	ciUsecase := biz4.NewCIUsecase(modelRepo, fieldRepo, relationTypeRepo, ciRepo, relationRepo, historyRepo, relationUsecase)
+	scopeRepo := data5.NewScopeRepo(dataData)
+	scopeUsecase := biz4.NewScopeUsecase(scopeRepo, authzUsecase, roleUsecase, modelRepo)
+	cmdbCIService := service4.NewCmdbCIService(ciUsecase, scopeUsecase)
+	cmdbRelationService := service4.NewCmdbRelationService(relationUsecase, ciUsecase, scopeUsecase)
+	cmdbScopeService := service4.NewCmdbScopeService(scopeUsecase)
+	syncSourceRepo := data5.NewSyncSourceRepo(dataData)
+	syncTaskRepo := data5.NewSyncTaskRepo(dataData)
+	syncRunRepo := data5.NewSyncRunRepo(dataData)
+	syncSecretBox, err := data5.NewSyncSecretBox(notify)
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	syncUsecase := biz4.NewSyncUsecase(syncSourceRepo, syncTaskRepo, syncRunRepo, syncSecretBox)
+	cmdbSyncService := service4.NewCmdbSyncService(syncUsecase)
+	favoriteRepo := data5.NewFavoriteRepo(dataData)
+	overviewRepo := data5.NewOverviewRepo(dataData)
+	insightUsecase := biz4.NewInsightUsecase(groupRepo, favoriteRepo, overviewRepo, schemaAuditRepo, modelRepo)
+	cmdbInsightService := service4.NewCmdbInsightService(insightUsecase, scopeUsecase)
+	httpServer := server.NewHTTPServer(confServer, logger, userService, roleService, authService, systemConfigService, loginLogService, notifyChannelService, notifyTemplateService, notifyRouteService, notifySilenceService, notifySubscriptionService, notifyProducerService, notifyEventService, notifyDispatchService, notifyDeliveryLogService, notifyDeadLetterService, assistantService, assistantChatService, cmdbModelService, cmdbCIService, cmdbRelationService, cmdbScopeService, cmdbSyncService, cmdbInsightService, tokenSigner, authzUsecase)
 	app := newApp(logger, httpServer)
 	return app, func() {
 		cleanup()

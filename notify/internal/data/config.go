@@ -227,7 +227,7 @@ func loadSilences(ctx context.Context, tx pgx.Tx) ([]*biz.Silence, error) {
 
 func loadTemplates(ctx context.Context, tx pgx.Tx) ([]*biz.Template, error) {
 	rows, err := tx.Query(ctx,
-		`SELECT id, biz_id, event_type, channel_type, subject, body, version, enabled FROM notify_template WHERE delete_time IS NULL`)
+		`SELECT id, biz_id, event_type, channel_type, subject, body, version, enabled, format FROM notify_template WHERE delete_time IS NULL`)
 	if err != nil {
 		return nil, fmt.Errorf("load templates: %w", err)
 	}
@@ -235,7 +235,7 @@ func loadTemplates(ctx context.Context, tx pgx.Tx) ([]*biz.Template, error) {
 	var out []*biz.Template
 	for rows.Next() {
 		var t biz.Template
-		if err := rows.Scan(&t.ID, &t.BizID, &t.EventType, &t.ChannelType, &t.Subject, &t.Body, &t.Version, &t.Enabled); err != nil {
+		if err := rows.Scan(&t.ID, &t.BizID, &t.EventType, &t.ChannelType, &t.Subject, &t.Body, &t.Version, &t.Enabled, &t.Format); err != nil {
 			return nil, fmt.Errorf("scan template: %w", err)
 		}
 		out = append(out, &t)

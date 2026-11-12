@@ -95,6 +95,16 @@ const (
 	// NOTIFY_BIZ_REQUIRED biz 受限用户的列表查询必须携带 biz 过滤（渠道/模板/路由/
 	// 静默/生产者/事件带 biz_id；任务/明细/死信带 channel_id），映射 HTTP 400。
 	ErrorReason_NOTIFY_BIZ_REQUIRED ErrorReason = 24
+	// NOTIFY_TEST_TOO_FREQUENT 同一渠道连通性测试过于频繁（测试事件真实投递，
+	// 按渠道 10s 冷却），映射 HTTP 429。
+	ErrorReason_NOTIFY_TEST_TOO_FREQUENT ErrorReason = 25
+	// NOTIFY_TIME_RANGE_INVALID 运行表列表时间跨度超过 90 天（分区表按时间裁剪，
+	// 更早的数据请分段查询），映射 HTTP 400。
+	ErrorReason_NOTIFY_TIME_RANGE_INVALID ErrorReason = 26
+	// NOTIFY_EVENT_NOT_FOUND 目标事件不存在（或已按保留期清理），映射 HTTP 404。
+	ErrorReason_NOTIFY_EVENT_NOT_FOUND ErrorReason = 27
+	// NOTIFY_DISPATCH_NOT_FOUND 目标发送任务不存在，映射 HTTP 404。
+	ErrorReason_NOTIFY_DISPATCH_NOT_FOUND ErrorReason = 28
 )
 
 // Enum value maps for ErrorReason.
@@ -125,6 +135,10 @@ var (
 		22: "NOTIFY_CHANNEL_IN_USE",
 		23: "NOTIFY_BIZ_FORBIDDEN",
 		24: "NOTIFY_BIZ_REQUIRED",
+		25: "NOTIFY_TEST_TOO_FREQUENT",
+		26: "NOTIFY_TIME_RANGE_INVALID",
+		27: "NOTIFY_EVENT_NOT_FOUND",
+		28: "NOTIFY_DISPATCH_NOT_FOUND",
 	}
 	ErrorReason_value = map[string]int32{
 		"NOTIFY_UNSPECIFIED":            0,
@@ -152,6 +166,10 @@ var (
 		"NOTIFY_CHANNEL_IN_USE":         22,
 		"NOTIFY_BIZ_FORBIDDEN":          23,
 		"NOTIFY_BIZ_REQUIRED":           24,
+		"NOTIFY_TEST_TOO_FREQUENT":      25,
+		"NOTIFY_TIME_RANGE_INVALID":     26,
+		"NOTIFY_EVENT_NOT_FOUND":        27,
+		"NOTIFY_DISPATCH_NOT_FOUND":     28,
 	}
 )
 
@@ -186,7 +204,7 @@ var File_notify_v1_error_reason_proto protoreflect.FileDescriptor
 
 const file_notify_v1_error_reason_proto_rawDesc = "" +
 	"\n" +
-	"\x1cnotify/v1/error_reason.proto\x12\tnotify.v1\x1a\x13errors/errors.proto*\x89\a\n" +
+	"\x1cnotify/v1/error_reason.proto\x12\tnotify.v1\x1a\x13errors/errors.proto*\x99\b\n" +
 	"\vErrorReason\x12\x16\n" +
 	"\x12NOTIFY_UNSPECIFIED\x10\x00\x12\"\n" +
 	"\x18NOTIFY_CHANNEL_NOT_FOUND\x10\x01\x1a\x04\xa8E\x94\x03\x12$\n" +
@@ -213,7 +231,11 @@ const file_notify_v1_error_reason_proto_rawDesc = "" +
 	"\x14NOTIFY_EVENT_INVALID\x10\x15\x1a\x04\xa8E\x90\x03\x12\x1f\n" +
 	"\x15NOTIFY_CHANNEL_IN_USE\x10\x16\x1a\x04\xa8E\x99\x03\x12\x1e\n" +
 	"\x14NOTIFY_BIZ_FORBIDDEN\x10\x17\x1a\x04\xa8E\x93\x03\x12\x1d\n" +
-	"\x13NOTIFY_BIZ_REQUIRED\x10\x18\x1a\x04\xa8E\x90\x03\x1a\x04\xa0E\xf4\x03B:Z8github.com/lanyulei/reborn/backend/core/api/notify/v1;v1b\x06proto3"
+	"\x13NOTIFY_BIZ_REQUIRED\x10\x18\x1a\x04\xa8E\x90\x03\x12\"\n" +
+	"\x18NOTIFY_TEST_TOO_FREQUENT\x10\x19\x1a\x04\xa8E\xad\x03\x12#\n" +
+	"\x19NOTIFY_TIME_RANGE_INVALID\x10\x1a\x1a\x04\xa8E\x90\x03\x12 \n" +
+	"\x16NOTIFY_EVENT_NOT_FOUND\x10\x1b\x1a\x04\xa8E\x94\x03\x12#\n" +
+	"\x19NOTIFY_DISPATCH_NOT_FOUND\x10\x1c\x1a\x04\xa8E\x94\x03\x1a\x04\xa0E\xf4\x03B:Z8github.com/lanyulei/reborn/backend/core/api/notify/v1;v1b\x06proto3"
 
 var (
 	file_notify_v1_error_reason_proto_rawDescOnce sync.Once

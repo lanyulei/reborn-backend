@@ -13,7 +13,7 @@ import (
 func newRouteService(t *testing.T) (*NotifyRouteService, *testfake.Store) {
 	t.Helper()
 	store := testfake.NewStore()
-	return NewNotifyRouteService(biz.NewRouteUsecase(store, store), testfake.Unrestricted()), store
+	return NewNotifyRouteService(biz.NewRouteUsecase(store, store), biz.NewPreviewUsecase(store, store, store, store), testfake.Unrestricted()), store
 }
 
 // seedRouteChannel 预置一个钉钉渠道并返回其 ID。
@@ -55,7 +55,7 @@ func i32ptr(v int32) *int32 { return &v }
 func TestNotifyRouteService_CreateRoundtrip(t *testing.T) {
 	t.Parallel()
 	svc, store := newRouteService(t)
-	channelSvc := NewNotifyChannelService(biz.NewChannelUsecase(store, store, store), testfake.Unrestricted())
+	channelSvc := NewNotifyChannelService(biz.NewChannelUsecase(store, store, store), biz.NewChannelHealthUsecase(store), testfake.Unrestricted())
 	channelID := seedRouteChannel(t, channelSvc)
 	ctx := testCtx()
 
@@ -98,7 +98,7 @@ func TestNotifyRouteService_CreateRoundtrip(t *testing.T) {
 func TestNotifyRouteService_CreateErrors(t *testing.T) {
 	t.Parallel()
 	svc, store := newRouteService(t)
-	channelSvc := NewNotifyChannelService(biz.NewChannelUsecase(store, store, store), testfake.Unrestricted())
+	channelSvc := NewNotifyChannelService(biz.NewChannelUsecase(store, store, store), biz.NewChannelHealthUsecase(store), testfake.Unrestricted())
 	channelID := seedRouteChannel(t, channelSvc)
 	ctx := testCtx()
 
@@ -130,7 +130,7 @@ func TestNotifyRouteService_CreateErrors(t *testing.T) {
 func TestNotifyRouteService_UpdateRoute(t *testing.T) {
 	t.Parallel()
 	svc, store := newRouteService(t)
-	channelSvc := NewNotifyChannelService(biz.NewChannelUsecase(store, store, store), testfake.Unrestricted())
+	channelSvc := NewNotifyChannelService(biz.NewChannelUsecase(store, store, store), biz.NewChannelHealthUsecase(store), testfake.Unrestricted())
 	channelID := seedRouteChannel(t, channelSvc)
 	ctx := testCtx()
 
@@ -183,7 +183,7 @@ func TestNotifyRouteService_UpdateRoute(t *testing.T) {
 func TestNotifyRouteService_DeleteAndList(t *testing.T) {
 	t.Parallel()
 	svc, store := newRouteService(t)
-	channelSvc := NewNotifyChannelService(biz.NewChannelUsecase(store, store, store), testfake.Unrestricted())
+	channelSvc := NewNotifyChannelService(biz.NewChannelUsecase(store, store, store), biz.NewChannelHealthUsecase(store), testfake.Unrestricted())
 	channelID := seedRouteChannel(t, channelSvc)
 	ctx := testCtx()
 
@@ -219,5 +219,42 @@ func TestNotifyRouteService_DeleteAndList(t *testing.T) {
 	}
 	if _, err := svc.GetRoute(ctx, &notifyv1.GetRouteRequest{Id: list.GetItems()[0].GetId()}); !errors.Is(err, biz.ErrRouteNotFound) {
 		t.Fatalf("GetRoute(deleted) error = %v, want ErrRouteNotFound", err)
+	}
+}
+
+// TestNotifyRouteService_PreviewRouting 路由试算：命中路由/渠道/模板解析与静默。
+func TestNotifyRouteService_PreviewRouting(t *testing.T) {
+	t.Parallel()
+	svc, store := newRouteService(t)
+	ctx := testCtx()
+	chSvc := NewNotifyChannelService(biz.NewChannelUsecase(store, store, store).WithTestEventCooldown(0), biz.NewChannelHealthUsecase(store), testfake.Unrestricted())
+	chID := seedRouteChannel(t, chSvc)
+	created, err := svc.CreateRoute(ctx, &notifyv1.CreateRouteRequest{
+		Spec: &notifyv1.RouteSpec{EventPattern: "monitor.*", ChannelIds: []string{chID}, Recipient: &notifyv1.RouteRecipient{}},
+	})
+	if err != nil {
+		t.Fatalf("CreateRoute() error = %v", err)
+	}
+	resp, err := svc.PreviewRouting(ctx, &notifyv1.PreviewRoutingRequest{EventType: "monitor.alert.firing", Severity: 3})
+	if err != nil {
+		t.Fatalf("PreviewRouting() error = %v", err)
+	}
+	if resp.GetSilenced() || resp.GetMatched().GetId() != created.GetRoute().GetId() || len(resp.GetCandidates()) != 1 ||
+		len(resp.GetChannels()) != 1 || resp.GetChannels()[0].GetId() != chID || resp.GetChannels()[0].GetTemplateId() != "" || resp.GetAggregate() {
+		t.Fatalf("PreviewRouting() = %+v", resp)
+	}
+	if resp, err := svc.PreviewRouting(ctx, &notifyv1.PreviewRoutingRequest{EventType: "ticket.apply.created", Severity: 3}); err != nil || resp.GetMatched() != nil || len(resp.GetChannels()) != 0 {
+		t.Fatalf("no-route preview = %+v, %v", resp, err)
+	}
+	if _, err := biz.NewSilenceUsecase(store).Create(ctx, &biz.Silence{BizID: biz.DefaultBizID, Enabled: true, SilenceRule: biz.SilenceRule{EventPattern: "monitor.*", SeverityMax: 4}}); err != nil {
+		t.Fatal(err)
+	}
+	if resp, err := svc.PreviewRouting(ctx, &notifyv1.PreviewRoutingRequest{EventType: "monitor.alert.firing", Severity: 3}); err != nil || !resp.GetSilenced() || len(resp.GetSilenceIds()) != 1 {
+		t.Fatalf("silenced preview = %+v, %v", resp, err)
+	}
+	// 受限用户：目标 biz 不在范围 → 403。
+	scoped := NewNotifyRouteService(biz.NewRouteUsecase(store, store), biz.NewPreviewUsecase(store, store, store, store), testfake.Scoped("ops"))
+	if _, err := scoped.PreviewRouting(ctx, &notifyv1.PreviewRoutingRequest{EventType: "monitor.alert.firing", Severity: 3}); !errors.Is(err, biz.ErrBizForbidden) {
+		t.Fatalf("scoped preview error = %v, want ErrBizForbidden", err)
 	}
 }

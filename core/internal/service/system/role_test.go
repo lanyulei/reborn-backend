@@ -21,9 +21,14 @@ func newRoleService(t *testing.T) (*RoleService, *testfake.Store) {
 	if err != nil {
 		t.Fatalf("testfake.NewAuthorizer() error = %v", err)
 	}
+	hasher, err := testfake.NewHasher()
+	if err != nil {
+		t.Fatalf("testfake.NewHasher() error = %v", err)
+	}
 	return NewRoleService(
 		biz.NewRoleUsecase(store, store, authorizer),
 		biz.NewPermissionUsecase(store, store, authorizer, biznotify.NewNotificationUsecase(store, nil), testfake.NewTxManager()),
+		biz.NewUserUsecase(store, store, store, store, hasher, store),
 	), store
 }
 
@@ -171,5 +176,68 @@ func TestRoleService_Permissions(t *testing.T) {
 	}
 	if gotOp.GetCode() != biz.OperationCode(v1.OperationUserServiceCreateUser) {
 		t.Fatalf("ListOperations() code = %q, want md5(name)", gotOp.GetCode())
+	}
+}
+
+// TestRoleService_BuiltinGuards 内置角色写操作守卫：编辑 / 授权仅超管（普通操作者
+// 403 PERMISSION_DENIED，缺少身份按无效令牌拒绝）；删除对任何人返回
+// ROLE_BUILTIN_PROTECTED；非内置角色不受影响。
+func TestRoleService_BuiltinGuards(t *testing.T) {
+	t.Parallel()
+	svc, store := newRoleService(t)
+	const adminID, opID = "u-admin", "u-op"
+	seedUserRow(t, store, adminID, "root", true)
+	seedUserRow(t, store, opID, "operator", false)
+	if err := store.CreateRole(context.Background(), &biz.Role{ID: "role-default", Name: "默认角色", Code: "default", Builtin: true}); err != nil {
+		t.Fatalf("seed builtin role: %v", err)
+	}
+	opCtx, adminCtx := claimsContext(opID), claimsContext(adminID)
+	name := "默认角色-改"
+
+	denied := func(step string, err error) {
+		t.Helper()
+		if errors.Code(err) != 403 || errors.Reason(err) != v1.ErrorReason_PERMISSION_DENIED.String() {
+			t.Errorf("%s: error = %v, want 403 PERMISSION_DENIED", step, err)
+		}
+	}
+
+	// 普通操作者：编辑 / 授权被拒。
+	_, err := svc.UpdateRole(opCtx, &v1.UpdateRoleRequest{Id: "role-default", Name: &name})
+	denied("UpdateRole(builtin, operator)", err)
+	_, err = svc.SetRolePermissions(opCtx, &v1.SetRolePermissionsRequest{Id: "role-default", Menus: []string{"system.user"}})
+	denied("SetRolePermissions(builtin, operator)", err)
+	// 缺少身份：无效令牌。
+	if _, err := svc.UpdateRole(context.Background(), &v1.UpdateRoleRequest{Id: "role-default", Name: &name}); !errors.Is(err, biz.ErrTokenInvalid) {
+		t.Errorf("UpdateRole(builtin, no claims) error = %v, want ErrTokenInvalid", err)
+	}
+	// 超管：编辑 / 授权通过。
+	if _, err := svc.UpdateRole(adminCtx, &v1.UpdateRoleRequest{Id: "role-default", Name: &name}); err != nil {
+		t.Fatalf("UpdateRole(builtin, admin) error = %v", err)
+	}
+	if _, err := svc.SetRolePermissions(adminCtx, &v1.SetRolePermissionsRequest{Id: "role-default", Menus: []string{"system.user"}}); err != nil {
+		t.Fatalf("SetRolePermissions(builtin, admin) error = %v", err)
+	}
+	got, err := svc.GetRole(adminCtx, &v1.GetRoleRequest{Id: "role-default"})
+	if err != nil || got.GetRole().GetName() != name || !got.GetRole().GetBuiltin() {
+		t.Fatalf("GetRole(builtin) = %+v, err = %v; want renamed + builtin=true", got.GetRole(), err)
+	}
+	// 删除：超管同样被拒，且角色仍在。
+	if _, err := svc.DeleteRole(adminCtx, &v1.DeleteRoleRequest{Id: "role-default"}); !errors.Is(err, biz.ErrRoleBuiltin) {
+		t.Fatalf("DeleteRole(builtin, admin) error = %v, want ErrRoleBuiltin", err)
+	}
+	if _, err := svc.GetRole(adminCtx, &v1.GetRoleRequest{Id: "role-default"}); err != nil {
+		t.Fatalf("builtin role vanished after rejected delete: %v", err)
+	}
+
+	// 非内置角色：普通操作者（接口级 RBAC 由中间件负责，service 不加额外守卫）可编辑 / 删除。
+	created, err := svc.CreateRole(opCtx, &v1.CreateRoleRequest{Name: "运维", Code: "ops"})
+	if err != nil {
+		t.Fatalf("CreateRole() error = %v", err)
+	}
+	if _, err := svc.UpdateRole(opCtx, &v1.UpdateRoleRequest{Id: created.GetRole().GetId(), Name: &name}); err != nil {
+		t.Fatalf("UpdateRole(normal, operator) error = %v", err)
+	}
+	if _, err := svc.DeleteRole(opCtx, &v1.DeleteRoleRequest{Id: created.GetRole().GetId()}); err != nil {
+		t.Fatalf("DeleteRole(normal, operator) error = %v", err)
 	}
 }

@@ -3,6 +3,7 @@ syntax = "proto3";
 package notify.v1;
 
 import "google/api/annotations.proto";
+import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 import "buf/validate/validate.proto";
 import "system/v1/annotations.proto";
@@ -53,6 +54,17 @@ service NotifyRouteService {
       get: "/api/v1/notify/route"
     };
     option (system.v1.title) = "查询通知路由列表";
+  }
+  // PreviewRouting 路由试算（只读，不落库）：按管道同一语义（静默 → 选路：pattern 命中
+  // ∧ severity ≥ 下限 ∧ tag_match 全等，priority → 精确度 → id 决胜）回答"这条事件会
+  // 被哪条路由接住、发到哪些渠道、用哪个模板、会不会被静默/聚合"，供配好路由后
+  // 先验证再上线。
+  rpc PreviewRouting(PreviewRoutingRequest) returns (PreviewRoutingResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/notify/route:preview"
+      body: "*"
+    };
+    option (system.v1.title) = "路由试算";
   }
 }
 
@@ -115,6 +127,10 @@ message RouteSpec {
     lte: 300
   }];
   // suppress_threshold 聚合抑制阈值，可选；未指定默认 500。
+  // name 可读名称，可选（≤64；控制台列表展示，空则回退 event_pattern）。
+  optional string name = 10 [(buf.validate.field).string.max_len = 64];
+  // description 说明，可选（≤255）。
+  optional string description = 11 [(buf.validate.field).string.max_len = 255];
   optional int32 suppress_threshold = 8 [(buf.validate.field).int32 = {
     gte: 1
     lte: 100000
@@ -146,6 +162,10 @@ message NotifyRoute {
   RouteRecipient recipient = 8;
   // aggregate_window_s 聚合窗口秒数；0=不聚合，>0 且事件带 group_key 时聚合微批。
   int32 aggregate_window_s = 9;
+  // name 可读名称（空 = 未命名）。
+  string name = 15;
+  // description 说明。
+  string description = 16;
   // suppress_threshold 聚合抑制阈值：分组计数超过后汇总转摘要模式。
   int32 suppress_threshold = 10;
   // suppress_duration_m 抑制时长（分钟）：超阈值后同 group_key 静默窗口。
@@ -194,8 +214,11 @@ message UpdateRouteRequest {
   optional bool enabled = 3;
 }
 
-// UpdateRouteResponse 更新路由响应。
-message UpdateRouteResponse {}
+// UpdateRouteResponse 更新路由响应：返回更新后的路由（免二次 GET）。
+message UpdateRouteResponse {
+  // route 更新后的路由。
+  NotifyRoute route = 1;
+}
 
 // DeleteRouteRequest 删除路由请求。
 message DeleteRouteRequest {
@@ -227,7 +250,7 @@ message ListRoutesRequest {
     gte: 1
     lte: 100
   }];
-  // keyword 关键字，可选；模糊匹配 event_pattern。
+  // keyword 关键字，可选；模糊匹配 name / event_pattern。
   optional string keyword = 3 [(buf.validate.field).string.max_len = 64];
   // enabled 启用状态过滤，可选。
   optional bool enabled = 4;
@@ -241,4 +264,59 @@ message ListRoutesResponse {
   repeated NotifyRoute items = 1;
   // total 总数。
   int64 total = 2;
+}
+
+// PreviewRoutingRequest 路由试算请求：一条假想事件。
+message PreviewRoutingRequest {
+  // biz_id 业务标识，缺省 default。
+  optional string biz_id = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+    pattern: "^[a-z0-9_-]{1,64}$"
+  }];
+  // event_type 事件类型（小写点分事件名）。
+  string event_type = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+    pattern: "^[a-z0-9][a-z0-9._-]{0,127}$"
+  }];
+  // severity 严重级 1-4。
+  int32 severity = 3 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 4
+  }];
+  // payload 载荷（tag_match 比对用），可选。
+  google.protobuf.Struct payload = 4;
+  // group_key 分组键，可选（判定是否进入聚合）。
+  optional string group_key = 5 [(buf.validate.field).string.max_len = 128];
+}
+
+// PreviewChannel 试算命中的渠道实例及其模板解析结果。
+message PreviewChannel {
+  // id 渠道 ID。
+  string id = 1;
+  // name 渠道名。
+  string name = 2;
+  // type 渠道类型（email/webhook/dingtalk/wecom/feishu）。
+  string type = 3;
+  // enabled 是否启用（停用实例会被管道跳过——命中也不发）。
+  bool enabled = 4;
+  // template_id 解析到的模板（空 = 内置默认模板）。
+  string template_id = 5;
+}
+
+// PreviewRoutingResponse 路由试算结果。
+message PreviewRoutingResponse {
+  // silenced 是否被静默规则抑制（为 true 时管道不会选路）。
+  bool silenced = 1;
+  // silence_ids 命中的静默规则。
+  repeated string silence_ids = 2;
+  // matched 生效路由（candidates 的第一条；无命中为空）。
+  NotifyRoute matched = 3;
+  // candidates 全部命中路由（按决胜序：priority → 精确度 → id）。
+  repeated NotifyRoute candidates = 4;
+  // channels 生效路由绑定的渠道实例（含停用标记与模板解析）。
+  repeated PreviewChannel channels = 5;
+  // aggregate 是否进入聚合窗口（路由 aggregate_window_s > 0 且事件带 group_key）。
+  bool aggregate = 6;
 }

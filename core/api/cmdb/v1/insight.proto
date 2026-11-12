@@ -1,0 +1,296 @@
+syntax = "proto3";
+
+package cmdb.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "buf/validate/validate.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/cmdb/v1;v1";
+
+// CmdbInsightService 资源目录与运营视角的辅助能力：模型分组、模型收藏、
+// 运营概览统计、模型变更审计。
+service CmdbInsightService {
+  // ListModelGroups 查询全部模型分组（按 sort、编码升序，含各分组的模型数）。
+  rpc ListModelGroups(ListModelGroupsRequest) returns (ListModelGroupsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/cmdb/model-group"
+    };
+    option (system.v1.title) = "查询模型分组";
+  }
+  // CreateModelGroup 创建模型分组。
+  rpc CreateModelGroup(CreateModelGroupRequest) returns (CreateModelGroupResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/cmdb/model-group"
+      body: "*"
+    };
+    option (system.v1.title) = "创建模型分组";
+  }
+  // UpdateModelGroup 更新模型分组的名称与顺序（编码不可改）。
+  rpc UpdateModelGroup(UpdateModelGroupRequest) returns (UpdateModelGroupResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/cmdb/model-group/{code}"
+      body: "*"
+    };
+    option (system.v1.title) = "更新模型分组";
+  }
+  // DeleteModelGroup 删除模型分组（内置分组或分组下仍有模型时 409）。
+  rpc DeleteModelGroup(DeleteModelGroupRequest) returns (DeleteModelGroupResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/cmdb/model-group/{code}"
+    };
+    option (system.v1.title) = "删除模型分组";
+  }
+  // ListFavorites 查询当前用户收藏的模型编码。
+  rpc ListFavorites(ListFavoritesRequest) returns (ListFavoritesResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/cmdb/favorite"
+    };
+    option (system.v1.title) = "查询收藏的模型";
+  }
+  // SetFavorite 收藏或取消收藏模型（幂等）。
+  rpc SetFavorite(SetFavoriteRequest) returns (SetFavoriteResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/cmdb/favorite/{model_code}"
+      body: "*"
+    };
+    option (system.v1.title) = "收藏模型";
+  }
+  // GetOverview 运营概览：模型 / 资源 / 关系总数，按模型、状态、环境、来源的资源分布，
+  // 以及近 N 天的变更趋势；受当前用户数据范围约束。
+  rpc GetOverview(GetOverviewRequest) returns (GetOverviewResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/cmdb/overview"
+    };
+    option (system.v1.title) = "查询运营概览";
+  }
+  // ListSchemaAudit 模型变更审计：分组 / 模型 / 字段 / 关系类型的增删改记录（倒序）。
+  rpc ListSchemaAudit(ListSchemaAuditRequest) returns (ListSchemaAuditResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/cmdb/schema-audit"
+    };
+    option (system.v1.title) = "查询模型变更审计";
+  }
+}
+
+// CmdbModelGroup 模型分组。
+message CmdbModelGroup {
+  // code 分组编码（cmdb_model.category 的取值）。
+  string code = 1;
+  // name 展示名。
+  string name = 2;
+  // sort 展示顺序（升序）。
+  int32 sort = 3;
+  // builtin 是否内置分组（不可删除）。
+  bool builtin = 4;
+  // model_count 分组下未删除的模型数。
+  int64 model_count = 5;
+}
+
+// ListModelGroupsRequest 查询模型分组请求。
+message ListModelGroupsRequest {}
+
+// ListModelGroupsResponse 查询模型分组响应。
+message ListModelGroupsResponse {
+  // items 全部分组。
+  repeated CmdbModelGroup items = 1;
+}
+
+// CreateModelGroupRequest 创建模型分组请求。
+message CreateModelGroupRequest {
+  // code 分组编码：2-64 位小写字母/数字/下划线，字母开头。
+  string code = 1 [(buf.validate.field).string = {
+    pattern: "^[a-z][a-z0-9_]{1,63}$"
+  }];
+  // name 展示名，1-64 位。
+  string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // sort 展示顺序，缺省 500（位于内置的“其他”之前）。
+  optional int32 sort = 3 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 100000
+  }];
+}
+
+// CreateModelGroupResponse 创建模型分组响应。
+message CreateModelGroupResponse {
+  // group 创建后的分组。
+  CmdbModelGroup group = 1;
+}
+
+// UpdateModelGroupRequest 更新模型分组请求；未传字段不更新。
+message UpdateModelGroupRequest {
+  // code 目标分组编码。
+  string code = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // name 展示名。
+  optional string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // sort 展示顺序。
+  optional int32 sort = 3 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 100000
+  }];
+}
+
+// UpdateModelGroupResponse 更新模型分组响应。
+message UpdateModelGroupResponse {
+  // group 更新后的分组。
+  CmdbModelGroup group = 1;
+}
+
+// DeleteModelGroupRequest 删除模型分组请求。
+message DeleteModelGroupRequest {
+  // code 目标分组编码。
+  string code = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+}
+
+// DeleteModelGroupResponse 删除模型分组响应。
+message DeleteModelGroupResponse {}
+
+// ListFavoritesRequest 查询收藏请求。
+message ListFavoritesRequest {}
+
+// ListFavoritesResponse 查询收藏响应。
+message ListFavoritesResponse {
+  // model_codes 当前用户收藏的模型编码（按收藏时间升序；已删除的模型不返回）。
+  repeated string model_codes = 1;
+}
+
+// SetFavoriteRequest 收藏 / 取消收藏请求。
+message SetFavoriteRequest {
+  // model_code 模型编码。
+  string model_code = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // favorite true 收藏 / false 取消。
+  bool favorite = 2;
+}
+
+// SetFavoriteResponse 收藏 / 取消收藏响应。
+message SetFavoriteResponse {}
+
+// OverviewCount 一个维度取值上的资源数。
+message OverviewCount {
+  // key 维度取值：模型编码 / 状态 / 环境 / 来源（manual、sync、assistant…；环境未填为空串）。
+  string key = 1;
+  // name 展示名（按模型统计时为模型名，其它维度为空）。
+  string name = 2;
+  // count 资源数。
+  int64 count = 3;
+}
+
+// OverviewTrendPoint 某天某动作的变更次数。
+message OverviewTrendPoint {
+  // date 日期（YYYY-MM-DD，数据库会话时区）。
+  string date = 1;
+  // action 动作：create / update / transition / delete / link / unlink。
+  string action = 2;
+  // count 次数。
+  int64 count = 3;
+}
+
+// GetOverviewRequest 查询运营概览请求。
+message GetOverviewRequest {
+  // days 变更趋势回看天数，1-90，缺省 30。
+  optional int32 days = 1 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 90
+  }];
+}
+
+// GetOverviewResponse 查询运营概览响应（全部数字受数据范围约束）。
+message GetOverviewResponse {
+  // model_count 可见模型数。
+  int64 model_count = 1;
+  // ci_count 可见资源总数。
+  int64 ci_count = 2;
+  // relation_count 关系实例数（源端资源可见）。
+  int64 relation_count = 3;
+  // change_count 回看窗口内的变更次数。
+  int64 change_count = 4;
+  // by_model 按模型的资源数（降序）。
+  repeated OverviewCount by_model = 5;
+  // by_status 按状态的资源数。
+  repeated OverviewCount by_status = 6;
+  // by_env 按环境的资源数（降序）。
+  repeated OverviewCount by_env = 7;
+  // by_source 按来源的资源数。
+  repeated OverviewCount by_source = 8;
+  // trend 变更趋势（按日期升序）。
+  repeated OverviewTrendPoint trend = 9;
+  // days 实际回看天数。
+  int32 days = 10;
+}
+
+// CmdbSchemaAudit 模型变更审计记录。
+message CmdbSchemaAudit {
+  // id 记录标识。
+  string id = 1;
+  // target_type 对象类型：group / model / field / relation_type。
+  string target_type = 2;
+  // target_code 对象编码。
+  string target_code = 3;
+  // target_name 对象名称（变更时的快照）。
+  string target_name = 4;
+  // model_code 所属模型编码（模型与字段有值）。
+  string model_code = 5;
+  // action 动作：create / update / delete。
+  string action = 6;
+  // diff 差异：{before:{...}, after:{...}}。
+  google.protobuf.Struct diff = 7;
+  // operator 操作者用户 ID。
+  string operator = 8;
+  // request_id 请求 ID。
+  string request_id = 9;
+  // create_time 发生时间。
+  google.protobuf.Timestamp create_time = 10;
+}
+
+// ListSchemaAuditRequest 查询模型变更审计请求。
+message ListSchemaAuditRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // target_type 对象类型过滤，可选。
+  optional string target_type = 3 [(buf.validate.field).string = {
+    in: ["group", "model", "field", "relation_type"]
+  }];
+  // model_code 所属模型过滤，可选。
+  optional string model_code = 4 [(buf.validate.field).string.max_len = 64];
+  // action 动作过滤，可选。
+  optional string action = 5 [(buf.validate.field).string = {
+    in: ["create", "update", "delete"]
+  }];
+  // operator 操作者（用户 ID）过滤，可选。
+  optional string operator = 6 [(buf.validate.field).string.max_len = 64];
+  // keyword 对象编码 / 名称模糊匹配，可选。
+  optional string keyword = 7 [(buf.validate.field).string.max_len = 128];
+  // from / to 发生时间范围，可选。
+  optional google.protobuf.Timestamp from = 8;
+  optional google.protobuf.Timestamp to = 9;
+}
+
+// ListSchemaAuditResponse 查询模型变更审计响应。
+message ListSchemaAuditResponse {
+  // items 当前页数据。
+  repeated CmdbSchemaAudit items = 1;
+  // total 总数。
+  int64 total = 2;
+}

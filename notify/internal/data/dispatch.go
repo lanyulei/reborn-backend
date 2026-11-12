@@ -71,21 +71,6 @@ func (r *dispatchRepo) Claim(ctx context.Context, limit int, lease time.Duration
 // fence 围栏条件：主键 + 分区键 + 仍为 sending + 本次声明的 attempts。
 const fence = " WHERE id = $1 AND create_time = $2 AND status = 2 AND attempts = $3"
 
-// SaveContent implements biz.DispatchRepo：渲染快照 + template_id 列回填（控制台
-// ListDispatches 展示用；版本号在 content.template_version）。
-func (r *dispatchRepo) SaveContent(ctx context.Context, d *biz.ClaimedDispatch, content []byte, templateID string) error {
-	tag, err := r.data.Pool.Exec(ctx, "UPDATE notify_dispatch SET content = $4, template_id = $5"+fence,
-		d.ID, d.CreateTime, d.Attempts, content, dbx.NilIfEmpty(templateID))
-	if err != nil {
-		return fmt.Errorf("save dispatch content: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return biz.ErrStaleClaim
-	}
-	d.Content = content
-	return nil
-}
-
 // Release implements biz.DispatchRepo：放回 pending 且撤销本次尝试计数。
 func (r *dispatchRepo) Release(ctx context.Context, d *biz.ClaimedDispatch, delay time.Duration) error {
 	tag, err := r.data.Pool.Exec(ctx,
@@ -100,15 +85,17 @@ func (r *dispatchRepo) Release(ctx context.Context, d *biz.ClaimedDispatch, dela
 	return nil
 }
 
-// Finish implements biz.DispatchRepo：同事务写 delivery_log + 终态；dead 时写 dlq
-// （id = dispatch id，ON CONFLICT DO NOTHING 幂等）。
+// Finish implements biz.DispatchRepo：同事务写 delivery_log + 终态（含首次渲染快照
+// 与 template_id 回填）；dead 时写 dlq（id = dispatch id，ON CONFLICT DO NOTHING
+// 幂等）。三条语句一个 pgx.Batch：一次往返。
 func (r *dispatchRepo) Finish(ctx context.Context, d *biz.ClaimedDispatch, res biz.FinishResult, maxAttempts int32) error {
 	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		return finishDispatch(ctx, tx, d.ID, d.CreateTime, d.Attempts, d.EventID, d.ChannelID, d.Recipient, res, maxAttempts)
 	})
 }
 
-// finishDispatch 落账原语（sender Finish 与租约回收共用）。
+// finishDispatch 落账原语（sender Finish 与租约回收共用）：围栏 UPDATE 0 行即
+// ErrStaleClaim（整个事务回滚，delivery_log 不留痕）。
 func finishDispatch(ctx context.Context, tx pgx.Tx, id string, createTime time.Time, attempts int32,
 	eventID, channelID, recipient string, res biz.FinishResult, maxAttempts int32,
 ) error {
@@ -116,38 +103,54 @@ func finishDispatch(ctx context.Context, tx pgx.Tx, id string, createTime time.T
 	if err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx,
+	batch := &pgx.Batch{}
+	batch.Queue(
 		`INSERT INTO notify_delivery_log (id, dispatch_id, channel_id, attempt, ok, latency_ms, provider_msg_id, error, create_time)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,now())`,
-		logID, id, channelID, attempts, res.OK, res.LatencyMs, dbx.NilIfEmpty(res.ProviderMsgID), dbx.NilIfEmpty(res.Error)); err != nil {
-		return fmt.Errorf("insert delivery log: %w", err)
-	}
-	var tag interface{ RowsAffected() int64 }
+		logID, id, channelID, attempts, res.OK, res.LatencyMs, dbx.NilIfEmpty(res.ProviderMsgID), dbx.NilIfEmpty(res.Error))
+	// 快照列：本次未渲染（NULL 实参）保持原值。
+	const snapshotSet = ", content = COALESCE($4, content), template_id = COALESCE($5, template_id)"
+	snapshot, tplID := dbx.NilIfEmptyBytes(res.Content), dbx.NilIfEmpty(res.TemplateID)
+	dead := !res.OK && (!res.Retryable || attempts >= maxAttempts)
 	switch {
 	case res.OK:
-		tag, err = tx.Exec(ctx, "UPDATE notify_dispatch SET status = 3, next_retry_time = NULL, last_error = NULL"+fence, id, createTime, attempts)
-	case res.Retryable && attempts < maxAttempts:
-		tag, err = tx.Exec(ctx, "UPDATE notify_dispatch SET status = 4, next_retry_time = $4, last_error = $5"+fence,
-			id, createTime, attempts, res.NextRetry, dbx.NilIfEmpty(res.Error))
+		batch.Queue("UPDATE notify_dispatch SET status = 3, next_retry_time = NULL, last_error = NULL"+snapshotSet+fence,
+			id, createTime, attempts, snapshot, tplID)
+	case !dead:
+		// 到期时刻取数据库 now()（Claim 亦按 now() 比较：同一时钟源，AGENTS §13.2）。
+		batch.Queue("UPDATE notify_dispatch SET status = 4, next_retry_time = now() + $6, last_error = $7"+snapshotSet+fence,
+			id, createTime, attempts, snapshot, tplID, res.RetryAfter, dbx.NilIfEmpty(res.Error))
 	default:
-		tag, err = tx.Exec(ctx, "UPDATE notify_dispatch SET status = 5, next_retry_time = NULL, last_error = $4"+fence,
-			id, createTime, attempts, dbx.NilIfEmpty(res.Error))
+		batch.Queue("UPDATE notify_dispatch SET status = 5, next_retry_time = NULL, last_error = $6"+snapshotSet+fence,
+			id, createTime, attempts, snapshot, tplID, dbx.NilIfEmpty(res.Error))
 	}
+	if dead {
+		batch.Queue(
+			`INSERT INTO notify_dlq (id, dispatch_id, event_id, channel_id, recipient, last_error, attempts, replay_state, create_time, update_time)
+			 VALUES ($1, $1, $2, $3, $4, $5, $6, 1, now(), now()) ON CONFLICT (id) DO NOTHING`,
+			id, eventID, channelID, recipient, dbx.NilIfEmpty(res.Error), attempts)
+	}
+	br := tx.SendBatch(ctx, batch)
+	if _, err := br.Exec(); err != nil {
+		_ = br.Close()
+		return fmt.Errorf("insert delivery log: %w", err)
+	}
+	tag, err := br.Exec()
 	if err != nil {
+		_ = br.Close()
 		return fmt.Errorf("finish dispatch: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
+		_ = br.Close()
 		return biz.ErrStaleClaim
 	}
-	if !res.OK && (!res.Retryable || attempts >= maxAttempts) {
-		if _, err := tx.Exec(ctx,
-			`INSERT INTO notify_dlq (id, dispatch_id, event_id, channel_id, recipient, last_error, attempts, replay_state, create_time, update_time)
-			 VALUES ($1, $1, $2, $3, $4, $5, $6, 1, now(), now()) ON CONFLICT (id) DO NOTHING`,
-			id, eventID, channelID, recipient, dbx.NilIfEmpty(res.Error), attempts); err != nil {
+	if dead {
+		if _, err := br.Exec(); err != nil {
+			_ = br.Close()
 			return fmt.Errorf("insert dead letter: %w", err)
 		}
 	}
-	return nil
+	return br.Close()
 }
 
 // ReapExpired implements biz.DispatchRepo：租约过期的 sending 行（可能崩溃于发送中）
@@ -175,7 +178,7 @@ func (r *dispatchRepo) ReapExpired(ctx context.Context, limit int, maxAttempts i
 			return err
 		}
 		for _, d := range expired {
-			res := biz.FinishResult{OK: false, Retryable: true, Error: "lease expired (sender crashed or stalled mid-send)", NextRetry: time.Now().Add(backoff(d.Attempts))}
+			res := biz.FinishResult{OK: false, Retryable: true, Error: "lease expired (sender crashed or stalled mid-send)", RetryAfter: backoff(d.Attempts)}
 			if err := finishDispatch(ctx, tx, d.ID, d.CreateTime, d.Attempts, d.EventID, d.ChannelID, d.Recipient, res, maxAttempts); err != nil {
 				return err
 			}
@@ -186,7 +189,25 @@ func (r *dispatchRepo) ReapExpired(ctx context.Context, limit int, maxAttempts i
 	return n, err
 }
 
-// GetEvent implements biz.DispatchRepo.
-func (r *dispatchRepo) GetEvent(ctx context.Context, id string) (*biz.Event, error) {
-	return getEvent(ctx, r.data.Pool, id)
+// GetEvents implements biz.DispatchRepo：id 集合一次取回；create_time 上界让分区
+// 剪枝只探查不晚于最新 dispatch 的分区。
+func (r *dispatchRepo) GetEvents(ctx context.Context, ids []string, maxCreateTime time.Time) (map[string]*biz.Event, error) {
+	out := make(map[string]*biz.Event, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := r.data.Pool.Query(ctx,
+		"SELECT "+eventColumns+" FROM notify_event WHERE id = ANY($1::uuid[]) AND create_time <= $2", ids, maxCreateTime)
+	if err != nil {
+		return nil, fmt.Errorf("get events: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		ev, err := scanEvent(rows.Scan)
+		if err != nil {
+			return nil, fmt.Errorf("scan event: %w", err)
+		}
+		out[ev.ID] = ev
+	}
+	return out, rows.Err()
 }

@@ -3,10 +3,13 @@
 package data
 
 import (
+	"context"
 	"errors"
 
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/notify"
 	"github.com/lanyulei/reborn/backend/core/internal/conf"
+	"github.com/lanyulei/reborn/backend/core/internal/pkg/operator"
+	"github.com/lanyulei/reborn/backend/kit/dbx"
 	"github.com/lanyulei/reborn/backend/kit/secretbox"
 )
 
@@ -34,3 +37,6 @@ func (b *SecretBox) Seal(plaintext string) ([]byte, error) {
 	}
 	return out, err
 }
+
+// operatorArg 审计列实参：请求上下文里的操作者 ID（uuid 列；未注入 → NULL）。
+func operatorArg(ctx context.Context) any { return dbx.NilIfEmpty(operator.FromContext(ctx)) }

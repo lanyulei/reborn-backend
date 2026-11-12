@@ -6,6 +6,8 @@ import "google/api/annotations.proto";
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 import "buf/validate/validate.proto";
+import "notify/v1/delivery_log.proto";
+import "notify/v1/dispatch.proto";
 import "system/v1/annotations.proto";
 
 option go_package = "github.com/lanyulei/reborn/backend/core/api/notify/v1;v1";
@@ -20,6 +22,24 @@ service NotifyEventService {
       get: "/api/v1/notify/event"
     };
     option (system.v1.title) = "查询通知事件列表";
+  }
+  // GetEvent 事件下钻：事件 + 其全部发送任务（≤100）+ 每个任务最近一次投递明细，
+  // 一次调用覆盖控制台"这条通知到底发到哪了"的排障路径。
+  rpc GetEvent(GetEventRequest) returns (GetEventResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/notify/event/{id}"
+    };
+    option (system.v1.title) = "查询通知事件详情";
+  }
+  // ReplayEvent 事件级重发：以原事件的类型/级别/标题/载荷/收件/分组重新直插一条
+  // source=internal 的新事件（新 id，不带 dedup_key——刻意再投），走完整路由链路；
+  // 用于路由/模板修复后整条重发（死信重放只重发单个失败任务）。
+  rpc ReplayEvent(ReplayEventRequest) returns (ReplayEventResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/notify/event/{id}:replay"
+      body: "*"
+    };
+    option (system.v1.title) = "重发通知事件";
   }
 }
 
@@ -91,10 +111,24 @@ message ListEventsRequest {
     gte: 1
     lte: 4
   }];
+  // 时间窗口：create_time_start 缺省 = (create_time_end 或当前时间) 往前 7 天；
+  // 两者跨度上限 90 天（400 NOTIFY_TIME_RANGE_INVALID）。分区表按时间裁剪，无界
+  // 查询会扫全部分区。
   // create_time_start 落库时间下界（含），可选。
   optional google.protobuf.Timestamp create_time_start = 6;
   // create_time_end 落库时间上界（含），可选。
   optional google.protobuf.Timestamp create_time_end = 7;
+  // severity 严重级精确过滤，可选（1-4）。
+  optional int32 severity = 8 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 4
+  }];
+  // source 来源过滤，可选：api（管道接入）/ internal（core 直插）。
+  optional string source = 9 [(buf.validate.field).string = {in: ["api", "internal"]}];
+  // keyword 标题关键字，可选；模糊匹配 title。
+  optional string keyword = 10 [(buf.validate.field).string.max_len = 64];
+  // group_key 分组键精确过滤，可选（聚合排障）。
+  optional string group_key = 11 [(buf.validate.field).string.max_len = 128];
 }
 
 // ListEventsResponse 分页查询事件响应。
@@ -103,4 +137,32 @@ message ListEventsResponse {
   repeated NotifyEvent items = 1;
   // total 总数。
   int64 total = 2;
+}
+
+// GetEventRequest 事件详情请求。
+message GetEventRequest {
+  // id 事件 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetEventResponse 事件详情响应：事件 + 发送任务 + 每个任务最近一次投递明细。
+message GetEventResponse {
+  // event 事件。
+  NotifyEvent event = 1;
+  // dispatches 该事件生成的发送任务（按生成时间倒序，最多 100 条）。
+  repeated NotifyDispatch dispatches = 2;
+  // latest_logs 每个发送任务最近一次投递明细（按 dispatch_id 对应；无尝试的任务无条目）。
+  repeated NotifyDeliveryLog latest_logs = 3;
+}
+
+// ReplayEventRequest 事件重发请求。
+message ReplayEventRequest {
+  // id 源事件 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// ReplayEventResponse 事件重发响应：新落库的事件。
+message ReplayEventResponse {
+  // event 新事件（source=internal，新 id）。
+  NotifyEvent event = 1;
 }

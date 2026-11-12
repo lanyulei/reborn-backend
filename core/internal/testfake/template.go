@@ -82,6 +82,9 @@ func (s *Store) UpdateTemplate(_ context.Context, id string, upd biz.TemplateUpd
 	if upd.Body != nil {
 		e.tpl.Body = *upd.Body
 	}
+	if upd.Format != nil {
+		e.tpl.Format = *upd.Format
+	}
 	if upd.Enabled != nil {
 		e.tpl.Enabled = *upd.Enabled
 	}
@@ -156,4 +159,19 @@ func (s *Store) ListTemplates(_ context.Context, filter biz.TemplateFilter, page
 	}
 	end := min(start+pageSize, total)
 	return items[start:end], total, nil
+}
+
+// ListTemplatesByBiz implements biz 仓储接口：biz 内全部未删除行。
+func (s *Store) ListTemplatesByBiz(_ context.Context, bizID string) ([]*biz.Template, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []*biz.Template
+	for _, e := range s.templates {
+		if e.deleted || e.tpl.BizID != bizID {
+			continue
+		}
+		out = append(out, cloneTemplate(e.tpl))
+	}
+	slices.SortFunc(out, func(a, b *biz.Template) int { return strings.Compare(a.ID, b.ID) })
+	return out, nil
 }

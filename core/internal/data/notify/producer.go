@@ -86,11 +86,11 @@ func (r *producerRepo) CreateProducer(ctx context.Context, producer *biz.Produce
 	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO notify_producer
-			     (id, name, biz_id, event_whitelist, token_hash, expire_time, enabled, create_time, update_time, qps_limit, daily_limit)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+			     (id, name, biz_id, event_whitelist, token_hash, expire_time, enabled, create_time, update_time, qps_limit, daily_limit, create_user, update_user)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)`,
 			producer.ID, producer.Name, producer.BizID,
 			dbx.TextArray(producer.EventWhitelist), producer.TokenHash, producer.ExpireTime,
-			producer.Enabled, producer.CreateTime, producer.UpdateTime, producer.QPSLimit, producer.DailyLimit); err != nil {
+			producer.Enabled, producer.CreateTime, producer.UpdateTime, producer.QPSLimit, producer.DailyLimit, operatorArg(ctx)); err != nil {
 			return mapProducerUniqueViolation(fmt.Errorf("insert producer: %w", err))
 		}
 		return bumpCfgVersion(ctx, tx, "notify_producer")
@@ -119,6 +119,7 @@ func (r *producerRepo) UpdateProducer(ctx context.Context, id string, upd biz.Pr
 	if len(sets) == 0 {
 		return nil
 	}
+	add("update_user", operatorArg(ctx))
 	args = append(args, id)
 	query := "UPDATE notify_producer SET " + strings.Join(sets, ", ") +
 		", update_time = now() WHERE id = $" + strconv.Itoa(len(args)) + " AND delete_time IS NULL"
@@ -140,9 +141,9 @@ func (r *producerRepo) UpdateProducerToken(ctx context.Context, id string, token
 	var producer *biz.Producer
 	err := dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		row := tx.QueryRow(ctx,
-			"UPDATE notify_producer SET token_hash = $2, update_time = now()"+
+			"UPDATE notify_producer SET token_hash = $2, update_time = now(), update_user = $3"+
 				" WHERE id = $1 AND delete_time IS NULL RETURNING "+producerSelectColumns,
-			id, tokenHash)
+			id, tokenHash, operatorArg(ctx))
 		p, err := scanProducer(row.Scan)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -163,8 +164,8 @@ func (r *producerRepo) UpdateProducerToken(ctx context.Context, id string, token
 func (r *producerRepo) DeleteProducer(ctx context.Context, id string) error {
 	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx,
-			"UPDATE notify_producer SET delete_time = now(), update_time = now()"+
-				" WHERE id = $1 AND delete_time IS NULL", id)
+			"UPDATE notify_producer SET delete_time = now(), update_time = now(), delete_user = $2"+
+				" WHERE id = $1 AND delete_time IS NULL", id, operatorArg(ctx))
 		if err != nil {
 			return fmt.Errorf("soft delete producer: %w", err)
 		}

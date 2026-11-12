@@ -27,9 +27,9 @@ dep:
 	buf dep update
 
 .PHONY: run
-# run 本地运行（必须用 kratos CLI）。
+# run 本地启动管道服务（kratos CLI；显式指向 cmd/notify，避免后续新增子命令时交互询问）。
 run:
-	kratos run
+	kratos run $(CURDIR)/cmd/notify
 
 .PHONY: format
 # format 按 gofumpt 规范格式化全部源码。

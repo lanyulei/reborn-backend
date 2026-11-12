@@ -79,16 +79,21 @@ func (e *Event) PayloadObject() map[string]any {
 	return m
 }
 
-// PayloadValue 把 payload 解码为任意 JSON 值（模板 .Payload 注入）；非法返回原文字符串。
+// PayloadValue 把 payload 解码为模板 .Payload 注入值：恒为对象（map），非对象载荷
+// （数组/标量/非法 JSON）包成 {"_raw": 值}——core 写入校验的试渲染按 map 口径执行，
+// 模板里 {{.Payload.host}} 对任何载荷形态都只会得到 "<no value>" 而非执行错误死信。
 func (e *Event) PayloadValue() any {
 	if len(e.Payload) == 0 {
 		return nil
 	}
 	var v any
 	if err := json.Unmarshal(e.Payload, &v); err != nil {
-		return string(e.Payload)
+		return map[string]any{"_raw": string(e.Payload)}
 	}
-	return v
+	if m, ok := v.(map[string]any); ok {
+		return m
+	}
+	return map[string]any{"_raw": v}
 }
 
 // Dispatch 发送任务领域模型（notify_dispatch 一行）。TemplateID 空 = NULL；
@@ -113,6 +118,7 @@ type Dispatch struct {
 type DispatchContent struct {
 	Subject         string      `json:"subject,omitempty"`
 	Body            string      `json:"body,omitempty"`
+	Format          string      `json:"format,omitempty"` // 生效输出格式（随快照固化，重试不变）
 	TemplateID      string      `json:"template_id,omitempty"`
 	TemplateVersion int32       `json:"template_version,omitempty"`
 	Agg             *AggContext `json:"agg,omitempty"`
@@ -164,6 +170,8 @@ type DeadLetter struct {
 	ReplayState int32
 	CreateTime  time.Time
 	UpdateTime  time.Time
+	// Content 死 dispatch 的 content 快照（重放保留聚合上下文用）；源 dispatch 已清理则 nil。
+	Content []byte
 }
 
 // SendKey 对外幂等键：hex(sha256(event|channel|recipient|dispatch))[:32]。

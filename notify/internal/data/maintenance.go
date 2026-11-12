@@ -29,6 +29,11 @@ func partitionName(table string, month time.Time) string {
 
 var partitionSuffix = regexp.MustCompile(`_(\d{4})_(\d{2})$`)
 
+// partitionBoundLayout 分区边界字面量带显式 UTC 偏移：边界是绝对时刻（迁移建的
+// 分区为 UTC 月初），不得随会话 TimeZone 漂移——DSN 设 Asia/Shanghai 时裸日期字面量
+// 会被解释成 +08 月初，与相邻分区重叠 8 小时，ATTACH 永久失败、行全部落 DEFAULT。
+const partitionBoundLayout = "2006-01-02 15:04:05+00"
+
 // EnsurePartition implements biz.MaintenanceRepo：
 //  1. 独立建表（LIKE 父表含默认值/约束）并加区间 CHECK（ATTACH 时免扫描）；
 //  2. 单短事务 lock_timeout=2s：迁出 DEFAULT 分区中该区间行 → ATTACH。
@@ -47,7 +52,7 @@ func (r *maintenanceRepo) EnsurePartition(ctx context.Context, table string, mon
 	if exists {
 		return nil
 	}
-	loS, hiS := lo.Format("2006-01-02"), hi.Format("2006-01-02")
+	loS, hiS := lo.Format(partitionBoundLayout), hi.Format(partitionBoundLayout)
 	// 标识符来自固定表名 + 格式化日期，无外部输入；SQL 文本仅拼接标识符与字面量。
 	if _, err := r.data.Pool.Exec(ctx, fmt.Sprintf(
 		"CREATE TABLE IF NOT EXISTS %s (LIKE %s INCLUDING DEFAULTS INCLUDING CONSTRAINTS)", name, table)); err != nil {

@@ -101,7 +101,11 @@ type SilenceSpec struct {
 	SeverityMax *int32 `protobuf:"varint,2,opt,name=severity_max,json=severityMax,proto3,oneof" json:"severity_max,omitempty"`
 	// time_window 免打扰时间窗，可选；缺省全程静默（更新时整组替换语义下
 	// 不传即清除窗口）。
-	TimeWindow    *SilenceWindow `protobuf:"bytes,3,opt,name=time_window,json=timeWindow,proto3,oneof" json:"time_window,omitempty"`
+	TimeWindow *SilenceWindow `protobuf:"bytes,3,opt,name=time_window,json=timeWindow,proto3,oneof" json:"time_window,omitempty"`
+	// name 可读名称，可选（≤64；控制台列表展示）。
+	Name *string `protobuf:"bytes,4,opt,name=name,proto3,oneof" json:"name,omitempty"`
+	// description 说明，可选（≤255）。
+	Description   *string `protobuf:"bytes,5,opt,name=description,proto3,oneof" json:"description,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -157,6 +161,20 @@ func (x *SilenceSpec) GetTimeWindow() *SilenceWindow {
 	return nil
 }
 
+func (x *SilenceSpec) GetName() string {
+	if x != nil && x.Name != nil {
+		return *x.Name
+	}
+	return ""
+}
+
+func (x *SilenceSpec) GetDescription() string {
+	if x != nil && x.Description != nil {
+		return *x.Description
+	}
+	return ""
+}
+
 // NotifySilence 静默规则实体。
 type NotifySilence struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -175,7 +193,11 @@ type NotifySilence struct {
 	// create_time 创建时间。
 	CreateTime *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=create_time,json=createTime,proto3" json:"create_time,omitempty"`
 	// update_time 更新时间。
-	UpdateTime    *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=update_time,json=updateTime,proto3" json:"update_time,omitempty"`
+	UpdateTime *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=update_time,json=updateTime,proto3" json:"update_time,omitempty"`
+	// name 可读名称（空 = 未命名）。
+	Name string `protobuf:"bytes,9,opt,name=name,proto3" json:"name,omitempty"`
+	// description 说明。
+	Description   string `protobuf:"bytes,10,opt,name=description,proto3" json:"description,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -264,6 +286,20 @@ func (x *NotifySilence) GetUpdateTime() *timestamppb.Timestamp {
 		return x.UpdateTime
 	}
 	return nil
+}
+
+func (x *NotifySilence) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *NotifySilence) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
 }
 
 // CreateSilenceRequest 创建静默规则请求。
@@ -440,9 +476,11 @@ func (x *UpdateSilenceRequest) GetEnabled() bool {
 	return false
 }
 
-// UpdateSilenceResponse 更新静默规则响应。
+// UpdateSilenceResponse 更新静默规则响应：返回更新后的规则。
 type UpdateSilenceResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// silence 更新后的静默规则。
+	Silence       *NotifySilence `protobuf:"bytes,1,opt,name=silence,proto3" json:"silence,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -475,6 +513,13 @@ func (x *UpdateSilenceResponse) ProtoReflect() protoreflect.Message {
 // Deprecated: Use UpdateSilenceResponse.ProtoReflect.Descriptor instead.
 func (*UpdateSilenceResponse) Descriptor() ([]byte, []int) {
 	return file_notify_v1_silence_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *UpdateSilenceResponse) GetSilence() *NotifySilence {
+	if x != nil {
+		return x.Silence
+	}
+	return nil
 }
 
 // DeleteSilenceRequest 删除静默规则请求。
@@ -659,7 +704,7 @@ type ListSilencesRequest struct {
 	Page int64 `protobuf:"varint,1,opt,name=page,proto3" json:"page,omitempty"`
 	// page_size 每页数量，1-100。
 	PageSize int32 `protobuf:"varint,2,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
-	// keyword 关键字，可选；模糊匹配 event_pattern。
+	// keyword 关键字，可选；模糊匹配 name / event_pattern。
 	Keyword *string `protobuf:"bytes,3,opt,name=keyword,proto3,oneof" json:"keyword,omitempty"`
 	// enabled 启用状态过滤，可选。
 	Enabled *bool `protobuf:"varint,4,opt,name=enabled,proto3,oneof" json:"enabled,omitempty"`
@@ -798,14 +843,18 @@ const file_notify_v1_silence_proto_rawDesc = "" +
 	"\x05start\x18\x01 \x01(\tB*\xbaH'r%\x10\x05\x18\x052\x1f^([01][0-9]|2[0-3]):[0-5][0-9]$R\x05start\x12<\n" +
 	"\x03end\x18\x02 \x01(\tB*\xbaH'r%\x10\x05\x18\x052\x1f^([01][0-9]|2[0-3]):[0-5][0-9]$R\x03end\x12\x1e\n" +
 	"\x02tz\x18\x03 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@H\x00R\x02tz\x88\x01\x01B\x05\n" +
-	"\x03_tz\"\x94\x02\n" +
+	"\x03_tz\"\x80\x03\n" +
 	"\vSilenceSpec\x12q\n" +
 	"\revent_pattern\x18\x01 \x01(\tBL\xbaHIrG\x10\x01\x18\x80\x012@^(\\*|[a-z0-9][a-z0-9._-]{0,127}|[a-z0-9][a-z0-9._-]{0,125}\\.\\*)$R\feventPattern\x121\n" +
 	"\fseverity_max\x18\x02 \x01(\x05B\t\xbaH\x06\x1a\x04\x18\x04(\x01H\x00R\vseverityMax\x88\x01\x01\x12>\n" +
 	"\vtime_window\x18\x03 \x01(\v2\x18.notify.v1.SilenceWindowH\x01R\n" +
-	"timeWindow\x88\x01\x01B\x0f\n" +
+	"timeWindow\x88\x01\x01\x12 \n" +
+	"\x04name\x18\x04 \x01(\tB\a\xbaH\x04r\x02\x18@H\x02R\x04name\x88\x01\x01\x12/\n" +
+	"\vdescription\x18\x05 \x01(\tB\b\xbaH\x05r\x03\x18\xff\x01H\x03R\vdescription\x88\x01\x01B\x0f\n" +
 	"\r_severity_maxB\x0e\n" +
-	"\f_time_window\"\xe2\x02\n" +
+	"\f_time_windowB\a\n" +
+	"\x05_nameB\x0e\n" +
+	"\f_description\"\x98\x03\n" +
 	"\rNotifySilence\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x15\n" +
 	"\x06biz_id\x18\x02 \x01(\tR\x05bizId\x12#\n" +
@@ -817,7 +866,10 @@ const file_notify_v1_silence_proto_rawDesc = "" +
 	"\vcreate_time\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"createTime\x12;\n" +
 	"\vupdate_time\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"updateTimeB\x0e\n" +
+	"updateTime\x12\x12\n" +
+	"\x04name\x18\t \x01(\tR\x04name\x12 \n" +
+	"\vdescription\x18\n" +
+	" \x01(\tR\vdescriptionB\x0e\n" +
 	"\f_time_window\"\xb3\x01\n" +
 	"\x14CreateSilenceRequest\x129\n" +
 	"\x06biz_id\x18\x01 \x01(\tB\x1d\xbaH\x1ar\x18\x10\x01\x18@2\x12^[a-z0-9_-]{1,64}$H\x00R\x05bizId\x88\x01\x01\x12*\n" +
@@ -835,8 +887,9 @@ const file_notify_v1_silence_proto_rawDesc = "" +
 	"\x1fnotify.silence.update.non_empty\x120at least one of spec or enabled must be provided\x1a#has(this.spec) || has(this.enabled)B\a\n" +
 	"\x05_specB\n" +
 	"\n" +
-	"\b_enabled\"\x17\n" +
-	"\x15UpdateSilenceResponse\"0\n" +
+	"\b_enabled\"K\n" +
+	"\x15UpdateSilenceResponse\x122\n" +
+	"\asilence\x18\x01 \x01(\v2\x18.notify.v1.NotifySilenceR\asilence\"0\n" +
 	"\x14DeleteSilenceRequest\x12\x18\n" +
 	"\x02id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\"\x17\n" +
 	"\x15DeleteSilenceResponse\"-\n" +
@@ -903,23 +956,24 @@ var file_notify_v1_silence_proto_depIdxs = []int32{
 	1,  // 4: notify.v1.CreateSilenceRequest.spec:type_name -> notify.v1.SilenceSpec
 	2,  // 5: notify.v1.CreateSilenceResponse.silence:type_name -> notify.v1.NotifySilence
 	1,  // 6: notify.v1.UpdateSilenceRequest.spec:type_name -> notify.v1.SilenceSpec
-	2,  // 7: notify.v1.GetSilenceResponse.silence:type_name -> notify.v1.NotifySilence
-	2,  // 8: notify.v1.ListSilencesResponse.items:type_name -> notify.v1.NotifySilence
-	3,  // 9: notify.v1.NotifySilenceService.CreateSilence:input_type -> notify.v1.CreateSilenceRequest
-	5,  // 10: notify.v1.NotifySilenceService.UpdateSilence:input_type -> notify.v1.UpdateSilenceRequest
-	7,  // 11: notify.v1.NotifySilenceService.DeleteSilence:input_type -> notify.v1.DeleteSilenceRequest
-	9,  // 12: notify.v1.NotifySilenceService.GetSilence:input_type -> notify.v1.GetSilenceRequest
-	11, // 13: notify.v1.NotifySilenceService.ListSilences:input_type -> notify.v1.ListSilencesRequest
-	4,  // 14: notify.v1.NotifySilenceService.CreateSilence:output_type -> notify.v1.CreateSilenceResponse
-	6,  // 15: notify.v1.NotifySilenceService.UpdateSilence:output_type -> notify.v1.UpdateSilenceResponse
-	8,  // 16: notify.v1.NotifySilenceService.DeleteSilence:output_type -> notify.v1.DeleteSilenceResponse
-	10, // 17: notify.v1.NotifySilenceService.GetSilence:output_type -> notify.v1.GetSilenceResponse
-	12, // 18: notify.v1.NotifySilenceService.ListSilences:output_type -> notify.v1.ListSilencesResponse
-	14, // [14:19] is the sub-list for method output_type
-	9,  // [9:14] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	2,  // 7: notify.v1.UpdateSilenceResponse.silence:type_name -> notify.v1.NotifySilence
+	2,  // 8: notify.v1.GetSilenceResponse.silence:type_name -> notify.v1.NotifySilence
+	2,  // 9: notify.v1.ListSilencesResponse.items:type_name -> notify.v1.NotifySilence
+	3,  // 10: notify.v1.NotifySilenceService.CreateSilence:input_type -> notify.v1.CreateSilenceRequest
+	5,  // 11: notify.v1.NotifySilenceService.UpdateSilence:input_type -> notify.v1.UpdateSilenceRequest
+	7,  // 12: notify.v1.NotifySilenceService.DeleteSilence:input_type -> notify.v1.DeleteSilenceRequest
+	9,  // 13: notify.v1.NotifySilenceService.GetSilence:input_type -> notify.v1.GetSilenceRequest
+	11, // 14: notify.v1.NotifySilenceService.ListSilences:input_type -> notify.v1.ListSilencesRequest
+	4,  // 15: notify.v1.NotifySilenceService.CreateSilence:output_type -> notify.v1.CreateSilenceResponse
+	6,  // 16: notify.v1.NotifySilenceService.UpdateSilence:output_type -> notify.v1.UpdateSilenceResponse
+	8,  // 17: notify.v1.NotifySilenceService.DeleteSilence:output_type -> notify.v1.DeleteSilenceResponse
+	10, // 18: notify.v1.NotifySilenceService.GetSilence:output_type -> notify.v1.GetSilenceResponse
+	12, // 19: notify.v1.NotifySilenceService.ListSilences:output_type -> notify.v1.ListSilencesResponse
+	15, // [15:20] is the sub-list for method output_type
+	10, // [10:15] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_notify_v1_silence_proto_init() }

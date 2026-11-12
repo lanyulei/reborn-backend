@@ -12,6 +12,7 @@ import (
 	_ "google.golang.org/genproto/googleapis/api/annotations"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	structpb "google.golang.org/protobuf/types/known/structpb"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
@@ -105,7 +106,11 @@ type RouteSpec struct {
 	// aggregate_window_s 聚合窗口秒数，可选；未指定默认 0（不聚合），>0 须 30-300。
 	AggregateWindowS *int32 `protobuf:"varint,7,opt,name=aggregate_window_s,json=aggregateWindowS,proto3,oneof" json:"aggregate_window_s,omitempty"`
 	// suppress_threshold 聚合抑制阈值，可选；未指定默认 500。
-	SuppressThreshold *int32 `protobuf:"varint,8,opt,name=suppress_threshold,json=suppressThreshold,proto3,oneof" json:"suppress_threshold,omitempty"`
+	// name 可读名称，可选（≤64；控制台列表展示，空则回退 event_pattern）。
+	Name *string `protobuf:"bytes,10,opt,name=name,proto3,oneof" json:"name,omitempty"`
+	// description 说明，可选（≤255）。
+	Description       *string `protobuf:"bytes,11,opt,name=description,proto3,oneof" json:"description,omitempty"`
+	SuppressThreshold *int32  `protobuf:"varint,8,opt,name=suppress_threshold,json=suppressThreshold,proto3,oneof" json:"suppress_threshold,omitempty"`
 	// suppress_duration_m 抑制时长分钟，可选；未指定默认 30。
 	SuppressDurationM *int32 `protobuf:"varint,9,opt,name=suppress_duration_m,json=suppressDurationM,proto3,oneof" json:"suppress_duration_m,omitempty"`
 	unknownFields     protoimpl.UnknownFields
@@ -191,6 +196,20 @@ func (x *RouteSpec) GetAggregateWindowS() int32 {
 	return 0
 }
 
+func (x *RouteSpec) GetName() string {
+	if x != nil && x.Name != nil {
+		return *x.Name
+	}
+	return ""
+}
+
+func (x *RouteSpec) GetDescription() string {
+	if x != nil && x.Description != nil {
+		return *x.Description
+	}
+	return ""
+}
+
 func (x *RouteSpec) GetSuppressThreshold() int32 {
 	if x != nil && x.SuppressThreshold != nil {
 		return *x.SuppressThreshold
@@ -226,6 +245,10 @@ type NotifyRoute struct {
 	Recipient *RouteRecipient `protobuf:"bytes,8,opt,name=recipient,proto3" json:"recipient,omitempty"`
 	// aggregate_window_s 聚合窗口秒数；0=不聚合，>0 且事件带 group_key 时聚合微批。
 	AggregateWindowS int32 `protobuf:"varint,9,opt,name=aggregate_window_s,json=aggregateWindowS,proto3" json:"aggregate_window_s,omitempty"`
+	// name 可读名称（空 = 未命名）。
+	Name string `protobuf:"bytes,15,opt,name=name,proto3" json:"name,omitempty"`
+	// description 说明。
+	Description string `protobuf:"bytes,16,opt,name=description,proto3" json:"description,omitempty"`
 	// suppress_threshold 聚合抑制阈值：分组计数超过后汇总转摘要模式。
 	SuppressThreshold int32 `protobuf:"varint,10,opt,name=suppress_threshold,json=suppressThreshold,proto3" json:"suppress_threshold,omitempty"`
 	// suppress_duration_m 抑制时长（分钟）：超阈值后同 group_key 静默窗口。
@@ -331,6 +354,20 @@ func (x *NotifyRoute) GetAggregateWindowS() int32 {
 		return x.AggregateWindowS
 	}
 	return 0
+}
+
+func (x *NotifyRoute) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *NotifyRoute) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
 }
 
 func (x *NotifyRoute) GetSuppressThreshold() int32 {
@@ -542,9 +579,11 @@ func (x *UpdateRouteRequest) GetEnabled() bool {
 	return false
 }
 
-// UpdateRouteResponse 更新路由响应。
+// UpdateRouteResponse 更新路由响应：返回更新后的路由（免二次 GET）。
 type UpdateRouteResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// route 更新后的路由。
+	Route         *NotifyRoute `protobuf:"bytes,1,opt,name=route,proto3" json:"route,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -577,6 +616,13 @@ func (x *UpdateRouteResponse) ProtoReflect() protoreflect.Message {
 // Deprecated: Use UpdateRouteResponse.ProtoReflect.Descriptor instead.
 func (*UpdateRouteResponse) Descriptor() ([]byte, []int) {
 	return file_notify_v1_route_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *UpdateRouteResponse) GetRoute() *NotifyRoute {
+	if x != nil {
+		return x.Route
+	}
+	return nil
 }
 
 // DeleteRouteRequest 删除路由请求。
@@ -761,7 +807,7 @@ type ListRoutesRequest struct {
 	Page int64 `protobuf:"varint,1,opt,name=page,proto3" json:"page,omitempty"`
 	// page_size 每页数量，1-100。
 	PageSize int32 `protobuf:"varint,2,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
-	// keyword 关键字，可选；模糊匹配 event_pattern。
+	// keyword 关键字，可选；模糊匹配 name / event_pattern。
 	Keyword *string `protobuf:"bytes,3,opt,name=keyword,proto3,oneof" json:"keyword,omitempty"`
 	// enabled 启用状态过滤，可选。
 	Enabled *bool `protobuf:"varint,4,opt,name=enabled,proto3,oneof" json:"enabled,omitempty"`
@@ -891,14 +937,269 @@ func (x *ListRoutesResponse) GetTotal() int64 {
 	return 0
 }
 
+// PreviewRoutingRequest 路由试算请求：一条假想事件。
+type PreviewRoutingRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// biz_id 业务标识，缺省 default。
+	BizId *string `protobuf:"bytes,1,opt,name=biz_id,json=bizId,proto3,oneof" json:"biz_id,omitempty"`
+	// event_type 事件类型（小写点分事件名）。
+	EventType string `protobuf:"bytes,2,opt,name=event_type,json=eventType,proto3" json:"event_type,omitempty"`
+	// severity 严重级 1-4。
+	Severity int32 `protobuf:"varint,3,opt,name=severity,proto3" json:"severity,omitempty"`
+	// payload 载荷（tag_match 比对用），可选。
+	Payload *structpb.Struct `protobuf:"bytes,4,opt,name=payload,proto3" json:"payload,omitempty"`
+	// group_key 分组键，可选（判定是否进入聚合）。
+	GroupKey      *string `protobuf:"bytes,5,opt,name=group_key,json=groupKey,proto3,oneof" json:"group_key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PreviewRoutingRequest) Reset() {
+	*x = PreviewRoutingRequest{}
+	mi := &file_notify_v1_route_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PreviewRoutingRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PreviewRoutingRequest) ProtoMessage() {}
+
+func (x *PreviewRoutingRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_notify_v1_route_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PreviewRoutingRequest.ProtoReflect.Descriptor instead.
+func (*PreviewRoutingRequest) Descriptor() ([]byte, []int) {
+	return file_notify_v1_route_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *PreviewRoutingRequest) GetBizId() string {
+	if x != nil && x.BizId != nil {
+		return *x.BizId
+	}
+	return ""
+}
+
+func (x *PreviewRoutingRequest) GetEventType() string {
+	if x != nil {
+		return x.EventType
+	}
+	return ""
+}
+
+func (x *PreviewRoutingRequest) GetSeverity() int32 {
+	if x != nil {
+		return x.Severity
+	}
+	return 0
+}
+
+func (x *PreviewRoutingRequest) GetPayload() *structpb.Struct {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+func (x *PreviewRoutingRequest) GetGroupKey() string {
+	if x != nil && x.GroupKey != nil {
+		return *x.GroupKey
+	}
+	return ""
+}
+
+// PreviewChannel 试算命中的渠道实例及其模板解析结果。
+type PreviewChannel struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// id 渠道 ID。
+	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	// name 渠道名。
+	Name string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	// type 渠道类型（email/webhook/dingtalk/wecom/feishu）。
+	Type string `protobuf:"bytes,3,opt,name=type,proto3" json:"type,omitempty"`
+	// enabled 是否启用（停用实例会被管道跳过——命中也不发）。
+	Enabled bool `protobuf:"varint,4,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	// template_id 解析到的模板（空 = 内置默认模板）。
+	TemplateId    string `protobuf:"bytes,5,opt,name=template_id,json=templateId,proto3" json:"template_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PreviewChannel) Reset() {
+	*x = PreviewChannel{}
+	mi := &file_notify_v1_route_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PreviewChannel) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PreviewChannel) ProtoMessage() {}
+
+func (x *PreviewChannel) ProtoReflect() protoreflect.Message {
+	mi := &file_notify_v1_route_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PreviewChannel.ProtoReflect.Descriptor instead.
+func (*PreviewChannel) Descriptor() ([]byte, []int) {
+	return file_notify_v1_route_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *PreviewChannel) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *PreviewChannel) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *PreviewChannel) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *PreviewChannel) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
+func (x *PreviewChannel) GetTemplateId() string {
+	if x != nil {
+		return x.TemplateId
+	}
+	return ""
+}
+
+// PreviewRoutingResponse 路由试算结果。
+type PreviewRoutingResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// silenced 是否被静默规则抑制（为 true 时管道不会选路）。
+	Silenced bool `protobuf:"varint,1,opt,name=silenced,proto3" json:"silenced,omitempty"`
+	// silence_ids 命中的静默规则。
+	SilenceIds []string `protobuf:"bytes,2,rep,name=silence_ids,json=silenceIds,proto3" json:"silence_ids,omitempty"`
+	// matched 生效路由（candidates 的第一条；无命中为空）。
+	Matched *NotifyRoute `protobuf:"bytes,3,opt,name=matched,proto3" json:"matched,omitempty"`
+	// candidates 全部命中路由（按决胜序：priority → 精确度 → id）。
+	Candidates []*NotifyRoute `protobuf:"bytes,4,rep,name=candidates,proto3" json:"candidates,omitempty"`
+	// channels 生效路由绑定的渠道实例（含停用标记与模板解析）。
+	Channels []*PreviewChannel `protobuf:"bytes,5,rep,name=channels,proto3" json:"channels,omitempty"`
+	// aggregate 是否进入聚合窗口（路由 aggregate_window_s > 0 且事件带 group_key）。
+	Aggregate     bool `protobuf:"varint,6,opt,name=aggregate,proto3" json:"aggregate,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PreviewRoutingResponse) Reset() {
+	*x = PreviewRoutingResponse{}
+	mi := &file_notify_v1_route_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PreviewRoutingResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PreviewRoutingResponse) ProtoMessage() {}
+
+func (x *PreviewRoutingResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_notify_v1_route_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PreviewRoutingResponse.ProtoReflect.Descriptor instead.
+func (*PreviewRoutingResponse) Descriptor() ([]byte, []int) {
+	return file_notify_v1_route_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *PreviewRoutingResponse) GetSilenced() bool {
+	if x != nil {
+		return x.Silenced
+	}
+	return false
+}
+
+func (x *PreviewRoutingResponse) GetSilenceIds() []string {
+	if x != nil {
+		return x.SilenceIds
+	}
+	return nil
+}
+
+func (x *PreviewRoutingResponse) GetMatched() *NotifyRoute {
+	if x != nil {
+		return x.Matched
+	}
+	return nil
+}
+
+func (x *PreviewRoutingResponse) GetCandidates() []*NotifyRoute {
+	if x != nil {
+		return x.Candidates
+	}
+	return nil
+}
+
+func (x *PreviewRoutingResponse) GetChannels() []*PreviewChannel {
+	if x != nil {
+		return x.Channels
+	}
+	return nil
+}
+
+func (x *PreviewRoutingResponse) GetAggregate() bool {
+	if x != nil {
+		return x.Aggregate
+	}
+	return false
+}
+
 var File_notify_v1_route_proto protoreflect.FileDescriptor
 
 const file_notify_v1_route_proto_rawDesc = "" +
 	"\n" +
-	"\x15notify/v1/route.proto\x12\tnotify.v1\x1a\x1cgoogle/api/annotations.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1bbuf/validate/validate.proto\x1a\x1bsystem/v1/annotations.proto\"_\n" +
+	"\x15notify/v1/route.proto\x12\tnotify.v1\x1a\x1cgoogle/api/annotations.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1bbuf/validate/validate.proto\x1a\x1bsystem/v1/annotations.proto\"_\n" +
 	"\x0eRouteRecipient\x12)\n" +
 	"\x05fixed\x18\x01 \x03(\tB\x13\xbaH\x10\x92\x01\r\b\x00\x10d\"\ar\x05\x10\x01\x18\xff\x01R\x05fixed\x12\"\n" +
-	"\fsubscription\x18\x02 \x01(\bR\fsubscription\"\x8c\x06\n" +
+	"\fsubscription\x18\x02 \x01(\bR\fsubscription\"\xf8\x06\n" +
 	"\tRouteSpec\x12q\n" +
 	"\revent_pattern\x18\x01 \x01(\tBL\xbaHIrG\x10\x01\x18\x80\x012@^(\\*|[a-z0-9][a-z0-9._-]{0,127}|[a-z0-9][a-z0-9._-]{0,125}\\.\\*)$R\feventPattern\x121\n" +
 	"\fseverity_min\x18\x02 \x01(\x05B\t\xbaH\x06\x1a\x04\x18\x04(\x01H\x00R\vseverityMin\x88\x01\x01\x12\\\n" +
@@ -908,18 +1209,23 @@ const file_notify_v1_route_proto_rawDesc = "" +
 	"channelIds\x127\n" +
 	"\trecipient\x18\x06 \x01(\v2\x19.notify.v1.RouteRecipientR\trecipient\x12=\n" +
 	"\x12aggregate_window_s\x18\a \x01(\x05B\n" +
-	"\xbaH\a\x1a\x05\x18\xac\x02(\x00H\x02R\x10aggregateWindowS\x88\x01\x01\x12?\n" +
-	"\x12suppress_threshold\x18\b \x01(\x05B\v\xbaH\b\x1a\x06\x18\xa0\x8d\x06(\x01H\x03R\x11suppressThreshold\x88\x01\x01\x12?\n" +
+	"\xbaH\a\x1a\x05\x18\xac\x02(\x00H\x02R\x10aggregateWindowS\x88\x01\x01\x12 \n" +
+	"\x04name\x18\n" +
+	" \x01(\tB\a\xbaH\x04r\x02\x18@H\x03R\x04name\x88\x01\x01\x12/\n" +
+	"\vdescription\x18\v \x01(\tB\b\xbaH\x05r\x03\x18\xff\x01H\x04R\vdescription\x88\x01\x01\x12?\n" +
+	"\x12suppress_threshold\x18\b \x01(\x05B\v\xbaH\b\x1a\x06\x18\xa0\x8d\x06(\x01H\x05R\x11suppressThreshold\x88\x01\x01\x12?\n" +
 	"\x13suppress_duration_m\x18\t \x01(\x05B\n" +
-	"\xbaH\a\x1a\x05\x18\xa0\v(\x01H\x04R\x11suppressDurationM\x88\x01\x01\x1a;\n" +
+	"\xbaH\a\x1a\x05\x18\xa0\v(\x01H\x06R\x11suppressDurationM\x88\x01\x01\x1a;\n" +
 	"\rTagMatchEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\x0f\n" +
 	"\r_severity_minB\v\n" +
 	"\t_priorityB\x15\n" +
-	"\x13_aggregate_window_sB\x15\n" +
+	"\x13_aggregate_window_sB\a\n" +
+	"\x05_nameB\x0e\n" +
+	"\f_descriptionB\x15\n" +
 	"\x13_suppress_thresholdB\x16\n" +
-	"\x14_suppress_duration_m\"\x93\x05\n" +
+	"\x14_suppress_duration_m\"\xc9\x05\n" +
 	"\vNotifyRoute\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x15\n" +
 	"\x06biz_id\x18\x02 \x01(\tR\x05bizId\x12#\n" +
@@ -930,7 +1236,9 @@ const file_notify_v1_route_proto_rawDesc = "" +
 	"\vchannel_ids\x18\a \x03(\tR\n" +
 	"channelIds\x127\n" +
 	"\trecipient\x18\b \x01(\v2\x19.notify.v1.RouteRecipientR\trecipient\x12,\n" +
-	"\x12aggregate_window_s\x18\t \x01(\x05R\x10aggregateWindowS\x12-\n" +
+	"\x12aggregate_window_s\x18\t \x01(\x05R\x10aggregateWindowS\x12\x12\n" +
+	"\x04name\x18\x0f \x01(\tR\x04name\x12 \n" +
+	"\vdescription\x18\x10 \x01(\tR\vdescription\x12-\n" +
 	"\x12suppress_threshold\x18\n" +
 	" \x01(\x05R\x11suppressThreshold\x12.\n" +
 	"\x13suppress_duration_m\x18\v \x01(\x05R\x11suppressDurationM\x12\x18\n" +
@@ -958,8 +1266,9 @@ const file_notify_v1_route_proto_rawDesc = "" +
 	"\x1dnotify.route.update.non_empty\x120at least one of spec or enabled must be provided\x1a#has(this.spec) || has(this.enabled)B\a\n" +
 	"\x05_specB\n" +
 	"\n" +
-	"\b_enabled\"\x15\n" +
-	"\x13UpdateRouteResponse\".\n" +
+	"\b_enabled\"C\n" +
+	"\x13UpdateRouteResponse\x12,\n" +
+	"\x05route\x18\x01 \x01(\v2\x16.notify.v1.NotifyRouteR\x05route\".\n" +
 	"\x12DeleteRouteRequest\x12\x18\n" +
 	"\x02id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\"\x15\n" +
 	"\x13DeleteRouteResponse\"+\n" +
@@ -980,14 +1289,42 @@ const file_notify_v1_route_proto_rawDesc = "" +
 	"\a_biz_id\"X\n" +
 	"\x12ListRoutesResponse\x12,\n" +
 	"\x05items\x18\x01 \x03(\v2\x16.notify.v1.NotifyRouteR\x05items\x12\x14\n" +
-	"\x05total\x18\x02 \x01(\x03R\x05total2\xb1\x05\n" +
+	"\x05total\x18\x02 \x01(\x03R\x05total\"\xba\x02\n" +
+	"\x15PreviewRoutingRequest\x129\n" +
+	"\x06biz_id\x18\x01 \x01(\tB\x1d\xbaH\x1ar\x18\x10\x01\x18@2\x12^[a-z0-9_-]{1,64}$H\x00R\x05bizId\x88\x01\x01\x12G\n" +
+	"\n" +
+	"event_type\x18\x02 \x01(\tB(\xbaH%r#\x10\x01\x18\x80\x012\x1c^[a-z0-9][a-z0-9._-]{0,127}$R\teventType\x12%\n" +
+	"\bseverity\x18\x03 \x01(\x05B\t\xbaH\x06\x1a\x04\x18\x04(\x01R\bseverity\x121\n" +
+	"\apayload\x18\x04 \x01(\v2\x17.google.protobuf.StructR\apayload\x12*\n" +
+	"\tgroup_key\x18\x05 \x01(\tB\b\xbaH\x05r\x03\x18\x80\x01H\x01R\bgroupKey\x88\x01\x01B\t\n" +
+	"\a_biz_idB\f\n" +
+	"\n" +
+	"_group_key\"\x83\x01\n" +
+	"\x0ePreviewChannel\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x12\n" +
+	"\x04type\x18\x03 \x01(\tR\x04type\x12\x18\n" +
+	"\aenabled\x18\x04 \x01(\bR\aenabled\x12\x1f\n" +
+	"\vtemplate_id\x18\x05 \x01(\tR\n" +
+	"templateId\"\x94\x02\n" +
+	"\x16PreviewRoutingResponse\x12\x1a\n" +
+	"\bsilenced\x18\x01 \x01(\bR\bsilenced\x12\x1f\n" +
+	"\vsilence_ids\x18\x02 \x03(\tR\n" +
+	"silenceIds\x120\n" +
+	"\amatched\x18\x03 \x01(\v2\x16.notify.v1.NotifyRouteR\amatched\x126\n" +
+	"\n" +
+	"candidates\x18\x04 \x03(\v2\x16.notify.v1.NotifyRouteR\n" +
+	"candidates\x125\n" +
+	"\bchannels\x18\x05 \x03(\v2\x19.notify.v1.PreviewChannelR\bchannels\x12\x1c\n" +
+	"\taggregate\x18\x06 \x01(\bR\taggregate2\xc2\x06\n" +
 	"\x12NotifyRouteService\x12\x83\x01\n" +
 	"\vCreateRoute\x12\x1d.notify.v1.CreateRouteRequest\x1a\x1e.notify.v1.CreateRouteResponse\"5\xc2\xf3\x18\x12创建通知路由\x82\xd3\xe4\x93\x02\x19:\x01*\"\x14/api/v1/notify/route\x12\x88\x01\n" +
 	"\vUpdateRoute\x12\x1d.notify.v1.UpdateRouteRequest\x1a\x1e.notify.v1.UpdateRouteResponse\":\xc2\xf3\x18\x12更新通知路由\x82\xd3\xe4\x93\x02\x1e:\x01*\x1a\x19/api/v1/notify/route/{id}\x12\x85\x01\n" +
 	"\vDeleteRoute\x12\x1d.notify.v1.DeleteRouteRequest\x1a\x1e.notify.v1.DeleteRouteResponse\"7\xc2\xf3\x18\x12删除通知路由\x82\xd3\xe4\x93\x02\x1b*\x19/api/v1/notify/route/{id}\x12|\n" +
 	"\bGetRoute\x12\x1a.notify.v1.GetRouteRequest\x1a\x1b.notify.v1.GetRouteResponse\"7\xc2\xf3\x18\x12查询通知路由\x82\xd3\xe4\x93\x02\x1b\x12\x19/api/v1/notify/route/{id}\x12\x83\x01\n" +
 	"\n" +
-	"ListRoutes\x12\x1c.notify.v1.ListRoutesRequest\x1a\x1d.notify.v1.ListRoutesResponse\"8\xc2\xf3\x18\x18查询通知路由列表\x82\xd3\xe4\x93\x02\x16\x12\x14/api/v1/notify/routeB:Z8github.com/lanyulei/reborn/backend/core/api/notify/v1;v1b\x06proto3"
+	"ListRoutes\x12\x1c.notify.v1.ListRoutesRequest\x1a\x1d.notify.v1.ListRoutesResponse\"8\xc2\xf3\x18\x18查询通知路由列表\x82\xd3\xe4\x93\x02\x16\x12\x14/api/v1/notify/route\x12\x8e\x01\n" +
+	"\x0ePreviewRouting\x12 .notify.v1.PreviewRoutingRequest\x1a!.notify.v1.PreviewRoutingResponse\"7\xc2\xf3\x18\f路由试算\x82\xd3\xe4\x93\x02!:\x01*\"\x1c/api/v1/notify/route:previewB:Z8github.com/lanyulei/reborn/backend/core/api/notify/v1;v1b\x06proto3"
 
 var (
 	file_notify_v1_route_proto_rawDescOnce sync.Once
@@ -1001,52 +1338,63 @@ func file_notify_v1_route_proto_rawDescGZIP() []byte {
 	return file_notify_v1_route_proto_rawDescData
 }
 
-var file_notify_v1_route_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_notify_v1_route_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_notify_v1_route_proto_goTypes = []any{
-	(*RouteRecipient)(nil),        // 0: notify.v1.RouteRecipient
-	(*RouteSpec)(nil),             // 1: notify.v1.RouteSpec
-	(*NotifyRoute)(nil),           // 2: notify.v1.NotifyRoute
-	(*CreateRouteRequest)(nil),    // 3: notify.v1.CreateRouteRequest
-	(*CreateRouteResponse)(nil),   // 4: notify.v1.CreateRouteResponse
-	(*UpdateRouteRequest)(nil),    // 5: notify.v1.UpdateRouteRequest
-	(*UpdateRouteResponse)(nil),   // 6: notify.v1.UpdateRouteResponse
-	(*DeleteRouteRequest)(nil),    // 7: notify.v1.DeleteRouteRequest
-	(*DeleteRouteResponse)(nil),   // 8: notify.v1.DeleteRouteResponse
-	(*GetRouteRequest)(nil),       // 9: notify.v1.GetRouteRequest
-	(*GetRouteResponse)(nil),      // 10: notify.v1.GetRouteResponse
-	(*ListRoutesRequest)(nil),     // 11: notify.v1.ListRoutesRequest
-	(*ListRoutesResponse)(nil),    // 12: notify.v1.ListRoutesResponse
-	nil,                           // 13: notify.v1.RouteSpec.TagMatchEntry
-	nil,                           // 14: notify.v1.NotifyRoute.TagMatchEntry
-	(*timestamppb.Timestamp)(nil), // 15: google.protobuf.Timestamp
+	(*RouteRecipient)(nil),         // 0: notify.v1.RouteRecipient
+	(*RouteSpec)(nil),              // 1: notify.v1.RouteSpec
+	(*NotifyRoute)(nil),            // 2: notify.v1.NotifyRoute
+	(*CreateRouteRequest)(nil),     // 3: notify.v1.CreateRouteRequest
+	(*CreateRouteResponse)(nil),    // 4: notify.v1.CreateRouteResponse
+	(*UpdateRouteRequest)(nil),     // 5: notify.v1.UpdateRouteRequest
+	(*UpdateRouteResponse)(nil),    // 6: notify.v1.UpdateRouteResponse
+	(*DeleteRouteRequest)(nil),     // 7: notify.v1.DeleteRouteRequest
+	(*DeleteRouteResponse)(nil),    // 8: notify.v1.DeleteRouteResponse
+	(*GetRouteRequest)(nil),        // 9: notify.v1.GetRouteRequest
+	(*GetRouteResponse)(nil),       // 10: notify.v1.GetRouteResponse
+	(*ListRoutesRequest)(nil),      // 11: notify.v1.ListRoutesRequest
+	(*ListRoutesResponse)(nil),     // 12: notify.v1.ListRoutesResponse
+	(*PreviewRoutingRequest)(nil),  // 13: notify.v1.PreviewRoutingRequest
+	(*PreviewChannel)(nil),         // 14: notify.v1.PreviewChannel
+	(*PreviewRoutingResponse)(nil), // 15: notify.v1.PreviewRoutingResponse
+	nil,                            // 16: notify.v1.RouteSpec.TagMatchEntry
+	nil,                            // 17: notify.v1.NotifyRoute.TagMatchEntry
+	(*timestamppb.Timestamp)(nil),  // 18: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),        // 19: google.protobuf.Struct
 }
 var file_notify_v1_route_proto_depIdxs = []int32{
-	13, // 0: notify.v1.RouteSpec.tag_match:type_name -> notify.v1.RouteSpec.TagMatchEntry
+	16, // 0: notify.v1.RouteSpec.tag_match:type_name -> notify.v1.RouteSpec.TagMatchEntry
 	0,  // 1: notify.v1.RouteSpec.recipient:type_name -> notify.v1.RouteRecipient
-	14, // 2: notify.v1.NotifyRoute.tag_match:type_name -> notify.v1.NotifyRoute.TagMatchEntry
+	17, // 2: notify.v1.NotifyRoute.tag_match:type_name -> notify.v1.NotifyRoute.TagMatchEntry
 	0,  // 3: notify.v1.NotifyRoute.recipient:type_name -> notify.v1.RouteRecipient
-	15, // 4: notify.v1.NotifyRoute.create_time:type_name -> google.protobuf.Timestamp
-	15, // 5: notify.v1.NotifyRoute.update_time:type_name -> google.protobuf.Timestamp
+	18, // 4: notify.v1.NotifyRoute.create_time:type_name -> google.protobuf.Timestamp
+	18, // 5: notify.v1.NotifyRoute.update_time:type_name -> google.protobuf.Timestamp
 	1,  // 6: notify.v1.CreateRouteRequest.spec:type_name -> notify.v1.RouteSpec
 	2,  // 7: notify.v1.CreateRouteResponse.route:type_name -> notify.v1.NotifyRoute
 	1,  // 8: notify.v1.UpdateRouteRequest.spec:type_name -> notify.v1.RouteSpec
-	2,  // 9: notify.v1.GetRouteResponse.route:type_name -> notify.v1.NotifyRoute
-	2,  // 10: notify.v1.ListRoutesResponse.items:type_name -> notify.v1.NotifyRoute
-	3,  // 11: notify.v1.NotifyRouteService.CreateRoute:input_type -> notify.v1.CreateRouteRequest
-	5,  // 12: notify.v1.NotifyRouteService.UpdateRoute:input_type -> notify.v1.UpdateRouteRequest
-	7,  // 13: notify.v1.NotifyRouteService.DeleteRoute:input_type -> notify.v1.DeleteRouteRequest
-	9,  // 14: notify.v1.NotifyRouteService.GetRoute:input_type -> notify.v1.GetRouteRequest
-	11, // 15: notify.v1.NotifyRouteService.ListRoutes:input_type -> notify.v1.ListRoutesRequest
-	4,  // 16: notify.v1.NotifyRouteService.CreateRoute:output_type -> notify.v1.CreateRouteResponse
-	6,  // 17: notify.v1.NotifyRouteService.UpdateRoute:output_type -> notify.v1.UpdateRouteResponse
-	8,  // 18: notify.v1.NotifyRouteService.DeleteRoute:output_type -> notify.v1.DeleteRouteResponse
-	10, // 19: notify.v1.NotifyRouteService.GetRoute:output_type -> notify.v1.GetRouteResponse
-	12, // 20: notify.v1.NotifyRouteService.ListRoutes:output_type -> notify.v1.ListRoutesResponse
-	16, // [16:21] is the sub-list for method output_type
-	11, // [11:16] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	2,  // 9: notify.v1.UpdateRouteResponse.route:type_name -> notify.v1.NotifyRoute
+	2,  // 10: notify.v1.GetRouteResponse.route:type_name -> notify.v1.NotifyRoute
+	2,  // 11: notify.v1.ListRoutesResponse.items:type_name -> notify.v1.NotifyRoute
+	19, // 12: notify.v1.PreviewRoutingRequest.payload:type_name -> google.protobuf.Struct
+	2,  // 13: notify.v1.PreviewRoutingResponse.matched:type_name -> notify.v1.NotifyRoute
+	2,  // 14: notify.v1.PreviewRoutingResponse.candidates:type_name -> notify.v1.NotifyRoute
+	14, // 15: notify.v1.PreviewRoutingResponse.channels:type_name -> notify.v1.PreviewChannel
+	3,  // 16: notify.v1.NotifyRouteService.CreateRoute:input_type -> notify.v1.CreateRouteRequest
+	5,  // 17: notify.v1.NotifyRouteService.UpdateRoute:input_type -> notify.v1.UpdateRouteRequest
+	7,  // 18: notify.v1.NotifyRouteService.DeleteRoute:input_type -> notify.v1.DeleteRouteRequest
+	9,  // 19: notify.v1.NotifyRouteService.GetRoute:input_type -> notify.v1.GetRouteRequest
+	11, // 20: notify.v1.NotifyRouteService.ListRoutes:input_type -> notify.v1.ListRoutesRequest
+	13, // 21: notify.v1.NotifyRouteService.PreviewRouting:input_type -> notify.v1.PreviewRoutingRequest
+	4,  // 22: notify.v1.NotifyRouteService.CreateRoute:output_type -> notify.v1.CreateRouteResponse
+	6,  // 23: notify.v1.NotifyRouteService.UpdateRoute:output_type -> notify.v1.UpdateRouteResponse
+	8,  // 24: notify.v1.NotifyRouteService.DeleteRoute:output_type -> notify.v1.DeleteRouteResponse
+	10, // 25: notify.v1.NotifyRouteService.GetRoute:output_type -> notify.v1.GetRouteResponse
+	12, // 26: notify.v1.NotifyRouteService.ListRoutes:output_type -> notify.v1.ListRoutesResponse
+	15, // 27: notify.v1.NotifyRouteService.PreviewRouting:output_type -> notify.v1.PreviewRoutingResponse
+	22, // [22:28] is the sub-list for method output_type
+	16, // [16:22] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_notify_v1_route_proto_init() }
@@ -1058,13 +1406,14 @@ func file_notify_v1_route_proto_init() {
 	file_notify_v1_route_proto_msgTypes[3].OneofWrappers = []any{}
 	file_notify_v1_route_proto_msgTypes[5].OneofWrappers = []any{}
 	file_notify_v1_route_proto_msgTypes[11].OneofWrappers = []any{}
+	file_notify_v1_route_proto_msgTypes[13].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_notify_v1_route_proto_rawDesc), len(file_notify_v1_route_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   15,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

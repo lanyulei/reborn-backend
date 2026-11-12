@@ -5,4 +5,5 @@ package service
 import "github.com/google/wire"
 
 // ProviderSet is system 域 service providers.
+// AdminResolver（内置角色写操作守卫）由 biz.UserUsecase 实现，在组合根 cmd/server/wire.go 绑定。
 var ProviderSet = wire.NewSet(NewUserService, NewRoleService, NewAuthService, NewSystemConfigService, NewLoginLogService)

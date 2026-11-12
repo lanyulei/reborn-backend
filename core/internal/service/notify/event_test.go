@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -22,7 +23,7 @@ func seedEventRow(t *testing.T, store *testfake.Store, event *biz.Event) *biz.Ev
 func TestNotifyEventService_ListEvents(t *testing.T) {
 	t.Parallel()
 	store := testfake.NewStore()
-	svc := NewNotifyEventService(biz.NewEventUsecase(store), testfake.Unrestricted())
+	svc := NewNotifyEventService(biz.NewEventUsecase(store, store), biz.NewDispatchUsecase(store), biz.NewDeliveryLogUsecase(store), testfake.Unrestricted())
 	ctx := testCtx()
 	base := time.Now().UTC().Add(-time.Hour)
 
@@ -123,7 +124,7 @@ func TestNotifyEventService_ListEvents(t *testing.T) {
 func TestNotifyEventService_NonObjectPayload(t *testing.T) {
 	t.Parallel()
 	store := testfake.NewStore()
-	svc := NewNotifyEventService(biz.NewEventUsecase(store), testfake.Unrestricted())
+	svc := NewNotifyEventService(biz.NewEventUsecase(store, store), biz.NewDispatchUsecase(store), biz.NewDeliveryLogUsecase(store), testfake.Unrestricted())
 	base := time.Now().UTC().Add(-time.Hour)
 	for i, raw := range []string{`[1,2]`, `"text"`, `null`, `{"ok":true}`} {
 		seedEventRow(t, store, &biz.Event{
@@ -148,5 +149,64 @@ func TestNotifyEventService_NonObjectPayload(t *testing.T) {
 		if item.GetPayload() == nil || item.GetPayload().GetFields()["value"] == nil {
 			t.Errorf("non-object payload of %s = %v, want wrapped {\"value\": ...}", item.GetId(), item.GetPayload())
 		}
+	}
+}
+
+// TestNotifyEventService_GetEventAndReplay 事件下钻（任务 + 每任务最近一次明细）与
+// 事件级重发；受限用户按事件 biz 隔离。
+func TestNotifyEventService_GetEventAndReplay(t *testing.T) {
+	t.Parallel()
+	store := testfake.NewStore()
+	svc := NewNotifyEventService(biz.NewEventUsecase(store, store), biz.NewDispatchUsecase(store), biz.NewDeliveryLogUsecase(store), testfake.Unrestricted())
+	ctx := testCtx()
+	base := time.Now().UTC().Add(-time.Hour)
+	const ev, ch = "018f3e1a-0304-7000-8000-0000000000f1", "018f3e1a-0304-7000-8000-0000000000c1"
+	seedEventRow(t, store, &biz.Event{
+		ID: ev, BizID: "monitor", EventType: "monitor.alert.firing", Severity: 3, Title: "CPU",
+		Payload: []byte(`{"host":"web-1"}`), GroupKey: "g1", Recipients: []string{"ops@example.com"}, Source: biz.EventSourceAPI,
+		Status: biz.EventStatusRouted, PublishState: 1, NextPublishTime: base, CreateTime: base,
+	})
+	store.SeedDispatch(&biz.Dispatch{ID: "018f3e1a-0304-7000-8000-0000000000d1", EventID: ev, ChannelID: ch, Recipient: "ops@example.com", Status: 4, Attempts: 2, SendKey: "k1", CreateTime: base})
+	store.SeedDispatch(&biz.Dispatch{ID: "018f3e1a-0304-7000-8000-0000000000d2", EventID: ev, ChannelID: ch, Recipient: "$bot", Status: 1, SendKey: "k2", CreateTime: base.Add(time.Second)})
+	store.SeedDeliveryLog(&biz.DeliveryLog{ID: "018f3e1a-0304-7000-8000-0000000000l1", DispatchID: "018f3e1a-0304-7000-8000-0000000000d1", ChannelID: ch, Attempt: 1, OK: false, Error: "timeout", CreateTime: base})
+	store.SeedDeliveryLog(&biz.DeliveryLog{ID: "018f3e1a-0304-7000-8000-0000000000l2", DispatchID: "018f3e1a-0304-7000-8000-0000000000d1", ChannelID: ch, Attempt: 2, OK: true, CreateTime: base.Add(time.Minute)})
+
+	resp, err := svc.GetEvent(ctx, &notifyv1.GetEventRequest{Id: ev})
+	if err != nil {
+		t.Fatalf("GetEvent() error = %v", err)
+	}
+	if resp.GetEvent().GetId() != ev || len(resp.GetDispatches()) != 2 || resp.GetDispatches()[0].GetId() != "018f3e1a-0304-7000-8000-0000000000d2" {
+		t.Fatalf("GetEvent() = %+v", resp)
+	}
+	if len(resp.GetLatestLogs()) != 1 || resp.GetLatestLogs()[0].GetAttempt() != 2 || !resp.GetLatestLogs()[0].GetOk() {
+		t.Fatalf("latest logs = %+v, want only attempt 2 of d1", resp.GetLatestLogs())
+	}
+	if _, err := svc.GetEvent(ctx, &notifyv1.GetEventRequest{Id: "018f3e1a-0304-7000-8000-0000000000ff"}); !errors.Is(err, biz.ErrEventNotFound) {
+		t.Fatalf("GetEvent(missing) error = %v, want ErrEventNotFound", err)
+	}
+
+	replay, err := svc.ReplayEvent(ctx, &notifyv1.ReplayEventRequest{Id: ev})
+	if err != nil {
+		t.Fatalf("ReplayEvent() error = %v", err)
+	}
+	if replay.GetEvent().GetId() == ev || replay.GetEvent().GetSource() != biz.EventSourceInternal || replay.GetEvent().GetEventType() != "monitor.alert.firing" ||
+		replay.GetEvent().GetDedupKey() != "" || replay.GetEvent().GetGroupKey() != "g1" || replay.GetEvent().GetStatus() != biz.EventStatusReceived {
+		t.Fatalf("ReplayEvent() = %+v", replay.GetEvent())
+	}
+	if list, err := svc.ListEvents(ctx, &notifyv1.ListEventsRequest{Page: 1, PageSize: 10, Source: sptr("internal")}); err != nil || list.GetTotal() != 1 {
+		t.Fatalf("replayed event must be listed by source filter: %+v, %v", list, err)
+	}
+	kw := "CPU"
+	if list, err := svc.ListEvents(ctx, &notifyv1.ListEventsRequest{Page: 1, PageSize: 10, Keyword: &kw, GroupKey: sptr("g1")}); err != nil || list.GetTotal() != 2 {
+		t.Fatalf("keyword/group filters: %+v, %v", list, err)
+	}
+
+	// 受限用户：事件 biz 不在范围 → 403（下钻与重发同口径）。
+	scoped := NewNotifyEventService(biz.NewEventUsecase(store, store), biz.NewDispatchUsecase(store), biz.NewDeliveryLogUsecase(store), testfake.Scoped("other"))
+	if _, err := scoped.GetEvent(ctx, &notifyv1.GetEventRequest{Id: ev}); !errors.Is(err, biz.ErrBizForbidden) {
+		t.Fatalf("scoped GetEvent error = %v, want ErrBizForbidden", err)
+	}
+	if _, err := scoped.ReplayEvent(ctx, &notifyv1.ReplayEventRequest{Id: ev}); !errors.Is(err, biz.ErrBizForbidden) {
+		t.Fatalf("scoped ReplayEvent error = %v, want ErrBizForbidden", err)
 	}
 }

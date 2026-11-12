@@ -5,6 +5,8 @@ import (
 
 	v1 "github.com/lanyulei/reborn/backend/core/api/system/v1"
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
+	"github.com/lanyulei/reborn/backend/core/internal/pkg/operator"
+	systemservice "github.com/lanyulei/reborn/backend/core/internal/service/system"
 
 	jwtx "github.com/go-kratos/kratos/contrib/middleware/jwt/v3"
 	"github.com/go-kratos/kratos/v3/errors"
@@ -24,6 +26,8 @@ var authExempt = map[string]struct{}{
 	// 查看 logo 文件：登录页 <img> 直载（无 Authorization 头），匿名
 	// 可读；上传接口不免检。
 	v1.OperationSystemConfigServiceGetSystemLogo: {},
+	// 查看用户头像：<img> 直载（无 Authorization 头），匿名可读；上传接口不免检。
+	v1.OperationAuthServiceGetUserAvatar: {},
 }
 
 // authMiddleware 组装鉴权中间件：白名单外的全部方法要求 Authorization: Bearer
@@ -40,6 +44,20 @@ func authMiddleware(signer *biz.TokenSigner) middleware.Middleware {
 			return !exempt
 		}).
 		Build())
+}
+
+// operatorMiddleware 把鉴权后的操作者 ID 注入中性上下文（internal/pkg/operator），
+// 供 data 层写配置表审计列（create_user/update_user/delete_user）：data 不触碰 JWT
+// claims，身份提取仍只有 UserIDFromContext 一处实现。匿名接口无 claims → 不注入。
+func operatorMiddleware() middleware.Middleware {
+	return func(handler middleware.Handler) middleware.Handler {
+		return func(ctx context.Context, req any) (any, error) {
+			if id, err := systemservice.UserIDFromContext(ctx); err == nil {
+				ctx = operator.WithID(ctx, id)
+			}
+			return handler(ctx, req)
+		}
+	}
 }
 
 // translateAuthError 将 jwt 中间件的内部哨兵错误翻译为 proto ErrorReason，

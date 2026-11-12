@@ -2,9 +2,12 @@ package service
 
 import (
 	"context"
+	"errors"
 	"net"
 	"strings"
 	"unicode/utf8"
+
+	"google.golang.org/genproto/googleapis/api/httpbody"
 
 	v1 "github.com/lanyulei/reborn/backend/core/api/system/v1"
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
@@ -16,13 +19,14 @@ import (
 
 // AuthService 实现 api/system/v1 生成的 AuthServiceServer。
 type AuthService struct {
-	uc    *biz.AuthUsecase
-	authz *biz.AuthzUsecase
+	uc     *biz.AuthUsecase
+	authz  *biz.AuthzUsecase
+	avatar *biz.AvatarUsecase
 }
 
 // NewAuthService new an AuthService.
-func NewAuthService(uc *biz.AuthUsecase, authz *biz.AuthzUsecase) *AuthService {
-	return &AuthService{uc: uc, authz: authz}
+func NewAuthService(uc *biz.AuthUsecase, authz *biz.AuthzUsecase, avatar *biz.AvatarUsecase) *AuthService {
+	return &AuthService{uc: uc, authz: authz, avatar: avatar}
 }
 
 // Login implements proto AuthService/Login：委托认证用例校验凭据并签发双令牌。
@@ -183,4 +187,35 @@ func truncate(s string) string {
 		s = s[:len(s)-1]
 	}
 	return s
+}
+
+// UploadMyAvatar implements proto AuthService/UploadMyAvatar：当前登录用户自助上传头像。
+func (s *AuthService) UploadMyAvatar(ctx context.Context, req *v1.UploadMyAvatarRequest) (*v1.UploadMyAvatarResponse, error) {
+	userID, err := UserIDFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	url, err := s.avatar.Upload(ctx, userID, req.GetData(), req.GetMime())
+	if err != nil {
+		return nil, err
+	}
+	return &v1.UploadMyAvatarResponse{Url: url}, nil
+}
+
+// GetUserAvatar implements proto AuthService/GetUserAvatar：以 HttpBody 返回头像
+// （<img> 直载，匿名可读）。nosniff + CSP sandbox 与 logo 同口径防御。
+func (s *AuthService) GetUserAvatar(ctx context.Context, req *v1.GetUserAvatarRequest) (*httpbody.HttpBody, error) {
+	data, mime, err := s.avatar.Get(ctx, req.GetId())
+	if err != nil {
+		if errors.Is(err, biz.ErrAvatarNotFound) {
+			return nil, v1.ErrorAvatarNotFound("用户未设置头像")
+		}
+		return nil, err
+	}
+	if tr, ok := transport.FromServerContext(ctx); ok {
+		tr.ReplyHeader().Set("X-Content-Type-Options", "nosniff")
+		tr.ReplyHeader().Set("Content-Security-Policy", "sandbox")
+		tr.ReplyHeader().Set("Cache-Control", "public, max-age=31536000, immutable")
+	}
+	return &httpbody.HttpBody{ContentType: mime, Data: data}, nil
 }

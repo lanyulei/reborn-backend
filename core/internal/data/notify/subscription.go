@@ -108,15 +108,16 @@ func (r *subscriptionRepo) UpsertSubscription(ctx context.Context, sub *biz.Subs
 	}
 	row := r.data.Pool.QueryRow(ctx,
 		`INSERT INTO notify_subscription
-		     (id, user_id, biz_id, event_pattern, channel_prefs, enabled, create_time, update_time)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		     (id, user_id, biz_id, event_pattern, channel_prefs, enabled, create_time, update_time, create_user, update_user)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
 		 ON CONFLICT (user_id, biz_id, event_pattern) WHERE delete_time IS NULL
 		 DO UPDATE SET channel_prefs = EXCLUDED.channel_prefs,
 		               enabled       = EXCLUDED.enabled,
-		               update_time   = now()
+		               update_time   = now(),
+		               update_user   = EXCLUDED.update_user
 		 RETURNING `+subscriptionSelectColumns,
 		sub.ID, sub.UserID, sub.BizID, sub.EventPattern, prefs,
-		sub.Enabled, sub.CreateTime, sub.UpdateTime)
+		sub.Enabled, sub.CreateTime, sub.UpdateTime, operatorArg(ctx))
 	out, err := scanSubscription(row.Scan)
 	if err != nil {
 		return nil, fmt.Errorf("upsert subscription: %w", err)
@@ -127,8 +128,8 @@ func (r *subscriptionRepo) UpsertSubscription(ctx context.Context, sub *biz.Subs
 // DeleteSubscription implements biz.SubscriptionRepo：软删。
 func (r *subscriptionRepo) DeleteSubscription(ctx context.Context, id string) error {
 	tag, err := r.data.Pool.Exec(ctx,
-		"UPDATE notify_subscription SET delete_time = now(), update_time = now()"+
-			" WHERE id = $1 AND delete_time IS NULL", id)
+		"UPDATE notify_subscription SET delete_time = now(), update_time = now(), delete_user = $2"+
+			" WHERE id = $1 AND delete_time IS NULL", id, operatorArg(ctx))
 	if err != nil {
 		return fmt.Errorf("soft delete subscription: %w", err)
 	}
@@ -156,8 +157,12 @@ func (r *subscriptionRepo) GetSubscription(ctx context.Context, id string) (*biz
 // 两条参数化查询。
 func (r *subscriptionRepo) ListSubscriptions(ctx context.Context, filter biz.SubscriptionFilter, page, pageSize int64) ([]*biz.Subscription, int64, error) {
 	where := []string{"delete_time IS NULL", "user_id = $1"}
-	args := make([]any, 0, 4)
+	args := make([]any, 0, 5)
 	args = append(args, filter.UserID)
+	if filter.BizID != "" {
+		args = append(args, filter.BizID)
+		where = append(where, "biz_id = $"+strconv.Itoa(len(args)))
+	}
 	if filter.Keyword != "" {
 		args = append(args, dbx.LikeContains(filter.Keyword))
 		where = append(where, "event_pattern ILIKE $"+strconv.Itoa(len(args)))

@@ -1,8 +1,6 @@
 package biz
 
 import (
-	"fmt"
-	"strings"
 	"time"
 
 	"github.com/lanyulei/reborn/backend/kit/notifycontract"
@@ -32,69 +30,9 @@ func (s *Snapshot) MatchRoute(bizID, eventType string, severity int32, payload m
 	return nil
 }
 
-// tagsMatch tag_match 为空无条件；否则 payload 须为对象且每个键的字面值相等
-// （数字/布尔按 JSON 文本比较）。键先按顶层字面键查找，未命中再按点分路径
-// 下钻嵌套对象（如 "labels.env" → payload.labels.env），适配监控事件把标签
-// 放在嵌套字段的常见形态。
+// tagsMatch tag_match 判定：kit/notifycontract.TagsMatch（控制面试算同一实现）。
 func tagsMatch(tags map[string]string, payload map[string]any) bool {
-	if len(tags) == 0 {
-		return true
-	}
-	if payload == nil {
-		return false
-	}
-	for k, want := range tags {
-		v, ok := lookupPath(payload, k)
-		if !ok {
-			return false
-		}
-		if scalarString(v) != want {
-			return false
-		}
-	}
-	return true
-}
-
-// lookupPath 顶层字面键优先；否则按 "." 逐级进入嵌套 map。
-func lookupPath(payload map[string]any, key string) (any, bool) {
-	if v, ok := payload[key]; ok {
-		return v, true
-	}
-	if !strings.Contains(key, ".") {
-		return nil, false
-	}
-	var cur any = payload
-	for _, part := range strings.Split(key, ".") {
-		m, ok := cur.(map[string]any)
-		if !ok {
-			return nil, false
-		}
-		if cur, ok = m[part]; !ok {
-			return nil, false
-		}
-	}
-	return cur, true
-}
-
-func scalarString(v any) string {
-	switch x := v.(type) {
-	case string:
-		return x
-	case bool:
-		if x {
-			return "true"
-		}
-		return "false"
-	case float64:
-		if x == float64(int64(x)) {
-			return fmt.Sprintf("%d", int64(x))
-		}
-		return fmt.Sprintf("%g", x)
-	case nil:
-		return "null"
-	default:
-		return fmt.Sprintf("%v", x)
-	}
+	return notifycontract.TagsMatch(tags, payload)
 }
 
 // Silenced 静默判定：biz 内任一启用规则 pattern 命中 ∧ severity ≤ severity_max
@@ -111,32 +49,8 @@ func (s *Snapshot) Silenced(bizID, eventType string, severity int32, now time.Ti
 	return false
 }
 
-// Contains 报告 now 是否落在时间窗内（按 tz 本地时间；start>end 跨午夜）。
-// tz 非法按 UTC；时刻解析失败视为不命中（宁放行不误静默）。
+// Contains 报告 now 是否落在时间窗内（kit/notifycontract.WindowContains：按 tz 本地
+// 时间；start>end 跨午夜；tz 非法按 UTC；时刻解析失败视为不命中）。
 func (w *SilenceWindow) Contains(now time.Time) bool {
-	loc := time.UTC
-	if w.Tz != "" {
-		if l, err := time.LoadLocation(w.Tz); err == nil {
-			loc = l
-		}
-	}
-	start, ok1 := parseClock(w.Start)
-	end, ok2 := parseClock(w.End)
-	if !ok1 || !ok2 {
-		return false
-	}
-	t := now.In(loc)
-	cur := t.Hour()*60 + t.Minute()
-	if start <= end {
-		return cur >= start && cur < end
-	}
-	return cur >= start || cur < end // 跨午夜
-}
-
-func parseClock(s string) (int, bool) {
-	var h, m int
-	if _, err := fmt.Sscanf(s, "%d:%d", &h, &m); err != nil || h < 0 || h > 23 || m < 0 || m > 59 {
-		return 0, false
-	}
-	return h*60 + m, true
+	return notifycontract.WindowContains(notifycontract.SilenceWindow(*w), now)
 }

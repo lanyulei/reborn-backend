@@ -16,7 +16,17 @@ data:
 pipeline:
   # roles 为空 = 全部角色；部署时用 SERVER_ROLES=api,router 等覆盖。
   roles: []
+  # backbone: pg（缺省）或 nats（JetStream 作队列游标，PG 仍为事实源；需启用 relay 角色）。
   backbone: pg
+  # nats:
+  #   url: nats://127.0.0.1:4222
+  #   token: ${KRATOS_NATS_TOKEN}
+  #   stream_prefix: NOTIFY
+  #   ack_wait: 120s
+  #   max_deliver: 20
+  #   relay_poll: 0.2s
+  #   relay_batch: 500
+  #   replicas: 1
   router:
     poll_interval: 0.2s
     batch_size: 500
@@ -30,6 +40,7 @@ pipeline:
     concurrency: 16
     lease: 300s
     send_timeout: 3s
+    max_send_timeout: 10s
     render_timeout: 0.1s
     reap_interval: 30s
     max_attempts: 6

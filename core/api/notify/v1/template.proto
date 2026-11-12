@@ -3,6 +3,7 @@ syntax = "proto3";
 package notify.v1;
 
 import "google/api/annotations.proto";
+import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 import "buf/validate/validate.proto";
 import "system/v1/annotations.proto";
@@ -53,6 +54,15 @@ service NotifyTemplateService {
     };
     option (system.v1.title) = "查询通知模板列表";
   }
+  // RenderTemplate 模板预览（只读，不落库）：用给定样例按管道同一口径渲染
+  // subject/body（零函数、顶层变量严格、载荷字段宽松、输出 ≤64KB）。
+  rpc RenderTemplate(RenderTemplateRequest) returns (RenderTemplateResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/notify/template:render"
+      body: "*"
+    };
+    option (system.v1.title) = "模板预览";
+  }
 }
 
 // NotifyTemplate 模板实体。
@@ -77,6 +87,9 @@ message NotifyTemplate {
   google.protobuf.Timestamp create_time = 9;
   // update_time 更新时间。
   google.protobuf.Timestamp update_time = 10;
+  // format 输出格式 text/markdown/html/card：渠道按能力降级——email 仅 html 生效（其余纯文本）；
+  // 群机器人 card→卡片、markdown/html→markdown、text→文本；webhook 透传。
+  string format = 11;
 }
 
 // CreateTemplateRequest 创建模板请求。
@@ -111,6 +124,8 @@ message CreateTemplateRequest {
   }];
   // enabled 初始启用状态，可选；未指定默认启用。
   optional bool enabled = 6;
+  // format 输出格式，可选，缺省 text（text/markdown/html/card）。
+  optional string format = 7 [(buf.validate.field).string = {in: ["text", "markdown", "html", "card"]}];
 }
 
 // CreateTemplateResponse 创建模板响应。
@@ -125,7 +140,7 @@ message UpdateTemplateRequest {
   option (buf.validate.message).cel = {
     id: "notify.template.update.non_empty"
     message: "at least one updatable field must be provided"
-    expression: "has(this.event_type) || has(this.channel_type) || has(this.subject) || has(this.body) || has(this.enabled)"
+    expression: "has(this.event_type) || has(this.channel_type) || has(this.subject) || has(this.body) || has(this.enabled) || has(this.format)"
   };
 
   // id 模板唯一标识，取自路径参数。
@@ -154,10 +169,15 @@ message UpdateTemplateRequest {
   }];
   // enabled 新启用状态。
   optional bool enabled = 6;
+  // format 输出格式，可选（text/markdown/html/card）。
+  optional string format = 7 [(buf.validate.field).string = {in: ["text", "markdown", "html", "card"]}];
 }
 
-// UpdateTemplateResponse 更新模板响应。
-message UpdateTemplateResponse {}
+// UpdateTemplateResponse 更新模板响应：返回更新后的模板（version 已 +1）。
+message UpdateTemplateResponse {
+  // template 更新后的模板。
+  NotifyTemplate template = 1;
+}
 
 // DeleteTemplateRequest 删除模板请求。
 message DeleteTemplateRequest {
@@ -215,4 +235,42 @@ message ListTemplatesResponse {
   repeated NotifyTemplate items = 1;
   // total 总数。
   int64 total = 2;
+}
+
+// RenderSample 模板预览样例上下文（渲染变量 Title/Payload/Severity/Count/BizID；
+// Samples 由系统生成一条样例；EventTime 取当前时间）。
+message RenderSample {
+  // title 标题，缺省 "sample"。
+  optional string title = 1 [(buf.validate.field).string.max_len = 255];
+  // payload 载荷对象，缺省 {"host":"sample-host"}。
+  google.protobuf.Struct payload = 2;
+  // severity 严重级 1-4，缺省 2。
+  optional int32 severity = 3 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 4
+  }];
+  // count 聚合条数，缺省 1（>1 时 Samples 注入样例）。
+  optional int32 count = 4 [(buf.validate.field).int32.gte = 1];
+  // biz_id 业务标识，缺省 default。
+  optional string biz_id = 5 [(buf.validate.field).string.max_len = 64];
+}
+
+// RenderTemplateRequest 模板预览请求。
+message RenderTemplateRequest {
+  // subject 标题模板。
+  string subject = 1 [(buf.validate.field).string.max_len = 512];
+  // body 正文模板。
+  string body = 2 [(buf.validate.field).string.max_len = 65536];
+  // sample 样例上下文，可选。
+  RenderSample sample = 3;
+  // format 输出格式，可选，缺省 text；html 走 html/template（载荷自动转义）。
+  optional string format = 4 [(buf.validate.field).string = {in: ["text", "markdown", "html", "card"]}];
+}
+
+// RenderTemplateResponse 模板预览响应。
+message RenderTemplateResponse {
+  // subject 渲染后的标题。
+  string subject = 1;
+  // body 渲染后的正文。
+  string body = 2;
 }

@@ -93,7 +93,11 @@ func (s *NotifyProducerService) UpdateProducer(ctx context.Context, req *notifyv
 	if err := s.uc.Update(ctx, req.GetId(), upd); err != nil {
 		return nil, err
 	}
-	return &notifyv1.UpdateProducerResponse{}, nil
+	producer, err := s.uc.Get(ctx, req.GetId())
+	if err != nil {
+		return nil, err
+	}
+	return &notifyv1.UpdateProducerResponse{Producer: toProtoProducer(producer)}, nil
 }
 
 // RotateProducerToken implements proto NotifyProducerService/RotateProducerToken：

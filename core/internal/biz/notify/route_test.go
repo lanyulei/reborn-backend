@@ -388,3 +388,14 @@ func TestRouteUsecase_ListPagingNormalize(t *testing.T) {
 		t.Fatalf("List(enabled filter) = %+v", items)
 	}
 }
+
+func (s *routeRepoStub) ListRoutesByBiz(_ context.Context, bizID string) ([]*Route, error) {
+	var out []*Route
+	for _, r := range s.routes {
+		if r.BizID == bizID {
+			cp := *r
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}

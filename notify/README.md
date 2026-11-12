@@ -2,7 +2,7 @@
 
 Kratos v3 单二进制，按 `SERVER_ROLES` 启用组件，与 core 共用 PostgreSQL（配置表只读、
 运行表读写），P1 骨干为 **PG 队列**（`FOR UPDATE SKIP LOCKED` + 条件更新状态机），
-NATS JetStream 作为后续可插拔实现（接口已抽象为 `biz.EventSource` / `biz.DispatchRepo`）。
+NATS JetStream 为可切换骨干（`pipeline.backbone: nats`，见「NATS 骨干」）；PG 在两种骨干下都是事实源与状态机。
 行为契约见 [AGENTS.md](AGENTS.md)，设计见 `backend/docs/notify-design.md`。
 与 core 共用的基础代码在同仓 `backend/kit`（`replace ../kit`）：传输装配 `httpx`、数据访问 `dbx`、
 凭据 `secretbox`（管道只 Open）、`idgen`，以及**数据契约** `notifycontract`——jsonb 结构体、状态常量、
@@ -38,14 +38,38 @@ NATS JetStream 作为后续可插拔实现（接口已抽象为 `biz.EventSource
 
 | 角色 | 组件 | 职责 |
 |---|---|---|
-| `api` | ingress（HTTP 8020） | `POST /ingress/v1/events`、`/ingress/v1/events:batch`；HMAC 鉴权；dedup 门闩；先落库后应答 |
+| `api` | ingress（HTTP 8020） | `POST /ingress/v1/events`、`/ingress/v1/events:batch`；HMAC 鉴权；dedup 门闩；先落库后应答（单事务两轮 pgx.Batch：门闩一批、插入一批；请求日志失败恒记、成功 1/100 采样） |
 | `router` | router + sweeper | 声明 pending 事件 → 静默 → 选路 → 收件解析（fixed + 订阅 ⋈ system_user）→ 生成 dispatch 或聚合计数；sweeper（选主）关闭聚合窗口出汇总/摘要 |
-| `sender` | sender + 租约回收 | 声明到期任务 → 渲染快照 → 熔断/令牌桶 → email / webhook / dingtalk / wecom / feishu 适配器 → 投递日志 → 成功/退避/死信 |
-| `dlqworker` | dlq 重放 | 控制台标记的死信 → 新 dispatch |
+| `sender` | sender + 租约回收 | 声明到期任务 → 渲染快照 → 熔断/令牌桶 → email / webhook / dingtalk / wecom / feishu 适配器 → 投递日志 → 成功/退避/死信；发送超时 = 渠道 `timeout_s`（上限 `sender.max_send_timeout` 10s）或缺省 `send_timeout` 3s |
+| `dlqworker` | dlq 重放 | 控制台标记的死信 → 新 dispatch（保留聚合上下文、按当前模板重新渲染） |
 | `maintenance` | 分区维护 + 清理（选主） | 预建未来 2 月分区（先迁出 DEFAULT 再 ATTACH）、按保留期 DROP、dedup/dlq/聚合组清理 |
-| — | HTTP 恒启动 | `/healthz`、`/metrics`（OTel → Prometheus） |
+| — | HTTP 恒启动 | `/healthz`（快照已加载 ∧ 刷新未停滞超 2 分钟 ∧ DB 可达）、`/metrics`（OTel → Prometheus） |
 
-`SERVER_ROLES` 为空 = 全部角色；`relay` 保留给 NATS 骨干。
+指标：`notify_loop_runs_total{loop,result}` / `notify_loop_items_total{loop}` / `notify_dispatch_total{channel_type,result}` /
+`notify_send_latency_ms{channel_type}`（直方图）/ `notify_ingress_requests_total{result}` / `notify_ingress_events_total{result}` /
+`notify_events_pending` / `notify_dispatch_due`（有界计数，10001 = 饱和）/ `notify_queue_oldest_age_seconds{queue}` /
+`notify_breaker_open{channel_id}` / `notify_config_age_seconds` / `notify_config_refresh_failures_total`。
+`SERVER_ROLES` 拼错直接装配失败（不再静默起一个只有 HTTP 的进程）。
+
+`SERVER_ROLES` 为空 = 全部角色（`backbone: nats` 下含 `relay`）；pg 骨干下 `relay` 为 no-op。
+
+## NATS 骨干（backbone: nats）
+
+- **定位**：JetStream 只做"队列游标"，流里只放 `{id, create_time}`；router/sender 消费到游标后仍用与 pg 路径完全相同的
+  PG 条件 UPDATE 做门闩（事件 `status=received`）与围栏（任务 `status IN (1,4)` 且到期 → sending，`attempts` 令牌），
+  `RouterUsecase` / `SenderUsecase` 业务代码不变。消息丢失、MaxDeliver 耗尽、消费者长期离线都由 PG 行兜底。
+- **relay**（唯一发布者，1~N 副本经 SKIP LOCKED 互斥）：`notify_event.publish_state=0` 且到期 → 发布 `notify.event.<biz>`
+  → `publish_state=1`；`notify_dispatch.publish_state=0 AND status IN (1,4)` 且到期 → 发布 `notify.dispatch.<channel_id>`
+  → `publish_state=1`（迁移 0038 新增列，pg 骨干恒 0）。发布失败：事件 `publish_attempts+1` 退避，任务原地重试。
+  **超期回拨**：已发布但 `2×ack_wait` 后仍未处理的行回拨 `publish_state=0` 重新发布。
+- **消费语义**：行已终态 → ack（重投幂等）；行被他人持有/未到期 → `NakWithDelay` 到期时刻；router `DeferEvent` →
+  按退避 Nak；sender 可重试失败 → PG 写 `next_retry_time` 后按 `RetryAfter` Nak；死信 → ack；落账失败 → 短延后 Nak，
+  租约回收照常。`Nats-Msg-Id = <id>:<代际>`（事件 publish_attempts / 任务 attempts），去重窗口 `min(2m, ack_wait)`。
+- **流/消费者**：`<prefix>_EVENTS`（`notify.event.>`）与 `<prefix>_DISPATCHES`（`notify.dispatch.>`），WorkQueue、文件存储、
+  `replicas` 配置（生产 3）、保留 7 天；durable pull 消费者 `router` / `sender`（AckWait=`ack_wait`，MaxDeliver=`max_deliver`）。
+  启动时 CreateOrUpdate 幂等。`/healthz` 追加 NATS 连接与流探测。
+- **切换**：改 `backbone: nats` + `nats.url`（token 走 `KRATOS_NATS_TOKEN`）滚动重启即可；切回 pg 时未消费消息无害
+  （pg 路径不看 publish_state，直接按 PG 行流转）。集成测试用内嵌 nats-server（`-tags=integration`）。
 
 ## 快速开始
 
@@ -107,7 +131,27 @@ JSON 体 `{event_id, biz_id, event_type, severity, title, subject, body, payload
 
 ## 已知口径
 
+- **停机**：各循环只关闭准入，在途迭代在不受取消的 ctx 上跑完（sender 一批最坏 ≈ batch/concurrency × max_send_timeout）；
+  `kratos.StopTimeout` 30s 用尽才硬中止；发送后的落账（Finish/Release/熔断记录）恒不随取消失败，
+  避免行停在 sending 直到租约到期被重发。
+- **发送前瞬时错误**（取事件/渲染超时/写快照/限流器故障）放回 pending 5s 后重试且不计尝试，不烧租约。
+- **配额**在 ingress 事务末尾消费，行锁只跨提交；超限整体回滚。
+- **分区边界**恒为 UTC 月初（字面量带 `+00`），与会话 TimeZone 无关。
+- **sender 往返**：一批任务的源事件一次取回（distinct event_id + create_time 剪枝）；首次渲染快照随 Finish 同事务
+  写入（delivery_log + 终态 + dlq 一个 pgx.Batch）；渲染后被放回（熔断/限流）则下次重渲染（模板按 id+version 缓存）；
+  熔断打开的渠道暂停/放回到 open_until 为止，不再每 5s 声明再放回。
+- **router** 一批事件的终态单语句提交（unnest）。
+- **积压指标** `notify_events_pending` / `notify_dispatch_due` 有界计数，读数 10001 表示饱和（≥ 1 万）。
 - 群机器人实例 secret = access_token/key，目标群由实例决定；`config.at_mobiles` 作 @ 名单（钉钉/企微）。
+- **渠道适配器口径（第四批）**：群机器人正文按平台**字节**上限截断（钉钉 markdown 18000B、企微 text 2000B / markdown 4000B、
+  飞书 text 28000B），标题进 markdown 字段前转义控制字符；限流缺省按类型（钉钉/企微 20/min 容量 1、飞书 100/min 容量 5，
+  `rate_limit.per_minute` 可显式配置，`qps` 优先）；SMTP 按应答码分级（4xx 可重试、5xx 死信），AUTH 按服务器通告选
+  PLAIN > LOGIN > CRAM-MD5，Message-ID 域取发件地址域；webhook 出站 SSRF 防护——core 拒绝本机/私网字面量，管道在**解析后**
+  对真实地址再校验（任一地址私网即拒绝，免疫 DNS 重绑定），429/503/408 的 `Retry-After` 透传给退避（上限 2h），
+  幂等键同时放 `Idempotency-Key`；接收端校验请 import `backend/notify/pkg/webhooksig`（`VerifyWithin` 含时间窗）。
+- **模板函数白名单**（core 校验与管道渲染同一集合 `kit/notifycontract.TemplateFuncs`）：`fmtTime t [layout]`、
+  `severity n`（info/warning/error/critical）、`json v`、`trunc s n`、`upper`、`lower`；缺省正文群机器人紧凑版、
+  邮件/webhook 多行版，载荷以 JSON 打印；非对象载荷注入为 `{"_raw": …}`。
 - 控制面按 biz 隔离只约束 notify 域接口；system 域（用户/角色）权限模型不变。
 
 ## 部署：数据库角色
