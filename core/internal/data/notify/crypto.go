@@ -29,6 +29,9 @@ func NewSecretBox(c *conf.Notify) (*SecretBox, error) {
 	return &SecretBox{box: box}, nil
 }
 
+// Enabled 报告是否已配置主密钥。
+func (b *SecretBox) Enabled() bool { return b != nil && b.box.Enabled() }
+
 // Seal 加密明文凭据。
 func (b *SecretBox) Seal(plaintext string) ([]byte, error) {
 	out, err := b.box.Seal(plaintext)

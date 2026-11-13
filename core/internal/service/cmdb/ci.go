@@ -6,6 +6,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	v1 "github.com/lanyulei/reborn/backend/core/api/cmdb/v1"
@@ -52,7 +53,7 @@ func (s *CmdbCIService) ImportCIs(ctx context.Context, req *v1.ImportCIsRequest)
 		}
 		rows = append(rows, row)
 	}
-	result, err := s.uc.Import(ctx, actor, req.GetModelCode(), rows, req.GetDryRun())
+	result, err := s.uc.Import(ctx, actor, scope, req.GetModelCode(), rows, req.GetDryRun())
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +69,15 @@ func (s *CmdbCIService) ImportCIs(ctx context.Context, req *v1.ImportCIsRequest)
 
 // ExportCIs implements proto CmdbCIService/ExportCIs：CSV（UTF-8 BOM，Excel 可直接打开）。
 func (s *CmdbCIService) ExportCIs(ctx context.Context, req *v1.ExportCIsRequest) (*httpbody.HttpBody, error) {
-	filter := biz.CIFilter{ModelCode: req.GetModelCode(), Keyword: req.GetKeyword(), Status: req.GetStatus(), Env: req.GetEnv()}
+	// 与 ListCIs 同一组筛选条件：导出的就是当前列表看到的那批资源
+	filter := biz.CIFilter{
+		ModelCode: req.GetModelCode(), Keyword: req.GetKeyword(), Status: req.GetStatus(), Env: req.GetEnv(),
+		Tag: req.GetTag(), Attrs: req.GetAttrs().AsMap(),
+		RelType: req.GetRelType(), RelDirection: req.GetRelDirection(), RelTargetID: req.GetRelTargetId(), RelNone: req.GetRelNone(),
+	}
+	if filter.RelType != "" && filter.RelDirection == "" {
+		filter.RelDirection = biz.DirectionOutgoing
+	}
 	visible, err := s.guard.narrowFilter(ctx, &filter)
 	if err != nil {
 		return nil, err
@@ -185,7 +194,13 @@ func exportCell(v any) string {
 		return ""
 	case string:
 		return t
-	case float64, int64, int, bool:
+	case float64:
+		return strconv.FormatFloat(t, 'f', -1, 64) // 不走科学计数法（1e+06）
+	case float32:
+		return strconv.FormatFloat(float64(t), 'f', -1, 32)
+	case json.Number:
+		return t.String()
+	case int64, int, int32, bool:
 		return fmt.Sprint(t)
 	default:
 		raw, err := json.Marshal(t)
@@ -359,7 +374,12 @@ func (s *CmdbCIService) TransitionCI(ctx context.Context, req *v1.TransitionCIRe
 	if _, err := s.guard.requireCI(ctx, s.uc.GetByID, req.GetId()); err != nil {
 		return nil, err
 	}
-	ci, err := s.uc.Transition(ctx, actor, req.GetId(), req.GetVersion(), req.GetStatus())
+	// 级联退役的依赖资源同样受数据范围约束。
+	scope, err := s.guard.resolve(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ci, err := s.uc.Transition(ctx, actor, scope, req.GetId(), req.GetVersion(), req.GetStatus())
 	if err != nil {
 		return nil, err
 	}

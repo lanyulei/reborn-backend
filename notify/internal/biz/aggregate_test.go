@@ -41,6 +41,7 @@ func TestSweeperUsecase_SweepOnce(t *testing.T) {
 	}}
 	snap := testSnapshot(routes, nil, nil)
 	tx := newRouterTxStub()
+	orphanSince := time.Unix(1_800_000_000, 0)
 	repo := &aggRepoStub{
 		due: []string{"default|small", "default|storm", "default|orphan", "default|gone"},
 		groups: map[string]*AggGroup{
@@ -52,7 +53,10 @@ func TestSweeperUsecase_SweepOnce(t *testing.T) {
 				Key: "default|storm", BizID: "default", EventType: "host.down", RouteID: routeAgg, FirstEventID: "e9", Count: 500,
 				Samples: []AggSample{{EventID: "e9", Title: "x"}},
 			},
-			"default|orphan": {Key: "default|orphan", BizID: "default", EventType: "host.down", RouteID: "deleted-route", FirstEventID: "e5", Count: 1},
+			"default|orphan": {
+				Key: "default|orphan", BizID: "default", EventType: "host.down", RouteID: "deleted-route", FirstEventID: "e5", Count: 30,
+				FirstEventTime: orphanSince, Samples: []AggSample{{EventID: "e5", Title: "o"}},
+			},
 		},
 		tx: tx, closeOK: true,
 	}
@@ -61,9 +65,16 @@ func TestSweeperUsecase_SweepOnce(t *testing.T) {
 	if err != nil || n != 3 {
 		t.Fatalf("SweepOnce() = %d, %v; want 3 closed", n, err)
 	}
-	// small：2 渠道 → 2 条汇总 dispatch（含样本）；storm：超阈值 → 摘要模式；orphan：路由缺失无 dispatch。
+	// small：2 渠道 → 2 条汇总 dispatch（含样本）；storm：超阈值 → 摘要模式；orphan：路由缺失无 dispatch，
+	// 整组事件（不止样本）按 biz + group_key + 窗口起点改标 failed。
 	if len(tx.dispatches) != 4 {
 		t.Fatalf("summary dispatches = %d, want 4", len(tx.dispatches))
+	}
+	if len(tx.failedGroups) != 1 || tx.failedGroups[0] != (failedGroup{bizID: "default", groupKey: "orphan", since: orphanSince}) {
+		t.Fatalf("orphan group must fail all its events by group membership, got %+v", tx.failedGroups)
+	}
+	if len(tx.marked) != 0 {
+		t.Fatalf("sweeper must not mark individual sample events, got %v", tx.marked)
 	}
 	for _, d := range tx.dispatches {
 		c, err := DecodeContent(d.Content)

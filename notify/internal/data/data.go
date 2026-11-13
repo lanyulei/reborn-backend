@@ -25,7 +25,7 @@ var ProviderSet = wire.NewSet(
 	NewDispatchRepo, NewDispatchSource,
 	NewAggRepo, wire.Bind(new(biz.AggRepo), new(*aggRepo)),
 	NewDlqRepo, wire.Bind(new(biz.DlqRepo), new(*dlqRepo)),
-	NewIngressRepo, wire.Bind(new(biz.IngressRepo), new(*ingressRepo)),
+	NewIngressRepo, wire.Bind(new(biz.IngressRepo), new(*ingressRepo)), wire.Bind(new(biz.ReplayStore), new(*ingressRepo)),
 	NewMaintenanceRepo, wire.Bind(new(biz.MaintenanceRepo), new(*maintenanceRepo)),
 	NewLocker, wire.Bind(new(biz.Locker), new(*locker)),
 	NewHealthRepo, wire.Bind(new(biz.ChannelHealthRepo), new(*healthRepo)),

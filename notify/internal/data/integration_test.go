@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/lanyulei/reborn/backend/kit/dbx"
+	"github.com/lanyulei/reborn/backend/kit/notifycontract"
 	"github.com/lanyulei/reborn/backend/notify/internal/biz"
 	"github.com/lanyulei/reborn/backend/notify/internal/conf"
 
@@ -43,7 +44,7 @@ func newIntegrationData(t *testing.T) *Data {
 	defer cancel()
 	if _, err := d.Pool.Exec(ctx, `TRUNCATE TABLE notify_channel, notify_template, notify_route, notify_silence, notify_subscription,
 		notify_producer, notify_event, notify_dispatch, notify_delivery_log, notify_dlq, notify_dedup, notify_agg_group,
-		notify_rate_bucket, notify_quota_counter, notify_channel_health, notify_cfg_version,
+		notify_rate_bucket, notify_quota_counter, notify_channel_health, notify_cfg_version, notify_ingress_replay,
 		system_permission, system_grant, system_user_role, "system_user" CASCADE`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
@@ -203,11 +204,27 @@ func TestIntegration_ConfigSnapshot(t *testing.T) {
 	if p := snap.Producers[idProducer]; p == nil || string(p.TokenHash) != "hash" || !p.Enabled {
 		t.Fatalf("producer = %+v", p)
 	}
+	// 生产者密钥封存形态（core 写入）：用主密钥解封为 HMAC 密钥；主密钥不一致 → 仅该
+	// 生产者不可鉴权（TokenHash 置空 + KeyErr）。
+	sealedKey, err := testBox(t).Seal("0123456789abcdef0123456789abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Pool.Exec(ctx, "UPDATE notify_producer SET token_hash = $2 WHERE id = $1", idProducer, notifycontract.WrapSealedProducerKey(sealedKey)); err != nil {
+		t.Fatal(err)
+	}
+	sealedSnap, err := repo.LoadSnapshot(ctx)
+	if err != nil || string(sealedSnap.Producers[idProducer].TokenHash) != "0123456789abcdef0123456789abcdef" || sealedSnap.Producers[idProducer].KeyErr != nil {
+		t.Fatalf("sealed producer key: err=%v producer=%+v", err, sealedSnap.Producers[idProducer])
+	}
 	// 主密钥错误：secret 渠道标记不健康，其余正常（快照不整体失败）。
 	badBox, _ := NewSecretBox(&conf.Notify{Master: &conf.Notify_Master{Key: "wrong"}})
 	snap2, err := NewConfigRepo(d, badBox).LoadSnapshot(ctx)
 	if err != nil || snap2.Channel(idChanHook).SecretErr == nil || snap2.Channel(idChanEmail).SecretErr != nil {
 		t.Fatalf("wrong key snapshot: err=%v hook=%+v", err, snap2.Channel(idChanHook))
+	}
+	if p := snap2.Producers[idProducer]; p == nil || p.KeyErr == nil || len(p.TokenHash) != 0 {
+		t.Fatalf("wrong key: sealed producer must be unusable, got %+v", p)
 	}
 	// 令牌桶同步：qps=5 的 email 有桶，qps=0 无桶。
 	if err := NewRateBucketRepo(d).SyncBuckets(ctx, []*biz.Channel{hook, mail}); err != nil {

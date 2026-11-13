@@ -71,10 +71,12 @@ func (r *dispatchRepo) Claim(ctx context.Context, limit int, lease time.Duration
 // fence 围栏条件：主键 + 分区键 + 仍为 sending + 本次声明的 attempts。
 const fence = " WHERE id = $1 AND create_time = $2 AND status = 2 AND attempts = $3"
 
-// Release implements biz.DispatchRepo：放回 pending 且撤销本次尝试计数。
+// Release implements biz.DispatchRepo：放回 pending 且撤销本次尝试计数。publish_state
+// 回拨为 0：nats 骨干下由 relay 在到期时重新发布（pg 骨干该列恒 0，无影响）；同时清掉
+// relay 残留的认领租约（迁移 0046），否则到期后还要等租约过期才会被重新发布。
 func (r *dispatchRepo) Release(ctx context.Context, d *biz.ClaimedDispatch, delay time.Duration) error {
 	tag, err := r.data.Pool.Exec(ctx,
-		"UPDATE notify_dispatch SET status = 1, attempts = attempts - 1, next_retry_time = now() + $4"+fence,
+		"UPDATE notify_dispatch SET status = 1, attempts = attempts - 1, next_retry_time = now() + $4, publish_state = 0, relay_claim_until = NULL"+fence,
 		d.ID, d.CreateTime, d.Attempts, delay)
 	if err != nil {
 		return fmt.Errorf("release dispatch: %w", err)

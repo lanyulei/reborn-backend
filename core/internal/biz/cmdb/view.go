@@ -81,11 +81,11 @@ func (uc *ModelUsecase) UpdateView(ctx context.Context, actor Actor, modelCode s
 	if err != nil {
 		return nil, err
 	}
+	// 已废弃字段允许被布局继续引用（前端在原分组内灰显展示）；
+	// 若此处排除废弃字段，存量布局一旦引用废弃字段，任何布局保存都会被拒绝。
 	fieldSet := make(map[string]struct{}, len(fields))
 	for _, f := range fields {
-		if !f.Deprecated {
-			fieldSet[f.Code] = struct{}{}
-		}
+		fieldSet[f.Code] = struct{}{}
 	}
 	typeByCode := make(map[string]*RelationType, len(types))
 	for _, t := range types {

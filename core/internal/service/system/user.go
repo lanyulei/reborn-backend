@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"slices"
 
 	v1 "github.com/lanyulei/reborn/backend/core/api/system/v1"
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
@@ -54,9 +55,13 @@ func (s *UserService) CreateUser(ctx context.Context, req *v1.CreateUserRequest)
 }
 
 // UpdateUser implements proto UserService/UpdateUser：携带 is_admin 时走
-// 超管标记变更守卫（仅超管可授予/撤销，且不能改自己的）；其余资料字段
+// 超管标记变更守卫（仅超管可授予/撤销，且不能改自己的）；修改超管账号的
+// 资料须由超管操作（否则持「编辑用户」权限者可改超管邮箱/手机号）；其余
 // 不受限（用户可改自己的昵称等）。
 func (s *UserService) UpdateUser(ctx context.Context, req *v1.UpdateUserRequest) (*v1.UpdateUserResponse, error) {
+	if err := s.guardMutation(ctx, req.GetId(), false); err != nil {
+		return nil, err
+	}
 	if req.IsAdmin != nil {
 		if err := s.guardAdminFlagChange(ctx, req.GetId(), req.GetIsAdmin()); err != nil {
 			return nil, err
@@ -138,8 +143,12 @@ func (s *UserService) ListUsers(ctx context.Context, req *v1.ListUsersRequest) (
 	return resp, nil
 }
 
-// BindUserRoles implements proto UserService/BindUserRoles.
+// BindUserRoles implements proto UserService/BindUserRoles：非超管只能授予
+// 自己已持有的角色（见 guardRoleBinding）。
 func (s *UserService) BindUserRoles(ctx context.Context, req *v1.BindUserRolesRequest) (*v1.BindUserRolesResponse, error) {
+	if err := s.guardRoleBinding(ctx, req.GetId(), req.GetRoleIds()); err != nil {
+		return nil, err
+	}
 	if err := s.uc.BindRoles(ctx, req.GetId(), req.GetRoleIds()); err != nil {
 		return nil, err
 	}
@@ -182,6 +191,38 @@ func (s *UserService) guardMutation(ctx context.Context, targetID string, selfFo
 	}
 	if target.IsAdmin {
 		return s.requireAdmin(ctx, operator)
+	}
+	return nil
+}
+
+// guardRoleBinding 角色绑定守卫：非超管只能授予自己已持有的角色（否则持
+// 「绑定用户角色」权限者可把任意高权限角色绑给自己，整体绕过 RBAC）。
+// 目标用户已绑定的角色可原样保留（不算新授予）；解绑不受限。超管不受限。
+func (s *UserService) guardRoleBinding(ctx context.Context, targetID string, roleIDs []string) error {
+	operator, err := UserIDFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	admin, err := s.uc.IsAdminUser(ctx, operator)
+	if err != nil || admin {
+		return err
+	}
+	held, err := s.uc.ListRoles(ctx, operator)
+	if err != nil {
+		return err
+	}
+	current, err := s.uc.ListRoles(ctx, targetID)
+	if err != nil {
+		return err
+	}
+	allowed := func(id string) bool {
+		return slices.ContainsFunc(held, func(r *biz.Role) bool { return r.ID == id }) ||
+			slices.ContainsFunc(current, func(r *biz.Role) bool { return r.ID == id })
+	}
+	for _, id := range roleIDs {
+		if !allowed(id) {
+			return v1.ErrorPermissionDenied("cannot grant a role you do not hold")
+		}
 	}
 	return nil
 }

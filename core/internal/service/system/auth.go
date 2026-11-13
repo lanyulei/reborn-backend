@@ -127,31 +127,41 @@ func UserIDFromContext(ctx context.Context) (string, error) {
 // maxUserAgentBytes 是落库 User-Agent 的截断上限（varchar(255)，实际均为 ASCII）。
 const maxUserAgentBytes = 255
 
-// clientIP 从传输上下文提取客户端 IP：HTTP 侧优先 X-Forwarded-For 首段
-// （逗号分隔取最左并去空白；可信 LB 追加头为部署前提，与限流同），否则取
-// RemoteAddr 的 host 部分；非 HTTP 传输取不到返回空串（DO 约定：空串=未取到，
-// 落库为 NULL）。
+// clientIP 从传输上下文提取客户端 IP（登录审计与登录失败限速的来源键）：
+// 缺省取 RemoteAddr 的 host 部分；仅当直连对端是回环/内网地址（即前置
+// 反向代理）时才采信 X-Forwarded-For，且只取最右一段——那是最近一跳代理
+// 追加的对端地址，客户端无法伪造；最左段由客户端任意填写，采信它等于允许
+// 伪造审计 IP 并绕过按 IP 限速。公网直连时 XFF 整体不可信，忽略。
+// 多级代理（CDN → LB → 本服务）下取到的是上一级代理地址：无可信代理名单
+// 配置，宁可保守。非 HTTP 传输取不到返回空串（DO 约定：空串=未取到，落库
+// 为 NULL）。
 //
-// 两路取值均须经 net.ParseIP 解析成功并规范化：XFF 是客户端可控头，不校验
-// 则任意串直达 ip varchar(45)——超长触发 22001 让 best-effort 的登录审计行
-// 静默丢失（爆破者可借此抹除痕迹），或把伪造串写进审计。解析失败按未取到
-// 处理，不回退使用原始串。
+// 两路取值均须经 net.ParseIP 解析成功并规范化：不校验则任意串直达 ip
+// varchar(45)——超长触发 22001 让 best-effort 的登录审计行静默丢失。解析
+// 失败按未取到处理，不回退使用原始串。
 func clientIP(ctx context.Context) string {
 	r, ok := khttp.RequestFromServerContext(ctx)
 	if !ok || r == nil {
 		return ""
 	}
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// 多级代理链最左为客户端原始 IP（可信 LB 追加，见函数注释）。
-		if ip := parseIP(strings.SplitN(xff, ",", 2)[0]); ip != "" {
+	return resolveClientIP(r.RemoteAddr, r.Header.Values("X-Forwarded-For"))
+}
+
+// resolveClientIP 是 clientIP 的纯判定部分（remoteAddr 为 host:port 或裸 host）。
+func resolveClientIP(remoteAddr string, forwardedFor []string) string {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	peer := parseIP(host)
+	if p := net.ParseIP(peer); p != nil && (p.IsLoopback() || p.IsPrivate()) {
+		// 多个 XFF 头按出现顺序拼接，最右段恒为最近一跳代理追加。
+		hops := strings.Split(strings.Join(forwardedFor, ","), ",")
+		if ip := parseIP(hops[len(hops)-1]); ip != "" {
 			return ip
 		}
 	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	return parseIP(host)
+	return peer
 }
 
 // parseIP 解析并规范化 IP 字面量（去空白；兼容 "[v6]" 方括号形态）；非法

@@ -76,6 +76,8 @@ type CI struct {
 type CIFilter struct {
 	// Cursor 游标分页（上一页 NextCursor）；非空时忽略 page（按 update_time, id 键集）。
 	Cursor string
+	// NoCount 不统计总数（返回 total = -1）：内部批量遍历（导出）用，省掉逐页 count(*)。
+	NoCount bool
 	// RelType / RelDirection / RelTargetID / RelNone 关联条件：
 	// RelTargetID 非空 = 关联到该资源；RelNone = 该方向上无任何关联；两者皆空 = 有任意关联。
 	RelType      string
@@ -147,6 +149,8 @@ type SearchHit struct {
 	CI    *CI
 	Field string
 	Value string
+	// Attr 命中来自属性值（Field 为属性字段编码；与固定列同名的字段编码据此区分）。
+	Attr bool
 }
 
 // SearchMaxLimit 全局搜索返回上限。
@@ -199,6 +203,13 @@ type CIRepo interface {
 	ExistsInModel(ctx context.Context, modelCode, id string) (bool, error)
 	// Search 名称 / 外部标识 / 标签 / 属性值子串匹配；名称命中优先，其次更新时间倒序。
 	Search(ctx context.Context, filter SearchFilter) ([]*SearchHit, error)
+}
+
+// CIBatchUpdater 仓储可选能力：多条资源的乐观锁更新与历史在同一事务内完成
+// （items[i].Version 为新版本，期望版本 = Version-1；任一失败整体回滚）。
+// 级联退役使用；仓储未实现时退化为逐条 Update。
+type CIBatchUpdater interface {
+	UpdateBatch(ctx context.Context, items []*CI, histories []*History) error
 }
 
 // HistoryRepo 变更历史只读接口（写入随资源/关系操作同事务）。
@@ -265,7 +276,19 @@ func (uc *CIUsecase) Create(ctx context.Context, actor Actor, ci *CI) (*CI, erro
 	if err := uc.cis.Create(ctx, ci, h); err != nil {
 		return nil, err
 	}
-	return uc.cis.Get(ctx, ci.ID)
+	return uc.getMasked(ctx, ci.ID)
+}
+
+// getMasked 读取资源并脱敏（写接口的返回值；与 Get / List 口径一致）。
+func (uc *CIUsecase) getMasked(ctx context.Context, id string) (*CI, error) {
+	ci, err := uc.cis.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := uc.mask(ctx, ci); err != nil {
+		return nil, err
+	}
+	return ci, nil
 }
 
 // GetByID 资源详情（不含关联统计；守卫与编排用）。
@@ -326,7 +349,10 @@ func (uc *CIUsecase) Search(ctx context.Context, filter SearchFilter) ([]*Search
 		return nil, err
 	}
 	for _, h := range hits {
-		if h.Field != "name" && h.Field != "externalId" && h.Field != "tags" && h.CI.Attrs[h.Field] == MaskedValue {
+		// 以"是否属性命中"判定（敏感字段编码恰为 name / tags 时也须脱敏）；
+		// 未标注 Attr 的仓储按字段名兜底。
+		attr := h.Attr || (h.Field != "name" && h.Field != "externalId" && h.Field != "tags")
+		if attr && h.CI.Attrs[h.Field] == MaskedValue {
 			h.Value = MaskedValue
 		}
 	}
@@ -339,6 +365,18 @@ func (uc *CIUsecase) List(ctx context.Context, filter CIFilter, page, pageSize i
 	if filter.Cursor != "" {
 		if _, _, err := DecodeCursor(filter.Cursor); err != nil {
 			return nil, 0, err
+		}
+	}
+	// 敏感字段不可作为过滤条件（等值过滤即取值探测）。未指定类型时由仓储按行所属类型排除。
+	if len(filter.Attrs) > 0 && filter.ModelCode != "" {
+		fields, err := uc.fields.ListByModel(ctx, filter.ModelCode)
+		if err != nil {
+			return nil, 0, err
+		}
+		for _, code := range sensitiveCodes(fields) {
+			if _, ok := filter.Attrs[code]; ok {
+				return nil, 0, detail(ErrCIInvalid, "field %q is sensitive and cannot be used as a filter", code)
+			}
 		}
 	}
 	items, total, err := uc.cis.List(ctx, filter, page, pageSize)
@@ -505,8 +543,8 @@ func (uc *CIUsecase) Update(ctx context.Context, actor Actor, id string, expecte
 		for key, v := range patch {
 			next.Attrs[key] = v
 		}
-		// 合并后全量校验必填（防止清空必填字段）。
-		if _, err := ValidateAttrs(fields, next.Attrs, false); err != nil {
+		// 合并后只校验必填（防止清空必填字段）；存量值与已废弃字段的遗留键不重校验。
+		if err := checkRequired(fields, next.Attrs); err != nil {
 			return nil, err
 		}
 		if err := uc.checkRefs(ctx, fields, patch); err != nil {
@@ -515,6 +553,9 @@ func (uc *CIUsecase) Update(ctx context.Context, actor Actor, id string, expecte
 	}
 	before, after := diffCI(cur, &next)
 	if len(after) == 0 {
+		if err := uc.mask(ctx, cur); err != nil {
+			return nil, err
+		}
 		return cur, nil
 	}
 	next.UniqueKey = UniqueKey(fields, next.Attrs)
@@ -527,11 +568,13 @@ func (uc *CIUsecase) Update(ctx context.Context, actor Actor, id string, expecte
 	if err := uc.cis.Update(ctx, &next, expectedVersion, h); err != nil {
 		return nil, err
 	}
-	return uc.cis.Get(ctx, id)
+	return uc.getMasked(ctx, id)
 }
 
 // Transition 状态流转：状态机校验；退役时按关系类型策略级联退役 dst 资源（restrict 则拒绝）。
-func (uc *CIUsecase) Transition(ctx context.Context, actor Actor, id string, expectedVersion int64, to string) (*CI, error) {
+// 级联闭包先整体算出，再与当前资源在同一事务内写入；scope 为调用者数据范围，
+// 闭包内任一资源越权则整体拒绝。
+func (uc *CIUsecase) Transition(ctx context.Context, actor Actor, scope Scope, id string, expectedVersion int64, to string) (*CI, error) {
 	cur, err := uc.cis.Get(ctx, id)
 	if err != nil {
 		return nil, err
@@ -542,61 +585,105 @@ func (uc *CIUsecase) Transition(ctx context.Context, actor Actor, id string, exp
 	if !CanTransition(cur.Status, to) {
 		return nil, detail(ErrCITransitionInvalid, "%s → %s", cur.Status, to)
 	}
+	targets := []*CI{cur}
 	if to == CIStatusRetired {
-		if err := uc.retireDependents(ctx, actor, cur); err != nil {
+		deps, err := uc.retireClosure(ctx, scope, cur)
+		if err != nil {
 			return nil, err
 		}
+		targets = append(targets, deps...)
 	}
-	next := *cur
-	next.Status = to
-	next.Version = cur.Version + 1
-	next.UpdateUser, next.UpdateTime = actor.UserID, time.Now()
-	h, err := newHistory(actor, id, ActionTransition, map[string]any{
-		"before": map[string]any{"status": cur.Status}, "after": map[string]any{"status": to},
-	})
-	if err != nil {
+	now := time.Now()
+	items := make([]*CI, 0, len(targets))
+	histories := make([]*History, 0, len(targets))
+	for _, t := range targets {
+		next := *t
+		next.Status = to
+		next.Version = t.Version + 1
+		next.UpdateUser, next.UpdateTime = actor.UserID, now
+		h, err := newHistory(actor, t.ID, ActionTransition, map[string]any{
+			"before": map[string]any{"status": t.Status}, "after": map[string]any{"status": to},
+		})
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, &next)
+		histories = append(histories, h)
+	}
+	if err := uc.updateAll(ctx, items, histories); err != nil {
 		return nil, err
 	}
-	if err := uc.cis.Update(ctx, &next, expectedVersion, h); err != nil {
-		return nil, err
-	}
-	return uc.cis.Get(ctx, id)
+	return uc.getMasked(ctx, id)
 }
 
-// retireDependents 退役前处理 outgoing 关系：cascade_retire 的 dst 逐个退役
-// （未退役者），restrict 且仍有关联则拒绝。
-func (uc *CIUsecase) retireDependents(ctx context.Context, actor Actor, ci *CI) error {
-	types, err := uc.relTypes.List(ctx, ci.ModelCode)
-	if err != nil {
-		return err
-	}
-	for _, t := range types {
-		if t.SrcModel != ModelAny && t.SrcModel != ci.ModelCode {
-			continue
+// updateAll 写入一组乐观锁更新：单条走 Update；多条优先同事务（CIBatchUpdater），
+// 仓储不支持时自后向前逐条更新（依赖在前、根在后）。
+func (uc *CIUsecase) updateAll(ctx context.Context, items []*CI, histories []*History) error {
+	if len(items) > 1 {
+		if b, ok := uc.cis.(CIBatchUpdater); ok {
+			return b.UpdateBatch(ctx, items, histories)
 		}
-		// 逐页遍历（依赖数可能超过单页上限）。
-		for page := int64(1); ; page++ {
-			related, total, err := uc.relations.ListRelated(ctx, ci.ID, t.Code, DirectionOutgoing, "", page, paging.MaxPageSize)
-			if err != nil {
-				return err
-			}
-			if page == 1 && total > 0 && t.OnDelete != OnDeleteCascadeRetire {
-				return detail(ErrCIInUse, "%d resources linked via %s", total, t.Code)
-			}
-			for _, r := range related {
-				if r.CI.Status == CIStatusRetired {
-					continue
-				}
-				if _, err := uc.Transition(ctx, actor, r.CI.ID, r.CI.Version, CIStatusRetired); err != nil {
-					return err
-				}
-			}
-			if int64(page*paging.MaxPageSize) >= total {
-				break
-			}
+	}
+	for i := len(items) - 1; i >= 0; i-- {
+		if err := uc.cis.Update(ctx, items[i], items[i].Version-1, histories[i]); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// retireClosure 计算退役 root 时需级联退役的资源闭包（不含 root）：沿 outgoing 关系
+// 广度优先遍历，visited 去重（环与菱形各只处理一次）；cascade_retire 的未退役 dst 纳入
+// 闭包并继续展开，restrict 且仍有关联则拒绝；已退役的 dst 跳过；越权的 dst 整体拒绝。
+// 返回的资源带读取时的当前版本。
+func (uc *CIUsecase) retireClosure(ctx context.Context, scope Scope, root *CI) ([]*CI, error) {
+	visited := map[string]struct{}{root.ID: {}}
+	typesByModel := map[string][]*RelationType{}
+	var deps []*CI
+	for queue := []*CI{root}; len(queue) > 0; queue = queue[1:] {
+		ci := queue[0]
+		types, ok := typesByModel[ci.ModelCode]
+		if !ok {
+			var err error
+			if types, err = uc.relTypes.List(ctx, ci.ModelCode); err != nil {
+				return nil, err
+			}
+			typesByModel[ci.ModelCode] = types
+		}
+		for _, t := range types {
+			if t.SrcModel != ModelAny && t.SrcModel != ci.ModelCode {
+				continue
+			}
+			// 逐页遍历（依赖数可能超过单页上限）。
+			for page := int64(1); ; page++ {
+				related, total, err := uc.relations.ListRelated(ctx, ci.ID, t.Code, DirectionOutgoing, "", page, paging.MaxPageSize)
+				if err != nil {
+					return nil, err
+				}
+				if page == 1 && total > 0 && t.OnDelete != OnDeleteCascadeRetire {
+					return nil, detail(ErrCIInUse, "%d resources linked via %s", total, t.Code)
+				}
+				for _, r := range related {
+					if _, ok := visited[r.CI.ID]; ok {
+						continue
+					}
+					visited[r.CI.ID] = struct{}{}
+					if r.CI.Status == CIStatusRetired {
+						continue
+					}
+					if !scope.Allows(r.CI.ModelCode, r.CI.Env) {
+						return nil, ErrScopeForbidden
+					}
+					deps = append(deps, r.CI)
+					queue = append(queue, r.CI)
+				}
+				if int64(page*paging.MaxPageSize) >= total {
+					break
+				}
+			}
+		}
+	}
+	return deps, nil
 }
 
 // Delete 软删资源：仍有任何关系时拒绝（先解除关系）。
@@ -740,7 +827,8 @@ func diffCI(cur, next *CI) (before, after map[string]any) {
 	}
 	ab, aa := map[string]any{}, map[string]any{}
 	for key, v := range cur.Attrs {
-		if nv, ok := next.Attrs[key]; !ok || !reflect.DeepEqual(v, nv) {
+		// 数值归一后比较：存量经 JSON 读回为 float64，新值归一为 int64，值相等不算变化。
+		if nv, ok := next.Attrs[key]; !ok || !reflect.DeepEqual(normalizeNumber(v), normalizeNumber(nv)) {
 			ab[key] = v
 			if ok {
 				aa[key] = nv

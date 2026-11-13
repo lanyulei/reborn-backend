@@ -86,6 +86,15 @@ func (uc *WorkerUsecase) RunOnce(ctx context.Context, token string) (int, error)
 	log := uc.log.With("task_id", task.ID, "run_id", task.RunID, "source_id", task.SourceID, "attempt", task.Attempts)
 	log.InfoContext(ctx, "sync task claimed")
 	src, counts, samples, runErr := uc.execute(ctx, task, log)
+	if runErr != nil && ctx.Err() != nil {
+		// 进程停机打断的同步不是任务失败：不写终态、不发失败告警，任务保持 running，
+		// 租约到期后由存活副本 / 重启后的进程重领重跑（重领时上一条运行记录置失败）。
+		log.WarnContext(ctx, "sync task interrupted by shutdown: left for re-claim after lease expiry")
+		if err := uc.staging.Clear(context.WithoutCancel(ctx), task.RunID); err != nil {
+			log.ErrorContext(ctx, "clear staging failed (scheduler will purge)", "error", err)
+		}
+		return 1, nil
+	}
 	status := cmdbcontract.TaskSucceeded
 	msg := ""
 	if runErr != nil {
@@ -171,28 +180,43 @@ func (uc *WorkerUsecase) run(ctx context.Context, task *Task, src *Source, log *
 		counts, samples, err = uc.collectAndReconcile(gctx, task, src, collector, credential, log)
 		return err
 	})
-	if err := g.Wait(); err != nil && !errors.Is(err, context.Canceled) {
+	if err := g.Wait(); err != nil {
+		if ctx.Err() != nil {
+			return counts, samples, fmt.Errorf("sync interrupted: %w", ctx.Err())
+		}
+		// 上层未取消时出现的任何错误（含采集器内部包装的 context.Canceled）都按失败处理，
+		// 不得当作成功——否则一次没采完的同步会以 0 计数记为成功。
 		return counts, samples, err
-	} else if err != nil && ctx.Err() != nil {
-		return counts, samples, fmt.Errorf("sync interrupted: %w", ctx.Err())
 	}
 	return counts, samples, nil
 }
 
-// keepAlive 每 lease/3 续约一次；失主返回 ErrLeaseLost（取消采集）。
+// keepAlive 每 lease/3 续约一次；失主返回 ErrLeaseLost（取消采集）。瞬时续约错误（DB
+// 抖动）不中止整次同步：改按 lease/10 快速重试，直到续上，或租约剩余不足 lease/3（再拖
+// 就可能与重领者并行对账）才放弃。
 func (uc *WorkerUsecase) keepAlive(ctx context.Context, task *Task) error {
-	ticker := time.NewTicker(uc.opts.Lease / 3)
+	interval, retry := uc.opts.Lease/3, uc.opts.Lease/10
+	expiry := time.Now().Add(uc.opts.Lease) // 领取略早于此刻：近似值，由 lease/3 余量覆盖
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			if err := uc.tasks.Renew(ctx, task, uc.opts.Lease); err != nil {
-				if ctx.Err() != nil {
-					return nil
-				}
+			start := time.Now()
+			err := uc.tasks.Renew(ctx, task, uc.opts.Lease)
+			switch {
+			case err == nil:
+				expiry = start.Add(uc.opts.Lease)
+				ticker.Reset(interval)
+			case ctx.Err() != nil:
+				return nil
+			case errors.Is(err, ErrLeaseLost) || time.Until(expiry) <= interval:
 				return err
+			default:
+				uc.log.WarnContext(ctx, "renew sync task lease failed, retrying", "task_id", task.ID, "error", err)
+				ticker.Reset(retry)
 			}
 		}
 	}
@@ -225,6 +249,7 @@ func (uc *WorkerUsecase) collectAndReconcile(ctx context.Context, task *Task, sr
 	if err != nil {
 		return counts, nil, err
 	}
+	staged := len(models) // models[:staged] 本次有暂存行；其后为补入的、本次 0 行的类型
 	// 本提供方可写但本次未出现的类型也要参与消失判定（如 VMware 全部虚拟机被删）。
 	for _, m := range cmdbcontract.ProviderModels(src.Provider) {
 		if !contains(models, m) {
@@ -232,10 +257,26 @@ func (uc *WorkerUsecase) collectAndReconcile(ctx context.Context, task *Task, sr
 		}
 	}
 	var samples []cmdbcontract.RunError
-	for _, model := range models {
+	for i, model := range models {
 		fields, err := uc.meta.Fields(ctx, model)
 		if err != nil {
 			return counts, samples, err
+		}
+		// 按类型的空集保护：本次该类型一条都没采到（账号失去该类资源的可见性），或类型
+		// 停用/不存在（采集行在入暂存前已被丢弃）时，不做该类型的消失/退役判定——否则
+		// 只要别的类型有数据，这一类型的全部资源就会被标记消失并在宽限期后整批退役。
+		// 代价：某类型资源真的全部下线时不会自动退役（由陈旧标记体现，需人工处理）。
+		skip := skipDisappear
+		if !skip && (i >= staged || len(fields) == 0) {
+			skip = true
+			active, err := uc.reconcile.HasActive(ctx, model, source)
+			if err != nil {
+				return counts, samples, err
+			}
+			if active {
+				log.WarnContext(ctx, "no resources discovered for model with active resources: disappearance check skipped",
+					"model", model, "model_enabled", len(fields) > 0)
+			}
 		}
 		var manual, unique []string
 		for _, f := range fields {
@@ -248,7 +289,7 @@ func (uc *WorkerUsecase) collectAndReconcile(ctx context.Context, task *Task, sr
 		}
 		c, errs, err := uc.reconcile.ReconcileModel(ctx, ReconcileParams{
 			RunID: task.RunID, ModelCode: model, Source: source, Env: src.Env, Grace: grace,
-			ManualKeys: manual, UniqueCodes: unique, SkipDisappear: skipDisappear,
+			ManualKeys: manual, UniqueCodes: unique, SkipDisappear: skip,
 		})
 		if err != nil {
 			return counts, samples, fmt.Errorf("reconcile %s: %w", model, err)

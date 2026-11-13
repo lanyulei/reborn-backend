@@ -899,6 +899,48 @@
             "type": "string"
           },
           {
+            "name": "tag",
+            "description": "tag 标签过滤（包含该标签），可选；与 ListCIsRequest 同名同义。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "attrs",
+            "description": "attrs 属性等值过滤（attrs.\u003ccode\u003e=value），可选；敏感字段不可用。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "relType",
+            "description": "rel_type 关联条件：关系类型，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "relDirection",
+            "description": "rel_direction 关联方向，缺省 outgoing。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "relTargetId",
+            "description": "rel_target_id 关联到该资源，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "relNone",
+            "description": "rel_none 该方向上无任何关联，可选。",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
             "name": "format",
             "description": "format 导出格式：csv（缺省）/ json。",
             "in": "query",
@@ -5512,6 +5554,13 @@
           },
           "title": "enum_values 枚举值（type=enum）。"
         },
+        "enumLabels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "enum_labels 枚举展示值（实际值 → 展示值）；未配置的枚举项展示实际值。"
+        },
         "refModel": {
           "type": "string",
           "title": "ref_model 引用的资源类型编码（type=ref，值为该类型资源 ID）。"
@@ -5962,6 +6011,13 @@
         "sensitive": {
           "type": "boolean",
           "title": "sensitive 敏感属性，可选。"
+        },
+        "enumLabels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "enum_labels 枚举展示值（键须属于 enum_values），值 0-64 位；仅显示层使用。"
         }
       },
       "title": "CreateFieldRequest 新增类型字段请求。"
@@ -9633,6 +9689,13 @@
         "sensitive": {
           "type": "boolean",
           "title": "sensitive 敏感属性。"
+        },
+        "enumLabels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "enum_labels 枚举展示值整组替换；随 enum_values 一同提交（enum_values 非空时生效）。"
         }
       },
       "title": "UpdateFieldRequest 更新类型字段请求；未传字段不更新。"
@@ -9994,11 +10057,11 @@
         },
         "email": {
           "type": "string",
-          "title": "email 新邮箱。"
+          "title": "email 新邮箱；传空串 = 清空。"
         },
         "phone": {
           "type": "string",
-          "title": "phone 新手机号。"
+          "title": "phone 新手机号；传空串 = 清空。"
         },
         "gender": {
           "type": "string",

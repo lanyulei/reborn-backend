@@ -11,6 +11,7 @@ import (
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
 	basedata "github.com/lanyulei/reborn/backend/core/internal/data"
 	"github.com/lanyulei/reborn/backend/kit/dbx"
+	"github.com/lanyulei/reborn/backend/kit/idgen"
 
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
@@ -198,6 +199,32 @@ func (r *userRepo) CreateUser(ctx context.Context, user *biz.User) error {
 		return mapUserUniqueViolation(err)
 	}
 	return nil
+}
+
+// CreateUserWithRoles implements biz.UserWriter：建号与角色绑定同事务提交，
+// 任一步失败整体回滚。
+func (r *userRepo) CreateUserWithRoles(ctx context.Context, user *biz.User, roleIDs []string) error {
+	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO "system_user" (id, username, password, nickname, email, phone, gender, is_admin, status, create_time, update_time)
+			 VALUES ($1, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''), $7, $8, $9, $10, $11)`,
+			user.ID, user.Username, user.Password, user.Nickname, user.Email, user.Phone,
+			user.Gender, user.IsAdmin, user.Status, user.CreateTime, user.UpdateTime); err != nil {
+			return mapUserUniqueViolation(err)
+		}
+		for _, roleID := range roleIDs {
+			id, err := idgen.NewID()
+			if err != nil {
+				return fmt.Errorf("generate binding id: %w", err)
+			}
+			if _, err := tx.Exec(ctx,
+				"INSERT INTO system_user_role (id, user_id, role_id) VALUES ($1, $2, $3)",
+				id, user.ID, roleID); err != nil {
+				return fmt.Errorf("insert user role binding: %w", err)
+			}
+		}
+		return nil
+	})
 }
 
 // UpdateUser implements biz.UserWriter：动态 SET 只允许静态列名白名单，值全部参数化；

@@ -4,7 +4,6 @@ go 1.26.0
 
 require (
 	buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.12-20260825204119-511051f7f437.2
-	github.com/casbin/casbin/v3 v3.11.0
 	github.com/go-kratos/kratos/contrib/middleware/jwt/v3 v3.0.0-20261026152050-dd0fb7df1e32
 	github.com/go-kratos/kratos/contrib/otel/v3 v3.0.0-20261026152050-dd0fb7df1e32
 	github.com/go-kratos/kratos/v3 v3.0.0
@@ -28,8 +27,6 @@ require (
 	cel.dev/cel-go v0.33.2 // indirect
 	cel.dev/expr v0.26.0 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
-	github.com/bmatcuk/doublestar/v4 v4.10.4 // indirect
-	github.com/casbin/govaluate v1.10.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect

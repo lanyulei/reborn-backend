@@ -96,6 +96,14 @@ sig       = hex(HMAC-SHA256(key, canonical))         # ts 为 Unix 秒，±5min
 ```
 Go 生产者可直接用 `pkg/ingressauth.Header(producerID, token, method, path, body, time.Now())`。
 
+- **密钥落库形态**：core 配置了主密钥时 `notify_producer.token_hash` 为封存形态（`notifycontract.WrapSealedProducerKey`），
+  管道用同一主密钥解封；未配置时为裸哈希，管道两种都接受。存量裸哈希由 core 启动时一次性补封存（幂等）。
+  **发布顺序**：先升级 notify（能解封），再升级 core（开始写封存形态）；两边主密钥必须一致。
+- **重放防护**：时间窗（±5min）内同一签名的请求只受理一次——实例内存表 + 共享表 `notify_ingress_replay`
+  （迁移 0048，多副本同口径，过期行由维护循环清理）。带 `dedup_key` 的请求由去重门闩兜底，重发按幂等受理；
+  不带的直接 401，指标 `notify_ingress_requests_total{result="replayed"}` 单列。
+- **配额口径**：秒窗（`qps_limit`）按请求事件数计；日窗（`daily_limit`）只计实际落库的事件，被去重的重发不扣日配额。
+
 ## Webhook 出站契约
 
 JSON 体 `{event_id, biz_id, event_type, severity, title, subject, body, payload, send_key, aggregate?, occurred_at}`；

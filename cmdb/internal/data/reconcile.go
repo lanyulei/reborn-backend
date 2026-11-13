@@ -275,6 +275,17 @@ func (r *reconcileRepo) ReconcileModel(ctx context.Context, p biz.ReconcileParam
 	return counts, samples, err
 }
 
+// HasActive implements biz.ReconcileRepo。
+func (r *reconcileRepo) HasActive(ctx context.Context, modelCode, source string) (bool, error) {
+	var active bool
+	if err := r.data.Pool.QueryRow(ctx,
+		"SELECT EXISTS (SELECT 1 FROM cmdb_ci WHERE model_code = $1 AND source = $2 AND delete_time IS NULL AND status <> $3)",
+		modelCode, source, cmdbcontract.CIStatusRetired).Scan(&active); err != nil {
+		return false, fmt.Errorf("check active resources: %w", err)
+	}
+	return active, nil
+}
+
 // stmtRelationsCTE 解析暂存声明的关系为 (type, src, dst, me, direction)，两端须为同源同步资源。
 const stmtRelationsCTE = `
 WITH decl AS (
@@ -316,12 +327,36 @@ CROSS JOIN LATERAL (
     FROM cmdb_ci src WHERE src.id = d.src_id
 ) h`
 
-// stmtRelationsInsert 缺失的关系插入并记双向历史。
+// stmtRelationSides 列出待写关系中受基数约束的端（one_to_one 两端、one_to_many 的 dst 端），
+// 锁名与 core 手工建关系一致（cmdb_relation:<type>:<col>:<id>），两条写路径由此互斥。
+const stmtRelationSides = stmtRelationsCTE + `
+SELECT DISTINCT 'cmdb_relation:' || x.type_code || ':dst_id:' || x.dst_id::text
+FROM resolved x JOIN cmdb_relation_type t ON t.code = x.type_code AND t.delete_time IS NULL
+WHERE t.cardinality IN ('one_to_one', 'one_to_many')
+UNION
+SELECT DISTINCT 'cmdb_relation:' || x.type_code || ':src_id:' || x.src_id::text
+FROM resolved x JOIN cmdb_relation_type t ON t.code = x.type_code AND t.delete_time IS NULL
+WHERE t.cardinality = 'one_to_one'
+ORDER BY 1`
+
+// stmtRelationsInsert 缺失的关系插入并记双向历史。受基数约束的端已有其它关系（如手工
+// 建立的）或同批重复声明时跳过该条——同步不破坏基数约束，也不因个别冲突整批失败。
 const stmtRelationsInsert = stmtRelationsCTE + `
 , ins AS (
     INSERT INTO cmdb_relation (id, type_code, src_id, dst_id, source, create_time)
-    SELECT DISTINCT ON (type_code, src_id, dst_id) gen_random_uuid(), type_code, src_id, dst_id, $2, now() FROM resolved
-    ORDER BY type_code, src_id, dst_id
+    SELECT gen_random_uuid(), c.type_code, c.src_id, c.dst_id, $2, now()
+    FROM (
+        SELECT x.type_code, x.src_id, x.dst_id, t.cardinality,
+               row_number() OVER (PARTITION BY x.type_code, x.dst_id ORDER BY x.src_id) AS dst_rank,
+               row_number() OVER (PARTITION BY x.type_code, x.src_id ORDER BY x.dst_id) AS src_rank
+        FROM (SELECT DISTINCT type_code, src_id, dst_id FROM resolved) x
+        JOIN cmdb_relation_type t ON t.code = x.type_code AND t.delete_time IS NULL
+    ) c
+    WHERE (c.cardinality NOT IN ('one_to_one', 'one_to_many') OR (c.dst_rank = 1 AND NOT EXISTS (
+              SELECT 1 FROM cmdb_relation r WHERE r.type_code = c.type_code AND r.dst_id = c.dst_id AND r.src_id <> c.src_id)))
+      AND (c.cardinality <> 'one_to_one' OR (c.src_rank = 1 AND NOT EXISTS (
+              SELECT 1 FROM cmdb_relation r WHERE r.type_code = c.type_code AND r.src_id = c.src_id AND r.dst_id <> c.dst_id)))
+    ORDER BY c.type_code, c.src_id, c.dst_id
     ON CONFLICT (type_code, src_id, dst_id) DO NOTHING
     RETURNING type_code, src_id, dst_id
 )
@@ -343,6 +378,20 @@ func (r *reconcileRepo) ReconcileRelations(ctx context.Context, runID, source st
 	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, stmtRelationsDelete, runID, source, cmdbcontract.DirectionOutgoing, cmdbcontract.ActionUnlink, cmdbcontract.DirectionIncoming); err != nil {
 			return fmt.Errorf("delete stale relations: %w", err)
+		}
+		// 受约束端加事务级 advisory lock（按键排序，防死锁），与 core 的手工写入串行。
+		rows, err := tx.Query(ctx, stmtRelationSides, runID, source, cmdbcontract.DirectionOutgoing)
+		if err != nil {
+			return fmt.Errorf("list relation sides: %w", err)
+		}
+		sides, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			return fmt.Errorf("list relation sides: %w", err)
+		}
+		for _, side := range sides {
+			if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", dbx.LockID(side)); err != nil {
+				return fmt.Errorf("lock relation side: %w", err)
+			}
 		}
 		if _, err := tx.Exec(ctx, stmtRelationsInsert, runID, source, cmdbcontract.DirectionOutgoing, cmdbcontract.ActionLink, cmdbcontract.DirectionIncoming); err != nil {
 			return fmt.Errorf("insert relations: %w", err)

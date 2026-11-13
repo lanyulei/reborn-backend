@@ -135,3 +135,20 @@ func (f fakeResolver) LookupIPAddr(_ context.Context, host string) ([]net.IPAddr
 	}
 	return out, nil
 }
+
+// TestWebhookSender_ErrorsCarryNoURL 出站失败与主机拦截的错误文本不带 URL 的路径/查询串
+// （用户 webhook 常把密钥放在查询串里）。
+func TestWebhookSender_ErrorsCarryNoURL(t *testing.T) {
+	t.Parallel()
+	const secret = "tok3n-in-query"
+	res, err := NewWebhookSender().WithInsecure().Send(context.Background(),
+		&biz.Channel{Type: biz.ChannelTypeWebhook, Webhook: &biz.WebhookConfig{URL: "http://127.0.0.1:1/h?token=" + secret, TimeoutS: 1}}, biz.RenderedMessage{})
+	if err == nil || !res.Retryable || strings.Contains(err.Error(), secret) {
+		t.Fatalf("connection refused: %+v %v", res, err)
+	}
+	res, err = NewWebhookSender().Send(context.Background(),
+		&biz.Channel{Type: biz.ChannelTypeWebhook, Webhook: &biz.WebhookConfig{URL: "https://10.1.2.3/h?token=" + secret}}, biz.RenderedMessage{})
+	if err == nil || res.Retryable || !errors.Is(err, errWebhookHostBlocked) || strings.Contains(err.Error(), secret) {
+		t.Fatalf("blocked host: %+v %v", res, err)
+	}
+}

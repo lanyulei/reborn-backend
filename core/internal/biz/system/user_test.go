@@ -58,9 +58,10 @@ func (s *userStoreStub) DeleteByUser(_ context.Context, userID string) error {
 	return nil
 }
 
-// Save/Rotate 补齐 RefreshTokenWriter 接口（UserUsecase 不调用）。
+// Save/Rotate/DeleteByFamily 补齐 RefreshTokenWriter 接口（UserUsecase 不调用）。
 func (s *userStoreStub) Save(context.Context, *RefreshToken) error           { return nil }
 func (s *userStoreStub) Rotate(context.Context, string, *RefreshToken) error { return nil }
+func (s *userStoreStub) DeleteByFamily(context.Context, string) error        { return nil }
 
 func newUserStoreStub() *userStoreStub {
 	return &userStoreStub{
@@ -107,6 +108,16 @@ func (s *userStoreStub) CreateUser(_ context.Context, user *User) error {
 	}
 	s.users[user.ID] = user
 	s.lastHash = user.Password
+	return nil
+}
+
+func (s *userStoreStub) CreateUserWithRoles(ctx context.Context, user *User, roleIDs []string) error {
+	if err := s.CreateUser(ctx, user); err != nil {
+		return err
+	}
+	if len(roleIDs) > 0 {
+		s.bindings[user.ID] = roleIDs
+	}
 	return nil
 }
 

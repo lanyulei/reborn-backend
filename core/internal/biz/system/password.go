@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"math"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -73,6 +74,17 @@ const (
 	maxArgon2Parallelism = 255
 )
 
+// argon2Slots 限制进程内并发 Argon2id 派生数：单次派生占用 memory_kb（典型
+// 64 MiB），不设界时并发登录/建号可瞬时吃光内存。超出者排队等待。
+var argon2Slots = make(chan struct{}, max(2, min(runtime.NumCPU(), 8)))
+
+// deriveKey 在并发槽位内执行 Argon2id 派生。
+func deriveKey(password string, salt []byte, time, memoryKB uint32, parallelism uint8, keyLen uint32) []byte {
+	argon2Slots <- struct{}{}
+	defer func() { <-argon2Slots }()
+	return argon2.IDKey([]byte(password), salt, time, memoryKB, parallelism, keyLen)
+}
+
 // PasswordHasher 是 Argon2id 密码哈希器；输出与校验均使用 PHC 标准格式串
 // （$argon2id$v=19$m=...,t=...,p=...$<salt>$<hash>），盐为每次随机的 16 字节。
 // 哈希串自带参数，Verify 按串内参数重新派生，天然支持参数在线升级后的旧串校验。
@@ -117,7 +129,7 @@ func (h *PasswordHasher) Hash(password string) (string, error) {
 	if _, err := rand.Read(salt); err != nil {
 		return "", fmt.Errorf("read random salt: %w", err)
 	}
-	key := argon2.IDKey([]byte(password), salt, h.time, h.memoryKB, h.parallelism, argon2KeyLen)
+	key := deriveKey(password, salt, h.time, h.memoryKB, h.parallelism, argon2KeyLen)
 	enc := base64.RawStdEncoding
 	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
 		argon2Version, h.memoryKB, h.time, h.parallelism,
@@ -131,7 +143,7 @@ func (h *PasswordHasher) Verify(password, phc string) bool {
 	if err != nil {
 		return false
 	}
-	key := argon2.IDKey([]byte(password), p.salt, p.time, p.memoryKB, p.parallelism, p.keyLen)
+	key := deriveKey(password, p.salt, p.time, p.memoryKB, p.parallelism, p.keyLen)
 	return subtle.ConstantTimeCompare(key, p.key) == 1
 }
 

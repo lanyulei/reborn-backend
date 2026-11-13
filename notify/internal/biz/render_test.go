@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"text/template"
 	"time"
 )
 
@@ -136,5 +137,24 @@ func TestRendererFormat(t *testing.T) {
 	textTpl := &Template{ID: "t", Version: 1, Subject: "s", Body: "<p>{{.Payload.host}}</p>"}
 	if _, body, _, _ = r.Render(context.Background(), textTpl, ChannelTypeEmail, RenderContextFor(ev, nil)); body != "<p><b>x</b></p>" {
 		t.Fatalf("text template must not escape: %q", body)
+	}
+}
+
+// TestRendererStopsAfterCancel ctx 结束后模板执行在下一次输出写入处中止（渲染协程不在
+// 超时后继续跑完）。
+func TestRendererStopsAfterCancel(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	tpl, err := template.New("t").Parse("{{range .Samples}}x{{end}}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc := RenderContext{Samples: make([]map[string]any, 100)}
+	if _, err := execLimited(ctx, tpl, rc); !errors.Is(err, context.Canceled) {
+		t.Fatalf("execLimited(cancelled) error = %v, want context.Canceled", err)
+	}
+	if out, err := execLimited(context.Background(), tpl, rc); err != nil || len(out) != 100 {
+		t.Fatalf("execLimited() = %d bytes, %v", len(out), err)
 	}
 }

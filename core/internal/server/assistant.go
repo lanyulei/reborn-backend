@@ -68,6 +68,10 @@ func streamHandler[T proto.Message](operation string, newReq func() T,
 		if w == nil {
 			return errors.InternalServer("ASSISTANT_UNSPECIFIED", "streaming not supported by response writer")
 		}
+		// 请求体已读完：清除连接读截止时间（Server.ReadTimeout），否则它在
+		// 流式期间到点会让 net/http 后台读报错并取消请求 ctx。尽力而为：
+		// 底层 writer 不支持时忽略（流式运行本就脱离请求 ctx 的取消）。
+		_ = http.NewResponseController(ctx.Response()).SetReadDeadline(time.Time{})
 		runCtx, cancel := context.WithTimeout(context.WithoutCancel(authed), sseMaxDuration)
 		defer cancel()
 		emit := func(ev bizassistant.Event) error {

@@ -3,6 +3,7 @@ package biz
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"io"
 	"log/slog"
 	"testing"
@@ -12,11 +13,12 @@ import (
 )
 
 // refreshStoreStub 是认证用例的内存刷新令牌仓储，语义对齐 data 层契约：
-// 行存在即有效、轮换检测重放、Save 惰性清理同用户过期行。
+// 未轮换的行存在即有效、轮换留墓碑、Save 惰性清理同用户过期行。
 type refreshStoreStub struct {
-	tokens    map[string]*RefreshToken // key: TokenHash
-	deleted   []string                 // DeleteByUser 的 userID 调用记录
-	raceLoser bool                     // 置位时 Rotate 模拟并发败者：旧行已被另一方删除
+	tokens          map[string]*RefreshToken // key: TokenHash
+	deleted         []string                 // DeleteByUser 的 userID 调用记录
+	deletedFamilies []string                 // DeleteByFamily 的 familyID 调用记录
+	raceLoser       bool                     // 置位时 Rotate 模拟并发败者：旧行已被另一方轮换
 }
 
 func newRefreshStoreStub() *refreshStoreStub {
@@ -43,15 +45,30 @@ func (s *refreshStoreStub) Save(_ context.Context, token *RefreshToken) error {
 }
 
 func (s *refreshStoreStub) Rotate(_ context.Context, oldHash string, next *RefreshToken) error {
+	old, ok := s.tokens[oldHash]
 	if s.raceLoser {
-		delete(s.tokens, oldHash)
+		if ok && old.RotatedAt == nil {
+			rotatedAt := next.CreateTime
+			old.RotatedAt = &rotatedAt
+		}
 		return ErrTokenInvalid
 	}
-	if _, ok := s.tokens[oldHash]; !ok {
+	if !ok || old.RotatedAt != nil {
 		return ErrTokenInvalid
 	}
-	delete(s.tokens, oldHash)
+	rotatedAt := next.CreateTime
+	old.RotatedAt = &rotatedAt
 	s.tokens[next.TokenHash] = next
+	return nil
+}
+
+func (s *refreshStoreStub) DeleteByFamily(_ context.Context, familyID string) error {
+	s.deletedFamilies = append(s.deletedFamilies, familyID)
+	for h, t := range s.tokens {
+		if t.FamilyID == familyID {
+			delete(s.tokens, h)
+		}
+	}
 	return nil
 }
 
@@ -285,8 +302,9 @@ func TestAuthUsecase_RefreshFailures(t *testing.T) {
 	})
 }
 
-// TestAuthUsecase_RefreshSuccessAndReplay 成功轮换：旧哈希即刻失效、新哈希
-// 可用；旧原文重放（含并发轮换败者语义）按 ErrTokenInvalid 拒绝。
+// TestAuthUsecase_RefreshSuccessAndReplay 成功轮换：旧哈希即刻失效（留墓碑）、
+// 新哈希可用且继承令牌族；宽限期内的旧原文重放（并发刷新竞态）按
+// ErrTokenInvalid 拒绝且不吊销任何令牌。
 func TestAuthUsecase_RefreshSuccessAndReplay(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -306,11 +324,16 @@ func TestAuthUsecase_RefreshSuccessAndReplay(t *testing.T) {
 	if next.AccessToken == "" || next.RefreshToken == "" || next.RefreshToken == pair.RefreshToken {
 		t.Fatalf("Refresh() pair = %+v, want new token pair", next)
 	}
-	if _, ok := refresh.tokens[oldHash]; ok {
-		t.Fatal("Refresh() left old hash valid")
+	tomb, ok := refresh.tokens[oldHash]
+	if !ok || tomb.RotatedAt == nil {
+		t.Fatalf("Refresh() old row = %+v, want tombstone with RotatedAt set", tomb)
 	}
-	if _, ok := refresh.tokens[hashRefreshToken(next.RefreshToken)]; !ok {
+	succ, ok := refresh.tokens[hashRefreshToken(next.RefreshToken)]
+	if !ok {
 		t.Fatal("Refresh() did not persist new hash")
+	}
+	if succ.RotatedAt != nil || succ.FamilyID == "" || succ.FamilyID != tomb.FamilyID || tomb.FamilyID != tomb.ID {
+		t.Fatalf("Refresh() successor = %+v tombstone = %+v, want live successor inheriting the login token's family", succ, tomb)
 	}
 	signer := newDefaultSigner(t)
 	claims, err := signer.ParseAccess(next.AccessToken)
@@ -318,9 +341,98 @@ func TestAuthUsecase_RefreshSuccessAndReplay(t *testing.T) {
 		t.Fatalf("Refresh() access token claims = %+v err = %v, want sub %s", claims, err, u.ID)
 	}
 
-	// 旧原文重放：哈希已不存在 → ErrTokenInvalid（覆盖并发轮换败者）。
+	// 宽限期内旧原文重放（并发刷新竞态）：仅拒绝，不吊销，后继令牌仍可用。
 	if _, err := uc.Refresh(ctx, pair.RefreshToken); !errors.Is(err, ErrTokenInvalid) {
-		t.Fatalf("Refresh(replay) error = %v, want ErrTokenInvalid", err)
+		t.Fatalf("Refresh(replay within grace) error = %v, want ErrTokenInvalid", err)
+	}
+	if len(refresh.deleted) != 0 || len(refresh.deletedFamilies) != 0 {
+		t.Fatalf("replay within grace revoked tokens: users = %v families = %v", refresh.deleted, refresh.deletedFamilies)
+	}
+	if _, err := uc.Refresh(ctx, next.RefreshToken); err != nil {
+		t.Fatalf("Refresh(successor after in-grace replay) error = %v, want success", err)
+	}
+}
+
+// TestAuthUsecase_RefreshReuseRevokesFamily 重放检测：已轮换的令牌在宽限期
+// 之外再次出示 = 被盗令牌重放，整族吊销——后继令牌（无论持有者是攻击者
+// 还是合法用户）一并失效；同一用户其它登录会话（另一族）不受影响。
+func TestAuthUsecase_RefreshReuseRevokesFamily(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	uc, stub, refresh, _ := newAuthUsecase(t)
+	seedLoginUser(t, stub, "alice", StatusEnabled)
+
+	_, pair, err := uc.Login(ctx, "alice", "plain-secret", "", "")
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+	_, other, err := uc.Login(ctx, "alice", "plain-secret", "", "")
+	if err != nil {
+		t.Fatalf("Login(second session) error = %v", err)
+	}
+	next, err := uc.Refresh(ctx, pair.RefreshToken)
+	if err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+	third, err := uc.Refresh(ctx, next.RefreshToken)
+	if err != nil {
+		t.Fatalf("Refresh(second rotation) error = %v", err)
+	}
+
+	// 把首个墓碑的轮换时间拨到宽限期之外，再重放其原文。
+	tomb := refresh.tokens[hashRefreshToken(pair.RefreshToken)]
+	stale := time.Now().Add(-refreshReuseGrace - time.Second)
+	tomb.RotatedAt = &stale
+	if _, err := uc.Refresh(ctx, pair.RefreshToken); !errors.Is(err, ErrTokenInvalid) {
+		t.Fatalf("Refresh(reuse after grace) error = %v, want ErrTokenInvalid", err)
+	}
+	if len(refresh.deletedFamilies) != 1 || refresh.deletedFamilies[0] != tomb.FamilyID {
+		t.Fatalf("reuse revoked families = %v, want [%s]", refresh.deletedFamilies, tomb.FamilyID)
+	}
+	for _, raw := range []string{pair.RefreshToken, next.RefreshToken, third.RefreshToken} {
+		if _, ok := refresh.tokens[hashRefreshToken(raw)]; ok {
+			t.Fatal("reuse left a row of the revoked family")
+		}
+	}
+	if _, err := uc.Refresh(ctx, third.RefreshToken); !errors.Is(err, ErrTokenInvalid) {
+		t.Fatalf("Refresh(successor after reuse) error = %v, want ErrTokenInvalid", err)
+	}
+	if len(refresh.deleted) != 0 {
+		t.Fatalf("reuse must revoke the family only, DeleteByUser calls = %v", refresh.deleted)
+	}
+	if _, err := uc.Refresh(ctx, other.RefreshToken); err != nil {
+		t.Fatalf("Refresh(other session) error = %v, want success", err)
+	}
+}
+
+// TestAuthUsecase_LogoutClearsTombstones 登出清除该用户全部行（含轮换墓碑）。
+func TestAuthUsecase_LogoutClearsTombstones(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	uc, stub, refresh, _ := newAuthUsecase(t)
+	u := seedLoginUser(t, stub, "alice", StatusEnabled)
+	_, pair, err := uc.Login(ctx, "alice", "plain-secret", "", "")
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+	if _, err := uc.Refresh(ctx, pair.RefreshToken); err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+	if tomb := refresh.tokens[hashRefreshToken(pair.RefreshToken)]; tomb == nil || tomb.RotatedAt == nil {
+		t.Fatalf("precondition: want tombstone before logout, got %+v", tomb)
+	}
+	if err := uc.Logout(ctx, u.ID); err != nil {
+		t.Fatalf("Logout() error = %v", err)
+	}
+	if len(refresh.tokens) != 0 {
+		t.Fatalf("Logout() left rows (tombstones must go too) = %v", refresh.tokens)
+	}
+	// 登出后重放旧原文：行已不存在，仅 ErrTokenInvalid，不触发族吊销。
+	if _, err := uc.Refresh(ctx, pair.RefreshToken); !errors.Is(err, ErrTokenInvalid) {
+		t.Fatalf("Refresh(after logout) error = %v, want ErrTokenInvalid", err)
+	}
+	if len(refresh.deletedFamilies) != 0 {
+		t.Fatalf("Refresh(after logout) revoked families = %v, want none", refresh.deletedFamilies)
 	}
 }
 
@@ -502,10 +614,10 @@ func TestAuthUsecase_LoginAuditWriteFailure(t *testing.T) {
 	}
 }
 
-// TestAuthUsecase_RefreshReuseRevokesFamily 刷新令牌重放检测：旧令牌在
-// FindByHash 命中后 Rotate 失败（并发/重放），吊销该用户全部刷新令牌——
-// 攻击者刚换到的新令牌同样失效，双方都须重新登录。
-func TestAuthUsecase_RefreshReuseRevokesFamily(t *testing.T) {
+// TestAuthUsecase_RefreshRaceLoserKeepsWinner 并发刷新竞态：旧令牌在
+// FindByHash 命中后 Rotate 失败（同一令牌被并发使用），败者仅本次返回
+// ErrTokenInvalid，不吊销该用户其它令牌——胜者刚换发的新令牌必须仍可用。
+func TestAuthUsecase_RefreshRaceLoserKeepsWinner(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	uc, stub, refresh, _ := newAuthUsecase(t)
@@ -519,21 +631,88 @@ func TestAuthUsecase_RefreshReuseRevokesFamily(t *testing.T) {
 		t.Fatalf("Refresh() error = %v", err)
 	}
 
-	// 模拟重放竞态：旧哈希行重新出现（FindByHash 命中）但 Rotate 时已被
-	// 并发方删除——用桩把旧行放回，再在 Rotate 前由另一方拿走。
+	// 模拟竞态：FindByHash 读到的旧行尚未被轮换（RotatedAt 为空），但
+	// Rotate 时已被并发方置为墓碑——用桩把旧行还原为未轮换，再让 Rotate 败北。
 	refresh.tokens[hashRefreshToken(pair.RefreshToken)] = &RefreshToken{
-		ID: "replayed", UserID: u.ID, TokenHash: hashRefreshToken(pair.RefreshToken),
+		ID: "replayed", UserID: u.ID, FamilyID: "replayed", TokenHash: hashRefreshToken(pair.RefreshToken),
 		ExpireTime: time.Now().Add(time.Hour), CreateTime: time.Now(),
 	}
 	refresh.raceLoser = true
 	if _, err := uc.Refresh(ctx, pair.RefreshToken); !errors.Is(err, ErrTokenInvalid) {
-		t.Fatalf("Refresh(replay) error = %v, want ErrTokenInvalid", err)
+		t.Fatalf("Refresh(race loser) error = %v, want ErrTokenInvalid", err)
 	}
-	if len(refresh.deleted) == 0 || refresh.deleted[len(refresh.deleted)-1] != u.ID {
-		t.Fatalf("reuse detection must revoke all tokens of %s, deleted = %v", u.ID, refresh.deleted)
+	if len(refresh.deleted) != 0 || len(refresh.deletedFamilies) != 0 {
+		t.Fatalf("race loser must not revoke other sessions, deleted = %v families = %v", refresh.deleted, refresh.deletedFamilies)
 	}
 	refresh.raceLoser = false
-	if _, err := uc.Refresh(ctx, next.RefreshToken); !errors.Is(err, ErrTokenInvalid) {
-		t.Fatalf("Refresh(sibling token after revocation) error = %v, want ErrTokenInvalid", err)
+	if _, err := uc.Refresh(ctx, next.RefreshToken); err != nil {
+		t.Fatalf("Refresh(winner token) error = %v, want success", err)
+	}
+}
+
+// TestAuthUsecase_LoginThrottle 登录防爆破：同一用户名连续失败达到阈值后
+// 短时锁定，锁定期内正确密码同样拒绝（ErrLoginThrottled）；锁定到期后恢复，
+// 成功登录清零计数。
+func TestAuthUsecase_LoginThrottle(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	uc, stub, _, _ := newAuthUsecase(t)
+	seedLoginUser(t, stub, "alice", StatusEnabled)
+	now := time.Now()
+	uc.limiter.now = func() time.Time { return now }
+
+	for i := range loginMaxFailuresPerUser {
+		if _, _, err := uc.Login(ctx, "alice", "wrong-secret", "10.0.0.8", ""); !errors.Is(err, ErrInvalidCredentials) {
+			t.Fatalf("Login(wrong #%d) error = %v, want ErrInvalidCredentials", i+1, err)
+		}
+	}
+	// 用户名大小写变体不得绕过锁定。
+	for _, name := range []string{"alice", "Alice"} {
+		if _, _, err := uc.Login(ctx, name, "plain-secret", "10.0.0.8", ""); !errors.Is(err, ErrLoginThrottled) {
+			t.Fatalf("Login(%s, locked) error = %v, want ErrLoginThrottled", name, err)
+		}
+	}
+	// 锁定按（用户名, IP）对：正主从其它地址仍可登录（他人输错密码不能锁死账号）。
+	if _, _, err := uc.Login(ctx, "alice", "plain-secret", "10.0.0.9", ""); err != nil {
+		t.Fatalf("Login(other ip while pair locked) error = %v, want success", err)
+	}
+	now = now.Add(loginLockout + time.Second)
+	if _, _, err := uc.Login(ctx, "alice", "plain-secret", "10.0.0.8", ""); err != nil {
+		t.Fatalf("Login(after lockout) error = %v, want success", err)
+	}
+	// 成功后计数清零：再失败阈值-1 次不锁定。
+	for range loginMaxFailuresPerUser - 1 {
+		_, _, _ = uc.Login(ctx, "alice", "wrong-secret", "10.0.0.8", "")
+	}
+	if _, _, err := uc.Login(ctx, "alice", "plain-secret", "10.0.0.8", ""); err != nil {
+		t.Fatalf("Login(below threshold) error = %v, want success", err)
+	}
+}
+
+// TestLoginLimiter_IPAndBound 按 IP 计数跨用户名累计；计数表有界。
+func TestLoginLimiter_IPAndBound(t *testing.T) {
+	t.Parallel()
+	l := newLoginLimiter()
+	for i := range loginMaxFailuresPerIP {
+		l.fail(fmt.Sprintf("user-%d", i), "10.0.0.8")
+	}
+	if !l.blocked("someone-else", "10.0.0.8") {
+		t.Fatal("ip must be locked after repeated failures across usernames")
+	}
+	if l.blocked("someone-else", "10.0.0.9") {
+		t.Fatal("other ip must not be locked")
+	}
+	// 用户名全局阈值兜分布式爆破：每个 IP 都没到对阈值，累计到全局阈值仍锁定。
+	for i := range loginMaxFailuresPerUserGlobal {
+		l.fail("victim", fmt.Sprintf("10.1.%d.%d", i/200, i%200))
+	}
+	if !l.blocked("victim", "10.9.9.9") {
+		t.Fatal("username must be locked globally after distributed failures")
+	}
+	for i := range loginLimiterMaxEntries + 100 {
+		l.fail(fmt.Sprintf("flood-%d", i), "")
+	}
+	if len(l.entries) > loginLimiterMaxEntries {
+		t.Fatalf("limiter entries = %d, want <= %d", len(l.entries), loginLimiterMaxEntries)
 	}
 }

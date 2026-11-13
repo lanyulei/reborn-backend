@@ -1,6 +1,7 @@
 package notifycontract
 
 import (
+	"bytes"
 	"testing"
 	"time"
 )
@@ -137,6 +138,21 @@ func TestEffectiveFormat(t *testing.T) {
 	for _, c := range cases {
 		if got := EffectiveFormat(c.ch, c.in); got != c.want {
 			t.Errorf("EffectiveFormat(%s,%s) = %s, want %s", c.ch, c.in, got, c.want)
+		}
+	}
+}
+
+func TestSealedProducerKey(t *testing.T) {
+	t.Parallel()
+	sealed := bytes.Repeat([]byte{7}, 60)
+	got, ok := SealedProducerKey(WrapSealedProducerKey(sealed))
+	if !ok || !bytes.Equal(got, sealed) {
+		t.Fatalf("SealedProducerKey(wrapped) = %v, %v", got, ok)
+	}
+	legacy := append([]byte(ProducerKeySealedPrefix), bytes.Repeat([]byte{1}, 28)...) // 32 字节且偶然带前缀
+	for name, stored := range map[string][]byte{"legacy hash": bytes.Repeat([]byte{9}, 32), "legacy with prefix bytes": legacy, "short": []byte("hash"), "empty": nil} {
+		if _, ok := SealedProducerKey(stored); ok {
+			t.Errorf("%s must be treated as legacy", name)
 		}
 	}
 }

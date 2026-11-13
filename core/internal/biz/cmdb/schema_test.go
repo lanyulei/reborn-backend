@@ -118,3 +118,44 @@ func TestDiffCI(t *testing.T) {
 		t.Fatal("sentinel reason")
 	}
 }
+
+func TestDiffCI_NumberNormalised(t *testing.T) {
+	t.Parallel()
+	// 存量经 JSON 读回为 float64，新值归一为 int64：值相等不算变化。
+	cur := &CI{Attrs: map[string]any{"cores": float64(4), "ratio": 1.5}}
+	next := &CI{Attrs: map[string]any{"cores": int64(4), "ratio": 1.5}}
+	if b, a := diffCI(cur, next); len(b) != 0 || len(a) != 0 {
+		t.Fatalf("equal numbers must not diff: %v %v", b, a)
+	}
+	next.Attrs["cores"] = int64(8)
+	if _, a := diffCI(cur, next); len(a) == 0 {
+		t.Fatal("changed number must diff")
+	}
+}
+
+func TestCheckRequired(t *testing.T) {
+	t.Parallel()
+	fields := []*Field{
+		{Code: "ip", Type: FieldTypeString, Required: true},
+		{Code: "kind", Type: FieldTypeEnum, EnumValues: []string{"a"}},
+		{Code: "old", Type: FieldTypeString, Required: true, Deprecated: true},
+	}
+	// 遗留的已废弃键、已移出枚举的存量值都不阻塞；已废弃的必填字段不再要求。
+	if err := checkRequired(fields, map[string]any{"ip": "1", "kind": "removed", "legacy": "x"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := checkRequired(fields, map[string]any{"kind": "a"}); err == nil {
+		t.Fatal("missing required field must fail")
+	}
+	if err := checkRequired(fields, map[string]any{"ip": nil}); err == nil {
+		t.Fatal("nil required field must fail")
+	}
+}
+
+func TestDropEmptyLabels(t *testing.T) {
+	t.Parallel()
+	got := dropEmptyLabels(map[string]string{"a": "A", "b": ""})
+	if len(got) != 1 || got["a"] != "A" {
+		t.Fatalf("dropEmptyLabels = %v", got)
+	}
+}

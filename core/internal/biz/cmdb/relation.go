@@ -70,6 +70,7 @@ type RelationRepo interface {
 	// Create 建立关系并同事务写入两端历史；已存在返回 ErrRelationExists。
 	Create(ctx context.Context, rel *Relation, histories []*History) error
 	// CreateBatch 同事务建立多条关系并写入历史（任一失败整体回滚）。
+	// 基数在事务内加锁复核（并发关联不得突破），违反返回 ErrRelationCardinality；Move 同。
 	CreateBatch(ctx context.Context, rels []*Relation, histories []*History) error
 	// Exists 报告 (type, src, dst) 关系是否存在。
 	Exists(ctx context.Context, typeCode, srcID, dstID string) (bool, error)
@@ -301,6 +302,7 @@ func (uc *RelationUsecase) buildRelation(ctx context.Context, actor Actor, t *Re
 }
 
 // checkSide 某端已有关系数（含批内增量）须为 0，否则基数冲突。
+// 此处为无锁预检（给出具体提示）；并发安全由仓储写入事务内的加锁复核保证。
 func (uc *RelationUsecase) checkSide(ctx context.Context, t *RelationType, side, id string, batch map[string]int64, key, name string) error {
 	n, err := uc.relations.CountSide(ctx, t.Code, side, id)
 	if err != nil {

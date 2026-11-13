@@ -126,7 +126,11 @@ func (s *WebhookSender) Send(ctx context.Context, ch *biz.Channel, msg biz.Rende
 		return biz.SendResult{Retryable: false}, errors.New("webhook url must be https")
 	}
 	if u, err := url.Parse(cfg.URL); err != nil || (!s.allowInsecure && notifycontract.UnsafeWebhookHost(u.Hostname())) {
-		return biz.SendResult{Retryable: false}, fmt.Errorf("%w: %s", errWebhookHostBlocked, cfg.URL)
+		host := "unparseable url" // 只报主机：路径/查询串可能带密钥
+		if err == nil {
+			host = u.Host
+		}
+		return biz.SendResult{Retryable: false}, fmt.Errorf("%w: %s", errWebhookHostBlocked, host)
 	}
 	body, err := json.Marshal(webhookPayload{
 		EventID: msg.EventID, BizID: msg.BizID, EventType: msg.EventType, Severity: msg.Severity, Title: msg.Title,
@@ -144,7 +148,7 @@ func (s *WebhookSender) Send(ctx context.Context, ch *biz.Channel, msg biz.Rende
 	// 叠加——叠加等于 min(两者)，渠道值会被固定缺省吞掉。
 	req, err := http.NewRequestWithContext(ctx, method, cfg.URL, bytes.NewReader(body))
 	if err != nil {
-		return biz.SendResult{Retryable: false}, fmt.Errorf("build webhook request: %w", err)
+		return biz.SendResult{Retryable: false}, fmt.Errorf("build webhook request: %w", scrubURLError(err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "reborn-notify/1.0")
@@ -161,7 +165,7 @@ func (s *WebhookSender) Send(ctx context.Context, ch *biz.Channel, msg biz.Rende
 	}
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return biz.SendResult{Retryable: !errors.Is(err, errWebhookHostBlocked)}, fmt.Errorf("webhook request: %w", err)
+		return biz.SendResult{Retryable: !errors.Is(err, errWebhookHostBlocked)}, fmt.Errorf("webhook request: %w", scrubURLError(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))

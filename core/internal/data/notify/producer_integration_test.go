@@ -8,6 +8,8 @@ import (
 	"time"
 
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/notify"
+	"github.com/lanyulei/reborn/backend/kit/notifycontract"
+	"github.com/lanyulei/reborn/backend/kit/secretbox"
 
 	"github.com/go-kratos/kratos/v3/errors"
 )
@@ -30,7 +32,7 @@ func newProducerDO(id, name string) *biz.Producer {
 
 func TestIntegration_ProducerCRUD(t *testing.T) {
 	d := newIntegrationNotifyData(t)
-	repo := NewProducerRepo(d)
+	repo := NewProducerRepo(d, nil) // 未配置主密钥：存量形态（裸哈希）往返
 	ctx := context.Background()
 
 	// 新建：text[] 白名单与 bytea 哈希往返；expire_time 缺省 NULL。
@@ -174,5 +176,68 @@ func TestIntegration_ProducerCRUD(t *testing.T) {
 	// + update×2（spec/enabled，撞名回滚）+ rotate×1 + delete×1 = 8 次成功 bump。
 	if version != 8 {
 		t.Fatalf("cfg_version = %d, want 8（每次成功写均 bump）", version)
+	}
+}
+
+// TestIntegration_ProducerKeySealed 配置主密钥后 HMAC 密钥封存落库（管道用同一主密钥
+// 解封得到原密钥）；存量裸哈希行在任一次更新时换成封存形态，密钥不变。
+func TestIntegration_ProducerKeySealed(t *testing.T) {
+	d := newIntegrationNotifyData(t)
+	ctx := context.Background()
+	peer, err := secretbox.New("integration-test-master-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	storedKey := func(id string) []byte {
+		t.Helper()
+		var stored []byte
+		if err := d.Pool.QueryRow(ctx, "SELECT token_hash FROM notify_producer WHERE id = $1", id).Scan(&stored); err != nil {
+			t.Fatalf("read token_hash: %v", err)
+		}
+		return stored
+	}
+	open := func(id string) string {
+		t.Helper()
+		sealed, ok := notifycontract.SealedProducerKey(storedKey(id))
+		if !ok {
+			t.Fatalf("producer %s key is not sealed", id)
+		}
+		plain, err := peer.Open(sealed)
+		if err != nil {
+			t.Fatalf("open sealed key: %v", err)
+		}
+		return plain
+	}
+
+	// 存量行：未配置主密钥时创建 → 裸哈希。
+	legacy := newProducerDO("018f3e1a-0304-7000-8000-0000000000d1", "legacy-engine")
+	if err := NewProducerRepo(d, nil).CreateProducer(ctx, legacy); err != nil {
+		t.Fatal(err)
+	}
+	if string(storedKey(legacy.ID)) != string(legacy.TokenHash) {
+		t.Fatal("no master key: key must be stored in legacy form")
+	}
+
+	repo := NewProducerRepo(d, newTestSecretBox(t))
+	fresh := newProducerDO("018f3e1a-0304-7000-8000-0000000000d2", "sealed-engine")
+	if err := repo.CreateProducer(ctx, fresh); err != nil {
+		t.Fatal(err)
+	}
+	if open(fresh.ID) != string(fresh.TokenHash) {
+		t.Fatal("CreateProducer() sealed key does not open to the HMAC key")
+	}
+	rotated := []byte("rotated-key-32-bytes-xxxxxxxxxxx")
+	if _, err := repo.UpdateProducerToken(ctx, fresh.ID, rotated); err != nil {
+		t.Fatal(err)
+	}
+	if open(fresh.ID) != string(rotated) {
+		t.Fatal("UpdateProducerToken() sealed key does not open to the new HMAC key")
+	}
+	off := false
+	if err := repo.UpdateProducer(ctx, legacy.ID, biz.ProducerUpdate{Enabled: &off}); err != nil {
+		t.Fatal(err)
+	}
+	if open(legacy.ID) != string(legacy.TokenHash) {
+		t.Fatal("UpdateProducer() must reseal the legacy key unchanged")
 	}
 }

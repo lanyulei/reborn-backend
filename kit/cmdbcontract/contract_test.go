@@ -61,3 +61,14 @@ func TestSourceOf(t *testing.T) {
 		t.Fatal("ProviderModels mapping broken")
 	}
 }
+
+// UniqueKey 的数值文本须与 jsonb `->>` 一致（SQL 重算与数据面对账以它为准）。
+func TestUniqueKeyNumberText(t *testing.T) {
+	got := UniqueKey([]string{"n", "f", "s", "b"}, map[string]any{
+		"n": float64(1000000), "f": 1.5, "s": "x", "b": true,
+	})
+	want := "b=true|f=1.5|n=1000000|s=x"
+	if got != want {
+		t.Fatalf("UniqueKey = %q, want %q", got, want)
+	}
+}

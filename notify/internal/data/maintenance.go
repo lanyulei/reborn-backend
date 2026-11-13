@@ -139,6 +139,17 @@ func (r *maintenanceRepo) DeleteExpiredDedup(ctx context.Context, limit int) (in
 	return int(tag.RowsAffected()), nil
 }
 
+// DeleteExpiredReplay implements biz.MaintenanceRepo.
+func (r *maintenanceRepo) DeleteExpiredReplay(ctx context.Context, limit int) (int, error) {
+	tag, err := r.data.Pool.Exec(ctx,
+		`DELETE FROM notify_ingress_replay WHERE (producer_id, signature) IN (
+		   SELECT producer_id, signature FROM notify_ingress_replay WHERE expire_time < now() LIMIT $1)`, limit)
+	if err != nil {
+		return 0, fmt.Errorf("delete expired ingress replay: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 // DeleteOldDlq implements biz.MaintenanceRepo.
 func (r *maintenanceRepo) DeleteOldDlq(ctx context.Context, before time.Time, limit int) (int, error) {
 	tag, err := r.data.Pool.Exec(ctx,

@@ -940,6 +940,8 @@ type CmdbField struct {
 	Unique bool `protobuf:"varint,7,opt,name=unique,proto3" json:"unique,omitempty"`
 	// enum_values 枚举值（type=enum）。
 	EnumValues []string `protobuf:"bytes,8,rep,name=enum_values,json=enumValues,proto3" json:"enum_values,omitempty"`
+	// enum_labels 枚举展示值（实际值 → 展示值）；未配置的枚举项展示实际值。
+	EnumLabels map[string]string `protobuf:"bytes,18,rep,name=enum_labels,json=enumLabels,proto3" json:"enum_labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// ref_model 引用的资源类型编码（type=ref，值为该类型资源 ID）。
 	RefModel string `protobuf:"bytes,9,opt,name=ref_model,json=refModel,proto3" json:"ref_model,omitempty"`
 	// rule 校验规则。
@@ -1044,6 +1046,13 @@ func (x *CmdbField) GetUnique() bool {
 func (x *CmdbField) GetEnumValues() []string {
 	if x != nil {
 		return x.EnumValues
+	}
+	return nil
+}
+
+func (x *CmdbField) GetEnumLabels() map[string]string {
+	if x != nil {
+		return x.EnumLabels
 	}
 	return nil
 }
@@ -1865,7 +1874,9 @@ type CreateFieldRequest struct {
 	// indexed 建表达式索引，可选。
 	Indexed *bool `protobuf:"varint,14,opt,name=indexed,proto3,oneof" json:"indexed,omitempty"`
 	// sensitive 敏感属性，可选。
-	Sensitive     *bool `protobuf:"varint,15,opt,name=sensitive,proto3,oneof" json:"sensitive,omitempty"`
+	Sensitive *bool `protobuf:"varint,15,opt,name=sensitive,proto3,oneof" json:"sensitive,omitempty"`
+	// enum_labels 枚举展示值（键须属于 enum_values），值 0-64 位；仅显示层使用。
+	EnumLabels    map[string]string `protobuf:"bytes,16,rep,name=enum_labels,json=enumLabels,proto3" json:"enum_labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2005,6 +2016,13 @@ func (x *CreateFieldRequest) GetSensitive() bool {
 	return false
 }
 
+func (x *CreateFieldRequest) GetEnumLabels() map[string]string {
+	if x != nil {
+		return x.EnumLabels
+	}
+	return nil
+}
+
 // CreateFieldResponse 新增类型字段响应。
 type CreateFieldResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -2079,7 +2097,9 @@ type UpdateFieldRequest struct {
 	// indexed 建/撤表达式索引。
 	Indexed *bool `protobuf:"varint,12,opt,name=indexed,proto3,oneof" json:"indexed,omitempty"`
 	// sensitive 敏感属性。
-	Sensitive     *bool `protobuf:"varint,13,opt,name=sensitive,proto3,oneof" json:"sensitive,omitempty"`
+	Sensitive *bool `protobuf:"varint,13,opt,name=sensitive,proto3,oneof" json:"sensitive,omitempty"`
+	// enum_labels 枚举展示值整组替换；随 enum_values 一同提交（enum_values 非空时生效）。
+	EnumLabels    map[string]string `protobuf:"bytes,14,rep,name=enum_labels,json=enumLabels,proto3" json:"enum_labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2203,6 +2223,13 @@ func (x *UpdateFieldRequest) GetSensitive() bool {
 		return *x.Sensitive
 	}
 	return false
+}
+
+func (x *UpdateFieldRequest) GetEnumLabels() map[string]string {
+	if x != nil {
+		return x.EnumLabels
+	}
+	return nil
 }
 
 // UpdateFieldResponse 更新类型字段响应。
@@ -2902,7 +2929,7 @@ const file_cmdb_v1_model_proto_rawDesc = "" +
 	"\n" +
 	"\b_min_lenB\n" +
 	"\n" +
-	"\b_max_len\"\xd7\x03\n" +
+	"\b_max_len\"\xdb\x04\n" +
 	"\tCmdbField\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
@@ -2913,7 +2940,9 @@ const file_cmdb_v1_model_proto_rawDesc = "" +
 	"\brequired\x18\x06 \x01(\bR\brequired\x12\x16\n" +
 	"\x06unique\x18\a \x01(\bR\x06unique\x12\x1f\n" +
 	"\venum_values\x18\b \x03(\tR\n" +
-	"enumValues\x12\x1b\n" +
+	"enumValues\x12C\n" +
+	"\venum_labels\x18\x12 \x03(\v2\".cmdb.v1.CmdbField.EnumLabelsEntryR\n" +
+	"enumLabels\x12\x1b\n" +
 	"\tref_model\x18\t \x01(\tR\brefModel\x12&\n" +
 	"\x04rule\x18\n" +
 	" \x01(\v2\x12.cmdb.v1.FieldRuleR\x04rule\x12\x14\n" +
@@ -2925,7 +2954,10 @@ const file_cmdb_v1_model_proto_rawDesc = "" +
 	"deprecated\x18\x0f \x01(\bR\n" +
 	"deprecated\x12\x18\n" +
 	"\aindexed\x18\x10 \x01(\bR\aindexed\x12\x1c\n" +
-	"\tsensitive\x18\x11 \x01(\bR\tsensitive\"\xc4\x02\n" +
+	"\tsensitive\x18\x11 \x01(\bR\tsensitive\x1a=\n" +
+	"\x0fEnumLabelsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xc4\x02\n" +
 	"\x10CmdbRelationType\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12!\n" +
@@ -2983,7 +3015,7 @@ const file_cmdb_v1_model_proto_rawDesc = "" +
 	"\x05model\x18\x01 \x01(\v2\x12.cmdb.v1.CmdbModelR\x05model\"3\n" +
 	"\x12DeleteModelRequest\x12\x1d\n" +
 	"\x04code\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@R\x04code\"\x15\n" +
-	"\x13DeleteModelResponse\"\x86\x06\n" +
+	"\x13DeleteModelResponse\"\xa3\a\n" +
 	"\x12CreateFieldRequest\x12(\n" +
 	"\n" +
 	"model_code\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@R\tmodelCode\x121\n" +
@@ -3003,7 +3035,12 @@ const file_cmdb_v1_model_proto_rawDesc = "" +
 	"\x04sort\x18\f \x01(\x05H\x05R\x04sort\x88\x01\x01\x12/\n" +
 	"\vdescription\x18\r \x01(\tB\b\xbaH\x05r\x03\x18\x80\x02H\x06R\vdescription\x88\x01\x01\x12\x1d\n" +
 	"\aindexed\x18\x0e \x01(\bH\aR\aindexed\x88\x01\x01\x12!\n" +
-	"\tsensitive\x18\x0f \x01(\bH\bR\tsensitive\x88\x01\x01B\v\n" +
+	"\tsensitive\x18\x0f \x01(\bH\bR\tsensitive\x88\x01\x01\x12\\\n" +
+	"\venum_labels\x18\x10 \x03(\v2+.cmdb.v1.CreateFieldRequest.EnumLabelsEntryB\x0e\xbaH\v\x9a\x01\b\x10d*\x04r\x02\x18@R\n" +
+	"enumLabels\x1a=\n" +
+	"\x0fEnumLabelsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\v\n" +
 	"\t_requiredB\t\n" +
 	"\a_uniqueB\f\n" +
 	"\n" +
@@ -3017,7 +3054,7 @@ const file_cmdb_v1_model_proto_rawDesc = "" +
 	"\n" +
 	"_sensitive\"?\n" +
 	"\x13CreateFieldResponse\x12(\n" +
-	"\x05field\x18\x01 \x01(\v2\x12.cmdb.v1.CmdbFieldR\x05field\"\xee\x04\n" +
+	"\x05field\x18\x01 \x01(\v2\x12.cmdb.v1.CmdbFieldR\x05field\"\x8b\x06\n" +
 	"\x12UpdateFieldRequest\x12(\n" +
 	"\n" +
 	"model_code\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@R\tmodelCode\x12\x18\n" +
@@ -3035,7 +3072,12 @@ const file_cmdb_v1_model_proto_rawDesc = "" +
 	" \x01(\x05H\x05R\x04sort\x88\x01\x01\x12/\n" +
 	"\vdescription\x18\v \x01(\tB\b\xbaH\x05r\x03\x18\x80\x02H\x06R\vdescription\x88\x01\x01\x12\x1d\n" +
 	"\aindexed\x18\f \x01(\bH\aR\aindexed\x88\x01\x01\x12!\n" +
-	"\tsensitive\x18\r \x01(\bH\bR\tsensitive\x88\x01\x01B\a\n" +
+	"\tsensitive\x18\r \x01(\bH\bR\tsensitive\x88\x01\x01\x12\\\n" +
+	"\venum_labels\x18\x0e \x03(\v2+.cmdb.v1.UpdateFieldRequest.EnumLabelsEntryB\x0e\xbaH\v\x9a\x01\b\x10d*\x04r\x02\x18@R\n" +
+	"enumLabels\x1a=\n" +
+	"\x0fEnumLabelsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\a\n" +
 	"\x05_nameB\v\n" +
 	"\t_requiredB\t\n" +
 	"\a_uniqueB\b\n" +
@@ -3128,7 +3170,7 @@ func file_cmdb_v1_model_proto_rawDescGZIP() []byte {
 	return file_cmdb_v1_model_proto_rawDescData
 }
 
-var file_cmdb_v1_model_proto_msgTypes = make([]protoimpl.MessageInfo, 40)
+var file_cmdb_v1_model_proto_msgTypes = make([]protoimpl.MessageInfo, 43)
 var file_cmdb_v1_model_proto_goTypes = []any{
 	(*ViewSection)(nil),                // 0: cmdb.v1.ViewSection
 	(*GetModelViewRequest)(nil),        // 1: cmdb.v1.GetModelViewRequest
@@ -3170,7 +3212,10 @@ var file_cmdb_v1_model_proto_goTypes = []any{
 	(*UpdateRelationTypeResponse)(nil), // 37: cmdb.v1.UpdateRelationTypeResponse
 	(*DeleteRelationTypeRequest)(nil),  // 38: cmdb.v1.DeleteRelationTypeRequest
 	(*DeleteRelationTypeResponse)(nil), // 39: cmdb.v1.DeleteRelationTypeResponse
-	(*timestamppb.Timestamp)(nil),      // 40: google.protobuf.Timestamp
+	nil,                                // 40: cmdb.v1.CmdbField.EnumLabelsEntry
+	nil,                                // 41: cmdb.v1.CreateFieldRequest.EnumLabelsEntry
+	nil,                                // 42: cmdb.v1.UpdateFieldRequest.EnumLabelsEntry
+	(*timestamppb.Timestamp)(nil),      // 43: google.protobuf.Timestamp
 }
 var file_cmdb_v1_model_proto_depIdxs = []int32{
 	0,  // 0: cmdb.v1.GetModelViewResponse.sections:type_name -> cmdb.v1.ViewSection
@@ -3178,61 +3223,64 @@ var file_cmdb_v1_model_proto_depIdxs = []int32{
 	0,  // 2: cmdb.v1.UpdateModelViewResponse.sections:type_name -> cmdb.v1.ViewSection
 	5,  // 3: cmdb.v1.ListRoleScopesResponse.items:type_name -> cmdb.v1.RoleScope
 	5,  // 4: cmdb.v1.SetRoleScopeResponse.scope:type_name -> cmdb.v1.RoleScope
-	40, // 5: cmdb.v1.CmdbModel.create_time:type_name -> google.protobuf.Timestamp
-	40, // 6: cmdb.v1.CmdbModel.update_time:type_name -> google.protobuf.Timestamp
-	13, // 7: cmdb.v1.CmdbField.rule:type_name -> cmdb.v1.FieldRule
-	12, // 8: cmdb.v1.ListModelsResponse.items:type_name -> cmdb.v1.CmdbModel
-	12, // 9: cmdb.v1.GetModelResponse.model:type_name -> cmdb.v1.CmdbModel
-	14, // 10: cmdb.v1.GetModelResponse.fields:type_name -> cmdb.v1.CmdbField
-	15, // 11: cmdb.v1.GetModelResponse.relation_types:type_name -> cmdb.v1.CmdbRelationType
-	12, // 12: cmdb.v1.CreateModelResponse.model:type_name -> cmdb.v1.CmdbModel
-	12, // 13: cmdb.v1.UpdateModelResponse.model:type_name -> cmdb.v1.CmdbModel
-	13, // 14: cmdb.v1.CreateFieldRequest.rule:type_name -> cmdb.v1.FieldRule
-	14, // 15: cmdb.v1.CreateFieldResponse.field:type_name -> cmdb.v1.CmdbField
-	13, // 16: cmdb.v1.UpdateFieldRequest.rule:type_name -> cmdb.v1.FieldRule
-	14, // 17: cmdb.v1.UpdateFieldResponse.field:type_name -> cmdb.v1.CmdbField
-	15, // 18: cmdb.v1.ListRelationTypesResponse.items:type_name -> cmdb.v1.CmdbRelationType
-	15, // 19: cmdb.v1.CreateRelationTypeResponse.relation_type:type_name -> cmdb.v1.CmdbRelationType
-	15, // 20: cmdb.v1.UpdateRelationTypeResponse.relation_type:type_name -> cmdb.v1.CmdbRelationType
-	16, // 21: cmdb.v1.CmdbModelService.ListModels:input_type -> cmdb.v1.ListModelsRequest
-	18, // 22: cmdb.v1.CmdbModelService.GetModel:input_type -> cmdb.v1.GetModelRequest
-	20, // 23: cmdb.v1.CmdbModelService.CreateModel:input_type -> cmdb.v1.CreateModelRequest
-	22, // 24: cmdb.v1.CmdbModelService.UpdateModel:input_type -> cmdb.v1.UpdateModelRequest
-	24, // 25: cmdb.v1.CmdbModelService.DeleteModel:input_type -> cmdb.v1.DeleteModelRequest
-	26, // 26: cmdb.v1.CmdbModelService.CreateField:input_type -> cmdb.v1.CreateFieldRequest
-	28, // 27: cmdb.v1.CmdbModelService.UpdateField:input_type -> cmdb.v1.UpdateFieldRequest
-	30, // 28: cmdb.v1.CmdbModelService.DeleteField:input_type -> cmdb.v1.DeleteFieldRequest
-	32, // 29: cmdb.v1.CmdbModelService.ListRelationTypes:input_type -> cmdb.v1.ListRelationTypesRequest
-	34, // 30: cmdb.v1.CmdbModelService.CreateRelationType:input_type -> cmdb.v1.CreateRelationTypeRequest
-	36, // 31: cmdb.v1.CmdbModelService.UpdateRelationType:input_type -> cmdb.v1.UpdateRelationTypeRequest
-	38, // 32: cmdb.v1.CmdbModelService.DeleteRelationType:input_type -> cmdb.v1.DeleteRelationTypeRequest
-	1,  // 33: cmdb.v1.CmdbModelService.GetModelView:input_type -> cmdb.v1.GetModelViewRequest
-	3,  // 34: cmdb.v1.CmdbModelService.UpdateModelView:input_type -> cmdb.v1.UpdateModelViewRequest
-	6,  // 35: cmdb.v1.CmdbScopeService.ListRoleScopes:input_type -> cmdb.v1.ListRoleScopesRequest
-	8,  // 36: cmdb.v1.CmdbScopeService.SetRoleScope:input_type -> cmdb.v1.SetRoleScopeRequest
-	10, // 37: cmdb.v1.CmdbScopeService.GetMyScope:input_type -> cmdb.v1.GetMyScopeRequest
-	17, // 38: cmdb.v1.CmdbModelService.ListModels:output_type -> cmdb.v1.ListModelsResponse
-	19, // 39: cmdb.v1.CmdbModelService.GetModel:output_type -> cmdb.v1.GetModelResponse
-	21, // 40: cmdb.v1.CmdbModelService.CreateModel:output_type -> cmdb.v1.CreateModelResponse
-	23, // 41: cmdb.v1.CmdbModelService.UpdateModel:output_type -> cmdb.v1.UpdateModelResponse
-	25, // 42: cmdb.v1.CmdbModelService.DeleteModel:output_type -> cmdb.v1.DeleteModelResponse
-	27, // 43: cmdb.v1.CmdbModelService.CreateField:output_type -> cmdb.v1.CreateFieldResponse
-	29, // 44: cmdb.v1.CmdbModelService.UpdateField:output_type -> cmdb.v1.UpdateFieldResponse
-	31, // 45: cmdb.v1.CmdbModelService.DeleteField:output_type -> cmdb.v1.DeleteFieldResponse
-	33, // 46: cmdb.v1.CmdbModelService.ListRelationTypes:output_type -> cmdb.v1.ListRelationTypesResponse
-	35, // 47: cmdb.v1.CmdbModelService.CreateRelationType:output_type -> cmdb.v1.CreateRelationTypeResponse
-	37, // 48: cmdb.v1.CmdbModelService.UpdateRelationType:output_type -> cmdb.v1.UpdateRelationTypeResponse
-	39, // 49: cmdb.v1.CmdbModelService.DeleteRelationType:output_type -> cmdb.v1.DeleteRelationTypeResponse
-	2,  // 50: cmdb.v1.CmdbModelService.GetModelView:output_type -> cmdb.v1.GetModelViewResponse
-	4,  // 51: cmdb.v1.CmdbModelService.UpdateModelView:output_type -> cmdb.v1.UpdateModelViewResponse
-	7,  // 52: cmdb.v1.CmdbScopeService.ListRoleScopes:output_type -> cmdb.v1.ListRoleScopesResponse
-	9,  // 53: cmdb.v1.CmdbScopeService.SetRoleScope:output_type -> cmdb.v1.SetRoleScopeResponse
-	11, // 54: cmdb.v1.CmdbScopeService.GetMyScope:output_type -> cmdb.v1.GetMyScopeResponse
-	38, // [38:55] is the sub-list for method output_type
-	21, // [21:38] is the sub-list for method input_type
-	21, // [21:21] is the sub-list for extension type_name
-	21, // [21:21] is the sub-list for extension extendee
-	0,  // [0:21] is the sub-list for field type_name
+	43, // 5: cmdb.v1.CmdbModel.create_time:type_name -> google.protobuf.Timestamp
+	43, // 6: cmdb.v1.CmdbModel.update_time:type_name -> google.protobuf.Timestamp
+	40, // 7: cmdb.v1.CmdbField.enum_labels:type_name -> cmdb.v1.CmdbField.EnumLabelsEntry
+	13, // 8: cmdb.v1.CmdbField.rule:type_name -> cmdb.v1.FieldRule
+	12, // 9: cmdb.v1.ListModelsResponse.items:type_name -> cmdb.v1.CmdbModel
+	12, // 10: cmdb.v1.GetModelResponse.model:type_name -> cmdb.v1.CmdbModel
+	14, // 11: cmdb.v1.GetModelResponse.fields:type_name -> cmdb.v1.CmdbField
+	15, // 12: cmdb.v1.GetModelResponse.relation_types:type_name -> cmdb.v1.CmdbRelationType
+	12, // 13: cmdb.v1.CreateModelResponse.model:type_name -> cmdb.v1.CmdbModel
+	12, // 14: cmdb.v1.UpdateModelResponse.model:type_name -> cmdb.v1.CmdbModel
+	13, // 15: cmdb.v1.CreateFieldRequest.rule:type_name -> cmdb.v1.FieldRule
+	41, // 16: cmdb.v1.CreateFieldRequest.enum_labels:type_name -> cmdb.v1.CreateFieldRequest.EnumLabelsEntry
+	14, // 17: cmdb.v1.CreateFieldResponse.field:type_name -> cmdb.v1.CmdbField
+	13, // 18: cmdb.v1.UpdateFieldRequest.rule:type_name -> cmdb.v1.FieldRule
+	42, // 19: cmdb.v1.UpdateFieldRequest.enum_labels:type_name -> cmdb.v1.UpdateFieldRequest.EnumLabelsEntry
+	14, // 20: cmdb.v1.UpdateFieldResponse.field:type_name -> cmdb.v1.CmdbField
+	15, // 21: cmdb.v1.ListRelationTypesResponse.items:type_name -> cmdb.v1.CmdbRelationType
+	15, // 22: cmdb.v1.CreateRelationTypeResponse.relation_type:type_name -> cmdb.v1.CmdbRelationType
+	15, // 23: cmdb.v1.UpdateRelationTypeResponse.relation_type:type_name -> cmdb.v1.CmdbRelationType
+	16, // 24: cmdb.v1.CmdbModelService.ListModels:input_type -> cmdb.v1.ListModelsRequest
+	18, // 25: cmdb.v1.CmdbModelService.GetModel:input_type -> cmdb.v1.GetModelRequest
+	20, // 26: cmdb.v1.CmdbModelService.CreateModel:input_type -> cmdb.v1.CreateModelRequest
+	22, // 27: cmdb.v1.CmdbModelService.UpdateModel:input_type -> cmdb.v1.UpdateModelRequest
+	24, // 28: cmdb.v1.CmdbModelService.DeleteModel:input_type -> cmdb.v1.DeleteModelRequest
+	26, // 29: cmdb.v1.CmdbModelService.CreateField:input_type -> cmdb.v1.CreateFieldRequest
+	28, // 30: cmdb.v1.CmdbModelService.UpdateField:input_type -> cmdb.v1.UpdateFieldRequest
+	30, // 31: cmdb.v1.CmdbModelService.DeleteField:input_type -> cmdb.v1.DeleteFieldRequest
+	32, // 32: cmdb.v1.CmdbModelService.ListRelationTypes:input_type -> cmdb.v1.ListRelationTypesRequest
+	34, // 33: cmdb.v1.CmdbModelService.CreateRelationType:input_type -> cmdb.v1.CreateRelationTypeRequest
+	36, // 34: cmdb.v1.CmdbModelService.UpdateRelationType:input_type -> cmdb.v1.UpdateRelationTypeRequest
+	38, // 35: cmdb.v1.CmdbModelService.DeleteRelationType:input_type -> cmdb.v1.DeleteRelationTypeRequest
+	1,  // 36: cmdb.v1.CmdbModelService.GetModelView:input_type -> cmdb.v1.GetModelViewRequest
+	3,  // 37: cmdb.v1.CmdbModelService.UpdateModelView:input_type -> cmdb.v1.UpdateModelViewRequest
+	6,  // 38: cmdb.v1.CmdbScopeService.ListRoleScopes:input_type -> cmdb.v1.ListRoleScopesRequest
+	8,  // 39: cmdb.v1.CmdbScopeService.SetRoleScope:input_type -> cmdb.v1.SetRoleScopeRequest
+	10, // 40: cmdb.v1.CmdbScopeService.GetMyScope:input_type -> cmdb.v1.GetMyScopeRequest
+	17, // 41: cmdb.v1.CmdbModelService.ListModels:output_type -> cmdb.v1.ListModelsResponse
+	19, // 42: cmdb.v1.CmdbModelService.GetModel:output_type -> cmdb.v1.GetModelResponse
+	21, // 43: cmdb.v1.CmdbModelService.CreateModel:output_type -> cmdb.v1.CreateModelResponse
+	23, // 44: cmdb.v1.CmdbModelService.UpdateModel:output_type -> cmdb.v1.UpdateModelResponse
+	25, // 45: cmdb.v1.CmdbModelService.DeleteModel:output_type -> cmdb.v1.DeleteModelResponse
+	27, // 46: cmdb.v1.CmdbModelService.CreateField:output_type -> cmdb.v1.CreateFieldResponse
+	29, // 47: cmdb.v1.CmdbModelService.UpdateField:output_type -> cmdb.v1.UpdateFieldResponse
+	31, // 48: cmdb.v1.CmdbModelService.DeleteField:output_type -> cmdb.v1.DeleteFieldResponse
+	33, // 49: cmdb.v1.CmdbModelService.ListRelationTypes:output_type -> cmdb.v1.ListRelationTypesResponse
+	35, // 50: cmdb.v1.CmdbModelService.CreateRelationType:output_type -> cmdb.v1.CreateRelationTypeResponse
+	37, // 51: cmdb.v1.CmdbModelService.UpdateRelationType:output_type -> cmdb.v1.UpdateRelationTypeResponse
+	39, // 52: cmdb.v1.CmdbModelService.DeleteRelationType:output_type -> cmdb.v1.DeleteRelationTypeResponse
+	2,  // 53: cmdb.v1.CmdbModelService.GetModelView:output_type -> cmdb.v1.GetModelViewResponse
+	4,  // 54: cmdb.v1.CmdbModelService.UpdateModelView:output_type -> cmdb.v1.UpdateModelViewResponse
+	7,  // 55: cmdb.v1.CmdbScopeService.ListRoleScopes:output_type -> cmdb.v1.ListRoleScopesResponse
+	9,  // 56: cmdb.v1.CmdbScopeService.SetRoleScope:output_type -> cmdb.v1.SetRoleScopeResponse
+	11, // 57: cmdb.v1.CmdbScopeService.GetMyScope:output_type -> cmdb.v1.GetMyScopeResponse
+	41, // [41:58] is the sub-list for method output_type
+	24, // [24:41] is the sub-list for method input_type
+	24, // [24:24] is the sub-list for extension type_name
+	24, // [24:24] is the sub-list for extension extendee
+	0,  // [0:24] is the sub-list for field type_name
 }
 
 func init() { file_cmdb_v1_model_proto_init() }
@@ -3256,7 +3304,7 @@ func file_cmdb_v1_model_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cmdb_v1_model_proto_rawDesc), len(file_cmdb_v1_model_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   40,
+			NumMessages:   43,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

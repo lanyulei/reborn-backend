@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -168,9 +169,26 @@ func UniqueKey(uniqueCodes []string, attrs map[string]any) string {
 		if !ok || v == nil {
 			continue
 		}
-		parts = append(parts, code+"="+fmt.Sprint(v))
+		parts = append(parts, code+"="+uniqueKeyText(v))
 	}
 	return strings.Join(parts, "|")
+}
+
+// uniqueKeyText 把属性值转成与 SQL `attrs ->> code` 一致的文本：core 的 SQL
+// 重算（stmtRecomputeUniqueKey）与数据面对账（stmtUniqueKey）都以 jsonb 文本
+// 为准。fmt.Sprint 会把 float64(1000000) 写成 1e+06，与 jsonb 的 1000000
+// 不一致——同一资源在 Go 与 SQL 两条路径上算出不同的唯一键。
+func uniqueKeyText(v any) string {
+	switch n := v.(type) {
+	case float64:
+		return strconv.FormatFloat(n, 'f', -1, 64)
+	case float32:
+		return strconv.FormatFloat(float64(n), 'f', -1, 32)
+	case json.Number:
+		return n.String()
+	default:
+		return fmt.Sprint(v)
+	}
 }
 
 // jsonb 列结构（json 标签即落库 schema；数据面以 DisallowUnknownFields 解码——

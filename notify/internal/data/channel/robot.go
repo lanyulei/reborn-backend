@@ -175,13 +175,13 @@ func (s *RobotSender) Send(ctx context.Context, ch *biz.Channel, msg biz.Rendere
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(raw))
 	if err != nil {
-		return biz.SendResult{Retryable: false}, fmt.Errorf("build robot request: %w", err)
+		return biz.SendResult{Retryable: false}, fmt.Errorf("build robot request: %w", scrubURLError(err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(HeaderSendKey, msg.SendKey)
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return biz.SendResult{Retryable: true}, fmt.Errorf("robot request: %w", err)
+		return biz.SendResult{Retryable: true}, fmt.Errorf("robot request: %w", scrubURLError(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<10))

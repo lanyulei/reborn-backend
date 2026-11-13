@@ -8,7 +8,7 @@ import (
 // Relayer 发布扫描器（设计 §4.3；仅 NATS 骨干装配）：把 PG 里未发布的事件/任务游标
 // 发布到消息骨干并标记 publish_state=1，并把超期未处理的已发布行回拨重发。
 type Relayer interface {
-	// RelayOnce 一轮扫描；返回发布/回拨条数（0 = 空闲）。
+	// RelayOnce 一轮扫描；返回发布条数（0 = 空闲；超期回拨不计，回拨的行下一轮发布）。
 	RelayOnce(ctx context.Context, batch int) (int, error)
 }
 

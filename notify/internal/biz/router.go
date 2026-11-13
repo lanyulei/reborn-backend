@@ -21,6 +21,12 @@ type RouterTx interface {
 	DeferEvent(ctx context.Context, eventID string, createTime time.Time, next time.Time) error
 	// InsertDispatches 批量插入发送任务（next_retry_time=now()，立即可领）。
 	InsertDispatches(ctx context.Context, dispatches []*Dispatch) error
+	// FailAggregatedEvents 把一个聚合窗口内归入组 (bizID, groupKey) 的全部事件由
+	// routed 改标 failed（汇总发不出去时用），返回改标条数。组不保存成员列表，成员由
+	// 事件行还原：同 biz + group_key、create_time ≥ since（窗口首事件时刻）、状态
+	// routed 且没有自己的 dispatch（走非聚合路由正常下发的同键事件有 dispatch，不受
+	// 影响）。
+	FailAggregatedEvents(ctx context.Context, bizID, groupKey string, since time.Time) (int64, error)
 	// UpsertAggGroups 按排序后的键依次 upsert 聚合组，返回每键当前是否处于抑制期。
 	UpsertAggGroups(ctx context.Context, increments []AggIncrement) (map[string]AggVerdict, error)
 	// ListSubscribers 事务内解析订阅者。

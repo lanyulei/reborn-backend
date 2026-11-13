@@ -360,3 +360,39 @@ func (r *ctxRecordingRepo) Finish(ctx context.Context, d *ClaimedDispatch, res F
 	r.finishCtxErr = ctx.Err()
 	return r.dispatchRepoStub.Finish(ctx, d, res, max)
 }
+
+// TestSenderUsecase_NonRetryableFailuresDoNotTripBreaker 不可重试失败（4xx / 内容非法）
+// 是单条消息的问题，不计入渠道熔断统计；并归还半开探测名额。
+func TestSenderUsecase_NonRetryableFailuresDoNotTripBreaker(t *testing.T) {
+	t.Parallel()
+	repo := &dispatchRepoStub{}
+	adapter := &senderStub{err: errors.New("400 bad payload")}
+	uc := newSender(t, repo, limiterStub{ok: true}, adapter)
+	for i := 0; i < 20; i++ {
+		repo.claims = []*ClaimedDispatch{claimed("d", chHook)}
+		if _, err := uc.SendOnce(context.Background(), 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if uc.Breaker().Local().Open(chHook) || len(adapter.sent) != 20 || len(repo.finished) != 20 {
+		t.Fatalf("non-retryable failures must not open the breaker: open=%v sent=%d finished=%d",
+			uc.Breaker().Local().Open(chHook), len(adapter.sent), len(repo.finished))
+	}
+	// 半开探测遇到不可重试失败：名额归还，下一条仍可探测（而不是永久拒绝）。
+	local := uc.Breaker().Local()
+	base := time.Now()
+	local.now = func() time.Time { return base }
+	for i := 0; i < breakerMinSamples; i++ {
+		local.Record(chHook, false)
+	}
+	local.now = func() time.Time { return base.Add(breakerOpenFor + time.Second) }
+	for i := 0; i < 2; i++ {
+		repo.claims = []*ClaimedDispatch{claimed("d", chHook)}
+		if _, err := uc.SendOnce(context.Background(), 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(adapter.sent) != 22 {
+		t.Fatalf("probe slot must be returned after a non-retryable failure: sent=%d, want 22", len(adapter.sent))
+	}
+}

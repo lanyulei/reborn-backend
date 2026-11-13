@@ -181,11 +181,20 @@ func (v messageView) Append(_ context.Context, m *biz.Message) error {
 	return nil
 }
 
-func (v messageView) List(_ context.Context, conversationID string) ([]*biz.Message, error) {
+func (v messageView) List(ctx context.Context, conversationID string) ([]*biz.Message, error) {
+	return v.ListRecent(ctx, conversationID, 0)
+}
+
+// ListRecent 最近 limit 条（seq 正序）；limit <= 0 表示全量。
+func (v messageView) ListRecent(_ context.Context, conversationID string, limit int) ([]*biz.Message, error) {
 	v.s.mu.RLock()
 	defer v.s.mu.RUnlock()
-	items := make([]*biz.Message, 0, len(v.s.messages[conversationID]))
-	for _, m := range v.s.messages[conversationID] {
+	all := v.s.messages[conversationID]
+	if limit > 0 && len(all) > limit {
+		all = all[len(all)-limit:]
+	}
+	items := make([]*biz.Message, 0, len(all))
+	for _, m := range all {
 		cp := *m
 		cp.ToolCalls = slices.Clone(m.ToolCalls)
 		items = append(items, &cp)

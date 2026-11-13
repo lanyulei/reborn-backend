@@ -67,6 +67,20 @@ func ValidateAttrs(fields []*Field, attrs map[string]any, partial bool) (map[str
 	return out, nil
 }
 
+// checkRequired 合并后的属性须包含全部启用的必填字段。只看键是否存在且非空：
+// 存量值不重校验（字段规则 / 枚举值收紧后不阻塞无关更新），已废弃字段的遗留键忽略。
+func checkRequired(fields []*Field, attrs map[string]any) error {
+	for _, f := range fields {
+		if f.Deprecated || !f.Required {
+			continue
+		}
+		if v, ok := attrs[f.Code]; !ok || v == nil {
+			return detail(ErrCIInvalid, "field %q is required", f.Code)
+		}
+	}
+	return nil
+}
+
 // normalizeValue 单字段校验与归一化。
 func normalizeValue(f *Field, raw any) (any, error) {
 	bad := func(msg string) error { return detail(ErrCIInvalid, "field %q %s", f.Code, msg) }

@@ -221,7 +221,12 @@ type ConversationRepo interface {
 type MessageRepo interface {
 	// Append 追加消息；Seq 由仓储按会话内 max(seq)+1 分配并回填。
 	Append(ctx context.Context, m *Message) error
+	// List 返回会话完整历史（seq 正序）；面向用户的历史查询使用。
 	List(ctx context.Context, conversationID string) ([]*Message, error)
+	// ListRecent 返回会话最近 limit 条消息（seq 正序）；构建模型上下文使用，
+	// 避免每轮加载全量历史。截断点可能落在 assistant 调用块中间（首部出现
+	// 无主 tool 消息），由 contextWindow 在发送侧丢弃。
+	ListRecent(ctx context.Context, conversationID string, limit int) ([]*Message, error)
 }
 
 // ToolCallRepo 工具调用审计仓储接口（data 层实现）。

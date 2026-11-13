@@ -107,7 +107,7 @@ func wireApp(confServer *conf.Server, confData *conf.Data, security *conf.Securi
 	subscriptionRepo := data3.NewSubscriptionRepo(dataData)
 	subscriptionUsecase := biz2.NewSubscriptionUsecase(subscriptionRepo)
 	notifySubscriptionService := service2.NewNotifySubscriptionService(subscriptionUsecase, userUsecase, authzUsecase)
-	producerRepo := data3.NewProducerRepo(dataData)
+	producerRepo := data3.NewProducerRepo(dataData, secretBox)
 	producerUsecase := biz2.NewProducerUsecase(producerRepo)
 	notifyProducerService := service2.NewNotifyProducerService(producerUsecase, authzUsecase)
 	eventUsecase := biz2.NewEventUsecase(eventRepo, eventRepo)

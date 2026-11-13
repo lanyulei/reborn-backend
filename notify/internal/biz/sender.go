@@ -354,7 +354,8 @@ func (uc *SenderUsecase) handle(ctx context.Context, snap *Snapshot, d *ClaimedD
 			content.TemplateID, content.TemplateVersion = tpl.ID, tpl.Version
 		}
 		if snapshot, err = EncodeContent(content); err != nil {
-			return err
+			// 确定性失败：落账为死信，不让行停在 sending 等租约回收后重复同一失败。
+			return finish(FinishResult{Retryable: false, Error: Truncate("encode content: "+err.Error(), 512)})
 		}
 	}
 	if !uc.breaker.Allow(ctx, ch.ID) {
@@ -387,7 +388,17 @@ func (uc *SenderUsecase) handle(ctx context.Context, snap *Snapshot, d *ClaimedD
 	elapsed := time.Since(start)
 	uc.observer.ObserveSendLatency(ch.Type, elapsed)
 	latency := int32(elapsed.Milliseconds()) //nolint:gosec // 毫秒级时延不会溢出 int32
-	_ = writeback(func(c context.Context) error { uc.breaker.Record(c, ch.ID, sendErr == nil); return nil })
+	// 熔断只统计反映渠道健康的结果：成功，或可重试失败（超时 / 连接错误 / 5xx / 限流）。
+	// 不可重试失败（4xx、内容非法、收件地址错误）是单条消息的问题——计入会让几条坏消息
+	// 把健康渠道熔断；此时只归还 Allow 可能放出的半开探测名额。
+	_ = writeback(func(c context.Context) error {
+		if sendErr == nil || res.Retryable {
+			uc.breaker.Record(c, ch.ID, sendErr == nil)
+		} else {
+			uc.breaker.CancelProbe(c, ch.ID)
+		}
+		return nil
+	})
 	fr := FinishResult{OK: sendErr == nil, ProviderMsgID: res.ProviderMsgID, LatencyMs: latency, Content: snapshot, TemplateID: content.TemplateID}
 	if sendErr != nil {
 		fr.Retryable = res.Retryable

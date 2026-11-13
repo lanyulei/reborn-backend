@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lanyulei/reborn/backend/kit/loop"
 	"github.com/lanyulei/reborn/backend/notify/internal/biz"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -140,25 +141,45 @@ func (l *Loop) Stop(ctx context.Context) error {
 }
 
 // leaderLoop 选主循环：持锁者执行 fn；未持锁则每 tick 尝试获取；持锁后用专用
-// 连接保持会话——连接断即失主（下一次 fn 出错后重新竞争）。
+// 连接保持会话。该连接不在池内、无人探活：每轮执行前先探测它（kit/loop.LockProbe，
+// 由 dbx.TryAdvisoryLock 填入对持锁连接的 Ping）——连接已断则 PG 早已随会话释放锁、
+// 他人可能已接任，本实例立即放弃领导权并重新竞争，而不是继续以主身份执行（脑裂）。
+// fn 出错同样放弃并重新竞争。Locker 实现未填探针时退化为不探活（旧行为）。
 type leaderLoop struct {
 	key     string
 	locker  biz.Locker
 	log     *slog.Logger
 	release func()
+	check   func(ctx context.Context) error
 	held    bool
 }
 
+// lockCheckTimeout 单次持锁连接探活的超时。
+const lockCheckTimeout = 3 * time.Second
+
 func (ll *leaderLoop) run(ctx context.Context, fn func(ctx context.Context) (int, error)) (int, error) {
+	if ll.held && ll.check != nil {
+		cctx, cancel := context.WithTimeout(ctx, lockCheckTimeout)
+		err := ll.check(cctx)
+		cancel()
+		if err != nil {
+			ll.log.WarnContext(ctx, "leader lock connection lost, dropping leadership", "lock", ll.key, "error", err)
+			ll.drop(ctx)
+			if ctx.Err() != nil {
+				return 0, ctx.Err()
+			}
+		}
+	}
 	if !ll.held {
-		release, ok, err := ll.locker.TryLock(ctx, ll.key)
+		probe := &loop.LockProbe{}
+		release, ok, err := ll.locker.TryLock(loop.WithLockProbe(ctx, probe), ll.key)
 		if err != nil {
 			return 0, err
 		}
 		if !ok {
 			return 0, nil
 		}
-		ll.release, ll.held = release, true
+		ll.release, ll.check, ll.held = release, probe.Check, true
 		ll.log.InfoContext(ctx, "leadership acquired", "lock", ll.key)
 	}
 	n, err := fn(ctx)
@@ -175,7 +196,7 @@ func (ll *leaderLoop) run(ctx context.Context, fn func(ctx context.Context) (int
 func (ll *leaderLoop) drop(ctx context.Context) {
 	if ll.held {
 		ll.release()
-		ll.held = false
+		ll.held, ll.check = false, nil
 		ll.log.InfoContext(ctx, "leadership released", "lock", ll.key)
 	}
 }

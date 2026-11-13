@@ -4,36 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/casbin/casbin/v3"
-	"github.com/casbin/casbin/v3/model"
-
 	"github.com/lanyulei/reborn/backend/core/internal/conf"
 )
-
-// authzModelText 是 Casbin 模型（ACL，无 g 规则）：
-// subject = 角色 code（创建后不可变），object = 操作 code
-// （OperationCode 派生的 32 位 md5 hex，与授权存储、authz 中间件同口径）。
-// 用户与角色的关系不进 Casbin：由判定链路每请求从自有表实时读取，绑定变更
-// 即刻生效且多实例天然一致；本模型只承载 p 策略（角色→操作）。
-// matcher 为精确相等、无通配符；未来需要模式匹配时仅改此常量，调用点不变。
-const authzModelText = `
-[request_definition]
-r = sub, obj
-
-[policy_definition]
-p = sub, obj
-
-[policy_effect]
-e = some(where (p.eft == allow))
-
-[matchers]
-m = r.sub == p.sub && r.obj == p.obj
-`
 
 // policy_ttl 配置边界：既是惰性刷新间隔，也是多实例策略变更的收敛上界。
 const (
@@ -42,18 +20,29 @@ const (
 	// maxRefreshBackoff 刷新失败后的重试退避上限：存储抖动期间按
 	// min(ttl, 5s) 间隔重试，而非每个请求都重跑全量策略查询。
 	maxRefreshBackoff = 5 * time.Second
+	// policyRefreshTimeout 单次全量策略加载的时限：刷新脱离请求取消信号
+	// （见 reloadLocked），须自带上界，防慢查询无限期占住刷新锁。
+	policyRefreshTimeout = 10 * time.Second
 )
 
-// Authorizer 是接口授权的内存策略求值器（Casbin）。
+// policySnapshot 是构建后冻结的策略快照：角色 code → 操作 code 集合。判定
+// 为两次 map 查找（O(1)），与策略总量无关；精确相等、无通配符。用户与角色
+// 的关系不进快照：由判定链路每请求从自有表实时读取，绑定变更即刻生效且
+// 多实例天然一致；快照只承载角色→操作策略。
+type policySnapshot map[string]map[string]struct{}
+
+// Authorizer 是接口授权的内存策略求值器。
 //
 // 并发与多实例一致性设计：
-//   - 快照是构建后冻结的 *casbin.Enforcer——绝不原地改写，因此选非 Synced
-//     版（省一层内部锁），并发 Enforce 只读安全；整体经 atomic.Pointer 交换，
-//     读端无锁。
-//   - Enforce 前惰性检查快照年龄，超过 policy_ttl 同步重建交换：无后台
-//     goroutine、无 ticker、空闲零查询。策略变更方在本实例调用 Reload 立即
-//     生效，其余实例在 TTL 内收敛（撤销传播窗口与短 TTL 访问令牌的既有
-//     风险姿态同量级；需要 ms 级收敛时再评估 PG LISTEN/NOTIFY）。
+//   - 快照是构建后冻结的 policySnapshot——绝不原地改写，并发只读安全；整体
+//     经 atomic.Pointer 交换，读端无锁。
+//   - Enforce 前惰性检查快照年龄，超过 policy_ttl 时由**一个**请求同步重建
+//     交换（single-flight）：其余并发请求不排队，直接用旧快照判定。重建
+//     脱离请求 ctx 的取消并自带 policyRefreshTimeout 上界，慢策略查询最多
+//     拖住一个请求、且有上限。无后台 goroutine、无 ticker、空闲零查询。
+//     策略变更方在本实例调用 Reload 立即生效，其余实例在 TTL 内收敛（撤销
+//     传播窗口与短 TTL 访问令牌的既有风险姿态同量级；需要 ms 级收敛时再
+//     评估 PG LISTEN/NOTIFY）。
 //   - 重建失败（存储抖动）继续服务旧快照（stale-serve）并记日志，不放大故障；
 //     启动阶段 DB 不可达则构造失败，禁止空策略静默上线。
 type Authorizer struct {
@@ -61,8 +50,8 @@ type Authorizer struct {
 	ttl time.Duration
 	log *slog.Logger
 
-	refreshMu sync.Mutex // 串行化重建，防 TTL 到期时的并发刷新击穿
-	enforcer  atomic.Pointer[casbin.Enforcer]
+	refreshMu sync.Mutex // 串行化重建；惰性刷新用 TryLock，抢不到即服务旧快照
+	snapshot  atomic.Pointer[policySnapshot]
 	loadedAt  atomic.Int64 // 快照加载时间，unix nanoseconds
 	retryAt   atomic.Int64 // 刷新失败后的下次重试时间，unix nanoseconds；0=无退避
 }
@@ -83,16 +72,17 @@ func NewAuthorizer(src PermissionPolicySource, c *conf.Security, logger *slog.Lo
 }
 
 // Enforce 判定角色是否被授权操作；调用前先确保快照未过期（惰性刷新）。
-// (false, nil) 表示明确无权限；error 仅在快照缺失或求值器异常时非 nil，
-// 属基础设施故障，调用方应 500 fail closed。快照刷新失败不返回错误：
-// 继续用旧快照服务（stale-serve），由下一次调用重试。
+// (false, nil) 表示明确无权限；error 仅在快照缺失时非 nil，属基础设施
+// 故障，调用方应 500 fail closed。快照刷新失败不返回错误：继续用旧快照
+// 服务（stale-serve），由后续调用重试。
 func (a *Authorizer) Enforce(ctx context.Context, roleCode, operation string) (bool, error) {
 	a.ensureFresh(ctx)
-	e := a.enforcer.Load()
-	if e == nil {
+	snap := a.snapshot.Load()
+	if snap == nil {
 		return false, fmt.Errorf("authz snapshot not loaded")
 	}
-	return e.Enforce(roleCode, operation)
+	_, ok := (*snap)[roleCode][operation]
+	return ok, nil
 }
 
 // Reload 强制全量重建快照并原子交换。策略变更（SetRolePermissions/
@@ -114,98 +104,82 @@ func (a *Authorizer) ReloadAfterCommit(ctx context.Context) {
 	}
 }
 
-// ensureFresh 惰性刷新：快照未过期直接返回；过期则经 mutex 串行重建
-// （double-check 防击穿，等待者拿锁后多半已新鲜）。刷新失败进入退避：
-// 退避期内全部调用直接服务旧快照、不拿锁不查库，避免存储抖动期间每个
-// 请求都在锁上排队并各自重跑全量策略查询（重试风暴）。
+// ensureFresh 惰性刷新：快照未过期直接返回；过期则抢刷新锁同步重建——
+// 抢不到说明已有请求（或 Reload）正在重建，本次直接服务旧快照、不排队
+// （single-flight；慢策略查询不再让全部非超管请求堵在锁上）。刷新失败
+// 进入退避：退避期内全部调用直接服务旧快照、不拿锁不查库，避免存储抖动
+// 期间每个请求各自重跑全量策略查询（重试风暴）。
 func (a *Authorizer) ensureFresh(ctx context.Context) {
-	if time.Since(time.Unix(0, a.loadedAt.Load())) <= a.ttl {
+	if !a.stale() {
 		return
 	}
-	if retryAt := a.retryAt.Load(); retryAt != 0 && time.Now().UnixNano() < retryAt {
+	if !a.refreshMu.TryLock() {
 		return
 	}
-	a.refreshMu.Lock()
 	defer a.refreshMu.Unlock()
-	if time.Since(time.Unix(0, a.loadedAt.Load())) <= a.ttl {
-		return
-	}
-	if retryAt := a.retryAt.Load(); retryAt != 0 && time.Now().UnixNano() < retryAt {
+	if !a.stale() {
 		return
 	}
 	if err := a.reloadLocked(ctx); err != nil {
-		a.log.Error("authz policy refresh failed, serving stale snapshot", "error", err)
+		a.log.ErrorContext(ctx, "authz policy refresh failed, serving stale snapshot", "error", err)
 	}
 }
 
-// reloadLocked 重建并交换快照；调用方必须已持有 refreshMu。失败设置退避
-// 窗口 min(ttl, maxRefreshBackoff)，成功清零。
+// stale 报告快照是否已过期且不在失败退避窗口内（即应当尝试刷新）。
+func (a *Authorizer) stale() bool {
+	if time.Since(time.Unix(0, a.loadedAt.Load())) <= a.ttl {
+		return false
+	}
+	retryAt := a.retryAt.Load()
+	return retryAt == 0 || time.Now().UnixNano() >= retryAt
+}
+
+// reloadLocked 重建并交换快照；调用方必须已持有 refreshMu。加载脱离入参
+// ctx 的取消（保留 trace 等取值）并限时 policyRefreshTimeout：触发刷新的
+// 请求被客户端取消不应作废一次所有请求共享的刷新，慢查询也不得无限期
+// 占锁。失败设置退避窗口 min(ttl, maxRefreshBackoff)，成功清零。
 func (a *Authorizer) reloadLocked(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), policyRefreshTimeout)
+	defer cancel()
 	policies, err := a.src.ListPolicies(ctx)
 	if err != nil {
 		a.retryAt.Store(time.Now().Add(min(a.ttl, maxRefreshBackoff)).UnixNano())
 		return fmt.Errorf("list permission policies: %w", err)
 	}
-	e, err := buildEnforcer(policies)
-	if err != nil {
-		a.retryAt.Store(time.Now().Add(min(a.ttl, maxRefreshBackoff)).UnixNano())
-		return err
-	}
-	a.enforcer.Store(e)
+	snap := buildSnapshot(policies)
+	a.snapshot.Store(&snap)
 	a.loadedAt.Store(time.Now().UnixNano())
 	a.retryAt.Store(0)
 	return nil
 }
 
-// buildEnforcer 按模型与策略集合构建冻结的求值器；返回值构建后不得再变更。
-func buildEnforcer(policies []PermissionPolicy) (*casbin.Enforcer, error) {
-	m, err := model.NewModelFromString(authzModelText)
-	if err != nil {
-		return nil, fmt.Errorf("parse authz model: %w", err)
+// buildSnapshot 按策略集合构建冻结快照；返回值构建后不得再变更。
+func buildSnapshot(policies []PermissionPolicy) policySnapshot {
+	snap := make(policySnapshot, 16)
+	for _, p := range policies {
+		ops, ok := snap[p.RoleCode]
+		if !ok {
+			ops = make(map[string]struct{}, 32)
+			snap[p.RoleCode] = ops
+		}
+		ops[p.Operation] = struct{}{}
 	}
-	e, err := casbin.NewEnforcer(m)
-	if err != nil {
-		return nil, fmt.Errorf("create enforcer: %w", err)
-	}
-	if len(policies) == 0 {
-		return e, nil
-	}
-	rules := make([][]string, len(policies))
-	for i, p := range policies {
-		rules[i] = []string{p.RoleCode, p.Operation}
-	}
-	if _, err := e.AddPolicies(rules); err != nil {
-		return nil, fmt.Errorf("load %d policies: %w", len(rules), err)
-	}
-	return e, nil
+	return snap
 }
 
 // OperationsForRoles 返回多个角色授权操作 code 的并集（字典序去重），供
 // EffectiveOperations 枚举 /me 出参；快照口径与 Enforce 一致。
 func (a *Authorizer) OperationsForRoles(ctx context.Context, roleCodes []string) ([]string, error) {
 	a.ensureFresh(ctx)
-	e := a.enforcer.Load()
-	if e == nil {
+	snap := a.snapshot.Load()
+	if snap == nil {
 		return nil, fmt.Errorf("authz snapshot not loaded")
 	}
 	seen := make(map[string]struct{}, 64)
-	ops := make([]string, 0, 64)
 	for _, code := range roleCodes {
-		rules, err := e.GetFilteredPolicy(0, code)
-		if err != nil {
-			return nil, fmt.Errorf("filter policy for role %s: %w", code, err)
-		}
-		for _, rule := range rules {
-			if len(rule) < 2 {
-				continue
-			}
-			if _, dup := seen[rule[1]]; dup {
-				continue
-			}
-			seen[rule[1]] = struct{}{}
-			ops = append(ops, rule[1])
+		for op := range (*snap)[code] {
+			seen[op] = struct{}{}
 		}
 	}
-	slices.Sort(ops)
-	return ops, nil
+	return slices.Sorted(maps.Keys(seen)), nil
 }

@@ -89,14 +89,16 @@ type FieldRule struct {
 
 // Field 类型字段定义。
 type Field struct {
-	ID          string
-	ModelCode   string
-	Code        string
-	Name        string
-	Type        string
-	Required    bool
-	Unique      bool
-	EnumValues  []string
+	ID         string
+	ModelCode  string
+	Code       string
+	Name       string
+	Type       string
+	Required   bool
+	Unique     bool
+	EnumValues []string
+	// EnumLabels 枚举展示值（实际值 → 展示值）；仅显示层使用，可为空。
+	EnumLabels  map[string]string
 	RefModel    string
 	Rule        FieldRule
 	Owner       string
@@ -114,10 +116,12 @@ type Field struct {
 
 // FieldUpdate 字段部分更新；nil 不更新（EnumValues/Rule 非 nil 整组替换）。
 type FieldUpdate struct {
-	Name        *string
-	Required    *bool
-	Unique      *bool
-	EnumValues  *[]string
+	Name       *string
+	Required   *bool
+	Unique     *bool
+	EnumValues *[]string
+	// EnumLabels 随 EnumValues 整组替换（proto3 map 无 presence，由服务层联动置位）。
+	EnumLabels  *map[string]string
 	Rule        *FieldRule
 	Owner       *string
 	ListVisible *bool
@@ -312,7 +316,12 @@ func (uc *ModelUsecase) CreateField(ctx context.Context, f *Field) (*Field, erro
 	if f.Owner == "" {
 		f.Owner = FieldOwnerManual
 	}
-	if err := uc.validateFieldDefinition(ctx, f.Type, f.EnumValues, f.RefModel, f.Rule); err != nil {
+	// 非枚举字段不保存枚举值 / 展示值（与 UpdateField 一致：忽略而非落库）
+	if f.Type != FieldTypeEnum {
+		f.EnumValues, f.EnumLabels = nil, nil
+	}
+	f.EnumLabels = dropEmptyLabels(f.EnumLabels)
+	if err := uc.validateFieldDefinition(ctx, f.Type, f.EnumValues, f.EnumLabels, f.RefModel, f.Rule); err != nil {
 		return nil, err
 	}
 	id, err := idgen.NewID()
@@ -326,6 +335,9 @@ func (uc *ModelUsecase) CreateField(ctx context.Context, f *Field) (*Field, erro
 	}
 	if f.Indexed {
 		if err := uc.indexer.EnsureAttrIndex(ctx, f.ModelCode, f.Code); err != nil {
+			// 建索引失败：回滚 indexed 标记（字段已创建，保持标记与实际索引一致）。
+			off := false
+			_ = uc.fields.Update(ctx, f.ModelCode, f.ID, FieldUpdate{Indexed: &off})
 			return nil, err
 		}
 	}
@@ -343,15 +355,34 @@ func (uc *ModelUsecase) UpdateField(ctx context.Context, modelCode, id string, u
 	if err != nil {
 		return nil, err
 	}
+	// 非枚举字段忽略枚举值 / 展示值；展示值只随枚举组整组替换（单独提供时忽略）。
+	if cur.Type != FieldTypeEnum || upd.EnumValues == nil {
+		upd.EnumValues, upd.EnumLabels = nil, nil
+	}
+	// unique 未变化时不下发（仓储在 unique 变化时重算该类型资源的唯一键）。
+	if upd.Unique != nil && *upd.Unique == cur.Unique {
+		upd.Unique = nil
+	}
 	enumValues, rule := cur.EnumValues, cur.Rule
+	enumLabels := cur.EnumLabels
 	if upd.EnumValues != nil {
 		enumValues = *upd.EnumValues
+		// 枚举组替换时展示值一并替换（未随请求提供即清空；空串展示值丢弃）
+		if upd.EnumLabels != nil {
+			enumLabels = dropEmptyLabels(*upd.EnumLabels)
+		} else {
+			enumLabels = nil
+		}
 	}
 	if upd.Rule != nil {
 		rule = *upd.Rule
 	}
-	if err := uc.validateFieldDefinition(ctx, cur.Type, enumValues, cur.RefModel, rule); err != nil {
+	if err := uc.validateFieldDefinition(ctx, cur.Type, enumValues, enumLabels, cur.RefModel, rule); err != nil {
 		return nil, err
+	}
+	// 枚举组替换时展示值同步替换，保证落库状态与校验状态一致
+	if upd.EnumValues != nil {
+		upd.EnumLabels = &enumLabels
 	}
 	if err := uc.fields.Update(ctx, modelCode, id, upd); err != nil {
 		return nil, err
@@ -364,6 +395,8 @@ func (uc *ModelUsecase) UpdateField(ctx context.Context, modelCode, id string, u
 			err = uc.indexer.DropAttrIndex(ctx, modelCode, cur.Code)
 		}
 		if err != nil {
+			// DDL 失败：回滚 indexed 标记，保持标记与实际索引一致。
+			_ = uc.fields.Update(ctx, modelCode, id, FieldUpdate{Indexed: &cur.Indexed})
 			return nil, err
 		}
 	}
@@ -390,8 +423,22 @@ func (uc *ModelUsecase) DeprecateField(ctx context.Context, modelCode, id string
 	return nil
 }
 
+// dropEmptyLabels 去掉展示值为空串的项（空串 = 不设展示值，不落库）。
+func dropEmptyLabels(labels map[string]string) map[string]string {
+	if len(labels) == 0 {
+		return labels
+	}
+	out := make(map[string]string, len(labels))
+	for k, v := range labels {
+		if v != "" {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 // validateFieldDefinition 字段定义自洽性校验。
-func (uc *ModelUsecase) validateFieldDefinition(ctx context.Context, typ string, enumValues []string, refModel string, rule FieldRule) error {
+func (uc *ModelUsecase) validateFieldDefinition(ctx context.Context, typ string, enumValues []string, enumLabels map[string]string, refModel string, rule FieldRule) error {
 	switch typ {
 	case FieldTypeEnum:
 		if len(enumValues) == 0 {
@@ -399,6 +446,15 @@ func (uc *ModelUsecase) validateFieldDefinition(ctx context.Context, typ string,
 		}
 		if len(slices.Compact(slices.Sorted(slices.Values(enumValues)))) != len(enumValues) {
 			return detail(ErrFieldInvalid, "duplicate enum values")
+		}
+		// 展示值的键必须属于枚举值；值 1-64 位（空串即删除该展示值）
+		for k, v := range enumLabels {
+			if !slices.Contains(enumValues, k) {
+				return detail(ErrFieldInvalid, "enum label key %q not in enum_values", k)
+			}
+			if l := len([]rune(v)); l > 64 {
+				return detail(ErrFieldInvalid, "enum label of %q exceeds 64 chars", k)
+			}
 		}
 	case FieldTypeRef:
 		if refModel == "" {
@@ -410,6 +466,9 @@ func (uc *ModelUsecase) validateFieldDefinition(ctx context.Context, typ string,
 	case FieldTypeString, FieldTypeInt, FieldTypeFloat, FieldTypeBool, FieldTypeDatetime, FieldTypeJSON, FieldTypeIP:
 	default:
 		return detail(ErrFieldInvalid, "unsupported type %s", typ)
+	}
+	if typ != FieldTypeEnum && len(enumLabels) > 0 {
+		return detail(ErrFieldInvalid, "enum_labels only applies to enum fields")
 	}
 	if rule.Pattern != nil && *rule.Pattern != "" {
 		if typ != FieldTypeString {

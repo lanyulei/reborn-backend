@@ -2,10 +2,13 @@ package server
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"sync/atomic"
 	"time"
+
+	"github.com/lanyulei/reborn/backend/notify/internal/biz"
 
 	kerrors "github.com/go-kratos/kratos/v3/errors"
 	"github.com/go-kratos/kratos/v3/middleware"
@@ -17,6 +20,8 @@ func ingressRequestResult(err error) string {
 	switch {
 	case err == nil:
 		return "ok"
+	case errors.Is(err, biz.ErrReplayed):
+		return "replayed" // 对外仍是 401；指标单列，便于区分重放与密钥错误
 	case kerrors.Code(err) == http.StatusUnauthorized:
 		return "unauthorized"
 	case kerrors.Code(err) == http.StatusTooManyRequests:

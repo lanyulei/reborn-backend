@@ -156,3 +156,26 @@ func TestHTTPServer_PermissionAuthz(t *testing.T) {
 		t.Fatalf("plain user configures permissions: status = %d, want 403", code)
 	}
 }
+
+// TestHTTPServer_ExemptRejectsDisabledUser 免授权的自助接口（/me）同样拒绝
+// 已停用账号的未过期 access token（403 ACCOUNT_DISABLED）；匿名免检接口不受影响。
+func TestHTTPServer_ExemptRejectsDisabledUser(t *testing.T) {
+	t.Parallel()
+	ts, signer := newTestHTTPServer(t)
+	adminBearer := testBearer(t, signer, e2eActorID)
+	yan := createUser(t, ts, adminBearer, "yan")
+	yanBearer := testBearer(t, signer, yan.Id)
+	if code, body := doRequestWithToken(t, http.MethodGet, ts.URL+"/api/v1/me", yanBearer, ""); code != http.StatusOK {
+		t.Fatalf("me before disable: status = %d body = %q", code, body)
+	}
+	if code, body := doRequestWithToken(t, http.MethodPost, ts.URL+"/api/v1/system/user/"+yan.Id+"/status", adminBearer, `{"status":2}`); code != http.StatusOK {
+		t.Fatalf("disable user: status = %d body = %q", code, body)
+	}
+	code, body := doRequestWithToken(t, http.MethodGet, ts.URL+"/api/v1/me", yanBearer, "")
+	if code != http.StatusForbidden || !strings.Contains(body, "ACCOUNT_DISABLED") {
+		t.Fatalf("me after disable: status = %d body = %q, want 403 ACCOUNT_DISABLED", code, body)
+	}
+	if code, body := doRequest(t, http.MethodGet, ts.URL+"/api/v1/system/config", ""); code != http.StatusOK {
+		t.Fatalf("anonymous exempt endpoint: status = %d body = %q", code, body)
+	}
+}

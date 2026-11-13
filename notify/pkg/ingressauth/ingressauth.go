@@ -4,12 +4,14 @@
 // 协议：
 //
 //	Authorization: HMAC <producer_id>:<sig>:<ts>
-//	key  = SHA-256(token 明文)            // token 形如 npt_xxx；服务端库存即此哈希，明文永不上线
+//	key  = SHA-256(token 明文)            // token 形如 npt_xxx；明文永不上线，服务端库存为该密钥的主密钥封存值
 //	sig  = hex(HMAC-SHA256(key, canonical))
 //	canonical = ts + "\n" + METHOD + "\n" + PATH + "\n" + hex(sha256(body))
 //
-// ts 为 Unix 秒；服务端校验 |now-ts| ≤ 时间窗（缺省 ±5min）防重放；body 哈希
-// 把签名绑定到请求体。数据面只承诺 HTTP（gRPC 无法等价绑定请求体，不暴露）。
+// ts 为 Unix 秒；服务端校验 |now-ts| ≤ 时间窗（缺省 ±5min），并在时间窗内拒绝重复
+// 出现的同一签名（防重放；事件全部带 dedup_key 的请求除外——原样重发由 dedup 门闩
+// 幂等应答）。生产者每次请求（含不带 dedup_key 的重试）都应以当前时间重新签名。body
+// 哈希把签名绑定到请求体。数据面只承诺 HTTP（gRPC 无法等价绑定请求体，不暴露）。
 package ingressauth
 
 import (
@@ -36,7 +38,7 @@ type Credential struct {
 	Timestamp  int64
 }
 
-// DeriveKey 由 token 明文派生 HMAC 密钥（= SHA-256(token)，与服务端库存 token_hash 相同）。
+// DeriveKey 由 token 明文派生 HMAC 密钥（= SHA-256(token)；服务端 token_hash 列存其封存值）。
 func DeriveKey(token string) []byte {
 	sum := sha256.Sum256([]byte(token))
 	return sum[:]

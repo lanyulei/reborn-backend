@@ -64,8 +64,9 @@ func TestUserService_CreateUserDuplicate(t *testing.T) {
 
 func TestUserService_UpdateUser_OptionalPassthrough(t *testing.T) {
 	t.Parallel()
-	svc, _ := newUserService(t)
-	ctx := context.Background()
+	svc, store := newUserService(t)
+	seedUserRow(t, store, "u-admin", "root", true)
+	ctx := claimsContext("u-admin")
 	created, err := svc.CreateUser(ctx, &v1.CreateUserRequest{
 		Username: "alice", Password: "plain-secret", Nickname: "Alice", Gender: "unknown",
 	})
@@ -119,7 +120,8 @@ func TestUserService_BindAndListRoles(t *testing.T) {
 		t.Fatalf("testfake.NewAuthorizer() error = %v", err)
 	}
 	roleSvc := NewRoleService(biz.NewRoleUsecase(store, store, authorizer), biz.NewPermissionUsecase(store, store, authorizer, biznotify.NewNotificationUsecase(store, nil), testfake.NewTxManager()), userSvc.uc)
-	ctx := context.Background()
+	seedUserRow(t, store, "u-admin", "root", true)
+	ctx := claimsContext("u-admin")
 
 	user, err := userSvc.CreateUser(ctx, &v1.CreateUserRequest{
 		Username: "alice", Password: "plain-secret", Nickname: "Alice", Gender: "unknown",
@@ -203,6 +205,31 @@ func TestUserService_AdminGuards(t *testing.T) {
 	}
 	if _, err := svc.UpdateUserStatus(opCtx, &v1.UpdateUserStatusRequest{Id: bobID, Status: biz.StatusDisabled}); err != nil {
 		t.Fatalf("operator disables bob: %v", err)
+	}
+
+	// 普通操作者不能改超管资料；不能授予自己未持有的角色，目标已有的可保留。
+	_, err = svc.UpdateUser(opCtx, &v1.UpdateUserRequest{Id: adminID, Nickname: &nick})
+	denied("operator edits admin profile", err)
+	for _, r := range []*biz.Role{{ID: "role-held", Name: "持有", Code: "held", Status: biz.RoleStatusEnabled}, {ID: "role-high", Name: "高权限", Code: "high", Status: biz.RoleStatusEnabled}} {
+		if err := store.CreateRole(context.Background(), r); err != nil {
+			t.Fatalf("seed role %s: %v", r.Code, err)
+		}
+	}
+	if err := store.BindUserRoles(context.Background(), opID, []string{"role-held"}); err != nil {
+		t.Fatalf("bind operator role: %v", err)
+	}
+	_, err = svc.BindUserRoles(opCtx, &v1.BindUserRolesRequest{Id: opID, RoleIds: []string{"role-held", "role-high"}})
+	denied("operator binds unheld role to self", err)
+	_, err = svc.BindUserRoles(opCtx, &v1.BindUserRolesRequest{Id: bobID, RoleIds: []string{"role-high"}})
+	denied("operator binds unheld role to other", err)
+	if _, err := svc.BindUserRoles(opCtx, &v1.BindUserRolesRequest{Id: bobID, RoleIds: []string{"role-held"}}); err != nil {
+		t.Fatalf("operator binds held role: %v", err)
+	}
+	if _, err := svc.BindUserRoles(adminCtx, &v1.BindUserRolesRequest{Id: bobID, RoleIds: []string{"role-held", "role-high"}}); err != nil {
+		t.Fatalf("admin binds any role: %v", err)
+	}
+	if _, err := svc.BindUserRoles(opCtx, &v1.BindUserRolesRequest{Id: bobID, RoleIds: []string{"role-high"}}); err != nil {
+		t.Fatalf("operator keeps target's existing role: %v", err)
 	}
 
 	// 超管：自我锁死路径拒绝；值未变的 is_admin 回填放行。

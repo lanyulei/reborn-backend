@@ -112,11 +112,14 @@ func TestCmdb_Phase3(t *testing.T) {
 		t.Fatalf("audit filter: %d %s", code, body)
 	}
 
-	// 关系导入：host-2 通过 CSV 行声明挂 p-1（已挂 host-1 → 基数冲突报错）；新配件 p-2 挂到 host-2 成功。
+	// 关系导入：新配件 p-2 挂到 host-2 成功；p-3 声明的对端不存在 → 资源已建、关系失败。
 	code, body = doRequestWithToken(t, http.MethodPost, ts.URL+"/api/v1/cmdb/ci:import", admin,
 		`{"modelCode":"part","dryRun":false,"rows":[{"name":"p-2","attrs":{"kind":"disk"},"relations":[{"relationType":"host_has_part","direction":"incoming","targetName":"h-2"}]},
 		  {"name":"p-3","attrs":{"kind":"disk"},"relations":[{"relationType":"host_has_part","direction":"incoming","targetName":"nope"}]}]}`)
-	if code != http.StatusOK || !strings.Contains(body, `"created":1`) || !strings.Contains(body, `"failed":1`) || !strings.Contains(body, "relations linked: 1") || !strings.Contains(body, `"nope\" not found`) {
+	// p-3 的资源已创建、仅关系失败：按资源动作计数（created），action 保持 create 并带 ciId，
+	// 关系失败经 "relation failed: " 前缀的 message 带出（不计 failed）。
+	if code != http.StatusOK || !strings.Contains(body, `"created":2`) || strings.Contains(body, `"failed":1`) || strings.Contains(body, `"action":"error"`) ||
+		!strings.Contains(body, "relations linked: 1") || !strings.Contains(body, `"message":"relation failed: `) || !strings.Contains(body, `"nope\" not found`) {
 		t.Fatalf("import relations: %d %s", code, body)
 	}
 	if items := list("&relType=host_has_part&relTargetId=" + host2.ID); len(items) != 0 {

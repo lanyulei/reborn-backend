@@ -454,6 +454,18 @@ type ExportCIsRequest struct {
 	Status *string `protobuf:"bytes,3,opt,name=status,proto3,oneof" json:"status,omitempty"`
 	// env 环境过滤，可选。
 	Env *string `protobuf:"bytes,4,opt,name=env,proto3,oneof" json:"env,omitempty"`
+	// tag 标签过滤（包含该标签），可选；与 ListCIsRequest 同名同义。
+	Tag *string `protobuf:"bytes,5,opt,name=tag,proto3,oneof" json:"tag,omitempty"`
+	// attrs 属性等值过滤（attrs.<code>=value），可选；敏感字段不可用。
+	Attrs *structpb.Struct `protobuf:"bytes,6,opt,name=attrs,proto3" json:"attrs,omitempty"`
+	// rel_type 关联条件：关系类型，可选。
+	RelType *string `protobuf:"bytes,7,opt,name=rel_type,json=relType,proto3,oneof" json:"rel_type,omitempty"`
+	// rel_direction 关联方向，缺省 outgoing。
+	RelDirection *string `protobuf:"bytes,8,opt,name=rel_direction,json=relDirection,proto3,oneof" json:"rel_direction,omitempty"`
+	// rel_target_id 关联到该资源，可选。
+	RelTargetId *string `protobuf:"bytes,9,opt,name=rel_target_id,json=relTargetId,proto3,oneof" json:"rel_target_id,omitempty"`
+	// rel_none 该方向上无任何关联，可选。
+	RelNone *bool `protobuf:"varint,10,opt,name=rel_none,json=relNone,proto3,oneof" json:"rel_none,omitempty"`
 	// format 导出格式：csv（缺省）/ json。
 	Format        *string `protobuf:"bytes,20,opt,name=format,proto3,oneof" json:"format,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -516,6 +528,48 @@ func (x *ExportCIsRequest) GetEnv() string {
 		return *x.Env
 	}
 	return ""
+}
+
+func (x *ExportCIsRequest) GetTag() string {
+	if x != nil && x.Tag != nil {
+		return *x.Tag
+	}
+	return ""
+}
+
+func (x *ExportCIsRequest) GetAttrs() *structpb.Struct {
+	if x != nil {
+		return x.Attrs
+	}
+	return nil
+}
+
+func (x *ExportCIsRequest) GetRelType() string {
+	if x != nil && x.RelType != nil {
+		return *x.RelType
+	}
+	return ""
+}
+
+func (x *ExportCIsRequest) GetRelDirection() string {
+	if x != nil && x.RelDirection != nil {
+		return *x.RelDirection
+	}
+	return ""
+}
+
+func (x *ExportCIsRequest) GetRelTargetId() string {
+	if x != nil && x.RelTargetId != nil {
+		return *x.RelTargetId
+	}
+	return ""
+}
+
+func (x *ExportCIsRequest) GetRelNone() bool {
+	if x != nil && x.RelNone != nil {
+		return *x.RelNone
+	}
+	return false
 }
 
 func (x *ExportCIsRequest) GetFormat() string {
@@ -2294,18 +2348,30 @@ const file_cmdb_v1_ci_proto_rawDesc = "" +
 	"\aupdated\x18\x03 \x01(\x05R\aupdated\x12\x18\n" +
 	"\askipped\x18\x04 \x01(\x05R\askipped\x12\x16\n" +
 	"\x06failed\x18\x05 \x01(\x05R\x06failed\x122\n" +
-	"\aresults\x18\x06 \x03(\v2\x18.cmdb.v1.ImportRowResultR\aresults\"\xaa\x02\n" +
+	"\aresults\x18\x06 \x03(\v2\x18.cmdb.v1.ImportRowResultR\aresults\"\x80\x05\n" +
 	"\x10ExportCIsRequest\x12(\n" +
 	"\n" +
 	"model_code\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@R\tmodelCode\x12'\n" +
 	"\akeyword\x18\x02 \x01(\tB\b\xbaH\x05r\x03\x18\x80\x01H\x00R\akeyword\x88\x01\x01\x12J\n" +
 	"\x06status\x18\x03 \x01(\tB-\xbaH*r(R\bplanningR\x06activeR\vmaintenanceR\aretiredH\x01R\x06status\x88\x01\x01\x12\x1e\n" +
-	"\x03env\x18\x04 \x01(\tB\a\xbaH\x04r\x02\x18 H\x02R\x03env\x88\x01\x01\x12-\n" +
-	"\x06format\x18\x14 \x01(\tB\x10\xbaH\rr\vR\x03csvR\x04jsonH\x03R\x06format\x88\x01\x01B\n" +
+	"\x03env\x18\x04 \x01(\tB\a\xbaH\x04r\x02\x18 H\x02R\x03env\x88\x01\x01\x12\x1e\n" +
+	"\x03tag\x18\x05 \x01(\tB\a\xbaH\x04r\x02\x18@H\x03R\x03tag\x88\x01\x01\x12-\n" +
+	"\x05attrs\x18\x06 \x01(\v2\x17.google.protobuf.StructR\x05attrs\x12'\n" +
+	"\brel_type\x18\a \x01(\tB\a\xbaH\x04r\x02\x18@H\x04R\arelType\x88\x01\x01\x12C\n" +
+	"\rrel_direction\x18\b \x01(\tB\x19\xbaH\x16r\x14R\boutgoingR\bincomingH\x05R\frelDirection\x88\x01\x01\x121\n" +
+	"\rrel_target_id\x18\t \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01H\x06R\vrelTargetId\x88\x01\x01\x12\x1e\n" +
+	"\brel_none\x18\n" +
+	" \x01(\bH\aR\arelNone\x88\x01\x01\x12-\n" +
+	"\x06format\x18\x14 \x01(\tB\x10\xbaH\rr\vR\x03csvR\x04jsonH\bR\x06format\x88\x01\x01B\n" +
 	"\n" +
 	"\b_keywordB\t\n" +
 	"\a_statusB\x06\n" +
-	"\x04_envB\t\n" +
+	"\x04_envB\x06\n" +
+	"\x04_tagB\v\n" +
+	"\t_rel_typeB\x10\n" +
+	"\x0e_rel_directionB\x10\n" +
+	"\x0e_rel_target_idB\v\n" +
+	"\t_rel_noneB\t\n" +
 	"\a_format\"\xda\x04\n" +
 	"\x06CmdbCI\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
@@ -2544,55 +2610,56 @@ var file_cmdb_v1_ci_proto_depIdxs = []int32{
 	1,  // 1: cmdb.v1.ImportRow.relations:type_name -> cmdb.v1.ImportRelation
 	0,  // 2: cmdb.v1.ImportCIsRequest.rows:type_name -> cmdb.v1.ImportRow
 	3,  // 3: cmdb.v1.ImportCIsResponse.results:type_name -> cmdb.v1.ImportRowResult
-	29, // 4: cmdb.v1.CmdbCI.attrs:type_name -> google.protobuf.Struct
-	30, // 5: cmdb.v1.CmdbCI.last_synced_at:type_name -> google.protobuf.Timestamp
-	30, // 6: cmdb.v1.CmdbCI.create_time:type_name -> google.protobuf.Timestamp
-	30, // 7: cmdb.v1.CmdbCI.update_time:type_name -> google.protobuf.Timestamp
-	29, // 8: cmdb.v1.CmdbHistory.diff:type_name -> google.protobuf.Struct
-	30, // 9: cmdb.v1.CmdbHistory.create_time:type_name -> google.protobuf.Timestamp
-	30, // 10: cmdb.v1.ListHistoryRequest.from:type_name -> google.protobuf.Timestamp
-	30, // 11: cmdb.v1.ListHistoryRequest.to:type_name -> google.protobuf.Timestamp
-	8,  // 12: cmdb.v1.ListHistoryResponse.items:type_name -> cmdb.v1.CmdbHistory
-	29, // 13: cmdb.v1.ListCIsRequest.attrs:type_name -> google.protobuf.Struct
-	6,  // 14: cmdb.v1.ListCIsResponse.items:type_name -> cmdb.v1.CmdbCI
-	6,  // 15: cmdb.v1.GetCIResponse.ci:type_name -> cmdb.v1.CmdbCI
-	7,  // 16: cmdb.v1.GetCIResponse.relations:type_name -> cmdb.v1.RelationSummary
-	29, // 17: cmdb.v1.CreateCIRequest.attrs:type_name -> google.protobuf.Struct
-	6,  // 18: cmdb.v1.CreateCIResponse.ci:type_name -> cmdb.v1.CmdbCI
-	18, // 19: cmdb.v1.UpdateCIRequest.tags:type_name -> cmdb.v1.TagList
-	29, // 20: cmdb.v1.UpdateCIRequest.attrs:type_name -> google.protobuf.Struct
-	6,  // 21: cmdb.v1.UpdateCIResponse.ci:type_name -> cmdb.v1.CmdbCI
-	6,  // 22: cmdb.v1.TransitionCIResponse.ci:type_name -> cmdb.v1.CmdbCI
-	8,  // 23: cmdb.v1.ListCIHistoryResponse.items:type_name -> cmdb.v1.CmdbHistory
-	6,  // 24: cmdb.v1.SearchHit.ci:type_name -> cmdb.v1.CmdbCI
-	27, // 25: cmdb.v1.SearchCIsResponse.items:type_name -> cmdb.v1.SearchHit
-	11, // 26: cmdb.v1.CmdbCIService.ListCIs:input_type -> cmdb.v1.ListCIsRequest
-	13, // 27: cmdb.v1.CmdbCIService.GetCI:input_type -> cmdb.v1.GetCIRequest
-	15, // 28: cmdb.v1.CmdbCIService.CreateCI:input_type -> cmdb.v1.CreateCIRequest
-	17, // 29: cmdb.v1.CmdbCIService.UpdateCI:input_type -> cmdb.v1.UpdateCIRequest
-	20, // 30: cmdb.v1.CmdbCIService.TransitionCI:input_type -> cmdb.v1.TransitionCIRequest
-	22, // 31: cmdb.v1.CmdbCIService.DeleteCI:input_type -> cmdb.v1.DeleteCIRequest
-	24, // 32: cmdb.v1.CmdbCIService.ListCIHistory:input_type -> cmdb.v1.ListCIHistoryRequest
-	2,  // 33: cmdb.v1.CmdbCIService.ImportCIs:input_type -> cmdb.v1.ImportCIsRequest
-	5,  // 34: cmdb.v1.CmdbCIService.ExportCIs:input_type -> cmdb.v1.ExportCIsRequest
-	26, // 35: cmdb.v1.CmdbCIService.SearchCIs:input_type -> cmdb.v1.SearchCIsRequest
-	9,  // 36: cmdb.v1.CmdbCIService.ListHistory:input_type -> cmdb.v1.ListHistoryRequest
-	12, // 37: cmdb.v1.CmdbCIService.ListCIs:output_type -> cmdb.v1.ListCIsResponse
-	14, // 38: cmdb.v1.CmdbCIService.GetCI:output_type -> cmdb.v1.GetCIResponse
-	16, // 39: cmdb.v1.CmdbCIService.CreateCI:output_type -> cmdb.v1.CreateCIResponse
-	19, // 40: cmdb.v1.CmdbCIService.UpdateCI:output_type -> cmdb.v1.UpdateCIResponse
-	21, // 41: cmdb.v1.CmdbCIService.TransitionCI:output_type -> cmdb.v1.TransitionCIResponse
-	23, // 42: cmdb.v1.CmdbCIService.DeleteCI:output_type -> cmdb.v1.DeleteCIResponse
-	25, // 43: cmdb.v1.CmdbCIService.ListCIHistory:output_type -> cmdb.v1.ListCIHistoryResponse
-	4,  // 44: cmdb.v1.CmdbCIService.ImportCIs:output_type -> cmdb.v1.ImportCIsResponse
-	31, // 45: cmdb.v1.CmdbCIService.ExportCIs:output_type -> google.api.HttpBody
-	28, // 46: cmdb.v1.CmdbCIService.SearchCIs:output_type -> cmdb.v1.SearchCIsResponse
-	10, // 47: cmdb.v1.CmdbCIService.ListHistory:output_type -> cmdb.v1.ListHistoryResponse
-	37, // [37:48] is the sub-list for method output_type
-	26, // [26:37] is the sub-list for method input_type
-	26, // [26:26] is the sub-list for extension type_name
-	26, // [26:26] is the sub-list for extension extendee
-	0,  // [0:26] is the sub-list for field type_name
+	29, // 4: cmdb.v1.ExportCIsRequest.attrs:type_name -> google.protobuf.Struct
+	29, // 5: cmdb.v1.CmdbCI.attrs:type_name -> google.protobuf.Struct
+	30, // 6: cmdb.v1.CmdbCI.last_synced_at:type_name -> google.protobuf.Timestamp
+	30, // 7: cmdb.v1.CmdbCI.create_time:type_name -> google.protobuf.Timestamp
+	30, // 8: cmdb.v1.CmdbCI.update_time:type_name -> google.protobuf.Timestamp
+	29, // 9: cmdb.v1.CmdbHistory.diff:type_name -> google.protobuf.Struct
+	30, // 10: cmdb.v1.CmdbHistory.create_time:type_name -> google.protobuf.Timestamp
+	30, // 11: cmdb.v1.ListHistoryRequest.from:type_name -> google.protobuf.Timestamp
+	30, // 12: cmdb.v1.ListHistoryRequest.to:type_name -> google.protobuf.Timestamp
+	8,  // 13: cmdb.v1.ListHistoryResponse.items:type_name -> cmdb.v1.CmdbHistory
+	29, // 14: cmdb.v1.ListCIsRequest.attrs:type_name -> google.protobuf.Struct
+	6,  // 15: cmdb.v1.ListCIsResponse.items:type_name -> cmdb.v1.CmdbCI
+	6,  // 16: cmdb.v1.GetCIResponse.ci:type_name -> cmdb.v1.CmdbCI
+	7,  // 17: cmdb.v1.GetCIResponse.relations:type_name -> cmdb.v1.RelationSummary
+	29, // 18: cmdb.v1.CreateCIRequest.attrs:type_name -> google.protobuf.Struct
+	6,  // 19: cmdb.v1.CreateCIResponse.ci:type_name -> cmdb.v1.CmdbCI
+	18, // 20: cmdb.v1.UpdateCIRequest.tags:type_name -> cmdb.v1.TagList
+	29, // 21: cmdb.v1.UpdateCIRequest.attrs:type_name -> google.protobuf.Struct
+	6,  // 22: cmdb.v1.UpdateCIResponse.ci:type_name -> cmdb.v1.CmdbCI
+	6,  // 23: cmdb.v1.TransitionCIResponse.ci:type_name -> cmdb.v1.CmdbCI
+	8,  // 24: cmdb.v1.ListCIHistoryResponse.items:type_name -> cmdb.v1.CmdbHistory
+	6,  // 25: cmdb.v1.SearchHit.ci:type_name -> cmdb.v1.CmdbCI
+	27, // 26: cmdb.v1.SearchCIsResponse.items:type_name -> cmdb.v1.SearchHit
+	11, // 27: cmdb.v1.CmdbCIService.ListCIs:input_type -> cmdb.v1.ListCIsRequest
+	13, // 28: cmdb.v1.CmdbCIService.GetCI:input_type -> cmdb.v1.GetCIRequest
+	15, // 29: cmdb.v1.CmdbCIService.CreateCI:input_type -> cmdb.v1.CreateCIRequest
+	17, // 30: cmdb.v1.CmdbCIService.UpdateCI:input_type -> cmdb.v1.UpdateCIRequest
+	20, // 31: cmdb.v1.CmdbCIService.TransitionCI:input_type -> cmdb.v1.TransitionCIRequest
+	22, // 32: cmdb.v1.CmdbCIService.DeleteCI:input_type -> cmdb.v1.DeleteCIRequest
+	24, // 33: cmdb.v1.CmdbCIService.ListCIHistory:input_type -> cmdb.v1.ListCIHistoryRequest
+	2,  // 34: cmdb.v1.CmdbCIService.ImportCIs:input_type -> cmdb.v1.ImportCIsRequest
+	5,  // 35: cmdb.v1.CmdbCIService.ExportCIs:input_type -> cmdb.v1.ExportCIsRequest
+	26, // 36: cmdb.v1.CmdbCIService.SearchCIs:input_type -> cmdb.v1.SearchCIsRequest
+	9,  // 37: cmdb.v1.CmdbCIService.ListHistory:input_type -> cmdb.v1.ListHistoryRequest
+	12, // 38: cmdb.v1.CmdbCIService.ListCIs:output_type -> cmdb.v1.ListCIsResponse
+	14, // 39: cmdb.v1.CmdbCIService.GetCI:output_type -> cmdb.v1.GetCIResponse
+	16, // 40: cmdb.v1.CmdbCIService.CreateCI:output_type -> cmdb.v1.CreateCIResponse
+	19, // 41: cmdb.v1.CmdbCIService.UpdateCI:output_type -> cmdb.v1.UpdateCIResponse
+	21, // 42: cmdb.v1.CmdbCIService.TransitionCI:output_type -> cmdb.v1.TransitionCIResponse
+	23, // 43: cmdb.v1.CmdbCIService.DeleteCI:output_type -> cmdb.v1.DeleteCIResponse
+	25, // 44: cmdb.v1.CmdbCIService.ListCIHistory:output_type -> cmdb.v1.ListCIHistoryResponse
+	4,  // 45: cmdb.v1.CmdbCIService.ImportCIs:output_type -> cmdb.v1.ImportCIsResponse
+	31, // 46: cmdb.v1.CmdbCIService.ExportCIs:output_type -> google.api.HttpBody
+	28, // 47: cmdb.v1.CmdbCIService.SearchCIs:output_type -> cmdb.v1.SearchCIsResponse
+	10, // 48: cmdb.v1.CmdbCIService.ListHistory:output_type -> cmdb.v1.ListHistoryResponse
+	38, // [38:49] is the sub-list for method output_type
+	27, // [27:38] is the sub-list for method input_type
+	27, // [27:27] is the sub-list for extension type_name
+	27, // [27:27] is the sub-list for extension extendee
+	0,  // [0:27] is the sub-list for field type_name
 }
 
 func init() { file_cmdb_v1_ci_proto_init() }

@@ -104,7 +104,7 @@ func TestIntegration_TenancyColumns(t *testing.T) {
 		t.Fatalf("nil scope must store as empty array, not NULL: %v", err)
 	}
 
-	producers := NewProducerRepo(d)
+	producers := NewProducerRepo(d, nil)
 	p := newProducerDO("018f3e1a-2302-7000-8000-000000000001", "quota-engine")
 	p.QPSLimit, p.DailyLimit = 20, 50000
 	if err := producers.CreateProducer(ctx, p); err != nil {

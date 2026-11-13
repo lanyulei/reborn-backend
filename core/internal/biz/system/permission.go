@@ -10,7 +10,7 @@ import (
 	"github.com/lanyulei/reborn/backend/core/internal/pkg/txrun"
 )
 
-// PermissionPolicy 是一条 Casbin p 策略的领域表示：角色 code → 接口操作。
+// PermissionPolicy 是一条授权策略的领域表示：角色 code → 接口操作。
 // 角色侧已由 data 层 JOIN 解析为 code（不可变），策略不感知角色 ID 变更。
 type PermissionPolicy struct {
 	RoleCode  string
@@ -88,6 +88,12 @@ func (uc *PermissionUsecase) GetGrants(ctx context.Context, roleID string) (Gran
 		return GrantSet{}, err
 	}
 	return uc.admin.ListGrantsByRole(ctx, roleID)
+}
+
+// GrantsOfRoles 返回多个角色直接授权的并集（三类各自去重、字典序）；供
+// service 层授权守卫计算操作者自身持有的授权上限。
+func (uc *PermissionUsecase) GrantsOfRoles(ctx context.Context, roleIDs []string) (GrantSet, error) {
+	return uc.admin.ListGrantsByRoles(ctx, roleIDs)
 }
 
 // 权限变更通知事件常量（设计 §11 示例）：事件经 NotificationWriter 在

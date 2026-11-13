@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	cmdbv1 "github.com/lanyulei/reborn/backend/core/api/cmdb/v1"
 	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
 	v1 "github.com/lanyulei/reborn/backend/core/api/system/v1"
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
@@ -80,6 +81,9 @@ func TestListOperations(t *testing.T) {
 		notifyv1.OperationNotifySilenceServiceListSilences:            {Title: "查询静默规则列表", Method: "GET", Path: "/api/v1/notify/silence"},
 		notifyv1.OperationNotifySubscriptionServiceUpsertSubscription: {Title: "保存订阅", Method: "POST", Path: "/api/v1/notify/subscription"},
 		notifyv1.OperationNotifySubscriptionServiceListSubscriptions:  {Title: "查询订阅列表", Method: "GET", Path: "/api/v1/notify/subscription"},
+		// cmdb insight：漏登记 insight.proto 时其接口无法授予任何角色。
+		cmdbv1.OperationCmdbInsightServiceGetOverview:     {Title: "查询运营概览", Method: "GET", Path: "/api/v1/cmdb/overview"},
+		cmdbv1.OperationCmdbInsightServiceListSchemaAudit: {Title: "查询模型变更审计", Method: "GET", Path: "/api/v1/cmdb/schema-audit"},
 	}
 	for want, wantOp := range mustContain {
 		idx := slices.IndexFunc(ops, func(op operation) bool { return op.Name == want })

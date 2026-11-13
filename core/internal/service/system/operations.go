@@ -46,6 +46,7 @@ var operationFiles = []protoreflect.FileDescriptor{
 	cmdbv1.File_cmdb_v1_ci_proto,
 	cmdbv1.File_cmdb_v1_relation_proto,
 	cmdbv1.File_cmdb_v1_sync_proto,
+	cmdbv1.File_cmdb_v1_insight_proto,
 }
 
 // authzExemptOperations 是免授权检查的操作集合（proto full method），为鉴权

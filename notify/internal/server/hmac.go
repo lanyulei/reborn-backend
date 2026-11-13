@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/lanyulei/reborn/backend/kit/httpx"
+	ingressv1 "github.com/lanyulei/reborn/backend/notify/api/ingress/v1"
 	"github.com/lanyulei/reborn/backend/notify/internal/biz"
 
 	"github.com/go-kratos/kratos/v3/middleware"
@@ -48,11 +49,37 @@ func hmacMiddleware(auth *biz.ProducerAuth) middleware.Middleware {
 				}
 				body = data
 			}
-			producer, err := auth.Verify(ctx, header, r.Method, r.URL.Path, body)
+			ad, err := auth.Verify(ctx, header, r.Method, r.URL.Path, body)
 			if err != nil {
 				return nil, err
 			}
-			return handler(WithProducer(ctx, producer), req)
+			// 重放：带 dedup_key 的交给 dedup 门闩幂等应答（客户端原样重发不受影响），
+			// 否则拒绝——无门闩兜底的事件会被重复落库。
+			if ad.Replayed && !dedupGuarded(req) {
+				return nil, biz.ErrReplayed
+			}
+			resp, err := handler(WithProducer(ctx, ad.Producer), req)
+			if err != nil {
+				ad.Forget() // 未受理（校验/配额/落库失败）：允许原样重发
+			}
+			return resp, err
 		}
+	}
+}
+
+// dedupGuarded 报告请求内的事件是否全部携带 dedup_key（重放时由门闩保证幂等）。
+func dedupGuarded(req any) bool {
+	switch r := req.(type) {
+	case *ingressv1.SendEventRequest:
+		return r.GetEvent().GetDedupKey() != ""
+	case *ingressv1.BatchSendRequest:
+		for _, e := range r.GetEvents() {
+			if e.GetDedupKey() == "" {
+				return false
+			}
+		}
+		return len(r.GetEvents()) > 0
+	default:
+		return false
 	}
 }

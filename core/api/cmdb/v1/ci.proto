@@ -209,6 +209,20 @@ message ExportCIsRequest {
   }];
   // env 环境过滤，可选。
   optional string env = 4 [(buf.validate.field).string.max_len = 32];
+  // tag 标签过滤（包含该标签），可选；与 ListCIsRequest 同名同义。
+  optional string tag = 5 [(buf.validate.field).string.max_len = 64];
+  // attrs 属性等值过滤（attrs.<code>=value），可选；敏感字段不可用。
+  google.protobuf.Struct attrs = 6;
+  // rel_type 关联条件：关系类型，可选。
+  optional string rel_type = 7 [(buf.validate.field).string.max_len = 64];
+  // rel_direction 关联方向，缺省 outgoing。
+  optional string rel_direction = 8 [(buf.validate.field).string = {
+    in: ["outgoing", "incoming"]
+  }];
+  // rel_target_id 关联到该资源，可选。
+  optional string rel_target_id = 9 [(buf.validate.field).string.uuid = true];
+  // rel_none 该方向上无任何关联，可选。
+  optional bool rel_none = 10;
   // format 导出格式：csv（缺省）/ json。
   optional string format = 20 [(buf.validate.field).string = {
     in: ["csv", "json"]

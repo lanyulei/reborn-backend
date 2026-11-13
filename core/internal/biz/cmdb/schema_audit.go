@@ -3,6 +3,7 @@ package biz
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"reflect"
 	"slices"
 	"time"
@@ -144,7 +145,7 @@ func fieldAuditMap(f *Field) map[string]any {
 	}
 	return map[string]any{
 		"name": f.Name, "type": f.Type, "required": f.Required, "unique": f.Unique,
-		"enumValues": slices.Clone(f.EnumValues), "refModel": f.RefModel, "rule": rule, "owner": f.Owner,
+		"enumValues": slices.Clone(f.EnumValues), "enumLabels": maps.Clone(f.EnumLabels), "refModel": f.RefModel, "rule": rule, "owner": f.Owner,
 		"listVisible": f.ListVisible, "sort": f.Sort, "description": f.Description,
 		"indexed": f.Indexed, "sensitive": f.Sensitive, "deprecated": f.Deprecated,
 	}

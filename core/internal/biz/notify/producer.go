@@ -31,8 +31,9 @@ type ProducerSpec struct {
 }
 
 // Producer 生产者领域模型（DO）：一行 = 一个事件生产者的接入凭据。
-// TokenHash 是 SHA-256(token 明文)；明文只在用例层签发时产生一次，
-// 不进入任何实体返回路径。与 proto 实体、data 层 PO 显式转换。
+// TokenHash 是 SHA-256(token 明文)（即 ingress HMAC 密钥）；明文只在用例层签发时
+// 产生一次，不进入任何实体返回路径。data 层落库前用主密钥封存，读回的是库存形态
+// （可能已封存），用例层不得依赖其内容。与 proto 实体、data 层 PO 显式转换。
 type Producer struct {
 	ID    string
 	BizID string

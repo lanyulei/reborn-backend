@@ -7,6 +7,8 @@ import (
 
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/assistant"
 	basedata "github.com/lanyulei/reborn/backend/core/internal/data"
+
+	"github.com/jackc/pgx/v5"
 )
 
 var _ biz.MessageRepo = (*messageRepo)(nil)
@@ -51,7 +53,7 @@ func (r *messageRepo) Append(ctx context.Context, m *biz.Message) error {
 	return nil
 }
 
-// List implements biz.MessageRepo：按 seq 正序。
+// List implements biz.MessageRepo：完整历史，按 seq 正序。
 func (r *messageRepo) List(ctx context.Context, conversationID string) ([]*biz.Message, error) {
 	rows, err := r.data.Pool.Query(ctx,
 		`SELECT id, conversation_id, seq, role, content, create_time
@@ -59,6 +61,25 @@ func (r *messageRepo) List(ctx context.Context, conversationID string) ([]*biz.M
 	if err != nil {
 		return nil, fmt.Errorf("list assistant messages: %w", err)
 	}
+	return scanMessages(rows)
+}
+
+// ListRecent implements biz.MessageRepo：最近 limit 条，按 seq 正序（子查询
+// 倒序取尾部后外层翻回正序）。
+func (r *messageRepo) ListRecent(ctx context.Context, conversationID string, limit int) ([]*biz.Message, error) {
+	rows, err := r.data.Pool.Query(ctx,
+		`SELECT id, conversation_id, seq, role, content, create_time FROM (
+		   SELECT id, conversation_id, seq, role, content, create_time
+		   FROM assistant_message WHERE conversation_id = $1 ORDER BY seq DESC LIMIT $2
+		 ) recent ORDER BY seq`, conversationID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list recent assistant messages: %w", err)
+	}
+	return scanMessages(rows)
+}
+
+// scanMessages 扫描消息结果集并解码 content jsonb；负责关闭 rows。
+func scanMessages(rows pgx.Rows) ([]*biz.Message, error) {
 	defer rows.Close()
 	items := make([]*biz.Message, 0, 32)
 	for rows.Next() {

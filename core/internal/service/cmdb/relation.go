@@ -5,6 +5,7 @@ import (
 
 	v1 "github.com/lanyulei/reborn/backend/core/api/cmdb/v1"
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/cmdb"
+	"github.com/lanyulei/reborn/backend/kit/paging"
 )
 
 // CmdbRelationService 实现 CmdbRelationServiceServer。
@@ -118,18 +119,19 @@ func (s *CmdbRelationService) ListRelated(ctx context.Context, req *v1.ListRelat
 	if err != nil {
 		return nil, err
 	}
-	items, total, err := s.uc.ListRelated(ctx, req.GetCiId(), req.GetRelationType(), req.GetDirection(), req.GetKeyword(),
-		req.GetPage(), int64(req.GetPageSize()))
+	var items []*biz.RelatedCI
+	var total int64
+	if scope.Unrestricted {
+		items, total, err = s.uc.ListRelated(ctx, req.GetCiId(), req.GetRelationType(), req.GetDirection(), req.GetKeyword(),
+			req.GetPage(), int64(req.GetPageSize()))
+	} else {
+		items, total, err = s.listRelatedInScope(ctx, scope, req)
+	}
 	if err != nil {
 		return nil, err
 	}
 	resp := &v1.ListRelatedResponse{Items: make([]*v1.RelatedCI, 0, len(items)), Total: total}
 	for _, r := range items {
-		if !scope.Allows(r.CI.ModelCode, r.CI.Env) {
-			// 范围外的对端不展示（总数相应减少；以隐藏为准，不泄露名称）。
-			resp.Total--
-			continue
-		}
 		p, err := toProtoCI(r.CI)
 		if err != nil {
 			return nil, err
@@ -137,4 +139,28 @@ func (s *CmdbRelationService) ListRelated(ctx context.Context, req *v1.ListRelat
 		resp.Items = append(resp.Items, &v1.RelatedCI{RelationId: r.RelationID, Ci: p})
 	}
 	return resp, nil
+}
+
+// listRelatedInScope 受限用户的关联列表：范围外的对端不展示（不泄露名称与数量）。
+// 仓储分页不带范围条件，这里取全量后按范围过滤、再内存分页，保证各页 Total 一致。
+func (s *CmdbRelationService) listRelatedInScope(ctx context.Context, scope biz.Scope, req *v1.ListRelatedRequest) ([]*biz.RelatedCI, int64, error) {
+	visible := make([]*biz.RelatedCI, 0, 16)
+	for page := int64(1); ; page++ {
+		items, total, err := s.uc.ListRelated(ctx, req.GetCiId(), req.GetRelationType(), req.GetDirection(), req.GetKeyword(), page, paging.MaxPageSize)
+		if err != nil {
+			return nil, 0, err
+		}
+		for _, r := range items {
+			if scope.Allows(r.CI.ModelCode, r.CI.Env) {
+				visible = append(visible, r)
+			}
+		}
+		if len(items) == 0 || page*paging.MaxPageSize >= total {
+			break
+		}
+	}
+	page, pageSize := paging.Normalize(req.GetPage(), int64(req.GetPageSize()))
+	total := int64(len(visible))
+	start := min((page-1)*pageSize, total)
+	return visible[start:min(start+pageSize, total)], total, nil
 }

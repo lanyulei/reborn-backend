@@ -111,6 +111,25 @@ func (t *routerTx) MarkEvents(ctx context.Context, marks []biz.EventMark) error 
 	return nil
 }
 
+// FailAggregatedEvents implements biz.RouterTx：单条有界 UPDATE。范围由 biz_id +
+// create_time 下界收敛（idx_notify_event_query，分区按 create_time 裁剪；上界即当前
+// 时刻——窗口最长 max_agg_window）；NOT EXISTS 走 idx_notify_dispatch_query(event_id)，
+// dispatch 的 create_time 不早于其事件，同一下界用于分区裁剪。调用方（CloseGroup）
+// 已在本事务锁住组行：归入本窗口的 router 事务均已提交，之后的事件属于下一窗口。
+// 局限：create_time 早于窗口首事件、却晚到归入本窗口的事件（延后重试的乱序）不在
+// 范围内，保持 routed。
+func (t *routerTx) FailAggregatedEvents(ctx context.Context, bizID, groupKey string, since time.Time) (int64, error) {
+	tag, err := t.tx.Exec(ctx,
+		`UPDATE notify_event e SET status = $4
+		 WHERE e.biz_id = $1 AND e.group_key = $2 AND e.create_time >= $3 AND e.status = $5
+		   AND NOT EXISTS (SELECT 1 FROM notify_dispatch d WHERE d.event_id = e.id AND d.create_time >= $3)`,
+		bizID, groupKey, since, biz.EventStatusFailed, biz.EventStatusRouted)
+	if err != nil {
+		return 0, fmt.Errorf("fail aggregated events: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
 func (t *routerTx) DeferEvent(ctx context.Context, id string, createTime time.Time, next time.Time) error {
 	if _, err := t.tx.Exec(ctx,
 		"UPDATE notify_event SET publish_attempts = publish_attempts + 1, next_publish_time = $3 WHERE id = $1 AND create_time = $2",

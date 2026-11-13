@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"fmt"
 	"log/slog"
 	"regexp"
 	"time"
@@ -38,11 +39,13 @@ func ProtoValidate(v any) error {
 // sensitiveFieldPattern 匹配 proto text 请求日志中的凭据类字段（kratos logging
 // 中间件把整个请求拼成单个字符串挂在 args 键下，按键名过滤穿透不了字符串内容）。
 // 黑名单模式：宁可误打码不可漏打码。
-var sensitiveFieldPattern = regexp.MustCompile(`(?i)\b(password|refresh_token|access_token|secret|sign_secret|authorization|token|signature):"[^"]*"`)
+// 值按 proto text 的带引号字符串整体匹配（`\"` 等转义序列不终止匹配），否则
+// 含 `"` 的密码会在首个转义引号处截断、尾部明文泄漏进日志。
+var sensitiveFieldPattern = regexp.MustCompile(`(?i)\b(password|refresh_token|access_token|secret|sign_secret|authorization|token|signature):"(?:[^"\\]|\\.)*"`)
 
 // sensitiveHeaderPattern 匹配 map<string,string> 形态的凭据类请求头条目
 // （如 webhook config.headers 的 `headers:{key:"Authorization" value:"…"}`）。
-var sensitiveHeaderPattern = regexp.MustCompile(`(?i)(key:"(?:authorization|proxy-authorization|cookie|x-api-key|x-auth-token|api-key)"\s*value:)"[^"]*"`)
+var sensitiveHeaderPattern = regexp.MustCompile(`(?i)(key:"(?:authorization|proxy-authorization|cookie|x-api-key|x-auth-token|api-key)"\s*value:)"(?:[^"\\]|\\.)*"`)
 
 // MaskSensitiveAttr slog.HandlerOptions.ReplaceAttr：args 属性内敏感字段统一替换为 ***。
 func MaskSensitiveAttr(groups []string, a slog.Attr) slog.Attr {
@@ -51,9 +54,17 @@ func MaskSensitiveAttr(groups []string, a slog.Attr) slog.Attr {
 	}
 	masked := sensitiveFieldPattern.ReplaceAllString(a.Value.String(), `$1:"***"`)
 	masked = sensitiveHeaderPattern.ReplaceAllString(masked, `$1"***"`)
+	// 上传类请求（头像 / logo 的 bytes 字段）会把整份文件内容写进 args：
+	// 超长的直接截断，保留头部便于排查，并标注原长度。
+	if len(masked) > maxLoggedArgs {
+		masked = masked[:maxLoggedArgs] + fmt.Sprintf("…(truncated, %d bytes total)", len(masked))
+	}
 	a.Value = slog.StringValue(masked)
 	return a
 }
+
+// maxLoggedArgs 单条访问日志里 args 的最大长度（字节）。
+const maxLoggedArgs = 4096
 
 // NewLogger 构造服务统一的 slog JSON 日志（经 Kratos 包装）：敏感字段在 handler
 // 构建处统一脱敏（FilterKey 按键过滤 + ReplaceAttr 按内容打码），附加 trace_id/span_id

@@ -89,7 +89,8 @@ func TestRoleService_UpdateAndGetRole(t *testing.T) {
 func TestRoleService_Permissions(t *testing.T) {
 	t.Parallel()
 	svc, store := newRoleService(t)
-	ctx := context.Background()
+	seedUserRow(t, store, "u-admin", "root", true)
+	ctx := claimsContext("u-admin")
 	created, err := svc.CreateRole(ctx, &v1.CreateRoleRequest{Name: "运维", Code: "ops"})
 	if err != nil {
 		t.Fatalf("CreateRole() error = %v", err)
@@ -239,5 +240,80 @@ func TestRoleService_BuiltinGuards(t *testing.T) {
 	}
 	if _, err := svc.DeleteRole(opCtx, &v1.DeleteRoleRequest{Id: created.GetRole().GetId()}); err != nil {
 		t.Fatalf("DeleteRole(normal, operator) error = %v", err)
+	}
+}
+
+// TestRoleService_GrantCeiling 授权上限守卫：非超管只能授予自己已持有的
+// 菜单/元素/接口授权与 biz 范围（目标角色已有项可保留）；超管不受限；
+// 缺少身份按无效令牌拒绝。
+func TestRoleService_GrantCeiling(t *testing.T) {
+	t.Parallel()
+	svc, store := newRoleService(t)
+	const adminID, opID = "u-admin", "u-op"
+	seedUserRow(t, store, adminID, "root", true)
+	seedUserRow(t, store, opID, "operator", false)
+	opCtx, adminCtx := claimsContext(opID), claimsContext(adminID)
+	listUsers := biz.OperationCode(v1.OperationUserServiceListUsers)
+	createUser := biz.OperationCode(v1.OperationUserServiceCreateUser)
+
+	mine, err := svc.CreateRole(adminCtx, &v1.CreateRoleRequest{Name: "运维", Code: "ops", BizScope: []string{"a", "b"}})
+	if err != nil {
+		t.Fatalf("CreateRole() error = %v", err)
+	}
+	mineID := mine.GetRole().GetId()
+	if _, err := svc.SetRolePermissions(adminCtx, &v1.SetRolePermissionsRequest{
+		Id: mineID, Menus: []string{"system.user"}, Apis: []string{listUsers},
+	}); err != nil {
+		t.Fatalf("SetRolePermissions(admin) error = %v", err)
+	}
+	if err := store.BindUserRoles(context.Background(), opID, []string{mineID}); err != nil {
+		t.Fatalf("bind operator role: %v", err)
+	}
+
+	denied := func(step string, err error) {
+		t.Helper()
+		if errors.Code(err) != 403 || errors.Reason(err) != v1.ErrorReason_PERMISSION_DENIED.String() {
+			t.Errorf("%s: error = %v, want 403 PERMISSION_DENIED", step, err)
+		}
+	}
+
+	// 给自己所在角色追加未持有的接口/菜单/元素 → 403。
+	_, err = svc.SetRolePermissions(opCtx, &v1.SetRolePermissionsRequest{Id: mineID, Menus: []string{"system.user"}, Apis: []string{listUsers, createUser}})
+	denied("operator adds api", err)
+	_, err = svc.SetRolePermissions(opCtx, &v1.SetRolePermissionsRequest{Id: mineID, Menus: []string{"system.user", "system.role"}})
+	denied("operator adds menu", err)
+	_, err = svc.SetRolePermissions(opCtx, &v1.SetRolePermissionsRequest{Id: mineID, Elements: []string{"system.role.grant"}})
+	denied("operator adds element", err)
+	// 持有范围内的授予与收缩放行。
+	other, err := svc.CreateRole(adminCtx, &v1.CreateRoleRequest{Name: "只读", Code: "ro", BizScope: []string{"a"}})
+	if err != nil {
+		t.Fatalf("CreateRole() error = %v", err)
+	}
+	otherID := other.GetRole().GetId()
+	if _, err := svc.SetRolePermissions(opCtx, &v1.SetRolePermissionsRequest{Id: otherID, Menus: []string{"system.user"}, Apis: []string{listUsers}}); err != nil {
+		t.Fatalf("operator grants within ceiling: %v", err)
+	}
+	// 目标角色已有的超限项可保留。
+	if _, err := svc.SetRolePermissions(adminCtx, &v1.SetRolePermissionsRequest{Id: otherID, Apis: []string{listUsers, createUser}}); err != nil {
+		t.Fatalf("SetRolePermissions(admin) error = %v", err)
+	}
+	if _, err := svc.SetRolePermissions(opCtx, &v1.SetRolePermissionsRequest{Id: otherID, Apis: []string{createUser}}); err != nil {
+		t.Fatalf("operator keeps existing grant: %v", err)
+	}
+	// 缺少身份：无效令牌。
+	if _, err := svc.SetRolePermissions(context.Background(), &v1.SetRolePermissionsRequest{Id: otherID}); !errors.Is(err, biz.ErrTokenInvalid) {
+		t.Errorf("SetRolePermissions(no claims) error = %v, want ErrTokenInvalid", err)
+	}
+
+	// biz 范围：扩到自身范围之外或清空（=不限）→ 403；范围内放行。
+	_, err = svc.UpdateRole(opCtx, &v1.UpdateRoleRequest{Id: otherID, BizScope: &v1.BizScope{Items: []string{"a", "c"}}})
+	denied("operator widens biz scope", err)
+	_, err = svc.UpdateRole(opCtx, &v1.UpdateRoleRequest{Id: mineID, BizScope: &v1.BizScope{}})
+	denied("operator clears biz scope", err)
+	if _, err := svc.UpdateRole(opCtx, &v1.UpdateRoleRequest{Id: otherID, BizScope: &v1.BizScope{Items: []string{"a", "b"}}}); err != nil {
+		t.Fatalf("operator sets biz scope within own: %v", err)
+	}
+	if _, err := svc.UpdateRole(adminCtx, &v1.UpdateRoleRequest{Id: otherID, BizScope: &v1.BizScope{}}); err != nil {
+		t.Fatalf("admin clears biz scope: %v", err)
 	}
 }

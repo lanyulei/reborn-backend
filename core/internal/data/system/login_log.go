@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
@@ -68,7 +69,20 @@ func scanLoginLog(scan func(dest ...any) error) (*biz.LoginLog, error) {
 // loginLogRepo 是登录日志仓储的 PostgreSQL 实现：手写参数化 SQL，无 ORM/反射。
 type loginLogRepo struct {
 	data *basedata.Data
+	// lastPurge 上次保留期清理的时间（unix 秒）；清理随写入顺带触发，至多每小时一次。
+	lastPurge atomic.Int64
 }
+
+// 登录日志写入与保留期参数。
+const (
+	// loginLogWriteTimeout 单条审计写入的上界：库慢时不拖住登录响应（失败由调用方告警降级）。
+	loginLogWriteTimeout = 2 * time.Second
+	// loginLogRetention 保留期：匿名失败登录也会各写一行，不清理会无限增长。
+	loginLogRetention     = 180 * 24 * time.Hour
+	loginLogPurgeInterval = time.Hour
+	loginLogPurgeBatch    = 5000
+	loginLogPurgeTimeout  = 10 * time.Second
+)
 
 // NewLoginLogRepo new a loginLogRepo.
 func NewLoginLogRepo(data *basedata.Data) *loginLogRepo {
@@ -78,6 +92,9 @@ func NewLoginLogRepo(data *basedata.Data) *loginLogRepo {
 // Create implements biz.LoginLogWriter：插入一条登录日志；可空列（user_id/ip/
 // user_agent）空串经 nilIfEmpty 归一为 NULL。
 func (r *loginLogRepo) Create(ctx context.Context, log *biz.LoginLog) error {
+	ctx, cancel := context.WithTimeout(ctx, loginLogWriteTimeout)
+	defer cancel()
+	defer r.maybePurge()
 	_, err := r.data.Pool.Exec(ctx,
 		`INSERT INTO system_login_log (id, user_id, username, result, ip, user_agent, create_time)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
@@ -89,6 +106,25 @@ func (r *loginLogRepo) Create(ctx context.Context, log *biz.LoginLog) error {
 		return fmt.Errorf("insert login log: %w", err)
 	}
 	return nil
+}
+
+// maybePurge 顺带清理超出保留期的日志：至多每 loginLogPurgeInterval 触发一次，
+// 每次限量删除（走 create_time 索引），后台执行、不占登录请求的时间；多实例
+// 各自触发互不依赖（重复删除幂等）。
+func (r *loginLogRepo) maybePurge() {
+	now := time.Now().Unix()
+	last := r.lastPurge.Load()
+	if now-last < int64(loginLogPurgeInterval/time.Second) || !r.lastPurge.CompareAndSwap(last, now) {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), loginLogPurgeTimeout)
+		defer cancel()
+		_, _ = r.data.Pool.Exec(ctx,
+			`DELETE FROM system_login_log WHERE id IN (
+			   SELECT id FROM system_login_log WHERE create_time < $1 ORDER BY create_time LIMIT $2)`,
+			time.Now().Add(-loginLogRetention), loginLogPurgeBatch)
+	}()
 }
 
 // ListLoginLogs implements biz.LoginLogReader：条件过滤 + 分页，两条参数化查询

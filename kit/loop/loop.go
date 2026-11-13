@@ -114,13 +114,41 @@ type Locker interface {
 	TryLock(ctx context.Context, key string) (release func(), ok bool, err error)
 }
 
+// LockProbe 是持锁连接的健康探针槽位：Leader 经 ctx（WithLockProbe）把它
+// 交给 Locker 实现，实现方在成功获取锁后填入 Check（对持锁连接做一次往返）。
+// 走 ctx 而非扩展 Locker 签名：既有实现无需改动，未填 Check 的实现退化为
+// 不探活（旧行为）。
+type LockProbe struct {
+	// Check 探测持锁连接是否存活；返回错误即视为锁已随会话丢失。
+	Check func(ctx context.Context) error
+}
+
+type lockProbeKey struct{}
+
+// WithLockProbe 返回携带探针槽位的 ctx。
+func WithLockProbe(ctx context.Context, p *LockProbe) context.Context {
+	return context.WithValue(ctx, lockProbeKey{}, p)
+}
+
+// LockProbeFromContext 取出探针槽位；未携带返回 nil。
+func LockProbeFromContext(ctx context.Context) *LockProbe {
+	p, _ := ctx.Value(lockProbeKey{}).(*LockProbe)
+	return p
+}
+
+// lockCheckTimeout 单次持锁连接探活的超时。
+const lockCheckTimeout = 3 * time.Second
+
 // Leader 选主执行器：持锁者执行 fn；未持锁则每次调用尝试获取；持锁后由专用连接
-// 保持会话——连接断即失主（fn 出错即释放并重新竞争）。非并发安全：由单个 Loop 驱动。
+// 保持会话，每次执行前探活该连接——连接断即失主（PG 已随会话释放锁，他人可能
+// 已接任），本实例放弃领导权并重新竞争；fn 出错同样释放并重新竞争。
+// 非并发安全：由单个 Loop 驱动。
 type Leader struct {
 	key     string
 	locker  Locker
 	log     *slog.Logger
 	release func()
+	check   func(ctx context.Context) error
 	held    bool
 }
 
@@ -131,15 +159,28 @@ func NewLeader(key string, locker Locker, log *slog.Logger) *Leader {
 
 // Run 尝试以主身份执行 fn；未持锁返回 (0, nil)。
 func (ld *Leader) Run(ctx context.Context, fn func(ctx context.Context) (int, error)) (int, error) {
+	if ld.held && ld.check != nil {
+		cctx, cancel := context.WithTimeout(ctx, lockCheckTimeout)
+		err := ld.check(cctx)
+		cancel()
+		if err != nil {
+			if ctx.Err() != nil {
+				return 0, ctx.Err()
+			}
+			ld.log.Warn("leader lock connection lost, dropping leadership", "key", ld.key, "error", err)
+			ld.Release()
+		}
+	}
 	if !ld.held {
-		release, ok, err := ld.locker.TryLock(ctx, ld.key)
+		probe := &LockProbe{}
+		release, ok, err := ld.locker.TryLock(WithLockProbe(ctx, probe), ld.key)
 		if err != nil {
 			return 0, err
 		}
 		if !ok {
 			return 0, nil
 		}
-		ld.release, ld.held = release, true
+		ld.release, ld.check, ld.held = release, probe.Check, true
 		ld.log.Info("leader lock acquired", "key", ld.key)
 	}
 	n, err := fn(ctx)
@@ -155,5 +196,5 @@ func (ld *Leader) Release() {
 		ld.release()
 		ld.log.Info("leader lock released", "key", ld.key)
 	}
-	ld.held, ld.release = false, nil
+	ld.held, ld.release, ld.check = false, nil, nil
 }

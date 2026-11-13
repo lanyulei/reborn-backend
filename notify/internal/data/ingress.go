@@ -21,6 +21,29 @@ type ingressRepo struct {
 	data *Data
 }
 
+var _ biz.ReplayStore = (*ingressRepo)(nil)
+
+// RegisterReplay implements biz.ReplayStore：(生产者, 签名) 首次登记返回 true；
+// 已存在（任一副本受理过）返回 false。主键冲突即重放，单语句原子。
+func (r *ingressRepo) RegisterReplay(ctx context.Context, producerID, signature string, until time.Time) (bool, error) {
+	tag, err := r.data.Pool.Exec(ctx,
+		`INSERT INTO notify_ingress_replay (producer_id, signature, expire_time) VALUES ($1, $2, $3)
+		 ON CONFLICT (producer_id, signature) DO NOTHING`, producerID, signature, until)
+	if err != nil {
+		return false, fmt.Errorf("register ingress replay: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// ForgetReplay implements biz.ReplayStore：撤销登记（请求未被受理，允许原样重发）。
+func (r *ingressRepo) ForgetReplay(ctx context.Context, producerID, signature string) error {
+	if _, err := r.data.Pool.Exec(ctx,
+		"DELETE FROM notify_ingress_replay WHERE producer_id = $1 AND signature = $2", producerID, signature); err != nil {
+		return fmt.Errorf("forget ingress replay: %w", err)
+	}
+	return nil
+}
+
 // NewIngressRepo new an ingressRepo.
 func NewIngressRepo(data *Data) *ingressRepo { return &ingressRepo{data: data} }
 
@@ -93,7 +116,10 @@ func (r *ingressRepo) SaveEvents(ctx context.Context, producer *biz.Producer, ev
 		// 配额放在事务末尾消费：其 upsert 的行锁 (producer_id, window_kind) 只跨提交，
 		// 而非覆盖整段门闩 + 插入——否则同一生产者的并发请求全部串行（一次一个在途）。
 		// 超限整体回滚（门闩与事件行一并撤销）。
-		return consumeQuota(ctx, tx, producer, len(events))
+		// 每秒窗口按请求内全部事件计（限流口径：重放 / 重复提交同样占用处理能力，
+		// 不留绕过口子）；每日窗口只计真正落库的事件——被 dedup 门闩去重的重试
+		// 不应消耗当天额度。
+		return consumeQuota(ctx, tx, producer, len(events), inserted)
 	})
 	if err != nil {
 		return nil, err
@@ -124,7 +150,7 @@ const (
 // 即重置计数（新窗口）、否则累加，累加后超过上限则 WHERE 不满足；两条路径 0 行
 // 均 → ErrQuotaExceeded（事务回滚，整批不落库）。多实例共享同一计数行，PG 行锁
 // 保证原子。limit=0 的窗口不计数。
-func consumeQuota(ctx context.Context, tx pgx.Tx, producer *biz.Producer, n int) error {
+func consumeQuota(ctx context.Context, tx pgx.Tx, producer *biz.Producer, requested, stored int) error {
 	if producer == nil {
 		return nil
 	}
@@ -132,14 +158,16 @@ func consumeQuota(ctx context.Context, tx pgx.Tx, producer *biz.Producer, n int)
 		kind  int16
 		limit int32
 		start string
+		n     int
 	}{
-		{quotaWindowSecond, producer.QPSLimit, "date_trunc('second', now())"},
-		{quotaWindowDay, producer.DailyLimit, "date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'"},
+		{quotaWindowSecond, producer.QPSLimit, "date_trunc('second', now())", requested},
+		{quotaWindowDay, producer.DailyLimit, "date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'", stored},
 	}
 	for _, w := range windows {
-		if w.limit <= 0 {
+		if w.limit <= 0 || w.n <= 0 {
 			continue
 		}
+		n := w.n
 		var count int
 		err := tx.QueryRow(ctx,
 			`INSERT INTO notify_quota_counter (producer_id, window_kind, window_start, count)

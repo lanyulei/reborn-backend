@@ -34,31 +34,44 @@ var (
 	ErrTokenExpired = errors.Unauthorized(v1.ErrorReason_TOKEN_EXPIRED.String(), "token has expired")
 )
 
+// refreshReuseGrace 是墓碑令牌的并发宽限期：旧令牌被轮换后这段时间内再次
+// 出示，视为同一客户端的并发刷新（多标签页/重试竞态），仅拒绝不吊销；超出
+// 则视为被盗令牌重放，整族吊销。
+const refreshReuseGrace = 10 * time.Second
+
 // RefreshToken 是刷新令牌领域模型（DO）；TokenHash 为原文的 SHA-256 hex，
 // 原文仅在签发响应中出现一次，任何路径不得持久化原文。
+// FamilyID 标识同一次登录派生的令牌族（登录签发时等于自身 ID，轮换继承）；
+// RotatedAt 非空表示该令牌已被轮换，仅作为墓碑留存用于重放检测。
 type RefreshToken struct {
 	ID         string
 	UserID     string
+	FamilyID   string
 	TokenHash  string
 	ExpireTime time.Time
 	CreateTime time.Time
+	RotatedAt  *time.Time
 }
 
 // RefreshTokenReader 是刷新令牌只读仓储接口，由 data 层实现（依赖倒置）。
 type RefreshTokenReader interface {
-	// FindByHash 按哈希查询令牌；不存在返回 ErrTokenInvalid。
+	// FindByHash 按哈希查询令牌（含已轮换的墓碑，RotatedAt 非空）；不存在返回 ErrTokenInvalid。
 	FindByHash(ctx context.Context, tokenHash string) (*RefreshToken, error)
 }
 
 // RefreshTokenWriter 是刷新令牌写仓储接口，由 data 层实现（依赖倒置）。
-// 轮换/登出/删号一律物理删除：行的存在即代表凭证有效，非业务实体不做软删。
+// 轮换把旧行置为墓碑（保留至原过期时间，用于重放检测）；登出/删号/整族吊销
+// 物理删除。未被轮换的行存在即代表凭证有效，非业务实体不做软删。
 type RefreshTokenWriter interface {
-	// Save 插入新令牌，并同事务惰性清理该用户已过期的历史行。
+	// Save 插入新令牌，并同事务惰性清理该用户已过期的历史行（含过期墓碑）。
 	Save(ctx context.Context, token *RefreshToken) error
-	// Rotate 原子轮换：删除旧哈希行（不存在或已被轮换返回 ErrTokenInvalid）并插入新行。
+	// Rotate 原子轮换：把旧哈希行置为墓碑（RotatedAt = next.CreateTime；不存在或
+	// 已被轮换返回 ErrTokenInvalid）并插入新行，同事务惰性清理该用户已过期行。
 	Rotate(ctx context.Context, oldHash string, next *RefreshToken) error
-	// DeleteByUser 删除该用户全部刷新令牌（登出/账号不可用）；幂等，删除 0 行不是错误。
+	// DeleteByUser 删除该用户全部刷新令牌含墓碑（登出/账号不可用）；幂等，删除 0 行不是错误。
 	DeleteByUser(ctx context.Context, userID string) error
+	// DeleteByFamily 删除整族刷新令牌含墓碑（重放检测吊销）；幂等。
+	DeleteByFamily(ctx context.Context, familyID string) error
 }
 
 // TokenPair 是一次签发产出的双令牌：AccessToken 置于 Authorization: Bearer
@@ -80,6 +93,7 @@ type AuthUsecase struct {
 	loginLogWriter LoginLogWriter
 	log            *slog.Logger
 	dummyHash      string // 防枚举时序对齐用的占位 PHC 串，构造时一次性生成
+	limiter        *loginLimiter
 }
 
 // NewAuthUsecase new an AuthUsecase. 构造时预生成占位哈希（一次 Argon2id 开销），
@@ -103,6 +117,7 @@ func NewAuthUsecase(userReader UserReader, roles UserRoleRepo,
 		loginLogWriter: loginLogWriter,
 		log:            logger,
 		dummyHash:      dummyHash,
+		limiter:        newLoginLimiter(),
 	}, nil
 }
 
@@ -115,10 +130,16 @@ func NewAuthUsecase(userReader UserReader, roles UserRoleRepo,
 // 登录审计：成功与各认证失败路径均落登录日志（细分结果仅存审计表，对外口径
 // 不变防枚举）；密码格式拒绝与用户查询的基础设施错误不记录（无凭据尝试语义
 // /认证结果未知）。审计写入尽力而为，失败仅告警不阻塞登录。
+// 防爆破：用户名/来源 IP 的凭据失败累计到阈值后短时锁定（见 loginLimiter），
+// 锁定期内在密码校验前直接返回 ErrLoginThrottled（不落审计，防刷表）。
 func (uc *AuthUsecase) Login(ctx context.Context, username, password, ip, userAgent string) (*User, *TokenPair, error) {
 	password, err := decodePassword(password)
 	if err != nil {
 		return nil, nil, err
+	}
+	if uc.limiter.blocked(username, ip) {
+		uc.log.WarnContext(ctx, "login throttled after repeated failures", "username", username, "ip", ip)
+		return nil, nil, ErrLoginThrottled
 	}
 	u, err := uc.userReader.GetUserByUsername(ctx, username)
 	if err != nil {
@@ -126,13 +147,16 @@ func (uc *AuthUsecase) Login(ctx context.Context, username, password, ip, userAg
 			return nil, nil, fmt.Errorf("get user by username: %w", err)
 		}
 		uc.hasher.Verify(password, uc.dummyHash)
+		uc.limiter.fail(username, ip)
 		uc.recordLogin(ctx, &LoginLog{Username: username, Result: LoginResultUserNotFound, IP: ip, UserAgent: userAgent})
 		return nil, nil, ErrInvalidCredentials
 	}
 	if !uc.hasher.Verify(password, u.Password) {
+		uc.limiter.fail(username, ip)
 		uc.recordLogin(ctx, &LoginLog{UserID: u.ID, Username: username, Result: LoginResultWrongPassword, IP: ip, UserAgent: userAgent})
 		return nil, nil, ErrInvalidCredentials
 	}
+	uc.limiter.succeed(username, ip)
 	if u.Status != StatusEnabled {
 		uc.recordLogin(ctx, &LoginLog{UserID: u.ID, Username: username, Result: LoginResultAccountDisabled, IP: ip, UserAgent: userAgent})
 		return nil, nil, ErrAccountDisabled
@@ -164,8 +188,10 @@ func (uc *AuthUsecase) recordLogin(ctx context.Context, entry *LoginLog) {
 	}
 }
 
-// Refresh 用刷新令牌原文换发新双令牌；旧令牌原子轮换即刻失效。
-// 未知/已轮换/已登出的令牌返回 ErrTokenInvalid；已过期返回 ErrTokenExpired
+// Refresh 用刷新令牌原文换发新双令牌；旧令牌原子轮换即刻失效（留墓碑）。
+// 未知/已轮换/已登出的令牌返回 ErrTokenInvalid；其中已轮换的墓碑若在
+// refreshReuseGrace 之外被出示，判定为被盗令牌重放并吊销整族（后继令牌
+// 一并失效，合法用户需重新登录）。已过期返回 ErrTokenExpired
 // （过期行不即时删除，由该用户下次签发时惰性清理）；账号已删除或不可用时
 // 吊销其全部令牌后分别返回 ErrTokenInvalid / ErrAccountDisabled。
 func (uc *AuthUsecase) Refresh(ctx context.Context, raw string) (*TokenPair, error) {
@@ -175,6 +201,20 @@ func (uc *AuthUsecase) Refresh(ctx context.Context, raw string) (*TokenPair, err
 			return nil, ErrTokenInvalid
 		}
 		return nil, fmt.Errorf("find refresh token: %w", err)
+	}
+	if old.RotatedAt != nil {
+		// 墓碑：宽限期内是同一客户端的并发刷新（合法方已持有后继令牌），
+		// 仅拒绝；宽限期外是重放——无法分辨出示者与后继令牌持有者谁是
+		// 攻击者，整族吊销。
+		if time.Since(*old.RotatedAt) <= refreshReuseGrace {
+			return nil, ErrTokenInvalid
+		}
+		uc.log.WarnContext(ctx, "refresh token reuse detected, revoking token family",
+			"user_id", old.UserID, "family_id", old.FamilyID)
+		if derr := uc.refreshWriter.DeleteByFamily(ctx, old.FamilyID); derr != nil {
+			return nil, fmt.Errorf("revoke refresh token family: %w", derr)
+		}
+		return nil, ErrTokenInvalid
 	}
 	if old.ExpireTime.Before(time.Now()) {
 		return nil, ErrTokenExpired
@@ -197,7 +237,7 @@ func (uc *AuthUsecase) Refresh(ctx context.Context, raw string) (*TokenPair, err
 	}
 
 	// 先签发（无状态、失败无害）后轮换：轮换成功前旧令牌始终有效，失败可重试；
-	// 并发轮换的败者由 Rotate 返回 ErrTokenInvalid（检测到重放，强制重新登录）。
+	// 并发轮换的败者由 Rotate 返回 ErrTokenInvalid（仅败者本次请求失败）。
 	now := time.Now()
 	access, expiresIn, err := uc.signer.SignAccess(u.ID, u.Username, now)
 	if err != nil {
@@ -214,6 +254,7 @@ func (uc *AuthUsecase) Refresh(ctx context.Context, raw string) (*TokenPair, err
 	next := &RefreshToken{
 		ID:         nextID,
 		UserID:     u.ID,
+		FamilyID:   old.FamilyID,
 		TokenHash:  hashRefreshToken(nextRaw),
 		ExpireTime: now.Add(uc.signer.RefreshTTL()),
 		CreateTime: now,
@@ -221,14 +262,10 @@ func (uc *AuthUsecase) Refresh(ctx context.Context, raw string) (*TokenPair, err
 	if err := uc.refreshWriter.Rotate(ctx, old.TokenHash, next); err != nil {
 		if errors.Is(err, ErrTokenInvalid) {
 			// FindByHash 刚命中、Rotate 却找不到旧行 = 同一刷新令牌被并发
-			// 使用（重放）：无法分辨哪一方是攻击者，吊销该用户全部刷新
-			// 令牌，双方都须重新登录（令牌族撤销，RFC 6819 §5.2.2.3）。
-			if derr := uc.refreshWriter.DeleteByUser(ctx, old.UserID); derr != nil {
-				uc.log.ErrorContext(ctx, "revoke refresh tokens after reuse detection failed",
-					"error", derr, "user_id", old.UserID)
-			} else {
-				uc.log.WarnContext(ctx, "refresh token reuse detected, all sessions revoked", "user_id", old.UserID)
-			}
+			// 使用。常见成因是同一客户端的并发刷新（多标签页/重试）：败者
+			// 仅本次失败，不吊销该用户其它令牌——否则会连带删掉胜者刚换发
+			// 的新令牌。旧令牌已成墓碑，宽限期后的重放会触发整族吊销。
+			uc.log.WarnContext(ctx, "concurrent refresh token rotation lost", "user_id", old.UserID)
 			return nil, ErrTokenInvalid
 		}
 		return nil, fmt.Errorf("rotate refresh token: %w", err)
@@ -277,6 +314,7 @@ func (uc *AuthUsecase) issueTokens(ctx context.Context, u *User, now time.Time) 
 	rt := &RefreshToken{
 		ID:         id,
 		UserID:     u.ID,
+		FamilyID:   id,
 		TokenHash:  hashRefreshToken(raw),
 		ExpireTime: now.Add(uc.signer.RefreshTTL()),
 		CreateTime: now,

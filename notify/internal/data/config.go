@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/lanyulei/reborn/backend/kit/dbx"
+	"github.com/lanyulei/reborn/backend/kit/notifycontract"
 	"github.com/lanyulei/reborn/backend/notify/internal/biz"
 
 	"github.com/jackc/pgx/v5"
@@ -78,7 +79,7 @@ func (r *configRepo) LoadSnapshot(ctx context.Context) (*biz.Snapshot, error) {
 		if err != nil {
 			return err
 		}
-		producers, err := loadProducers(ctx, tx)
+		producers, err := r.loadProducers(ctx, tx)
 		if err != nil {
 			return err
 		}
@@ -243,7 +244,10 @@ func loadTemplates(ctx context.Context, tx pgx.Tx) ([]*biz.Template, error) {
 	return out, rows.Err()
 }
 
-func loadProducers(ctx context.Context, tx pgx.Tx) ([]*biz.Producer, error) {
+// loadProducers 读取生产者并还原 ingress HMAC 密钥：封存形态（notifycontract 前缀）
+// 用主密钥解封，存量裸哈希原样使用。解封失败（主密钥缺失/不一致）只让该生产者鉴权
+// 失败（TokenHash 置空 + KeyErr），不拖垮快照。
+func (r *configRepo) loadProducers(ctx context.Context, tx pgx.Tx) ([]*biz.Producer, error) {
 	rows, err := tx.Query(ctx,
 		`SELECT id, biz_id, name, event_whitelist, token_hash, expire_time, enabled, qps_limit, daily_limit FROM notify_producer WHERE delete_time IS NULL`)
 	if err != nil {
@@ -255,6 +259,14 @@ func loadProducers(ctx context.Context, tx pgx.Tx) ([]*biz.Producer, error) {
 		var p biz.Producer
 		if err := rows.Scan(&p.ID, &p.BizID, &p.Name, &p.EventWhitelist, &p.TokenHash, &p.ExpireTime, &p.Enabled, &p.QPSLimit, &p.DailyLimit); err != nil {
 			return nil, fmt.Errorf("scan producer: %w", err)
+		}
+		if sealed, ok := notifycontract.SealedProducerKey(p.TokenHash); ok {
+			key, err := r.box.Open(sealed)
+			if err != nil {
+				p.TokenHash, p.KeyErr = nil, err
+			} else {
+				p.TokenHash = []byte(key)
+			}
 		}
 		out = append(out, &p)
 	}

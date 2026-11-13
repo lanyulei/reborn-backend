@@ -4,6 +4,7 @@ import (
 	"context"
 	"maps"
 	"slices"
+	"sync"
 
 	"github.com/go-kratos/kratos/v3/errors"
 )
@@ -30,7 +31,8 @@ func NewAuthzUsecase(users UserReader, roles UserRoleRepo, grants PermissionGran
 // operationCode 是操作的稳定标识（OperationCode 派生；策略存储同口径），
 // biz 层不感知 proto full method 与派生规则。error 非 nil 表示仓储或求值器
 // 故障，调用方应 500 fail closed，禁止放行。用户绑定与角色状态每请求实时
-// 读库（多实例一致）；仅角色→操作策略走内存快照。
+// 读库（多实例一致；同一请求内经 WithRequestCache 复用一次读库结果）；
+// 仅角色→操作策略走内存快照。
 func (uc *AuthzUsecase) Allowed(ctx context.Context, userID, operationCode string) (bool, error) {
 	isAdmin, roleCodes, err := uc.enabledRoleCodes(ctx, userID)
 	if err != nil {
@@ -159,6 +161,82 @@ func (uc *AuthzUsecase) BizScope(ctx context.Context, userID string) (unrestrict
 	return false, slices.Sorted(maps.Keys(set)), nil
 }
 
+// Active 报告用户是否存在且为可用状态；供免授权但需登录的自助接口（/me、
+// 登出、头像上传）拒绝已停用账号——这些接口不经 Allowed 判定。用户不存在
+// （含已软删）→ (false, ErrUserNotFound)，由调用方按无效令牌收口。
+func (uc *AuthzUsecase) Active(ctx context.Context, userID string) (bool, error) {
+	subject, err := uc.resolve(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	return subject.enabled, nil
+}
+
+// authzSubject 是一次判定所需的主体快照：账号是否可用、是否超管、启用角色。
+type authzSubject struct {
+	enabled bool
+	isAdmin bool
+	roles   []*Role
+}
+
+// authzCacheKey 是请求级主体缓存的 context 键。
+type authzCacheKey struct{}
+
+// authzCache 请求级主体缓存：同一请求内 authz 中间件与 handler（/me 连续
+// 调用 EffectiveOperations/EffectiveGrants/BizScope 等）共享一次读库结果。
+// 生命周期 = 单个请求，不跨请求，多实例一致性口径不变。
+type authzCache struct {
+	mu       sync.Mutex
+	subjects map[string]*authzSubject
+}
+
+// WithRequestCache 返回携带请求级主体缓存的 ctx（server 层中间件在每个已
+// 认证请求入口调用一次）；未携带缓存的 ctx 每次判定实时读库。
+func WithRequestCache(ctx context.Context) context.Context {
+	return context.WithValue(ctx, authzCacheKey{}, &authzCache{subjects: make(map[string]*authzSubject, 1)})
+}
+
+// resolve 读取主体快照（请求级缓存命中则不读库；仅缓存成功结果）：
+// 用户不存在（含已软删）→ ErrUserNotFound；非可用状态 → enabled=false 且
+// 不读角色；is_admin 超管不读角色绑定（直通短路）。error 仅仓储故障。
+func (uc *AuthzUsecase) resolve(ctx context.Context, userID string) (*authzSubject, error) {
+	cache, _ := ctx.Value(authzCacheKey{}).(*authzCache)
+	if cache != nil {
+		cache.mu.Lock()
+		subject, ok := cache.subjects[userID]
+		cache.mu.Unlock()
+		if ok {
+			return subject, nil
+		}
+	}
+	user, err := uc.users.GetUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	subject := &authzSubject{enabled: user.Status == StatusEnabled}
+	if subject.enabled {
+		subject.isAdmin = user.IsAdmin
+	}
+	if subject.enabled && !subject.isAdmin {
+		roles, err := uc.roles.ListUserRoles(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		subject.roles = make([]*Role, 0, len(roles))
+		for _, role := range roles {
+			if role.Status == RoleStatusEnabled {
+				subject.roles = append(subject.roles, role)
+			}
+		}
+	}
+	if cache != nil {
+		cache.mu.Lock()
+		cache.subjects[userID] = subject
+		cache.mu.Unlock()
+	}
+	return subject, nil
+}
+
 // enabledRoles 是 Allowed/EffectiveOperations/EffectiveGrants 的公共判定前段
 // （AGENTS 4.5：同一逻辑第二份即提取，保证各处口径永不漂移）：
 // 用户不存在（含已软删）→ ErrUserNotFound（语义由调用方收口）；
@@ -167,31 +245,15 @@ func (uc *AuthzUsecase) BizScope(ctx context.Context, userID string) (unrestrict
 // is_admin 超管 → (true, nil)，不读角色绑定（直通短路）；
 // 其余 → (false, 启用角色列表)。error 仅仓储故障。
 func (uc *AuthzUsecase) enabledRoles(ctx context.Context, userID string) (bool, []*Role, error) {
-	user, err := uc.users.GetUser(ctx, userID)
+	subject, err := uc.resolve(ctx, userID)
 	if err != nil {
 		return false, nil, err
 	}
-	if user.Status != StatusEnabled {
-		return false, nil, nil
-	}
-	if user.IsAdmin {
-		return true, nil, nil
-	}
-	roles, err := uc.roles.ListUserRoles(ctx, userID)
-	if err != nil {
-		return false, nil, err
-	}
-	enabled := make([]*Role, 0, len(roles))
-	for _, role := range roles {
-		if role.Status == RoleStatusEnabled {
-			enabled = append(enabled, role)
-		}
-	}
-	return false, enabled, nil
+	return subject.isAdmin, subject.roles, nil
 }
 
 // enabledRoleCodes 由启用角色列表派生 code 列表（Allowed/EffectiveOperations
-// 的 casbin subject 口径）。
+// 的策略快照键口径）。
 func (uc *AuthzUsecase) enabledRoleCodes(ctx context.Context, userID string) (bool, []string, error) {
 	isAdmin, roles, err := uc.enabledRoles(ctx, userID)
 	if err != nil || isAdmin {

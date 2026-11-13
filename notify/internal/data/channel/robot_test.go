@@ -269,3 +269,20 @@ func TestRobotSender_Cards(t *testing.T) {
 		t.Fatalf("non-card format must keep text: %v %v", fc.body["msg_type"], err)
 	}
 }
+
+// TestRobotSender_ErrorsCarryNoToken 出站失败（连接拒绝）的错误文本不得带 access_token /
+// key / 飞书 hook 路径：错误会落库（last_error / delivery_log / 死信）并进日志。
+func TestRobotSender_ErrorsCarryNoToken(t *testing.T) {
+	t.Parallel()
+	const secret = "s3cr3t-token-value"
+	for _, typ := range []string{biz.ChannelTypeDingtalk, biz.ChannelTypeWecom, biz.ChannelTypeFeishu} {
+		s := NewRobotSender().WithEndpoint(typ, "http://127.0.0.1:1/hook/")
+		res, err := s.Send(context.Background(), &biz.Channel{Type: typ, Secret: secret, SignSecret: "sign"}, biz.RenderedMessage{Subject: "S", Body: "B"})
+		if err == nil || !res.Retryable {
+			t.Fatalf("%s: connection refused must be retryable, got %+v %v", typ, res, err)
+		}
+		if msg := err.Error(); strings.Contains(msg, secret) || strings.Contains(msg, "access_token") || strings.Contains(msg, "key=") || strings.Contains(msg, "sign=") {
+			t.Fatalf("%s: error leaks request url: %s", typ, msg)
+		}
+	}
+}

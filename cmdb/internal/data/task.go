@@ -32,13 +32,17 @@ func NewTaskRepo(data *Data) *taskRepo { return &taskRepo{data: data} }
 func (r *taskRepo) Claim(ctx context.Context, token string, lease time.Duration) (*biz.Task, error) {
 	var task *biz.Task
 	err := dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
-		// 先把尝试耗尽的过期任务收尾（幂等）。
+		// 先把尝试耗尽的过期任务收尾（幂等）：任务、运行记录与采集源 last_status 同一语句——
+		// 否则源会一直显示 running。源只在仍指向该运行且为 running 时改写（不覆盖更新的结果）。
 		if _, err := tx.Exec(ctx,
 			`WITH dead AS (
 			   UPDATE cmdb_sync_task SET status = $1, error = 'lease expired too many times', finish_time = now()
-			   WHERE status = $2 AND lease_until < now() AND attempts >= $3 RETURNING run_id)
-			 UPDATE cmdb_sync_run r SET status = $4, error = 'lease expired too many times', finish_time = now()
-			 FROM dead WHERE r.id = dead.run_id AND r.status = $5`,
+			   WHERE status = $2 AND lease_until < now() AND attempts >= $3 RETURNING run_id, source_id),
+			 run AS (
+			   UPDATE cmdb_sync_run r SET status = $4, error = 'lease expired too many times', finish_time = now()
+			   FROM dead WHERE r.id = dead.run_id AND r.status = $5)
+			 UPDATE cmdb_sync_source s SET last_status = $4
+			 FROM dead WHERE s.id = dead.source_id AND s.last_run_id = dead.run_id AND s.last_status = $5`,
 			cmdbcontract.TaskFailed, cmdbcontract.TaskRunning, cmdbcontract.TaskMaxAttempts, cmdbcontract.RunFailed, cmdbcontract.RunRunning); err != nil {
 			return fmt.Errorf("reap dead tasks: %w", err)
 		}

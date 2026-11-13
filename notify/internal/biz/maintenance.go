@@ -30,6 +30,8 @@ type MaintenanceRepo interface {
 	DropPartitionsBefore(ctx context.Context, table string, before time.Time) (int, error)
 	// DeleteExpiredDedup / DeleteOldDlq / DeleteClosedAggGroups 批量行清理；返回删除数。
 	DeleteExpiredDedup(ctx context.Context, limit int) (int, error)
+	// DeleteExpiredReplay 清理已滑出时间窗的 ingress 防重放登记；返回删除数。
+	DeleteExpiredReplay(ctx context.Context, limit int) (int, error)
 	DeleteOldDlq(ctx context.Context, before time.Time, limit int) (int, error)
 	DeleteClosedAggGroups(ctx context.Context, before time.Time, limit int) (int, error)
 	// DeleteStaleChannelHealth 清理已关闭且久未更新的渠道健康行；返回删除数。
@@ -141,6 +143,7 @@ func (uc *MaintenanceUsecase) RunOnce(ctx context.Context, now time.Time) error 
 		}
 	}
 	sweep("delete expired dedup", func(limit int) (int, error) { return uc.repo.DeleteExpiredDedup(ctx, limit) })
+	sweep("delete expired ingress replay", func(limit int) (int, error) { return uc.repo.DeleteExpiredReplay(ctx, limit) })
 	sweep("delete old dlq", func(limit int) (int, error) { return uc.repo.DeleteOldDlq(ctx, now.Add(-uc.retention.Dlq), limit) })
 	sweep("delete closed agg groups", func(limit int) (int, error) {
 		return uc.repo.DeleteClosedAggGroups(ctx, now.Add(-uc.retention.AggGroup), limit)

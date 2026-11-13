@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -26,6 +27,20 @@ const (
 	maxTitleRunes = 30
 	// cleanupTimeout 轮次被取消后补写终态的独立超时（不随请求 ctx 取消）。
 	cleanupTimeout = 3 * time.Second
+	// maxUserConcurrentRuns 单用户并发轮次上限：防单个用户占满全局槽位。
+	maxUserConcurrentRuns = 2
+	// 发送给模型的历史窗口上限（存储的历史保持完整）：按「用户消息」或
+	// 「assistant 消息 + 其 tool 结果」为单位自新向旧累计，超出任一上限即截断。
+	maxContextMessages = 80
+	maxContextBytes    = 256 << 10
+	// historyLoadLimit 每轮从库里加载的最近消息条数上限：远高于发送窗口
+	// maxContextMessages，窗口裁剪结果与加载全量一致（字节上限只会更早
+	// 截断），同时避免长会话每轮全量读取。
+	historyLoadLimit = 200
+	// cancelledToolMessage 中断轮次遗留的工具调用补写/合成的取消说明。
+	cancelledToolMessage = "调用被取消"
+	// genericRunError 非业务错误对客户端的统一文案（细节只进日志）。
+	genericRunError = "助手运行出错，请稍后重试"
 )
 
 // AgentConfig Agent 运行参数（由 conf.Assistant 规整而来）。
@@ -92,6 +107,9 @@ type AgentUsecase struct {
 	cfg     AgentConfig
 	sem     chan struct{}
 	logger  *slog.Logger
+
+	userMu   sync.Mutex
+	userRuns map[string]int // 各用户在途轮次数
 }
 
 // NewAgentUsecase new an AgentUsecase.
@@ -103,9 +121,32 @@ func NewAgentUsecase(convs ConversationRepo, msgs MessageRepo, calls ToolCallRep
 		convs: convs, msgs: msgs, calls: calls,
 		model: model, invoker: invoker, perms: perms, actors: actors,
 		catalog: catalog, cfg: cfg,
-		sem:    make(chan struct{}, cfg.MaxConcurrentRuns),
-		logger: logger,
+		sem:      make(chan struct{}, cfg.MaxConcurrentRuns),
+		logger:   logger,
+		userRuns: make(map[string]int, cfg.MaxConcurrentRuns),
 	}
+}
+
+// acquireUser 占用一个单用户并发名额；已达上限返回 false。
+func (uc *AgentUsecase) acquireUser(userID string) bool {
+	uc.userMu.Lock()
+	defer uc.userMu.Unlock()
+	if uc.userRuns[userID] >= maxUserConcurrentRuns {
+		return false
+	}
+	uc.userRuns[userID]++
+	return true
+}
+
+// releaseUser 归还单用户并发名额（归零即删键，map 不随用户数增长）。
+func (uc *AgentUsecase) releaseUser(userID string) {
+	uc.userMu.Lock()
+	defer uc.userMu.Unlock()
+	if uc.userRuns[userID] <= 1 {
+		delete(uc.userRuns, userID)
+		return
+	}
+	uc.userRuns[userID]--
 }
 
 // Enabled 报告助手是否已配置可用。
@@ -118,6 +159,11 @@ func (uc *AgentUsecase) Run(ctx context.Context, in RunInput, emit func(Event) e
 	if !uc.cfg.Enabled {
 		return ErrDisabled
 	}
+	// 单用户上限先于全局槽位：单个用户不得占满全部并发名额。
+	if !uc.acquireUser(in.UserID) {
+		return ErrRunBusy
+	}
+	defer uc.releaseUser(in.UserID)
 	select {
 	case uc.sem <- struct{}{}:
 		defer func() { <-uc.sem }()
@@ -157,6 +203,9 @@ func (uc *AgentUsecase) Run(ctx context.Context, in RunInput, emit func(Event) e
 	if err := r.load(ctx); err != nil {
 		return err
 	}
+	// 任何退出路径（emit 失败/超时/落库失败）都补齐未决工具调用的 tool 消息，
+	// 先于租约释放执行；正常结束时无遗留，为空操作。
+	defer r.settleDangling(ctx)
 	if in.Confirm != nil && r.findPending(in.Confirm.ToolCallID) == nil {
 		// 在写出任何事件前校验，使"无待确认操作"以标准 409 返回而非流内错误。
 		return ErrConfirmationNotPending
@@ -220,9 +269,10 @@ type run struct {
 	awaiting bool
 }
 
-// load 加载历史、工具目录（按权限过滤）与 system prompt。
+// load 加载最近历史（至多 historyLoadLimit 条）、工具目录（按权限过滤）与
+// system prompt。
 func (r *run) load(ctx context.Context) error {
-	msgs, err := r.uc.msgs.List(ctx, r.conv.ID)
+	msgs, err := r.uc.msgs.ListRecent(ctx, r.conv.ID, historyLoadLimit)
 	if err != nil {
 		return err
 	}
@@ -310,7 +360,7 @@ func (r *run) applyConfirmation(ctx context.Context) error {
 // loop 模型 ⇄ 工具循环，直到模型不再调用工具、需要确认或达到步数上限。
 func (r *run) loop(ctx context.Context) error {
 	for step := 0; step < r.uc.cfg.MaxSteps; step++ {
-		completion, err := r.uc.model.Stream(ctx, ChatRequest{System: r.system, Messages: r.messages, Tools: r.tools}, r.onDelta)
+		completion, err := r.uc.model.Stream(ctx, ChatRequest{System: r.system, Messages: contextWindow(r.messages), Tools: r.tools}, r.onDelta)
 		if err != nil {
 			return r.fail(ctx, err)
 		}
@@ -442,8 +492,9 @@ func (r *run) execute(ctx context.Context, tc *ToolCall) error {
 		if ctx.Err() != nil {
 			return r.settle(ctx, tc, ToolStatusCancelled, nil, "调用被取消")
 		}
+		// 内部错误细节（地址、驱动报错等）只进日志；回给模型与客户端的是通用文案
 		r.uc.logger.WarnContext(ctx, "assistant: tool invoke", "tool", tc.ToolName, "error", err)
-		return r.settle(ctx, tc, ToolStatusFailed, nil, "接口调用失败："+err.Error())
+		return r.settle(ctx, tc, ToolStatusFailed, nil, "接口调用失败，请稍后重试")
 	}
 	switch {
 	case res.StatusCode >= 200 && res.StatusCode < 300:
@@ -497,8 +548,7 @@ func (r *run) settle(ctx context.Context, tc *ToolCall, status string, output js
 	if status == ToolStatusSucceeded {
 		content = string(tc.Output)
 	} else {
-		b, _ := json.Marshal(map[string]any{"error": map[string]string{"status": status, "message": errMsg}})
-		content = string(b)
+		content = toolErrorContent(status, errMsg)
 	}
 	if err := r.append(wctx, &Message{Role: RoleTool, Content: content, ToolCallID: tc.CallID}); err != nil {
 		return err
@@ -507,6 +557,136 @@ func (r *run) settle(ctx context.Context, tc *ToolCall, status string, output js
 		return ctx.Err()
 	}
 	return r.emit(Event{Type: EventToolResult, Payload: toolPayload(tc)})
+}
+
+// settleDangling 轮次中断后的收尾：最后一条 assistant 消息里既无 tool 结果
+// 也非待确认的工具调用，一律记为已取消并补写 tool 消息——否则历史里留下
+// 悬空的 tool_calls，后续每次请求都会被模型接口拒绝。写入用脱离取消的
+// 独立短超时 ctx；失败仅记日志（下次发送时 contextWindow 仍会兜底合成）。
+func (r *run) settleDangling(ctx context.Context) {
+	idx := -1
+	for i := len(r.messages) - 1; i >= 0; i-- {
+		if r.messages[i].Role != RoleTool {
+			idx = i
+			break
+		}
+	}
+	// 仅处理位于历史末尾的 assistant 调用块：其后出现过其它消息时再追加
+	// tool 消息只会制造孤儿（由 contextWindow 在发送侧兜底）。
+	if idx < 0 || r.messages[idx].Role != RoleAssistant || len(r.messages[idx].ToolCalls) == 0 {
+		return
+	}
+	assistant := r.messages[idx]
+	answered := make(map[string]struct{}, len(assistant.ToolCalls))
+	for _, m := range r.messages[idx+1:] {
+		answered[m.ToolCallID] = struct{}{}
+	}
+	var wctx context.Context
+	for _, ref := range assistant.ToolCalls {
+		if _, ok := answered[ref.ID]; ok {
+			continue
+		}
+		tc := r.findCall(assistant.ID, ref.ID)
+		if tc != nil && tc.Status == ToolStatusPending {
+			continue // 待确认：由下一次确认或新消息裁决
+		}
+		if wctx == nil {
+			var cancel context.CancelFunc
+			wctx, cancel = context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
+			defer cancel()
+		}
+		if tc != nil {
+			now := time.Now()
+			tc.Status, tc.Error, tc.ResolveTime = ToolStatusCancelled, cancelledToolMessage, &now
+			if err := r.uc.calls.Finish(wctx, tc); err != nil {
+				r.uc.logger.ErrorContext(wctx, "assistant: cancel dangling tool call", "tool_call", tc.ID, "error", err)
+			}
+		}
+		if err := r.append(wctx, &Message{Role: RoleTool, Content: toolErrorContent(ToolStatusCancelled, cancelledToolMessage), ToolCallID: ref.ID}); err != nil {
+			r.uc.logger.ErrorContext(wctx, "assistant: settle dangling tool call", "conversation", r.conv.ID, "error", err)
+			return
+		}
+	}
+}
+
+// findCall 按所属 assistant 消息与模型侧调用 ID 查找审计记录；未建档返回 nil。
+func (r *run) findCall(messageID, callID string) *ToolCall {
+	for _, tc := range r.calls {
+		if tc.MessageID == messageID && tc.CallID == callID {
+			return tc
+		}
+	}
+	return nil
+}
+
+// toolErrorContent 非成功终态回灌模型的 tool 消息内容。
+func toolErrorContent(status, message string) string {
+	b, _ := json.Marshal(map[string]any{"error": map[string]string{"status": status, "message": message}})
+	return string(b)
+}
+
+// contextWindow 由完整历史裁出发送给模型的消息窗口（不改动入参与存储）：
+//   - 结构修复：assistant 消息的每个 tool_call 之后必须紧跟对应 tool 消息，
+//     缺失的合成一条"已取消"结果，无主的 tool 消息丢弃（OpenAI 兼容接口
+//     对悬空 tool_calls / 孤儿 tool 消息直接拒绝）；
+//   - 有界：以「用户消息」或「assistant + 其 tool 结果」为不可拆分单位，
+//     自新向旧累计至 maxContextMessages / maxContextBytes，最新一个单位
+//     始终保留；窗口尽量从用户消息起始。
+//
+// system prompt 不在消息列表内（ChatRequest.System 单独携带），恒保留。
+func contextWindow(messages []*Message) []*Message {
+	units := make([][]*Message, 0, len(messages))
+	for i := 0; i < len(messages); i++ {
+		m := messages[i]
+		switch m.Role {
+		case RoleTool:
+			continue // 孤儿 tool 消息：不跟在声明它的 assistant 调用块之后
+		case RoleAssistant:
+			unit := []*Message{m}
+			results := make(map[string]*Message, len(m.ToolCalls))
+			for i+1 < len(messages) && messages[i+1].Role == RoleTool {
+				i++
+				results[messages[i].ToolCallID] = messages[i]
+			}
+			for _, ref := range m.ToolCalls {
+				res, ok := results[ref.ID]
+				if !ok {
+					res = &Message{Role: RoleTool, Content: toolErrorContent(ToolStatusCancelled, cancelledToolMessage), ToolCallID: ref.ID}
+				}
+				unit = append(unit, res)
+			}
+			units = append(units, unit)
+		default:
+			units = append(units, []*Message{m})
+		}
+	}
+	start, count, size := len(units), 0, 0
+	for i := len(units) - 1; i >= 0; i-- {
+		n, b := len(units[i]), 0
+		for _, m := range units[i] {
+			b += len(m.Content)
+			for _, ref := range m.ToolCalls {
+				b += len(ref.Name) + len(ref.Arguments)
+			}
+		}
+		if start < len(units) && (count+n > maxContextMessages || size+b > maxContextBytes) {
+			break
+		}
+		start, count, size = i, count+n, size+b
+	}
+	// 窗口尽量从用户消息起始（部分接口要求首条非 system 消息为 user）；
+	// 窗口内没有用户消息（单轮超长工具链）则保持原样。
+	for i := start; i < len(units); i++ {
+		if units[i][0].Role == RoleUser {
+			start = i
+			break
+		}
+	}
+	out := make([]*Message, 0, count)
+	for _, unit := range units[start:] {
+		out = append(out, unit...)
+	}
+	return out
 }
 
 // append 追加消息并落库（仓储分配 seq / ID 由此处生成）。
@@ -530,12 +710,15 @@ func (r *run) append(ctx context.Context, m *Message) error {
 }
 
 // fail 把运行期错误转成 error 事件推给客户端；ctx 取消/emit 失败则直接返回。
+// 仅业务错误（kratos Error，reason/message 即对外契约）原样下发；其余内部
+// 错误（SQL/网络等）只进日志，客户端收到统一文案。
 func (r *run) fail(ctx context.Context, err error) error {
 	if ctx.Err() != nil || errors.Is(err, context.Canceled) {
 		return err
 	}
-	reason, msg := "ASSISTANT_UNSPECIFIED", err.Error()
-	if ke := kerrors.FromError(err); ke != nil {
+	reason, msg := "ASSISTANT_UNSPECIFIED", genericRunError
+	var ke *kerrors.Error
+	if errors.As(err, &ke) && ke.Reason != "" {
 		reason, msg = ke.Reason, ke.Message
 	}
 	r.uc.logger.ErrorContext(ctx, "assistant: run failed", "conversation", r.conv.ID, "error", err)

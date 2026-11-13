@@ -292,3 +292,29 @@ func TestParseIP(t *testing.T) {
 		}
 	}
 }
+
+// TestResolveClientIP 客户端 IP 判定：公网直连忽略 XFF（客户端可伪造）；
+// 对端为回环/内网代理时取 XFF 最右段（最近一跳代理追加），最左段不采信。
+func TestResolveClientIP(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		remote string
+		xff    []string
+		want   string
+	}{
+		{"direct public ignores xff", "203.0.113.9:4711", []string{"1.2.3.4"}, "203.0.113.9"},
+		{"no xff", "203.0.113.9:4711", nil, "203.0.113.9"},
+		{"loopback proxy single hop", "127.0.0.1:5000", []string{"198.51.100.7"}, "198.51.100.7"},
+		{"spoofed leftmost ignored", "10.0.0.2:5000", []string{"1.2.3.4, 198.51.100.7"}, "198.51.100.7"},
+		{"multiple headers rightmost", "10.0.0.2:5000", []string{"1.2.3.4", "198.51.100.7"}, "198.51.100.7"},
+		{"garbage xff falls back to peer", "127.0.0.1:5000", []string{"not-an-ip"}, "127.0.0.1"},
+		{"proxy without xff", "[::1]:5000", nil, "::1"},
+		{"unparseable remote", "bogus", []string{"1.2.3.4"}, ""},
+	}
+	for _, tc := range cases {
+		if got := resolveClientIP(tc.remote, tc.xff); got != tc.want {
+			t.Errorf("%s: resolveClientIP() = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}

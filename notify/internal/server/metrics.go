@@ -32,7 +32,7 @@ type Metrics struct {
 	DispatchResults metric.Int64Counter
 	// SendLatency 真实出站耗时（毫秒，channel_type）。
 	SendLatency metric.Float64Histogram
-	// IngressRequests 接入请求结果（result=ok|unauthorized|invalid|quota_exceeded|error）。
+	// IngressRequests 接入请求结果（result=ok|unauthorized|replayed|invalid|quota_exceeded|error）。
 	IngressRequests metric.Int64Counter
 	// IngressEvents 接入事件结果（result=accepted|deduplicated）。
 	IngressEvents metric.Int64Counter

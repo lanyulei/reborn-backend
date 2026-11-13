@@ -116,6 +116,9 @@ type UserReader interface {
 type UserWriter interface {
 	// CreateUser 创建用户；username/email/phone 冲突分别返回对应哨兵错误。
 	CreateUser(ctx context.Context, user *User) error
+	// CreateUserWithRoles 创建用户并在同一事务内写入其角色绑定（roleIDs 可空）：
+	// 任一步失败整体回滚，不留下「已建号但缺默认角色」的半成品。冲突哨兵同 CreateUser。
+	CreateUserWithRoles(ctx context.Context, user *User, roleIDs []string) error
 	// UpdateUser 按 ID 部分更新未删除用户；不存在返回 ErrUserNotFound。
 	UpdateUser(ctx context.Context, id string, upd UserUpdate) error
 	// DeleteUser 软删用户并同事务物理删除其全部角色绑定与刷新令牌；不存在返回 ErrUserNotFound。
@@ -139,7 +142,8 @@ func NewUserUsecase(reader UserReader, writer UserWriter, roles UserRoleRepo, ro
 	return &UserUsecase{reader: reader, writer: writer, roles: roles, roleReader: roleReader, hasher: hasher, tokens: tokens}
 }
 
-// Create 创建用户：生成 ID、解码密码（b64$/明文）、哈希、填充审计时间后落库；
+// Create 创建用户：生成 ID、解码密码（b64$/明文）、哈希、填充审计时间后落库
+// （与内置角色绑定同事务）；
 // 返回出参不含密码。
 func (uc *UserUsecase) Create(ctx context.Context, user *User) (*User, error) {
 	id, err := idgen.NewID()
@@ -158,18 +162,14 @@ func (uc *UserUsecase) Create(ctx context.Context, user *User) (*User, error) {
 	user.ID = id
 	user.Password = hash
 	user.CreateTime, user.UpdateTime = now, now
-	if err := uc.writer.CreateUser(ctx, user); err != nil {
-		return nil, err
-	}
 	// 新建用户自动绑定全部内置角色（默认角色）；无内置角色时不写绑定。
+	// 建号与绑定同事务提交（仓储实现），避免绑定失败留下无默认角色的账号。
 	builtin, err := uc.roleReader.ListBuiltinRoleIDs(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if len(builtin) > 0 {
-		if err := uc.roles.BindUserRoles(ctx, id, builtin); err != nil {
-			return nil, fmt.Errorf("bind builtin roles: %w", err)
-		}
+	if err := uc.writer.CreateUserWithRoles(ctx, user, builtin); err != nil {
+		return nil, err
 	}
 	user.Password = ""
 	return user, nil

@@ -5,6 +5,7 @@
 package notifycontract
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -438,4 +439,32 @@ func UnsafeWebhookHost(host string) bool {
 		return PrivateIP(ip)
 	}
 	return false
+}
+
+// 生产者 ingress HMAC 密钥（notify_producer.token_hash）的落库形态。密钥本身恒为
+// SHA-256(token 明文)（客户端签名协议不变，见 notify/pkg/ingressauth）：
+//   - 封存：ProducerKeySealedPrefix || secretbox 密文（nonce||ct，主密钥 notify.master.key）
+//     ——读到库或备份的人拿不到可用于伪造签名的密钥；core 写、管道解；
+//   - 存量：32 字节裸哈希（未配置主密钥，或封存上线前写入的行），两端继续接受。
+const (
+	// ProducerKeySealedPrefix 封存形态的版本前缀。
+	ProducerKeySealedPrefix = "sb1:"
+	// producerKeyLegacyLen 存量裸哈希长度（SHA-256）。
+	producerKeyLegacyLen = 32
+)
+
+// WrapSealedProducerKey 给 secretbox 密文加上版本前缀，得到落库值。
+func WrapSealedProducerKey(sealed []byte) []byte {
+	out := make([]byte, 0, len(ProducerKeySealedPrefix)+len(sealed))
+	return append(append(out, ProducerKeySealedPrefix...), sealed...)
+}
+
+// SealedProducerKey 识别落库值：封存形态返回去前缀的 secretbox 密文与 true；
+// 否则（存量裸哈希）返回 false。恰为 32 字节的值一律按裸哈希处理——封存值恒长于
+// 32 字节，裸哈希偶然以前缀开头也不会被误判。
+func SealedProducerKey(stored []byte) ([]byte, bool) {
+	if len(stored) == producerKeyLegacyLen || !bytes.HasPrefix(stored, []byte(ProducerKeySealedPrefix)) {
+		return nil, false
+	}
+	return stored[len(ProducerKeySealedPrefix):], true
 }

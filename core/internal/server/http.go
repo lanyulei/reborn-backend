@@ -2,6 +2,7 @@ package server
 
 import (
 	"log/slog"
+	"time"
 
 	assistantv1 "github.com/lanyulei/reborn/backend/core/api/assistant/v1"
 	cmdbv1 "github.com/lanyulei/reborn/backend/core/api/cmdb/v1"
@@ -22,6 +23,9 @@ import (
 	"github.com/go-kratos/kratos/v3/middleware/validate"
 	"github.com/go-kratos/kratos/v3/transport/http"
 )
+
+// readTimeout 单个请求（头 + 体）的读取总时限。
+const readTimeout = 60 * time.Second
 
 // NewHTTPServer new an HTTP server.
 // 中间件顺序固定：recovery → tracing → logging → validate →
@@ -71,6 +75,10 @@ func NewHTTPServer(c *conf.Server, logger *slog.Logger, user *service.UserServic
 	}
 	srv := http.NewServer(opts...)
 	httpx.HardenServer(srv) // ReadHeaderTimeout / IdleTimeout（Kratos 默认不设）
+	// 请求头 + 请求体读取总时限（体上限 8MiB，头像/logo 上传足够）：防慢速
+	// 请求体占住连接。不设 WriteTimeout——助手 SSE 为分钟级长响应（其读截止
+	// 时间在进入流式阶段前清除，见 assistant.go）。
+	srv.ReadTimeout = readTimeout
 	v1.RegisterUserServiceHTTPServer(srv, user)
 	v1.RegisterRoleServiceHTTPServer(srv, role)
 	v1.RegisterAuthServiceHTTPServer(srv, auth)

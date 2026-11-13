@@ -244,3 +244,54 @@ func TestAuthzUsecase_BizScope(t *testing.T) {
 		t.Fatalf("missing user = %v %v %v; want restricted empty", un, scope, err)
 	}
 }
+
+// countingUserReader 统计 GetUser 调用次数，验证请求级主体缓存。
+type countingUserReader struct {
+	*userStoreStub
+	gets int
+}
+
+func (s *countingUserReader) GetUser(ctx context.Context, id string) (*User, error) {
+	s.gets++
+	return s.userStoreStub.GetUser(ctx, id)
+}
+
+// TestAuthzUsecase_RequestCache 请求级缓存：携带 WithRequestCache 的 ctx 内
+// 多次判定只读一次用户；不携带缓存则每次实时读库（跨请求不缓存）。
+func TestAuthzUsecase_RequestCache(t *testing.T) {
+	t.Parallel()
+	stub := newUserStoreStub()
+	stub.users["alice"] = &User{ID: "alice", Username: "alice", Status: StatusEnabled}
+	stub.roles["r1"] = &Role{ID: "r1", Code: "ops", Status: RoleStatusEnabled}
+	stub.bindings["alice"] = []string{"r1"}
+	users := &countingUserReader{userStoreStub: stub}
+	uc := NewAuthzUsecase(users, stub, stub, newTestAuthorizer(t, &policyStoreStub{}, time.Minute))
+
+	ctx := WithRequestCache(context.Background())
+	if _, err := uc.Allowed(ctx, "alice", "op"); err != nil {
+		t.Fatalf("Allowed() error = %v", err)
+	}
+	if _, err := uc.EffectiveOperations(ctx, "alice"); err != nil {
+		t.Fatalf("EffectiveOperations() error = %v", err)
+	}
+	if _, _, err := uc.EffectiveGrants(ctx, "alice"); err != nil {
+		t.Fatalf("EffectiveGrants() error = %v", err)
+	}
+	if _, _, err := uc.BizScope(ctx, "alice"); err != nil {
+		t.Fatalf("BizScope() error = %v", err)
+	}
+	if users.gets != 1 {
+		t.Fatalf("GetUser calls within one request = %d, want 1", users.gets)
+	}
+	// 新请求（新缓存）与无缓存 ctx 均重新读库：停用即刻生效。
+	stub.users["alice"].Status = StatusDisabled
+	if active, err := uc.Active(WithRequestCache(context.Background()), "alice"); err != nil || active {
+		t.Fatalf("Active(disabled, new request) = (%v, %v), want (false, nil)", active, err)
+	}
+	if allowed, err := uc.Allowed(context.Background(), "alice", "op"); err != nil || allowed {
+		t.Fatalf("Allowed(disabled, no cache) = (%v, %v), want (false, nil)", allowed, err)
+	}
+	if _, err := uc.Active(context.Background(), "ghost"); !errors.Is(err, ErrUserNotFound) {
+		t.Fatalf("Active(missing) error = %v, want ErrUserNotFound", err)
+	}
+}

@@ -167,13 +167,14 @@ func (r *Renderer) Render(ctx context.Context, tpl *Template, channelType string
 		err           error
 	}
 	done := make(chan result, 1)
+	// 渲染协程随 ctx 中止：超时/取消后的下一次输出写入即报错返回，不再后台跑完。
 	go func() {
-		s, err := execLimited(subjT, rc)
+		s, err := execLimited(ctx, subjT, rc)
 		if err != nil {
 			done <- result{err: fmt.Errorf("render subject: %w", err)}
 			return
 		}
-		b, err := execLimited(bodyT, rc)
+		b, err := execLimited(ctx, bodyT, rc)
 		if err != nil {
 			done <- result{err: fmt.Errorf("render body: %w", err)}
 			return
@@ -188,21 +189,25 @@ func (r *Renderer) Render(ctx context.Context, tpl *Template, channelType string
 	}
 }
 
-// limitedWriter 超上限即报错中止执行。
+// limitedWriter 超上限或 ctx 结束即报错中止执行。
 type limitedWriter struct {
+	ctx context.Context // 模板执行无 ctx 入口，只能经 Writer 传递取消
 	buf bytes.Buffer
 	max int
 }
 
 func (w *limitedWriter) Write(p []byte) (int, error) {
+	if err := w.ctx.Err(); err != nil {
+		return 0, err
+	}
 	if w.buf.Len()+len(p) > w.max {
 		return 0, ErrRenderTooLarge
 	}
 	return w.buf.Write(p)
 }
 
-func execLimited(t executor, rc RenderContext) (string, error) {
-	w := &limitedWriter{max: maxRenderBytes}
+func execLimited(ctx context.Context, t executor, rc RenderContext) (string, error) {
+	w := &limitedWriter{ctx: ctx, max: maxRenderBytes}
 	if err := t.Execute(w, rc); err != nil {
 		return "", err
 	}

@@ -6,6 +6,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/lanyulei/reborn/backend/kit/loop"
 )
 
 // TestLoop_StopDrainsInFlight Stop 关闭准入后，在途迭代须在未被取消的 ctx 上跑完
@@ -97,5 +99,67 @@ func TestLoop_ErrorBackoff(t *testing.T) {
 	// 10ms 周期无退避 ≈ 12 次；指数退避（20/40/80ms…）应明显更少。
 	if n := runs.Load(); n < 2 || n > 6 {
 		t.Fatalf("runs = %d, want exponential backoff", n)
+	}
+}
+
+// lockerStub 可控的 Locker：记录获取/释放次数，并经 kit/loop.LockProbe 暴露可注入
+// 故障的持锁连接探针（对应 dbx.TryAdvisoryLock 的行为）。
+type lockerStub struct {
+	acquired, released int
+	held               bool
+	connErr            error
+}
+
+func (l *lockerStub) TryLock(ctx context.Context, _ string) (func(), bool, error) {
+	if l.held {
+		return nil, false, nil
+	}
+	l.held = true
+	l.acquired++
+	if probe := loop.LockProbeFromContext(ctx); probe != nil {
+		probe.Check = func(context.Context) error { return l.connErr }
+	}
+	return func() { l.held = false; l.released++ }, true, nil
+}
+
+// TestLeaderLoop_DropsLeadershipWhenLockConnLost 持锁连接断开（PG 已随会话释放锁）
+// 时，下一轮不得继续以主身份执行：先放弃领导权再重新竞争。
+func TestLeaderLoop_DropsLeadershipWhenLockConnLost(t *testing.T) {
+	t.Parallel()
+	locker := &lockerStub{}
+	ll := &leaderLoop{key: "k", locker: locker, log: testLogger()}
+	runs := 0
+	fn := func(context.Context) (int, error) { runs++; return 1, nil }
+	ctx := context.Background()
+	for range 2 {
+		if n, err := ll.run(ctx, fn); err != nil || n != 1 {
+			t.Fatalf("run() = %d, %v", n, err)
+		}
+	}
+	if locker.acquired != 1 || runs != 2 {
+		t.Fatalf("healthy leader must keep the lock: acquired=%d runs=%d", locker.acquired, runs)
+	}
+
+	// 连接断开，且锁已被他人接任：本实例必须失主且本轮不执行 fn。
+	locker.connErr = errors.New("conn closed")
+	other := &lockerStub{held: true}
+	ll.locker = other
+	if n, err := ll.run(ctx, fn); err != nil || n != 0 {
+		t.Fatalf("run() after conn loss = %d, %v; want (0, nil)", n, err)
+	}
+	if runs != 2 || locker.released != 1 || ll.held {
+		t.Fatalf("lost lock conn must drop leadership without running fn: runs=%d released=%d held=%v", runs, locker.released, ll.held)
+	}
+
+	// 锁重新可得：再次竞争成功后恢复执行。
+	other.held = false
+	if n, err := ll.run(ctx, fn); err != nil || n != 1 || other.acquired != 1 || runs != 3 {
+		t.Fatalf("re-acquire: n=%d err=%v acquired=%d runs=%d", n, err, other.acquired, runs)
+	}
+
+	// fn 出错同样放弃领导权。
+	boom := errors.New("boom")
+	if _, err := ll.run(ctx, func(context.Context) (int, error) { return 0, boom }); !errors.Is(err, boom) || ll.held || other.released != 1 {
+		t.Fatalf("fn error must release leadership: err=%v held=%v released=%d", err, ll.held, other.released)
 	}
 }

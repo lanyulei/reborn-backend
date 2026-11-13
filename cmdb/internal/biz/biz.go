@@ -143,6 +143,8 @@ type ReconcileRepo interface {
 	// ReconcileModel 对单一类型执行 touch / update / insert / disappear / retire，并写历史；
 	// manualKeys 为人工归属字段（同步不得覆盖），uniqueCodes 为唯一字段（拼唯一键）。
 	ReconcileModel(ctx context.Context, p ReconcileParams) (Counts, []cmdbcontract.RunError, error)
+	// HasActive 报告该来源在该类型下是否仍有未退役、未删除的资源（按类型空集保护的告警依据）。
+	HasActive(ctx context.Context, modelCode, source string) (bool, error)
 	// ReconcileRelations 按暂存声明同步关系：同源同类型多余关系删除、缺失关系插入（一事务）。
 	ReconcileRelations(ctx context.Context, runID, source string) error
 }
@@ -156,7 +158,7 @@ type ReconcileParams struct {
 	Grace       time.Duration
 	ManualKeys  []string
 	UniqueCodes []string
-	// SkipDisappear 为真时不做消失/退役判定（本次采集为空集时的保护）。
+	// SkipDisappear 为真时不做消失/退役判定（本次采集整体或该类型为空集、类型停用时的保护）。
 	SkipDisappear bool
 }
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -24,6 +25,8 @@ type fakeStore struct {
 	claimed   bool
 	renews    int
 	renewErr  error
+	renewFail int             // 前 N 次续约返回瞬时错误
+	active    map[string]bool // 类型 → 该来源下仍有未退役资源
 	finished  []finishCall
 	staging   map[string][]*Resource
 	cleared   []string
@@ -75,6 +78,9 @@ func (f *fakeStore) Renew(context.Context, *Task, time.Duration) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.renews++
+	if f.renews <= f.renewFail {
+		return errors.New("db blip")
+	}
 	return f.renewErr
 }
 
@@ -129,6 +135,10 @@ func (f *fakeStore) ReconcileModel(_ context.Context, p ReconcileParams) (Counts
 	defer f.mu.Unlock()
 	f.reconcile = append(f.reconcile, p)
 	return f.counts, f.samples, f.recErr
+}
+
+func (f *fakeStore) HasActive(_ context.Context, model, _ string) (bool, error) {
+	return f.active[model], nil
 }
 
 func (f *fakeStore) ReconcileRelations(_ context.Context, runID, source string) error {
@@ -287,6 +297,35 @@ func TestWorker_EmptyDiscoverySkipsDisappear(t *testing.T) {
 	}
 }
 
+// TestWorker_PerModelEmptyGuard 主机采到了、虚拟机一条没有（类型停用被 sink 丢弃 / 账号
+// 失去可见性）：只有采到数据的类型做消失判定，0 行的类型跳过——否则全部虚拟机被整批退役。
+func TestWorker_PerModelEmptyGuard(t *testing.T) {
+	t.Parallel()
+	store := newFakeStore()
+	store.source = &Source{ID: "src-1", Provider: cmdbcontract.ProviderVMware, Credential: []byte("ct")}
+	store.task = &Task{ID: "t1", SourceID: "src-1"}
+	store.active = map[string]bool{cmdbcontract.ModelVirtualMachine: true}
+	delete(store.fields, cmdbcontract.ModelVirtualMachine) // 类型停用：采集行在入暂存前被丢弃
+	col := &fakeCollector{provider: cmdbcontract.ProviderVMware, items: []*Resource{
+		{ModelCode: cmdbcontract.ModelPhysicalServer, ExternalID: "h-1", Attrs: map[string]any{"ip": "10.0.0.1"}},
+		{ModelCode: cmdbcontract.ModelVirtualMachine, ExternalID: "vm-1", Attrs: map[string]any{"ip": "10.0.1.1"}},
+	}}
+	if _, err := newWorker(store, col).RunOnce(context.Background(), "w"); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.reconcile) != 2 {
+		t.Fatalf("reconcile = %+v", store.reconcile)
+	}
+	for _, p := range store.reconcile {
+		if want := p.ModelCode == cmdbcontract.ModelVirtualMachine; p.SkipDisappear != want {
+			t.Fatalf("model %s SkipDisappear = %v, want %v", p.ModelCode, p.SkipDisappear, want)
+		}
+	}
+	if store.finished[0].status != cmdbcontract.TaskSucceeded || store.finished[0].counts.Discovered != 1 {
+		t.Fatalf("finished = %+v", store.finished)
+	}
+}
+
 func TestWorker_CollectorErrorFailsTask(t *testing.T) {
 	t.Parallel()
 	store := newFakeStore()
@@ -367,6 +406,46 @@ func TestWorker_RenewsLease(t *testing.T) {
 	defer store.mu.Unlock()
 	if store.renews < 2 {
 		t.Fatalf("expected periodic renewals, got %d", store.renews)
+	}
+}
+
+// TestWorker_RenewToleratesTransientError 一次续约抖动不中止同步（快速重试续上）；
+// 持续失败则在租约临近到期前放弃，任务失败。
+func TestWorker_RenewToleratesTransientError(t *testing.T) {
+	t.Parallel()
+	opts := WorkerOptions{Lease: 600 * time.Millisecond, CollectTimeout: 5 * time.Second, StagingBatch: 2}
+	store := newFakeStore()
+	store.source = aliyunSource()
+	store.task = &Task{ID: "t1", SourceID: "src-1"}
+	store.renewFail = 1
+	slow := &slowCollector{provider: cmdbcontract.ProviderAliyun, delay: 450 * time.Millisecond}
+	if _, err := newWorker(store, slow).WithOptions(opts).RunOnce(context.Background(), "w"); err != nil {
+		t.Fatal(err)
+	}
+	if f := store.finished[0]; f.status != cmdbcontract.TaskSucceeded {
+		t.Fatalf("one renew blip must not fail the sync: %+v", f)
+	}
+	if store.renews < 2 {
+		t.Fatalf("failed renew must be retried, renews = %d", store.renews)
+	}
+
+	down := newFakeStore()
+	down.source = aliyunSource()
+	down.task = &Task{ID: "t1", SourceID: "src-1"}
+	down.renewFail = 1 << 30
+	blocked := &fakeCollector{provider: cmdbcontract.ProviderAliyun, block: true}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = newWorker(down, blocked).RunOnce(context.Background(), "w")
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("persistent renew failure must abort before the lease runs out")
+	}
+	if f := down.finished[0]; f.status != cmdbcontract.TaskFailed || !strings.Contains(f.err, "db blip") {
+		t.Fatalf("finished = %+v", f)
 	}
 }
 

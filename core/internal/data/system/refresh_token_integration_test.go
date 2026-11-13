@@ -34,7 +34,7 @@ func newRefreshToken(id, userID, raw string, expireIn time.Duration) *biz.Refres
 }
 
 // TestIntegration_RefreshTokenRepo 刷新令牌仓储契约：哈希查询、原子轮换
-// （重放拒绝）、按用户吊销幂等、Save 惰性清理同用户过期行。
+// （墓碑 + 重放拒绝）、整族吊销、按用户吊销幂等、Save 惰性清理同用户过期行。
 func TestIntegration_RefreshTokenRepo(t *testing.T) {
 	d := newIntegrationData(t)
 	users := NewUserRepo(d)
@@ -62,19 +62,42 @@ func TestIntegration_RefreshTokenRepo(t *testing.T) {
 		t.Fatalf("FindByHash(unknown) error = %v, want ErrTokenInvalid", err)
 	}
 
-	// Rotate：旧哈希即刻失效，新哈希可查；旧哈希重放（并发败者）拒绝。
+	if got.FamilyID != rt.ID || got.RotatedAt != nil {
+		t.Fatalf("FindByHash() family = %q rotatedAt = %v, want family = own id and live", got.FamilyID, got.RotatedAt)
+	}
+
+	// Rotate：旧行置为墓碑（仍可查、RotatedAt 非空），新哈希可查且继承族；
+	// 旧哈希再次轮换（并发败者/重放）拒绝。
 	next := newRefreshToken("018f3e1a-0003-7000-8000-000000000002", user.ID, "raw-beta", time.Hour)
+	next.FamilyID = got.FamilyID
 	if err := repo.Rotate(ctx, rt.TokenHash, next); err != nil {
 		t.Fatalf("Rotate() error = %v", err)
 	}
-	if _, err := repo.FindByHash(ctx, rt.TokenHash); !errors.Is(err, biz.ErrTokenInvalid) {
-		t.Fatalf("FindByHash(rotated old) error = %v, want ErrTokenInvalid", err)
+	tomb, err := repo.FindByHash(ctx, rt.TokenHash)
+	if err != nil || tomb.RotatedAt == nil {
+		t.Fatalf("FindByHash(rotated old) = %+v err = %v, want tombstone", tomb, err)
 	}
-	if _, err := repo.FindByHash(ctx, next.TokenHash); err != nil {
-		t.Fatalf("FindByHash(rotated new) error = %v", err)
+	succ, err := repo.FindByHash(ctx, next.TokenHash)
+	if err != nil || succ.RotatedAt != nil || succ.FamilyID != rt.ID {
+		t.Fatalf("FindByHash(rotated new) = %+v err = %v, want live row in family %s", succ, err, rt.ID)
 	}
-	if err := repo.Rotate(ctx, rt.TokenHash, next); !errors.Is(err, biz.ErrTokenInvalid) {
+	replay := newRefreshToken("018f3e1a-0003-7000-8000-000000000005", user.ID, "raw-gamma", time.Hour)
+	replay.FamilyID = got.FamilyID
+	if err := repo.Rotate(ctx, rt.TokenHash, replay); !errors.Is(err, biz.ErrTokenInvalid) {
 		t.Fatalf("Rotate(replay) error = %v, want ErrTokenInvalid", err)
+	}
+
+	// DeleteByFamily：整族（墓碑 + 后继）删除，幂等。
+	if err := repo.DeleteByFamily(ctx, rt.ID); err != nil {
+		t.Fatalf("DeleteByFamily() error = %v", err)
+	}
+	for _, h := range []string{rt.TokenHash, next.TokenHash} {
+		if _, err := repo.FindByHash(ctx, h); !errors.Is(err, biz.ErrTokenInvalid) {
+			t.Fatalf("FindByHash(after family revoke) error = %v, want ErrTokenInvalid", err)
+		}
+	}
+	if err := repo.DeleteByFamily(ctx, rt.ID); err != nil {
+		t.Fatalf("DeleteByFamily(idempotent) error = %v", err)
 	}
 
 	// Save 惰性清理：先落一行已过期，再为新令牌 Save 时同用户过期行被清除。

@@ -323,9 +323,9 @@ type UpdateUserRequest struct {
 	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	// nickname 新昵称。
 	Nickname *string `protobuf:"bytes,2,opt,name=nickname,proto3,oneof" json:"nickname,omitempty"`
-	// email 新邮箱。
+	// email 新邮箱；传空串 = 清空。
 	Email *string `protobuf:"bytes,3,opt,name=email,proto3,oneof" json:"email,omitempty"`
-	// phone 新手机号。
+	// phone 新手机号；传空串 = 清空。
 	Phone *string `protobuf:"bytes,4,opt,name=phone,proto3,oneof" json:"phone,omitempty"`
 	// gender 新性别。
 	Gender *string `protobuf:"bytes,5,opt,name=gender,proto3,oneof" json:"gender,omitempty"`
@@ -1152,13 +1152,13 @@ const file_system_v1_user_proto_rawDesc = "" +
 	"\x06_phoneB\t\n" +
 	"\a_status\"9\n" +
 	"\x12CreateUserResponse\x12#\n" +
-	"\x04user\x18\x01 \x01(\v2\x0f.system.v1.UserR\x04user\"\xfa\x03\n" +
+	"\x04user\x18\x01 \x01(\v2\x0f.system.v1.UserR\x04user\"\xde\x04\n" +
 	"\x11UpdateUserRequest\x12\x18\n" +
 	"\x02id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\x12*\n" +
-	"\bnickname\x18\x02 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@H\x00R\bnickname\x88\x01\x01\x12%\n" +
-	"\x05email\x18\x03 \x01(\tB\n" +
-	"\xbaH\ar\x05\x18\xff\x01`\x01H\x01R\x05email\x88\x01\x01\x120\n" +
-	"\x05phone\x18\x04 \x01(\tB\x15\xbaH\x12r\x102\x0e^[0-9+]{5,20}$H\x02R\x05phone\x88\x01\x01\x129\n" +
+	"\bnickname\x18\x02 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@H\x00R\bnickname\x88\x01\x01\x12\x85\x01\n" +
+	"\x05email\x18\x03 \x01(\tBj\xbaHg\xba\x01_\n" +
+	"\x11user.update.email\x12,value must be a valid email address or empty\x1a\x1cthis == '' || this.isEmail()r\x03\x18\xff\x01H\x01R\x05email\x88\x01\x01\x123\n" +
+	"\x05phone\x18\x04 \x01(\tB\x18\xbaH\x15r\x132\x11^$|^[0-9+]{5,20}$H\x02R\x05phone\x88\x01\x01\x129\n" +
 	"\x06gender\x18\x05 \x01(\tB\x1c\xbaH\x19r\x17R\x04maleR\x06femaleR\aunknownH\x03R\x06gender\x88\x01\x01\x12\x1e\n" +
 	"\bis_admin\x18\x06 \x01(\bH\x04R\aisAdmin\x88\x01\x01:\xb1\x01\xbaH\xad\x01\x1a\xaa\x01\n" +
 	"\x15user.update.non_empty\x12-at least one updatable field must be provided\x1abhas(this.nickname) || has(this.email) || has(this.phone) || has(this.gender) || has(this.is_admin)B\v\n" +

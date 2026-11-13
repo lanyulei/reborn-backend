@@ -86,3 +86,46 @@ func TestIntegration_AggregateLifecycle(t *testing.T) {
 		t.Fatalf("DeleteClosedAggGroups = %d, %v", n, err)
 	}
 }
+
+// TestIntegration_AggregateRouteDeleted 窗口关闭时路由已被删除：汇总发不出去，本窗口内
+// 归入该组的全部事件（不止样本）改标 failed；窗口之前的同键事件、有自己 dispatch 的
+// 同键事件不受影响。
+func TestIntegration_AggregateRouteDeleted(t *testing.T) {
+	d := newIntegrationData(t)
+	seedConfig(t, d, "http://127.0.0.1:9/hook")
+	ctx := context.Background()
+	router := biz.NewRouterUsecase(NewEventRepo(d), newCache(t, d), testLogger())
+	const (
+		before = "018f3e1a-2401-7000-8000-000000000001"
+		direct = "018f3e1a-2401-7000-8000-000000000002"
+	)
+	seedEvent(t, d, before, "host.down", 1, "room-z", nil)
+	if _, err := d.Pool.Exec(ctx, "UPDATE notify_event SET status = 2, publish_state = 1, create_time = now() - interval '1 minute' WHERE id = $1", before); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 25 { // 超过样本上限 20
+		seedEvent(t, d, "018f3e1a-2401-7000-8000-0000000001"+string(rune('a'+i/10))+string(rune('0'+i%10)), "host.down", 1, "room-z", nil)
+	}
+	seedEvent(t, d, direct, "monitor.alert.firing", 2, "room-z", nil) // 同键、走直发路由（有 dispatch）
+	if n, err := router.RouteOnce(ctx, 100); err != nil || n != 26 {
+		t.Fatalf("RouteOnce() = %d, %v", n, err)
+	}
+	// 路由删除后的快照 + 窗口到期。
+	if _, err := d.Pool.Exec(ctx, "UPDATE notify_route SET delete_time = now() WHERE id = $1", idRouteAgg); err != nil {
+		t.Fatal(err)
+	}
+	key := biz.AggKey("default", "room-z")
+	if _, err := d.Pool.Exec(ctx, "UPDATE notify_agg_group SET window_until = now() - interval '1 second' WHERE group_key = $1", key); err != nil {
+		t.Fatal(err)
+	}
+	sweeper := biz.NewSweeperUsecase(NewAggRepo(d), newCache(t, d), testLogger())
+	if n, err := sweeper.SweepOnce(ctx, 10); err != nil || n != 1 {
+		t.Fatalf("SweepOnce() = %d, %v", n, err)
+	}
+	if got := count(t, d, "SELECT count(*) FROM notify_event WHERE group_key = 'room-z' AND status = 4"); got != 25 {
+		t.Fatalf("failed events = %d, want all 25 of the window", got)
+	}
+	if count(t, d, "SELECT count(*) FROM notify_event WHERE id = ANY($1::uuid[]) AND status = 2", []string{before, direct}) != 2 {
+		t.Fatal("events outside the window / with their own dispatch must stay routed")
+	}
+}

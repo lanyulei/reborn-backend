@@ -92,13 +92,15 @@ type Template struct {
 	Enabled     bool
 }
 
-// Producer 生产者快照（ingress 鉴权用；TokenHash = sha256(token 明文)）。
+// Producer 生产者快照（ingress 鉴权用；TokenHash = sha256(token 明文)，即 HMAC 密钥——
+// 库存封存形态已由 data 层解封；KeyErr 非 nil = 解封失败，TokenHash 为空，鉴权一律 401）。
 type Producer struct {
 	ID             string
 	BizID          string
 	Name           string
 	EventWhitelist []string
 	TokenHash      []byte
+	KeyErr         error
 	ExpireTime     *time.Time
 	Enabled        bool
 	QPSLimit       int32 // 每秒接入上限，0 = 不限
@@ -279,6 +281,12 @@ func (c *ConfigCache) install(ctx context.Context, snap *Snapshot) {
 		if ch.SecretErr != nil {
 			c.log.ErrorContext(ctx, "channel secret unavailable, channel marked unhealthy",
 				"channel_id", ch.ID, "channel", ch.Name, "error", ch.SecretErr)
+		}
+	}
+	for _, p := range snap.Producers {
+		if p.KeyErr != nil {
+			c.log.ErrorContext(ctx, "producer key unavailable, producer cannot authenticate",
+				"producer_id", p.ID, "producer", p.Name, "error", p.KeyErr)
 		}
 	}
 	if err := c.buckets.SyncBuckets(ctx, channels); err != nil {

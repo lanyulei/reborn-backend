@@ -335,6 +335,8 @@ message CmdbField {
   bool unique = 7;
   // enum_values 枚举值（type=enum）。
   repeated string enum_values = 8;
+  // enum_labels 枚举展示值（实际值 → 展示值）；未配置的枚举项展示实际值。
+  map<string, string> enum_labels = 18;
   // ref_model 引用的资源类型编码（type=ref，值为该类型资源 ID）。
   string ref_model = 9;
   // rule 校验规则。
@@ -542,6 +544,15 @@ message CreateFieldRequest {
   optional bool indexed = 14;
   // sensitive 敏感属性，可选。
   optional bool sensitive = 15;
+  // enum_labels 枚举展示值（键须属于 enum_values），值 0-64 位；仅显示层使用。
+  map<string, string> enum_labels = 16 [(buf.validate.field).map = {
+    max_pairs: 100
+    values: {
+      string: {
+        max_len: 64
+      }
+    }
+  }];
 }
 
 // CreateFieldResponse 新增类型字段响应。
@@ -592,6 +603,15 @@ message UpdateFieldRequest {
   optional bool indexed = 12;
   // sensitive 敏感属性。
   optional bool sensitive = 13;
+  // enum_labels 枚举展示值整组替换；随 enum_values 一同提交（enum_values 非空时生效）。
+  map<string, string> enum_labels = 14 [(buf.validate.field).map = {
+    max_pairs: 100
+    values: {
+      string: {
+        max_len: 64
+      }
+    }
+  }];
 }
 
 // UpdateFieldResponse 更新类型字段响应。

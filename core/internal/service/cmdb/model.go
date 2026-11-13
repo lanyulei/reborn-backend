@@ -100,7 +100,7 @@ func (s *CmdbModelService) DeleteModel(ctx context.Context, req *v1.DeleteModelR
 func (s *CmdbModelService) CreateField(ctx context.Context, req *v1.CreateFieldRequest) (*v1.CreateFieldResponse, error) {
 	f, err := s.uc.CreateField(withActor(ctx), &biz.Field{
 		ModelCode: req.GetModelCode(), Code: req.GetCode(), Name: req.GetName(), Type: req.GetType(),
-		Required: req.GetRequired(), Unique: req.GetUnique(), EnumValues: req.GetEnumValues(), RefModel: req.GetRefModel(),
+		Required: req.GetRequired(), Unique: req.GetUnique(), EnumValues: req.GetEnumValues(), EnumLabels: req.GetEnumLabels(), RefModel: req.GetRefModel(),
 		Rule: ruleFromProto(req.GetRule()), Owner: req.GetOwner(), ListVisible: req.GetListVisible(), Sort: req.GetSort(),
 		Description: req.GetDescription(), Indexed: req.GetIndexed(), Sensitive: req.GetSensitive(),
 	})
@@ -119,6 +119,9 @@ func (s *CmdbModelService) UpdateField(ctx context.Context, req *v1.UpdateFieldR
 	if len(req.GetEnumValues()) > 0 {
 		values := req.GetEnumValues()
 		upd.EnumValues = &values
+		// 展示值随枚举组整组替换（proto3 map 无 presence，未提供即清空）
+		labels := req.GetEnumLabels()
+		upd.EnumLabels = &labels
 	}
 	if req.Rule != nil {
 		rule := ruleFromProto(req.GetRule())
@@ -244,7 +247,7 @@ func toProtoModel(m *biz.Model) *v1.CmdbModel {
 func toProtoField(f *biz.Field) *v1.CmdbField {
 	return &v1.CmdbField{
 		Id: f.ID, ModelCode: f.ModelCode, Code: f.Code, Name: f.Name, Type: f.Type, Required: f.Required, Unique: f.Unique,
-		EnumValues: f.EnumValues, RefModel: f.RefModel, Rule: ruleToProto(f.Rule), Owner: f.Owner, ListVisible: f.ListVisible,
+		EnumValues: f.EnumValues, EnumLabels: f.EnumLabels, RefModel: f.RefModel, Rule: ruleToProto(f.Rule), Owner: f.Owner, ListVisible: f.ListVisible,
 		Sort: f.Sort, Description: f.Description, Deprecated: f.Deprecated, Indexed: f.Indexed, Sensitive: f.Sensitive,
 	}
 }

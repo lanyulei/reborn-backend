@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"time"
 )
 
@@ -70,8 +71,15 @@ func (uc *SweeperUsecase) SweepOnce(ctx context.Context, limit int) (int, error)
 		}
 		ok, err := uc.repo.CloseGroup(ctx, key, threshold, duration, func(ctx context.Context, tx RouterTx, g *AggGroup) error {
 			if route == nil {
-				// 路由已删除：组关闭但无处可发（配置变更导致），记日志即可。
-				uc.log.WarnContext(ctx, "aggregate group route missing, summary dropped", "group", key, "route_id", routeID, "count", g.Count)
+				// 路由已删除：组关闭但无处可发（配置变更导致）。组内事件此前已标 routed，
+				// 汇总却发不出去——把本窗口内归入该组的**全部**事件改标 failed（一条有界
+				// UPDATE，成员判定见 RouterTx.FailAggregatedEvents），控制台按失败状态可查。
+				n, err := tx.FailAggregatedEvents(ctx, g.BizID, strings.TrimPrefix(g.Key, g.BizID+"|"), g.FirstEventTime)
+				if err != nil {
+					return err
+				}
+				uc.log.ErrorContext(ctx, "aggregate group route deleted, summary dropped", "group", key, "route_id", routeID,
+					"count", g.Count, "first_event_id", g.FirstEventID, "marked_failed", n)
 				return nil
 			}
 			var subs []Subscriber

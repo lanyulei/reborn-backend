@@ -213,6 +213,17 @@ func (s *Store) CreateUser(_ context.Context, user *biz.User) error {
 	return nil
 }
 
+// CreateUserWithRoles implements biz.UserWriter：建号并写入角色绑定。
+func (s *Store) CreateUserWithRoles(ctx context.Context, user *biz.User, roleIDs []string) error {
+	if err := s.CreateUser(ctx, user); err != nil {
+		return err
+	}
+	if len(roleIDs) > 0 {
+		return s.BindUserRoles(ctx, user.ID, roleIDs)
+	}
+	return nil
+}
+
 // UpdateUser implements biz.UserWriter.
 func (s *Store) UpdateUser(_ context.Context, id string, upd biz.UserUpdate) error {
 	s.mu.Lock()
@@ -451,16 +462,31 @@ func (s *Store) Save(_ context.Context, token *biz.RefreshToken) error {
 	return nil
 }
 
-// Rotate implements biz.RefreshTokenWriter：原子轮换；旧行不存在返回 ErrTokenInvalid。
+// Rotate implements biz.RefreshTokenWriter：原子轮换——旧行置为墓碑并插入新行；
+// 旧行不存在或已是墓碑返回 ErrTokenInvalid。
 func (s *Store) Rotate(_ context.Context, oldHash string, next *biz.RefreshToken) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.refreshTokens[oldHash]; !ok {
+	old, ok := s.refreshTokens[oldHash]
+	if !ok || old.RotatedAt != nil {
 		return biz.ErrTokenInvalid
 	}
-	delete(s.refreshTokens, oldHash)
+	rotatedAt := next.CreateTime
+	old.RotatedAt = &rotatedAt
 	cp := *next
 	s.refreshTokens[cp.TokenHash] = &cp
+	return nil
+}
+
+// DeleteByFamily implements biz.RefreshTokenWriter：删除整族刷新令牌（含墓碑）；幂等。
+func (s *Store) DeleteByFamily(_ context.Context, familyID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for hash, t := range s.refreshTokens {
+		if t.FamilyID == familyID {
+			delete(s.refreshTokens, hash)
+		}
+	}
 	return nil
 }
 

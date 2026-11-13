@@ -284,3 +284,52 @@ func TestIntegration_NatsLoadReconciliation(t *testing.T) {
 		t.Fatalf("sends = %d, distinct keys = %d, want %d each", adapter.total.Load(), len(adapter.keys), total)
 	}
 }
+
+// TestIntegration_RelayClaimLease 认领租约即多副本互斥：租约未到期的行不被重复认领；
+// 到期未落账（relay 崩溃）的行可被再次认领并发布；落账后租约清空。
+func TestIntegration_RelayClaimLease(t *testing.T) {
+	d := newIntegrationData(t)
+	nb := startNats(t)
+	seedConfig(t, d, "http://127.0.0.1:9/hook")
+	ctx := context.Background()
+	relay := &natsRelay{data: d, nb: nb, log: testLogger(), staleAfter: time.Minute}
+
+	const ev = "018f3e1a-2203-7000-8000-000000000001"
+	seedEvent(t, d, ev, "monitor.alert.firing", 2, "", nil)
+	// 另一副本已认领（发布在途）。
+	if _, err := d.Pool.Exec(ctx, "UPDATE notify_event SET relay_claim_until = now() + interval '1 minute' WHERE id = $1", ev); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := relay.RelayOnce(ctx, 100); err != nil || n != 0 {
+		t.Fatalf("RelayOnce(claimed by other) = %d, %v; want 0", n, err)
+	}
+	// 该副本崩溃：租约到期后被接手。
+	if _, err := d.Pool.Exec(ctx, "UPDATE notify_event SET relay_claim_until = now() - interval '1 second' WHERE id = $1", ev); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := relay.RelayOnce(ctx, 100); err != nil || n != 1 {
+		t.Fatalf("RelayOnce(expired claim) = %d, %v; want 1", n, err)
+	}
+	if count(t, d, "SELECT count(*) FROM notify_event WHERE id = $1 AND publish_state = 1 AND relay_claim_until IS NULL", ev) != 1 {
+		t.Fatal("published event must be marked and its claim cleared")
+	}
+
+	// 任务同理。
+	const dsp = "018f3e1a-2203-7000-8000-0000000000d1"
+	seedDispatch(t, d, dsp, ev, idChanHook, 1, time.Now().Add(-time.Second))
+	if _, err := d.Pool.Exec(ctx, "UPDATE notify_dispatch SET relay_claim_until = now() + interval '1 minute' WHERE id = $1", dsp); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := relay.publishDispatches(ctx, 100); err != nil || n != 0 {
+		t.Fatalf("publishDispatches(claimed by other) = %d, %v; want 0", n, err)
+	}
+	if _, err := d.Pool.Exec(ctx, "UPDATE notify_dispatch SET relay_claim_until = now() - interval '1 second' WHERE id = $1", dsp); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := relay.publishDispatches(ctx, 100); err != nil || n != 1 {
+		t.Fatalf("publishDispatches(expired claim) = %d, %v; want 1", n, err)
+	}
+	if count(t, d, "SELECT count(*) FROM notify_dispatch WHERE id = $1 AND publish_state = 1 AND relay_claim_until IS NULL", dsp) != 1 {
+		t.Fatal("published dispatch must be marked and its claim cleared")
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -16,7 +17,10 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-var _ biz.CIRepo = (*ciRepo)(nil)
+var (
+	_ biz.CIRepo         = (*ciRepo)(nil)
+	_ biz.CIBatchUpdater = (*ciRepo)(nil)
+)
 
 // ciSelectColumns 资源查询列序（c = cmdb_ci，m = cmdb_model）。
 const ciSelectColumns = `c.id, c.model_code, m.name, c.name, c.status, c.env, c.owner, c.tags, c.source, c.external_id, c.unique_key,
@@ -151,6 +155,12 @@ func (r *ciRepo) List(ctx context.Context, filter biz.CIFilter, page, pageSize i
 		add("? = ANY(c.tags)", filter.Tag)
 	}
 	if len(filter.Attrs) > 0 {
+		// 敏感字段不可过滤（防取值探测）：过滤键在该行所属类型下为敏感字段的行一律不命中。
+		keys := make([]string, 0, len(filter.Attrs))
+		for key := range filter.Attrs {
+			keys = append(keys, key)
+		}
+		add("NOT EXISTS (SELECT 1 FROM cmdb_model_field sf WHERE sf.model_code = c.model_code AND sf.sensitive AND sf.code = ANY(?))", dbx.TextArray(keys))
 		// 标量等值走 attrs ->> code = value（可命中 indexed 字段的表达式索引）；复合值走 @>（GIN）。
 		complex := map[string]any{}
 		for key, v := range filter.Attrs {
@@ -159,7 +169,7 @@ func (r *ciRepo) List(ctx context.Context, filter biz.CIFilter, page, pageSize i
 				if !identPattern.MatchString(key) {
 					return nil, 0, fmt.Errorf("invalid attr filter key %q", key)
 				}
-				add("(c.attrs ->> '"+key+"') = ?", fmt.Sprint(v))
+				add("(c.attrs ->> '"+key+"') = ?", scalarText(v))
 			default:
 				complex[key] = v
 			}
@@ -193,12 +203,15 @@ func (r *ciRepo) List(ctx context.Context, filter biz.CIFilter, page, pageSize i
 		}
 	}
 	whereClause := strings.Join(where, " AND ")
-	var total int64
-	if err := r.data.Pool.QueryRow(ctx, "SELECT count(*)"+ciFrom+"WHERE "+whereClause, args...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("count cmdb cis: %w", err)
-	}
-	if total == 0 {
-		return nil, 0, nil
+	total := int64(-1)
+	if !filter.NoCount {
+		// 计数不需要类型名：只在 cmdb_ci 上数，省掉与模型表的 join
+		if err := r.data.Pool.QueryRow(ctx, "SELECT count(*) FROM cmdb_ci c WHERE "+whereClause, args...).Scan(&total); err != nil {
+			return nil, 0, fmt.Errorf("count cmdb cis: %w", err)
+		}
+		if total == 0 {
+			return nil, 0, nil
+		}
 	}
 	pageClause := ""
 	if filter.Cursor != "" {
@@ -232,37 +245,72 @@ func (r *ciRepo) List(ctx context.Context, filter biz.CIFilter, page, pageSize i
 	return items, total, rows.Err()
 }
 
+// scalarText 标量过滤值 → 与 jsonb ->> 文本一致的形式（浮点不走科学计数法）。
+func scalarText(v any) string {
+	switch n := v.(type) {
+	case float64:
+		return strconv.FormatFloat(n, 'f', -1, 64)
+	case float32:
+		return strconv.FormatFloat(float64(n), 'f', -1, 32)
+	default:
+		return fmt.Sprint(v)
+	}
+}
+
 // Update implements biz.CIRepo：乐观锁条件更新 + 历史同事务。
 func (r *ciRepo) Update(ctx context.Context, ci *biz.CI, expectedVersion int64, h *biz.History) error {
+	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+		return updateCI(ctx, tx, ci, expectedVersion, h)
+	})
+}
+
+// UpdateBatch implements biz.CIBatchUpdater：多条乐观锁更新 + 历史同一事务
+// （按 ID 排序写入，避免并发批次互相死锁）。
+func (r *ciRepo) UpdateBatch(ctx context.Context, items []*biz.CI, histories []*biz.History) error {
+	order := make([]int, len(items))
+	for i := range order {
+		order[i] = i
+	}
+	slices.SortFunc(order, func(a, b int) int { return strings.Compare(items[a].ID, items[b].ID) })
+	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+		for _, i := range order {
+			if err := updateCI(ctx, tx, items[i], items[i].Version-1, histories[i]); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// updateCI 事务内的单条乐观锁更新 + 历史。
+func updateCI(ctx context.Context, tx pgx.Tx, ci *biz.CI, expectedVersion int64, h *biz.History) error {
 	attrs, err := json.Marshal(ci.Attrs)
 	if err != nil {
 		return fmt.Errorf("marshal attrs: %w", err)
 	}
-	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
-		tag, err := tx.Exec(ctx,
-			`UPDATE cmdb_ci SET name = $2, status = $3, env = $4, owner = $5, tags = $6, external_id = $7, unique_key = $8,
-			   attrs = $9, version = $10, update_user = $11, update_time = $12
-			 WHERE id = $1 AND version = $13 AND delete_time IS NULL`,
-			ci.ID, ci.Name, ci.Status, ci.Env, ci.Owner, dbx.TextArray(ci.Tags), ci.ExternalID, ci.UniqueKey,
-			attrs, ci.Version, dbx.NilIfEmpty(ci.UpdateUser), ci.UpdateTime, expectedVersion)
-		if err != nil {
-			if mapped := mapCIUniqueViolation(err); mapped != err {
-				return mapped
-			}
-			return fmt.Errorf("update cmdb ci: %w", err)
+	tag, err := tx.Exec(ctx,
+		`UPDATE cmdb_ci SET name = $2, status = $3, env = $4, owner = $5, tags = $6, external_id = $7, unique_key = $8,
+		   attrs = $9, version = $10, update_user = $11, update_time = $12
+		 WHERE id = $1 AND version = $13 AND delete_time IS NULL`,
+		ci.ID, ci.Name, ci.Status, ci.Env, ci.Owner, dbx.TextArray(ci.Tags), ci.ExternalID, ci.UniqueKey,
+		attrs, ci.Version, dbx.NilIfEmpty(ci.UpdateUser), ci.UpdateTime, expectedVersion)
+	if err != nil {
+		if mapped := mapCIUniqueViolation(err); mapped != err {
+			return mapped
 		}
-		if tag.RowsAffected() == 0 {
-			var exists bool
-			if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM cmdb_ci WHERE id = $1 AND delete_time IS NULL)", ci.ID).Scan(&exists); err != nil {
-				return fmt.Errorf("check cmdb ci: %w", err)
-			}
-			if !exists {
-				return biz.ErrCINotFound
-			}
-			return biz.ErrCIVersionConflict
+		return fmt.Errorf("update cmdb ci: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		var exists bool
+		if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM cmdb_ci WHERE id = $1 AND delete_time IS NULL)", ci.ID).Scan(&exists); err != nil {
+			return fmt.Errorf("check cmdb ci: %w", err)
 		}
-		return insertHistories(ctx, tx, []*biz.History{h})
-	})
+		if !exists {
+			return biz.ErrCINotFound
+		}
+		return biz.ErrCIVersionConflict
+	}
+	return insertHistories(ctx, tx, []*biz.History{h})
 }
 
 // SoftDelete implements biz.CIRepo.
@@ -290,7 +338,7 @@ func (r *ciRepo) ExistsInModel(ctx context.Context, modelCode, id string) (bool,
 	return exists, nil
 }
 
-// Search implements biz.CIRepo：名称 / 外部标识 / 标签 / 属性值子串匹配（全部参数绑定）；
+// Search implements biz.CIRepo：名称 / 外部标识 / 标签 / 属性值子串匹配（全部参数绑定；敏感字段的值不参与匹配）；
 // 命中字段按 name → externalId → tags → 属性键 的优先级给出，属性键经 LATERAL 取第一个命中。
 func (r *ciRepo) Search(ctx context.Context, filter biz.SearchFilter) ([]*biz.SearchHit, error) {
 	like := dbx.LikeContains(filter.Query)
@@ -300,11 +348,16 @@ func (r *ciRepo) Search(ctx context.Context, filter biz.SearchFilter) ([]*biz.Se
 		   CASE WHEN c.name ILIKE $1 THEN 'name' WHEN c.external_id ILIKE $1 THEN 'externalId'
 		        WHEN tg.tag IS NOT NULL THEN 'tags' ELSE COALESCE(a.key, '') END AS field,
 		   CASE WHEN c.name ILIKE $1 THEN c.name WHEN c.external_id ILIKE $1 THEN c.external_id
-		        WHEN tg.tag IS NOT NULL THEN tg.tag ELSE COALESCE(a.value, '') END AS value
+		        WHEN tg.tag IS NOT NULL THEN tg.tag ELSE COALESCE(a.value, '') END AS value,
+		   NOT (c.name ILIKE $1 OR c.external_id ILIKE $1 OR tg.tag IS NOT NULL) AS attr
 		 FROM cmdb_ci c JOIN cmdb_model m ON m.code = c.model_code`+ciJoinSource+`
 		 LEFT JOIN LATERAL (SELECT t AS tag FROM unnest(c.tags) AS t WHERE t ILIKE $1 LIMIT 1) tg ON true
-		 LEFT JOIN LATERAL (SELECT key, value FROM jsonb_each_text(c.attrs) WHERE value ILIKE $1 ORDER BY key LIMIT 1) a ON true
+		 LEFT JOIN LATERAL (SELECT kv.key, kv.value FROM jsonb_each_text(c.attrs) kv WHERE kv.value ILIKE $1
+		     AND NOT EXISTS (SELECT 1 FROM cmdb_model_field sf WHERE sf.model_code = c.model_code AND sf.code = kv.key AND sf.sensitive)
+		     ORDER BY kv.key LIMIT 1) a ON true
 		 WHERE c.delete_time IS NULL
+		   -- 索引预筛（0047 的三元组表达式索引）：候选行再由下一行做精确命中判定与敏感值排除
+		   AND cmdb_ci_search_text(c.name, c.external_id, c.tags, c.attrs) ILIKE $1
 		   AND (c.name ILIKE $1 OR c.external_id ILIKE $1 OR tg.tag IS NOT NULL OR a.key IS NOT NULL)
 		   AND (cardinality($2::text[]) = 0 OR c.model_code = ANY($2::text[]))
 		   AND (cardinality($3::text[]) = 0 OR c.env = ANY($3::text[]))
@@ -316,13 +369,14 @@ func (r *ciRepo) Search(ctx context.Context, filter biz.SearchFilter) ([]*biz.Se
 	hits := make([]*biz.SearchHit, 0, filter.Limit)
 	for rows.Next() {
 		var field, value string
+		var attr bool
 		ci, err := scanCI(func(dest ...any) error {
-			return rows.Scan(append(dest, &field, &value)...)
+			return rows.Scan(append(dest, &field, &value, &attr)...)
 		})
 		if err != nil {
 			return nil, fmt.Errorf("scan cmdb search hit: %w", err)
 		}
-		hits = append(hits, &biz.SearchHit{CI: ci, Field: field, Value: value})
+		hits = append(hits, &biz.SearchHit{CI: ci, Field: field, Value: value, Attr: attr})
 	}
 	return hits, rows.Err()
 }

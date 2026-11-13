@@ -109,3 +109,48 @@ func TestLeader(t *testing.T) {
 	}
 	ld.Release()
 }
+
+// probeLocker 模拟 dbx.TryAdvisoryLock：获取成功后经 ctx 探针槽位登记连接探活。
+type probeLocker struct {
+	fakeLocker
+	connErr error
+	// takenOver 模拟连接断开后锁已被其它实例接任：本实例重新竞争失败。
+	takenOver bool
+}
+
+func (p *probeLocker) TryLock(ctx context.Context, key string) (func(), bool, error) {
+	if p.takenOver {
+		return nil, false, nil
+	}
+	release, ok, err := p.fakeLocker.TryLock(ctx, key)
+	if ok {
+		if probe := LockProbeFromContext(ctx); probe != nil {
+			probe.Check = func(context.Context) error { return p.connErr }
+		}
+	}
+	return release, ok, err
+}
+
+// 持锁连接断开：下一轮探活失败即放弃领导权并重新竞争，而非继续以主身份执行。
+func TestLeader_DropsLeadershipWhenLockConnLost(t *testing.T) {
+	t.Parallel()
+	lk := &probeLocker{}
+	ld := NewLeader("k", lk, testLogger())
+	ran := 0
+	fn := func(context.Context) (int, error) { ran++; return 1, nil }
+	for i := range 2 {
+		if _, err := ld.Run(context.Background(), fn); err != nil || ran != i+1 || lk.released != 0 {
+			t.Fatalf("healthy conn must keep leadership: err=%v ran=%d released=%d", err, ran, lk.released)
+		}
+	}
+	// 连接断开且锁已被他人接任：释放旧持有，本轮不得执行 fn。
+	lk.connErr, lk.takenOver = errors.New("conn closed"), true
+	if n, err := ld.Run(context.Background(), fn); n != 0 || err != nil || ran != 2 || lk.released != 1 {
+		t.Fatalf("lost conn must drop leadership: n=%d err=%v ran=%d released=%d", n, err, ran, lk.released)
+	}
+	// 他人释放后重新竞争成功，恢复执行。
+	lk.connErr, lk.takenOver = nil, false
+	if n, err := ld.Run(context.Background(), fn); n != 1 || err != nil || ran != 3 {
+		t.Fatalf("leader must re-acquire: n=%d err=%v ran=%d", n, err, ran)
+	}
+}

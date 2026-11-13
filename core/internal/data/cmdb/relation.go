@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
+	"strings"
 
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/cmdb"
 	basedata "github.com/lanyulei/reborn/backend/core/internal/data"
@@ -50,23 +52,77 @@ func deleteRelation(ctx context.Context, tx pgx.Tx, typeCode, srcID, dstID strin
 	return nil
 }
 
+// relationSide 受基数约束的一端：某关系类型下 col（src_id / dst_id）= id 的关系至多一条。
+type relationSide struct {
+	typeCode, col, id string
+}
+
+// lockCardinalitySides 事务内对待写关系的受约束端加事务级 advisory lock（键排序，防死锁），
+// 返回这些端供写入后复核。one_to_one 两端受约束；one_to_many 仅 dst 端。
+func lockCardinalitySides(ctx context.Context, tx pgx.Tx, rels []*biz.Relation) ([]relationSide, error) {
+	cardinality := map[string]string{}
+	var sides []relationSide
+	for _, rel := range rels {
+		c, ok := cardinality[rel.TypeCode]
+		if !ok {
+			err := tx.QueryRow(ctx, "SELECT cardinality FROM cmdb_relation_type WHERE code = $1", rel.TypeCode).Scan(&c)
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return nil, fmt.Errorf("load cmdb relation type cardinality: %w", err)
+			}
+			cardinality[rel.TypeCode] = c
+		}
+		if c == biz.CardinalityOneToOne || c == biz.CardinalityOneToMany {
+			sides = append(sides, relationSide{rel.TypeCode, "dst_id", rel.DstID})
+		}
+		if c == biz.CardinalityOneToOne {
+			sides = append(sides, relationSide{rel.TypeCode, "src_id", rel.SrcID})
+		}
+	}
+	key := func(s relationSide) string { return "cmdb_relation:" + s.typeCode + ":" + s.col + ":" + s.id }
+	slices.SortFunc(sides, func(a, b relationSide) int { return strings.Compare(key(a), key(b)) })
+	sides = slices.Compact(sides)
+	for _, s := range sides {
+		if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", dbx.LockID(key(s))); err != nil {
+			return nil, fmt.Errorf("lock cmdb relation side: %w", err)
+		}
+	}
+	return sides, nil
+}
+
+// checkCardinalitySides 写入后在同一事务（持锁）内复核：受约束端的关系数不得超过 1。
+func checkCardinalitySides(ctx context.Context, tx pgx.Tx, sides []relationSide) error {
+	for _, s := range sides {
+		var n int64
+		if err := tx.QueryRow(ctx,
+			"SELECT count(*) FROM cmdb_relation WHERE type_code = $1 AND "+s.col+" = $2", s.typeCode, s.id).Scan(&n); err != nil {
+			return fmt.Errorf("count cmdb relation side: %w", err)
+		}
+		if n > 1 {
+			return biz.ErrRelationCardinality
+		}
+	}
+	return nil
+}
+
 // Create implements biz.RelationRepo.
 func (r *relationRepo) Create(ctx context.Context, rel *biz.Relation, histories []*biz.History) error {
-	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
-		if err := insertRelation(ctx, tx, rel); err != nil {
-			return err
-		}
-		return insertHistories(ctx, tx, histories)
-	})
+	return r.CreateBatch(ctx, []*biz.Relation{rel}, histories)
 }
 
 // CreateBatch implements biz.RelationRepo（单事务）。
 func (r *relationRepo) CreateBatch(ctx context.Context, rels []*biz.Relation, histories []*biz.History) error {
 	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+		sides, err := lockCardinalitySides(ctx, tx, rels)
+		if err != nil {
+			return err
+		}
 		for _, rel := range rels {
 			if err := insertRelation(ctx, tx, rel); err != nil {
 				return err
 			}
+		}
+		if err := checkCardinalitySides(ctx, tx, sides); err != nil {
+			return err
 		}
 		return insertHistories(ctx, tx, histories)
 	})
@@ -96,10 +152,17 @@ func (r *relationRepo) Delete(ctx context.Context, typeCode, srcID, dstID string
 // Move implements biz.RelationRepo（解除 + 建立同事务）。
 func (r *relationRepo) Move(ctx context.Context, typeCode string, old, next *biz.Relation, histories []*biz.History) error {
 	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+		sides, err := lockCardinalitySides(ctx, tx, []*biz.Relation{next})
+		if err != nil {
+			return err
+		}
 		if err := deleteRelation(ctx, tx, typeCode, old.SrcID, old.DstID); err != nil {
 			return err
 		}
 		if err := insertRelation(ctx, tx, next); err != nil {
+			return err
+		}
+		if err := checkCardinalitySides(ctx, tx, sides); err != nil {
 			return err
 		}
 		return insertHistories(ctx, tx, histories)
@@ -183,8 +246,12 @@ func (r *relationRepo) CountSide(ctx context.Context, typeCode, direction, id st
 	return n, nil
 }
 
+// neighborsRowsPerNode 拓扑每层 SQL 行数上限 = maxNodes × 此系数（行 = 与当前层相连的边）；
+// 超出即报告截断，避免超级节点把整层边全部拉回。
+const neighborsRowsPerNode = 4
+
 // Neighbors implements biz.RelationRepo：逐层 BFS（每层一条 SQL，层数 ≤3），两个方向同时展开；
-// 边按关系 ID 去重，节点达上限即停止并报告截断。
+// 边按关系 ID 去重，节点达上限或单层行数达上限即停止并报告截断。
 func (r *relationRepo) Neighbors(ctx context.Context, ciID string, depth, maxNodes int32) ([]*biz.TopologyNode, []*biz.TopologyEdge, bool, error) {
 	var root biz.TopologyNode
 	if err := r.data.Pool.QueryRow(ctx,
@@ -202,6 +269,7 @@ func (r *relationRepo) Neighbors(ctx context.Context, ciID string, depth, maxNod
 	var edges []*biz.TopologyEdge
 	frontier := []string{ciID}
 	truncated := false
+	rowLimit := int(maxNodes) * neighborsRowsPerNode
 	for level := int32(1); level <= depth && len(frontier) > 0 && !truncated; level++ {
 		rows, err := r.data.Pool.Query(ctx,
 			`SELECT r.id, r.type_code, t.forward_name, r.src_id, r.dst_id, c.id, c.name, c.model_code, m.name, c.status, c.env
@@ -210,12 +278,16 @@ func (r *relationRepo) Neighbors(ctx context.Context, ciID string, depth, maxNod
 			 JOIN cmdb_ci c ON c.id = CASE WHEN r.src_id = ANY($1::uuid[]) THEN r.dst_id ELSE r.src_id END
 			 JOIN cmdb_model m ON m.code = c.model_code
 			 WHERE (r.src_id = ANY($1::uuid[]) OR r.dst_id = ANY($1::uuid[])) AND c.delete_time IS NULL
-			 ORDER BY c.name, r.id`, dbx.TextArray(frontier))
+			 ORDER BY c.name, r.id LIMIT $2`, dbx.TextArray(frontier), rowLimit+1)
 		if err != nil {
 			return nil, nil, false, fmt.Errorf("topology level %d: %w", level, err)
 		}
 		var next []string
-		for rows.Next() {
+		for n := 0; rows.Next(); n++ {
+			if n >= rowLimit {
+				truncated = true // 第 rowLimit+1 行仅用于探测截断
+				break
+			}
 			var e biz.TopologyEdge
 			var n biz.TopologyNode
 			if err := rows.Scan(&e.ID, &e.TypeCode, &e.Name, &e.SrcID, &e.DstID, &n.ID, &n.Name, &n.ModelCode, &n.ModelName, &n.Status, &n.Env); err != nil {

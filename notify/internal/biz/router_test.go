@@ -19,6 +19,13 @@ type routerTxStub struct {
 	subsErr     error
 	subsCalls   int
 	users       map[string]string // 用户ID → 邮箱（显式收件解析）
+	// failedGroups 记录 FailAggregatedEvents 调用（汇总发不出去的聚合组）。
+	failedGroups []failedGroup
+}
+
+type failedGroup struct {
+	bizID, groupKey string
+	since           time.Time
 }
 
 func newRouterTxStub() *routerTxStub {
@@ -30,6 +37,11 @@ func (s *routerTxStub) MarkEvents(_ context.Context, marks []EventMark) error {
 		s.marked[m.ID] = m.Status
 	}
 	return nil
+}
+
+func (s *routerTxStub) FailAggregatedEvents(_ context.Context, bizID, groupKey string, since time.Time) (int64, error) {
+	s.failedGroups = append(s.failedGroups, failedGroup{bizID: bizID, groupKey: groupKey, since: since})
+	return 1, nil
 }
 
 func (s *routerTxStub) DeferEvent(_ context.Context, id string, _ time.Time, next time.Time) error {

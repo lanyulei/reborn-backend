@@ -125,3 +125,52 @@ func TestIntegration_SharedBreakerOnPG(t *testing.T) {
 		t.Fatal("open breaker row must survive cleanup")
 	}
 }
+
+// TestIntegration_ReplayStoreAndDedupQuota 跨副本防重放登记（主键冲突即重放、撤销后
+// 可重登记、过期行被清理），以及「被 dedup 去重的事件不消耗每日配额」。
+func TestIntegration_ReplayStoreAndDedupQuota(t *testing.T) {
+	d := newIntegrationData(t)
+	ctx := context.Background()
+	repo := NewIngressRepo(d)
+	until := time.Now().Add(5 * time.Minute)
+	if fresh, err := repo.RegisterReplay(ctx, idProducer, "sig-a", until); err != nil || !fresh {
+		t.Fatalf("first register = %v, %v; want fresh", fresh, err)
+	}
+	// 另一个副本（同一张表）再次登记同一签名 → 重放。
+	if fresh, err := NewIngressRepo(d).RegisterReplay(ctx, idProducer, "sig-a", until); err != nil || fresh {
+		t.Fatalf("second register = %v, %v; want replay", fresh, err)
+	}
+	if err := repo.ForgetReplay(ctx, idProducer, "sig-a"); err != nil {
+		t.Fatalf("forget: %v", err)
+	}
+	if fresh, err := repo.RegisterReplay(ctx, idProducer, "sig-a", time.Now().Add(-time.Minute)); err != nil || !fresh {
+		t.Fatalf("register after forget = %v, %v; want fresh", fresh, err)
+	}
+	if n, err := NewMaintenanceRepo(d).DeleteExpiredReplay(ctx, 100); err != nil || n != 1 {
+		t.Fatalf("DeleteExpiredReplay = %d, %v; want 1", n, err)
+	}
+
+	// 每日配额 2：同一 dedup_key 重发三次只落一条、只扣一次；之后还能再收一条新事件。
+	producer := &biz.Producer{ID: idProducer, BizID: "monitor", DailyLimit: 2}
+	uc := biz.NewIngressUsecase(repo)
+	mk := func(key string) []*biz.Event {
+		return []*biz.Event{{
+			BizID: "monitor", EventType: "monitor.alert.firing", Severity: 2, Title: "q", DedupKey: key,
+			Source: biz.EventSourceAPI, Status: 1, NextPublishTime: time.Now(), CreateTime: time.Now(),
+		}}
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := uc.Accept(ctx, producer, mk("k-1")); err != nil {
+			t.Fatalf("dedup resend #%d: %v", i, err)
+		}
+	}
+	if _, err := uc.Accept(ctx, producer, mk("k-2")); err != nil {
+		t.Fatalf("second distinct event within daily limit: %v", err)
+	}
+	if _, err := uc.Accept(ctx, producer, mk("k-3")); !errors.Is(err, biz.ErrQuotaExceeded) {
+		t.Fatalf("third distinct event: %v, want ErrQuotaExceeded", err)
+	}
+	if got := count(t, d, "SELECT count(*) FROM notify_event"); got != 2 {
+		t.Fatalf("events stored = %d, want 2", got)
+	}
+}
