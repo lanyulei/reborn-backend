@@ -2,6 +2,7 @@ package testfake
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"slices"
@@ -40,6 +41,8 @@ type CmdbStore struct {
 	groups       map[string]*biz.ModelGroup
 	favorites    map[string][]string
 	schemaAudits []*biz.SchemaAudit
+	// 唯一规则（ID -> 规则）；资源的重复判定按规则即时计算，口径同 migrations 0049 的键函数。
+	uniqueRules map[string]*biz.UniqueRule
 }
 
 type cmdbModelEntry struct {
@@ -60,15 +63,16 @@ type cmdbCIEntry struct {
 // NewCmdbStore new a CmdbStore。
 func NewCmdbStore() *CmdbStore {
 	return &CmdbStore{
-		models:    make(map[string]*cmdbModelEntry),
-		fields:    make(map[string]*biz.Field),
-		relTypes:  make(map[string]*cmdbRelationTypeEntry),
-		cis:       make(map[string]*cmdbCIEntry),
-		relations: make(map[string]*biz.Relation),
-		views:     make(map[string]*biz.ModelView),
-		scopes:    make(map[string]*biz.RoleScope),
-		groups:    builtinGroups(),
-		favorites: make(map[string][]string),
+		models:      make(map[string]*cmdbModelEntry),
+		fields:      make(map[string]*biz.Field),
+		relTypes:    make(map[string]*cmdbRelationTypeEntry),
+		cis:         make(map[string]*cmdbCIEntry),
+		relations:   make(map[string]*biz.Relation),
+		views:       make(map[string]*biz.ModelView),
+		scopes:      make(map[string]*biz.RoleScope),
+		groups:      builtinGroups(),
+		favorites:   make(map[string][]string),
+		uniqueRules: make(map[string]*biz.UniqueRule),
 	}
 }
 
@@ -271,9 +275,6 @@ func (v cmdbFieldView) Update(_ context.Context, modelCode, id string, upd biz.F
 	if upd.Required != nil {
 		f.Required = *upd.Required
 	}
-	if upd.Unique != nil {
-		f.Unique = *upd.Unique
-	}
 	if upd.EnumValues != nil {
 		f.EnumValues = slices.Clone(*upd.EnumValues)
 	}
@@ -308,8 +309,197 @@ func (v cmdbFieldView) Deprecate(_ context.Context, modelCode, id string) error 
 	if !ok || f.ModelCode != modelCode {
 		return biz.ErrFieldNotFound
 	}
+	for _, r := range v.s.uniqueRules {
+		if r.ModelCode == modelCode && slices.Contains(r.FieldCodes, f.Code) {
+			return biz.ErrFieldInUse
+		}
+	}
 	f.Deprecated = true
 	return nil
+}
+
+// ---- UniqueRuleRepo ----
+
+type cmdbUniqueRuleView struct{ s *CmdbStore }
+
+// UniqueRules 返回唯一规则仓储视图。
+func (s *CmdbStore) UniqueRules() biz.UniqueRuleRepo { return cmdbUniqueRuleView{s} }
+
+// uniqueKey 资源在字段组上的键；任一字段为空（缺失 / nil / 空串 / 非标量）返回 ""（不受约束）。
+func uniqueKey(attrs map[string]any, codes []string) string {
+	var b strings.Builder
+	for _, code := range codes {
+		var text string
+		switch v := attrs[code].(type) {
+		case string:
+			text = v
+		case bool, int, int32, int64, float32, float64, json.Number:
+			text = fmt.Sprint(normalizeNumber(v))
+		}
+		if text == "" {
+			return ""
+		}
+		fmt.Fprintf(&b, "%d:%s%d:%s", len(code), code, len(text), text)
+	}
+	return b.String()
+}
+
+// conflictGroups 类型内在字段组上取值重复的资源名分组（调用方已持锁）。
+func (s *CmdbStore) conflictGroups(modelCode string, codes []string) []biz.UniqueConflict {
+	byKey := map[string][]string{}
+	for _, e := range s.cis {
+		if e.deleted || e.ci.ModelCode != modelCode {
+			continue
+		}
+		if key := uniqueKey(e.ci.Attrs, codes); key != "" {
+			byKey[key] = append(byKey[key], e.ci.Name)
+		}
+	}
+	out := make([]biz.UniqueConflict, 0, 2)
+	for _, names := range byKey {
+		if len(names) < 2 {
+			continue
+		}
+		slices.Sort(names)
+		out = append(out, biz.UniqueConflict{Count: int64(len(names)), Names: names[:min(len(names), biz.UniqueConflictSampleMax)]})
+	}
+	slices.SortFunc(out, func(a, b biz.UniqueConflict) int { return strings.Compare(a.Names[0], b.Names[0]) })
+	return out
+}
+
+// syncUniqueFlags 字段的 Unique 派生标记 = 被任一规则引用（调用方已持锁）。
+func (s *CmdbStore) syncUniqueFlags(modelCode string) {
+	for _, f := range s.fields {
+		if f.ModelCode != modelCode {
+			continue
+		}
+		f.Unique = false
+		for _, r := range s.uniqueRules {
+			if r.ModelCode == modelCode && slices.Contains(r.FieldCodes, f.Code) {
+				f.Unique = true
+				break
+			}
+		}
+	}
+}
+
+func (s *CmdbStore) ruleExists(modelCode, exceptID, name string, codes []string) bool {
+	for id, r := range s.uniqueRules {
+		if id != exceptID && r.ModelCode == modelCode && (strings.EqualFold(r.Name, name) || slices.Equal(r.FieldCodes, codes)) {
+			return true
+		}
+	}
+	return false
+}
+
+func cloneUniqueRule(r *biz.UniqueRule) *biz.UniqueRule {
+	cp := *r
+	cp.FieldCodes = slices.Clone(r.FieldCodes)
+	return &cp
+}
+
+func (v cmdbUniqueRuleView) list(match func(*biz.UniqueRule) bool) []*biz.UniqueRule {
+	v.s.mu.RLock()
+	defer v.s.mu.RUnlock()
+	items := make([]*biz.UniqueRule, 0, 4)
+	for _, r := range v.s.uniqueRules {
+		if match(r) {
+			items = append(items, cloneUniqueRule(r))
+		}
+	}
+	slices.SortFunc(items, func(a, b *biz.UniqueRule) int { return strings.Compare(a.Name, b.Name) })
+	return items
+}
+
+func (v cmdbUniqueRuleView) ListByModel(_ context.Context, modelCode string) ([]*biz.UniqueRule, error) {
+	return v.list(func(r *biz.UniqueRule) bool { return r.ModelCode == modelCode }), nil
+}
+
+func (v cmdbUniqueRuleView) ListByField(_ context.Context, modelCode, fieldCode string) ([]*biz.UniqueRule, error) {
+	return v.list(func(r *biz.UniqueRule) bool {
+		return r.ModelCode == modelCode && slices.Contains(r.FieldCodes, fieldCode)
+	}), nil
+}
+
+func (v cmdbUniqueRuleView) Get(_ context.Context, modelCode, id string) (*biz.UniqueRule, error) {
+	v.s.mu.RLock()
+	defer v.s.mu.RUnlock()
+	r, ok := v.s.uniqueRules[id]
+	if !ok || r.ModelCode != modelCode {
+		return nil, biz.ErrUniqueRuleNotFound
+	}
+	return cloneUniqueRule(r), nil
+}
+
+func (v cmdbUniqueRuleView) Create(_ context.Context, r *biz.UniqueRule, maxPerModel int) error {
+	v.s.mu.Lock()
+	defer v.s.mu.Unlock()
+	count := 0
+	for _, e := range v.s.uniqueRules {
+		if e.ModelCode == r.ModelCode {
+			count++
+		}
+	}
+	if count >= maxPerModel {
+		return biz.UniqueRuleLimitError(maxPerModel)
+	}
+	if v.s.ruleExists(r.ModelCode, "", r.Name, r.FieldCodes) {
+		return biz.ErrUniqueRuleExists
+	}
+	if groups := v.s.conflictGroups(r.ModelCode, r.FieldCodes); len(groups) > 0 {
+		return biz.UniqueRuleConflictError(int64(len(groups)))
+	}
+	v.s.uniqueRules[r.ID] = cloneUniqueRule(r)
+	v.s.syncUniqueFlags(r.ModelCode)
+	return nil
+}
+
+func (v cmdbUniqueRuleView) Update(_ context.Context, in *biz.UniqueRule, rename, rekey bool) error {
+	v.s.mu.Lock()
+	defer v.s.mu.Unlock()
+	cur, ok := v.s.uniqueRules[in.ID]
+	if !ok || cur.ModelCode != in.ModelCode {
+		return biz.ErrUniqueRuleNotFound
+	}
+	// 只写被要求的部分。
+	r := cloneUniqueRule(cur)
+	r.UpdateTime = in.UpdateTime
+	if rename {
+		r.Name = in.Name
+	}
+	if rekey {
+		r.FieldCodes = slices.Clone(in.FieldCodes)
+	}
+	if v.s.ruleExists(r.ModelCode, r.ID, r.Name, r.FieldCodes) {
+		return biz.ErrUniqueRuleExists
+	}
+	if rekey {
+		if groups := v.s.conflictGroups(r.ModelCode, r.FieldCodes); len(groups) > 0 {
+			return biz.UniqueRuleConflictError(int64(len(groups)))
+		}
+	}
+	v.s.uniqueRules[r.ID] = cloneUniqueRule(r)
+	v.s.syncUniqueFlags(r.ModelCode)
+	return nil
+}
+
+func (v cmdbUniqueRuleView) Delete(_ context.Context, modelCode, id string) error {
+	v.s.mu.Lock()
+	defer v.s.mu.Unlock()
+	r, ok := v.s.uniqueRules[id]
+	if !ok || r.ModelCode != modelCode {
+		return biz.ErrUniqueRuleNotFound
+	}
+	delete(v.s.uniqueRules, id)
+	v.s.syncUniqueFlags(modelCode)
+	return nil
+}
+
+func (v cmdbUniqueRuleView) Conflicts(_ context.Context, modelCode string, fieldCodes []string, limit int) (int64, []biz.UniqueConflict, error) {
+	v.s.mu.RLock()
+	defer v.s.mu.RUnlock()
+	groups := v.s.conflictGroups(modelCode, fieldCodes)
+	return int64(len(groups)), groups[:min(len(groups), limit)], nil
 }
 
 // ---- RelationTypeRepo ----
@@ -394,17 +584,25 @@ func (v cmdbRelationTypeView) SoftDelete(_ context.Context, code string, _ time.
 
 type cmdbCIView struct{ s *CmdbStore }
 
-// duplicate 同类型内名称或唯一键重复（排除自身）。
-func (s *CmdbStore) duplicate(ci *biz.CI) bool {
+// duplicate 同类型内名称重复或违反任一唯一规则（排除自身）；无冲突返回 nil。
+func (s *CmdbStore) duplicate(ci *biz.CI) error {
 	for id, e := range s.cis {
 		if e.deleted || id == ci.ID || e.ci.ModelCode != ci.ModelCode {
 			continue
 		}
-		if e.ci.Name == ci.Name || (ci.UniqueKey != "" && e.ci.UniqueKey == ci.UniqueKey) {
-			return true
+		if e.ci.Name == ci.Name {
+			return biz.DuplicateName()
+		}
+		for _, r := range s.uniqueRules {
+			if r.ModelCode != ci.ModelCode {
+				continue
+			}
+			if key := uniqueKey(ci.Attrs, r.FieldCodes); key != "" && key == uniqueKey(e.ci.Attrs, r.FieldCodes) {
+				return biz.DuplicateByRule(r.Name, r.FieldCodes)
+			}
 		}
 	}
-	return false
+	return nil
 }
 
 func (v cmdbCIView) Create(_ context.Context, ci *biz.CI, h *biz.History) error {
@@ -414,8 +612,8 @@ func (v cmdbCIView) Create(_ context.Context, ci *biz.CI, h *biz.History) error 
 	if !ok || e.deleted {
 		return biz.ErrModelNotFound
 	}
-	if v.s.duplicate(ci) {
-		return biz.ErrCIDuplicate
+	if err := v.s.duplicate(ci); err != nil {
+		return err
 	}
 	cp := cloneCI(ci)
 	cp.ModelName = e.model.Name
@@ -450,7 +648,8 @@ func (v cmdbCIView) List(_ context.Context, filter biz.CIFilter, page, pageSize 
 	items := make([]*biz.CI, 0, len(v.s.cis))
 	for _, e := range v.s.cis {
 		ci := e.ci
-		if e.deleted || (filter.ModelCode != "" && ci.ModelCode != filter.ModelCode) ||
+		if e.deleted != filter.Deleted || (filter.Owner != "" && ci.Owner != filter.Owner) ||
+			(filter.ModelCode != "" && ci.ModelCode != filter.ModelCode) ||
 			(len(filter.ModelCodes) > 0 && !slices.Contains(filter.ModelCodes, ci.ModelCode)) ||
 			(len(filter.Envs) > 0 && !slices.Contains(filter.Envs, ci.Env)) ||
 			(filter.Status != "" && ci.Status != filter.Status) || (filter.Env != "" && ci.Env != filter.Env) ||
@@ -461,6 +660,10 @@ func (v cmdbCIView) List(_ context.Context, filter biz.CIFilter, page, pageSize 
 			continue
 		}
 		if filter.RelType != "" && !v.s.matchRelationFilter(ci.ID, filter) {
+			continue
+		}
+		if filter.Issue != "" && (ci.Status == biz.CIStatusRetired ||
+			!v.s.issueMatch(&ci, filter.Issue, time.Now().AddDate(0, 0, -biz.QualityOutdatedDays))) {
 			continue
 		}
 		match := true
@@ -558,8 +761,8 @@ func (v cmdbCIView) Update(_ context.Context, ci *biz.CI, expectedVersion int64,
 	if e.ci.Version != expectedVersion {
 		return biz.ErrCIVersionConflict
 	}
-	if v.s.duplicate(ci) {
-		return biz.ErrCIDuplicate
+	if err := v.s.duplicate(ci); err != nil {
+		return err
 	}
 	cp := cloneCI(ci)
 	cp.ModelName = e.ci.ModelName
@@ -576,8 +779,52 @@ func (v cmdbCIView) SoftDelete(_ context.Context, id string, _ time.Time, h *biz
 		return biz.ErrCINotFound
 	}
 	e.deleted = true
+	e.ci.UpdateTime = time.Now()
 	v.s.histories = append(v.s.histories, h)
 	return nil
+}
+
+func (v cmdbCIView) GetDeleted(_ context.Context, id string) (*biz.CI, error) {
+	v.s.mu.RLock()
+	defer v.s.mu.RUnlock()
+	e, ok := v.s.cis[id]
+	if !ok || !e.deleted {
+		return nil, biz.ErrCINotFound
+	}
+	return cloneCI(&e.ci), nil
+}
+
+func (v cmdbCIView) Restore(_ context.Context, ci *biz.CI, at time.Time, h *biz.History) error {
+	v.s.mu.Lock()
+	defer v.s.mu.Unlock()
+	e, ok := v.s.cis[ci.ID]
+	if !ok || !e.deleted {
+		return biz.ErrCINotFound
+	}
+	if err := v.s.duplicate(&e.ci); err != nil {
+		return err
+	}
+	e.deleted = false
+	e.ci.Version++
+	e.ci.UpdateTime, e.ci.UpdateUser = at, ci.UpdateUser
+	v.s.histories = append(v.s.histories, h)
+	return nil
+}
+
+// Owners 返回负责人目录（内存桩：固定两名用户）。
+func (s *CmdbStore) Owners() biz.OwnerDirectory { return cmdbOwnerView{} }
+
+type cmdbOwnerView struct{}
+
+func (cmdbOwnerView) ListOwnerCandidates(_ context.Context, keyword string, limit int) ([]biz.OwnerCandidate, error) {
+	all := []biz.OwnerCandidate{{ID: "01a1b987-129c-7186-9a25-92bd159a765f", Name: "超级管理员"}, {ID: "01a1b987-129c-7186-9a25-92bd159a7660", Name: "alice"}}
+	out := make([]biz.OwnerCandidate, 0, len(all))
+	for _, c := range all {
+		if keyword == "" || strings.Contains(c.Name, keyword) {
+			out = append(out, c)
+		}
+	}
+	return out[:min(len(out), limit)], nil
 }
 
 func (v cmdbCIView) ExistsInModel(_ context.Context, modelCode, id string) (bool, error) {
@@ -1282,4 +1529,9 @@ func (s *CmdbStore) CIAttr(id, code string) any {
 		return e.ci.Attrs[code]
 	}
 	return nil
+}
+
+// ListConflicts implements biz.SyncRunRepo（内存桩不产生冲突：由数据面写入）。
+func (v cmdbSyncRunView) ListConflicts(context.Context, string, int64, int64) ([]*biz.SyncConflict, int64, error) {
+	return nil, 0, nil
 }

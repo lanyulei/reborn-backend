@@ -110,15 +110,15 @@ func newTestServices(t *testing.T) testServices {
 	// CMDB：内存仓储，模型/资源/关系/历史语义对齐 data 层。
 	cmdbData := testfake.NewCmdbStore()
 	roleUC := biz.NewRoleUsecase(store, store, authorizer)
-	cmdbModelUC := bizcmdb.NewModelUsecase(cmdbData.Models(), cmdbData.Fields(), cmdbData.RelationTypes(), cmdbData.Relations(), cmdbData.Views(), &testfake.FakeIndexer{}, cmdbData.Groups(), cmdbData.SchemaAudits())
+	cmdbModelUC := bizcmdb.NewModelUsecase(cmdbData.Models(), cmdbData.Fields(), cmdbData.RelationTypes(), cmdbData.Relations(), cmdbData.Views(), &testfake.FakeIndexer{}, cmdbData.Groups(), cmdbData.SchemaAudits(), cmdbData.UniqueRules())
 	cmdbRelationUC := bizcmdb.NewRelationUsecase(cmdbData.RelationTypes(), cmdbData.CIs(), cmdbData.Relations(), cmdbData.Fields())
-	cmdbCIUC := bizcmdb.NewCIUsecase(cmdbData.Models(), cmdbData.Fields(), cmdbData.RelationTypes(), cmdbData.CIs(), cmdbData.Relations(), cmdbData.Histories(), cmdbRelationUC)
+	cmdbCIUC := bizcmdb.NewCIUsecase(cmdbData.Models(), cmdbData.Fields(), cmdbData.RelationTypes(), cmdbData.CIs(), cmdbData.Relations(), cmdbData.Histories(), cmdbRelationUC, cmdbData.Owners())
 	cmdbScopeUC := bizcmdb.NewScopeUsecase(cmdbData.Scopes(), authzUC, roleUC, cmdbData.Models())
 	syncData := testfake.NewSyncStore()
 	cmdbSyncUC := bizcmdb.NewSyncUsecase(syncData.Sources(), syncData.Tasks(), syncData.Runs(), &testfake.FakeSealer{Enabled: true})
 	cmdbInsightUC := bizcmdb.NewInsightUsecase(cmdbData.Groups(), cmdbData.Favorites(), cmdbData.Overviews(), cmdbData.SchemaAudits(), cmdbData.Models())
 	return testServices{
-		cmdbModel:     cmdbservice.NewCmdbModelService(cmdbModelUC),
+		cmdbModel:     cmdbservice.NewCmdbModelService(cmdbModelUC, cmdbScopeUC),
 		cmdbCI:        cmdbservice.NewCmdbCIService(cmdbCIUC, cmdbScopeUC),
 		cmdbRelation:  cmdbservice.NewCmdbRelationService(cmdbRelationUC, cmdbCIUC, cmdbScopeUC),
 		cmdbScope:     cmdbservice.NewCmdbScopeService(cmdbScopeUC),

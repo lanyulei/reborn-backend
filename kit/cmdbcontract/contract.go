@@ -1,6 +1,6 @@
 // Package cmdbcontract 是 core 控制面与 cmdb 数据面（backend/cmdb 采集/对账进程）之间的
 // 数据契约：同库不同进程，不跨模块 import 业务代码，只共享"落库长什么样"——状态字面量、
-// 来源格式、jsonb 列结构、采集源配置的解码与校验、唯一键拼接规则。任何一方改契约必须改
+// 来源格式、jsonb 列结构、采集源配置的解码与校验。任何一方改契约必须改
 // 这里，由编译器把漂移点全部暴露。
 package cmdbcontract
 
@@ -10,8 +10,6 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -39,6 +37,7 @@ const (
 	ActionDelete     = "delete"
 	ActionLink       = "link"
 	ActionUnlink     = "unlink"
+	ActionRestore    = "restore"
 )
 
 // 关系端通配（cmdb_relation_type.src_model / dst_model）。
@@ -157,39 +156,9 @@ func SourceOf(sourceID string) string { return "sync:" + sourceID }
 // IsSyncSource 报告来源是否同步写入。
 func IsSyncSource(source string) bool { return strings.HasPrefix(source, "sync:") }
 
-// UniqueKey 按类型唯一字段拼接资源唯一键：唯一字段 code 升序，`code=value|...`，
-// 缺失/nil 值跳过，空串不参与唯一约束。core 写路径与数据面对账写入必须一致。
-func UniqueKey(uniqueCodes []string, attrs map[string]any) string {
-	codes := make([]string, len(uniqueCodes))
-	copy(codes, uniqueCodes)
-	sort.Strings(codes)
-	parts := make([]string, 0, len(codes))
-	for _, code := range codes {
-		v, ok := attrs[code]
-		if !ok || v == nil {
-			continue
-		}
-		parts = append(parts, code+"="+uniqueKeyText(v))
-	}
-	return strings.Join(parts, "|")
-}
-
-// uniqueKeyText 把属性值转成与 SQL `attrs ->> code` 一致的文本：core 的 SQL
-// 重算（stmtRecomputeUniqueKey）与数据面对账（stmtUniqueKey）都以 jsonb 文本
-// 为准。fmt.Sprint 会把 float64(1000000) 写成 1e+06，与 jsonb 的 1000000
-// 不一致——同一资源在 Go 与 SQL 两条路径上算出不同的唯一键。
-func uniqueKeyText(v any) string {
-	switch n := v.(type) {
-	case float64:
-		return strconv.FormatFloat(n, 'f', -1, 64)
-	case float32:
-		return strconv.FormatFloat(float64(n), 'f', -1, 32)
-	case json.Number:
-		return n.String()
-	default:
-		return fmt.Sprint(v)
-	}
-}
+// 唯一约束契约（migrations 0049）：唯一规则存 cmdb_model_unique_rule，资源的键存
+// cmdb_ci_unique，由数据库函数 cmdb_unique_key 计算、cmdb_ci 的触发器维护——两个进程都不在
+// 应用侧计算键。数据面对账的冲突预判直接调用同一个数据库函数（见 backend/cmdb reconcile）。
 
 // jsonb 列结构（json 标签即落库 schema；数据面以 DisallowUnknownFields 解码——
 // 字段增删必须两端同时发布）。

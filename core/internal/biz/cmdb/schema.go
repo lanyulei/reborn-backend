@@ -9,8 +9,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/lanyulei/reborn/backend/kit/cmdbcontract"
 )
 
 // patternCache 正则编译缓存（字段规则不可变，按模式串缓存）。
@@ -198,15 +196,4 @@ func checkStringRule(f *Field, s string) error {
 		}
 	}
 	return nil
-}
-
-// UniqueKey 按唯一字段（code 字典序）拼接唯一键；无唯一字段或值全空返回空串（不参与唯一约束）。
-func UniqueKey(fields []*Field, attrs map[string]any) string {
-	codes := make([]string, 0, 2)
-	for _, f := range fields {
-		if f.Unique && !f.Deprecated {
-			codes = append(codes, f.Code)
-		}
-	}
-	return cmdbcontract.UniqueKey(codes, attrs)
 }

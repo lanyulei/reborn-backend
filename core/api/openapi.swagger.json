@@ -388,6 +388,27 @@
             "in": "query",
             "required": false,
             "type": "string"
+          },
+          {
+            "name": "owner",
+            "description": "owner 负责人精确匹配（用户 ID 或原文），可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "deleted",
+            "description": "deleted 为真 = 查询回收站（已删除的资源）；缺省只查未删除。",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "issue",
+            "description": "issue 数据质量问题筛选（与数据质量看板同口径，只含在册资源），可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
           }
         ],
         "tags": [
@@ -811,6 +832,46 @@
         ]
       }
     },
+    "/api/v1/cmdb/ci/{id}:restore": {
+      "post": {
+        "summary": "RestoreCI 从回收站恢复已删除的资源；名称或唯一规则已被其它资源占用时 409。",
+        "operationId": "CmdbCIService_RestoreCI",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/RestoreCIResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 资源标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/RestoreCIBody"
+            }
+          }
+        ],
+        "tags": [
+          "CmdbCIService"
+        ]
+      }
+    },
     "/api/v1/cmdb/ci/{id}:transition": {
       "post": {
         "summary": "TransitionCI 资源状态流转（planning → active → maintenance ⇄ active → retired）。",
@@ -843,6 +904,105 @@
             "required": true,
             "schema": {
               "$ref": "#/definitions/TransitionCIBody"
+            }
+          }
+        ],
+        "tags": [
+          "CmdbCIService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/ci:batchDelete": {
+      "post": {
+        "summary": "BatchDeleteCIs 批量删除资源（软删，进回收站）；逐条执行、逐条返回结果。",
+        "operationId": "CmdbCIService_BatchDeleteCIs",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/BatchCIsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/BatchDeleteCIsRequest"
+            }
+          }
+        ],
+        "tags": [
+          "CmdbCIService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/ci:batchTransition": {
+      "post": {
+        "summary": "BatchTransitionCIs 批量变更资源状态；逐条执行、逐条返回结果。",
+        "operationId": "CmdbCIService_BatchTransitionCIs",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/BatchCIsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/BatchTransitionCIsRequest"
+            }
+          }
+        ],
+        "tags": [
+          "CmdbCIService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/ci:batchUpdate": {
+      "post": {
+        "summary": "BatchUpdateCIs 批量修改资源的负责人 / 环境 / 标签 / 属性；逐条执行、逐条返回结果（互不影响）。",
+        "operationId": "CmdbCIService_BatchUpdateCIs",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/BatchCIsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/BatchUpdateCIsRequest"
             }
           }
         ],
@@ -939,6 +1099,13 @@
             "in": "query",
             "required": false,
             "type": "boolean"
+          },
+          {
+            "name": "owner",
+            "description": "owner 负责人精确匹配（与列表一致），可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
           },
           {
             "name": "format",
@@ -1615,6 +1782,170 @@
         ]
       }
     },
+    "/api/v1/cmdb/model/{modelCode}/unique-rule": {
+      "post": {
+        "summary": "CreateUniqueRule 新增唯一规则：一条规则 = 一组字段取值在类型内不可重复（单字段唯一 / 多字段联合唯一）；\n存量资源在该规则下已有重复时拒绝（409，附冲突样例）。读取随 GetModel 返回。",
+        "operationId": "CmdbModelService_CreateUniqueRule",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/CreateUniqueRuleResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "modelCode",
+            "description": "model_code 所属类型。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/CreateUniqueRuleBody"
+            }
+          }
+        ],
+        "tags": [
+          "CmdbModelService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/model/{modelCode}/unique-rule/{id}": {
+      "delete": {
+        "summary": "DeleteUniqueRule 删除唯一规则（解除该组字段的唯一约束）。",
+        "operationId": "CmdbModelService_DeleteUniqueRule",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/DeleteUniqueRuleResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "modelCode",
+            "description": "model_code 所属类型。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "description": "id 规则标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "CmdbModelService"
+        ]
+      },
+      "put": {
+        "summary": "UpdateUniqueRule 更新唯一规则（名称 / 字段组）；字段组变化时重算该规则下全部资源的键，存量重复则拒绝。",
+        "operationId": "CmdbModelService_UpdateUniqueRule",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UpdateUniqueRuleResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "modelCode",
+            "description": "model_code 所属类型。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "description": "id 规则标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UpdateUniqueRuleBody"
+            }
+          }
+        ],
+        "tags": [
+          "CmdbModelService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/model/{modelCode}/unique-rule:check": {
+      "post": {
+        "summary": "CheckUniqueRule 预检：按给定字段组统计存量资源中的重复（只读，不落库）。",
+        "operationId": "CmdbModelService_CheckUniqueRule",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/CheckUniqueRuleResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "modelCode",
+            "description": "model_code 所属类型。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/CheckUniqueRuleBody"
+            }
+          }
+        ],
+        "tags": [
+          "CmdbModelService"
+        ]
+      }
+    },
     "/api/v1/cmdb/model/{modelCode}/view": {
       "get": {
         "summary": "GetModelView 查询类型的详情页布局；未配置时返回按字段与适用关系生成的缺省布局。",
@@ -1713,6 +2044,61 @@
             "format": "int32"
           }
         ],
+        "tags": [
+          "CmdbInsightService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/owner-candidate": {
+      "get": {
+        "summary": "ListOwnerCandidates 可选负责人（启用的系统用户，仅 ID 与显示名）；供资源表单与筛选使用。",
+        "operationId": "CmdbCIService_ListOwnerCandidates",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListOwnerCandidatesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "keyword",
+            "description": "keyword 用户名 / 昵称模糊匹配，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "CmdbCIService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/quality": {
+      "get": {
+        "summary": "GetQuality 数据质量：按模型统计在册（未删除、未退役）资源中缺必填项 / 无负责人 /\n无任何关联 / 同步陈旧 / 长期未更新的数量；受当前用户数据范围约束。",
+        "operationId": "CmdbInsightService_GetQuality",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetQualityResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
         "tags": [
           "CmdbInsightService"
         ]
@@ -2207,6 +2593,54 @@
             "schema": {
               "$ref": "#/definitions/UpdateSourceBody"
             }
+          }
+        ],
+        "tags": [
+          "CmdbSyncService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/sync/source/{id}/conflict": {
+      "get": {
+        "summary": "ListConflicts 分页查询采集源当前未解决的同步冲突（因名称 / 唯一规则冲突而未能写入的采集行）。",
+        "operationId": "CmdbSyncService_ListConflicts",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListConflictsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 采集源标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "page",
+            "description": "page 页码，从 1 开始。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "page_size 每页数量，1-100。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
           }
         ],
         "tags": [
@@ -5331,6 +5765,120 @@
       },
       "title": "AssistantToolCall 一次工具调用（审计视图）。"
     },
+    "BatchCIResult": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 资源标识。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 资源名称（无权或不存在时为空）。"
+        },
+        "ok": {
+          "type": "boolean",
+          "title": "ok 是否成功。"
+        },
+        "message": {
+          "type": "string",
+          "title": "message 失败原因。"
+        }
+      },
+      "title": "BatchCIResult 批量操作的单条结果。"
+    },
+    "BatchCIsResponse": {
+      "type": "object",
+      "properties": {
+        "succeeded": {
+          "type": "integer",
+          "format": "int32",
+          "title": "succeeded / failed 统计。"
+        },
+        "failed": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/BatchCIResult"
+          },
+          "title": "results 逐条结果（与请求 ids 同序）。"
+        }
+      },
+      "title": "BatchCIsResponse 批量操作响应。"
+    },
+    "BatchDeleteCIsRequest": {
+      "type": "object",
+      "properties": {
+        "ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "ids 资源标识，1-100 个且不重复。"
+        }
+      },
+      "title": "BatchDeleteCIsRequest 批量删除请求。"
+    },
+    "BatchTransitionCIsRequest": {
+      "type": "object",
+      "properties": {
+        "ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "ids 资源标识，1-100 个且不重复。"
+        },
+        "status": {
+          "type": "string",
+          "title": "status 目标状态。"
+        }
+      },
+      "title": "BatchTransitionCIsRequest 批量变更状态请求。"
+    },
+    "BatchUpdateCIsRequest": {
+      "type": "object",
+      "properties": {
+        "ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "ids 资源标识，1-100 个且不重复。"
+        },
+        "owner": {
+          "type": "string",
+          "title": "owner 负责人（用户 ID 或原文）；空串 = 清空。"
+        },
+        "env": {
+          "type": "string",
+          "title": "env 环境。"
+        },
+        "addTags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "add_tags 追加的标签。"
+        },
+        "removeTags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "remove_tags 移除的标签。"
+        },
+        "attrs": {
+          "type": "object",
+          "title": "attrs 属性增量（键为字段编码；值为 null 清空）。所选资源须属于同一类型的字段才能通过校验。"
+        }
+      },
+      "title": "BatchUpdateCIsRequest 批量编辑请求；未传字段不修改。"
+    },
     "BindUserRolesBody": {
       "type": "object",
       "properties": {
@@ -5431,6 +5979,38 @@
       "type": "object",
       "title": "ChatResponse 占位：实际响应为 SSE 事件流，本消息不会被序列化返回。"
     },
+    "CheckUniqueRuleBody": {
+      "type": "object",
+      "properties": {
+        "fieldCodes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "field_codes 字段编码，1-5 个且不重复。"
+        }
+      },
+      "title": "CheckUniqueRuleRequest 预检唯一规则请求。"
+    },
+    "CheckUniqueRuleResponse": {
+      "type": "object",
+      "properties": {
+        "conflictGroups": {
+          "type": "string",
+          "format": "int64",
+          "title": "conflict_groups 取值重复的组数（0 = 可以建立该规则）。"
+        },
+        "samples": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/UniqueConflict"
+          },
+          "title": "samples 重复组样例（至多 5 组）。"
+        }
+      },
+      "title": "CheckUniqueRuleResponse 预检唯一规则响应。"
+    },
     "CmdbCI": {
       "type": "object",
       "properties": {
@@ -5512,6 +6092,15 @@
         "sourceDeleted": {
           "type": "boolean",
           "title": "source_deleted 同步来源的采集源已删除。"
+        },
+        "ownerName": {
+          "type": "string",
+          "title": "owner_name 负责人为系统用户（owner 存用户 ID）时的显示名；否则为空，展示 owner 原文。"
+        },
+        "deleteTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "delete_time 删除时间；仅回收站列表（deleted=true）返回。"
         }
       },
       "title": "CmdbCI 资源实体。"
@@ -5545,7 +6134,7 @@
         },
         "unique": {
           "type": "boolean",
-          "title": "unique 同类型内唯一（参与唯一键）。"
+          "title": "unique 是否被任一唯一规则引用（只读派生值；唯一约束经唯一规则维护）。"
         },
         "enumValues": {
           "type": "array",
@@ -5782,7 +6371,7 @@
         },
         "targetType": {
           "type": "string",
-          "title": "target_type 对象类型：group / model / field / relation_type。"
+          "title": "target_type 对象类型：group / model / field / relation_type / unique_rule。"
         },
         "targetCode": {
           "type": "string",
@@ -5819,6 +6408,41 @@
         }
       },
       "title": "CmdbSchemaAudit 模型变更审计记录。"
+    },
+    "CmdbUniqueRule": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 规则标识。"
+        },
+        "modelCode": {
+          "type": "string",
+          "title": "model_code 所属类型。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 规则名（类型内唯一）。"
+        },
+        "fieldCodes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "field_codes 字段编码（1 个 = 单字段唯一，多个 = 联合唯一；字典序）。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 创建时间。"
+        },
+        "updateTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "update_time 更新时间。"
+        }
+      },
+      "title": "CmdbUniqueRule 唯一规则：field_codes 这组字段的取值在类型内不可重复。\n任一字段为空（缺失 / null / 空串）的资源不受该规则约束。"
     },
     "ConfirmRequest": {
       "type": "object",
@@ -5970,7 +6594,7 @@
         },
         "unique": {
           "type": "boolean",
-          "title": "unique 唯一，可选。"
+          "title": "unique 已停用：唯一约束改由唯一规则维护；传 true 返回 400（保留字段号，兼容仍传 false 的旧客户端）。"
         },
         "enumValues": {
           "type": "array",
@@ -6367,6 +6991,33 @@
       },
       "title": "CreateTemplateResponse 创建模板响应。"
     },
+    "CreateUniqueRuleBody": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "name 规则名，1-64 位。"
+        },
+        "fieldCodes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "field_codes 字段编码，1-5 个且不重复。"
+        }
+      },
+      "title": "CreateUniqueRuleRequest 新增唯一规则请求。"
+    },
+    "CreateUniqueRuleResponse": {
+      "type": "object",
+      "properties": {
+        "rule": {
+          "$ref": "#/definitions/CmdbUniqueRule",
+          "title": "rule 新增的规则。"
+        }
+      },
+      "title": "CreateUniqueRuleResponse 新增唯一规则响应。"
+    },
     "CreateUserRequest": {
       "type": "object",
       "properties": {
@@ -6471,6 +7122,10 @@
     "DeleteTemplateResponse": {
       "type": "object",
       "title": "DeleteTemplateResponse 删除模板响应。"
+    },
+    "DeleteUniqueRuleResponse": {
+      "type": "object",
+      "title": "DeleteUniqueRuleResponse 删除唯一规则响应。"
     },
     "DeleteUserResponse": {
       "type": "object",
@@ -6683,6 +7338,14 @@
             "$ref": "#/definitions/CmdbRelationType"
           },
           "title": "relation_types 适用于该类型的关系类型（任一端匹配或通配）。"
+        },
+        "uniqueRules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/CmdbUniqueRule"
+          },
+          "title": "unique_rules 唯一规则（按名称排序）。"
         }
       },
       "title": "GetModelResponse 查询资源类型详情响应。"
@@ -6813,6 +7476,25 @@
         }
       },
       "title": "GetProducerResponse 查询生产者响应。"
+    },
+    "GetQualityResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/QualityRow"
+          },
+          "title": "items 按模型（有在册资源的），问题总数降序。"
+        },
+        "outdatedDays": {
+          "type": "integer",
+          "format": "int32",
+          "title": "outdated_days \"长期未更新\"的天数阈值。"
+        }
+      },
+      "title": "GetQualityResponse 查询数据质量响应。"
     },
     "GetRolePermissionsResponse": {
       "type": "object",
@@ -7192,6 +7874,25 @@
       },
       "title": "ListChannelsResponse 分页查询渠道响应。"
     },
+    "ListConflictsResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/SyncConflict"
+          },
+          "title": "items 当前页数据（最早出现的在前）。"
+        },
+        "total": {
+          "type": "string",
+          "format": "int64",
+          "title": "total 总数。"
+        }
+      },
+      "title": "ListConflictsResponse 查询同步冲突响应。"
+    },
     "ListConversationsResponse": {
       "type": "object",
       "properties": {
@@ -7398,6 +8099,20 @@
         }
       },
       "title": "ListOperationsResponse 枚举接口操作响应。"
+    },
+    "ListOwnerCandidatesResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/OwnerCandidate"
+          },
+          "title": "items 至多 50 个，按显示名排序。"
+        }
+      },
+      "title": "ListOwnerCandidatesResponse 查询可选负责人响应。"
     },
     "ListPermissionCatalogResponse": {
       "type": "object",
@@ -8490,6 +9205,20 @@
       },
       "title": "OverviewTrendPoint 某天某动作的变更次数。"
     },
+    "OwnerCandidate": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 用户标识。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 显示名（昵称优先，否则用户名）。"
+        }
+      },
+      "title": "OwnerCandidate 可选负责人。"
+    },
     "PreviewChannel": {
       "type": "object",
       "properties": {
@@ -8615,6 +9344,50 @@
         }
       },
       "title": "ProducerSpec 生产者配置载荷：名称 / 事件白名单 / 过期时间（创建与整组\n替换更新共用）。event_whitelist 为空 = 不限事件类型（token scope 仍限定\nbiz）；条目为事件模式：精确 / 前缀通配（'monitor.alert.*'）/ 全匹配（'*'）。"
+    },
+    "QualityRow": {
+      "type": "object",
+      "properties": {
+        "modelCode": {
+          "type": "string",
+          "title": "model_code 模型编码。"
+        },
+        "modelName": {
+          "type": "string",
+          "title": "model_name 模型名称。"
+        },
+        "total": {
+          "type": "string",
+          "format": "int64",
+          "title": "total 在册资源数（未删除、未退役）。"
+        },
+        "missingRequired": {
+          "type": "string",
+          "format": "int64",
+          "title": "missing_required 缺少必填字段取值。"
+        },
+        "noOwner": {
+          "type": "string",
+          "format": "int64",
+          "title": "no_owner 未设置负责人。"
+        },
+        "orphan": {
+          "type": "string",
+          "format": "int64",
+          "title": "orphan 没有任何关联。"
+        },
+        "stale": {
+          "type": "string",
+          "format": "int64",
+          "title": "stale 同步陈旧（超过同步周期未更新）。"
+        },
+        "outdated": {
+          "type": "string",
+          "format": "int64",
+          "title": "outdated 超过 outdated_days 天未更新。"
+        }
+      },
+      "title": "QualityRow 一个模型的数据质量计数。"
     },
     "RefreshTokenRequest": {
       "type": "object",
@@ -8791,6 +9564,20 @@
     "ResetUserPasswordResponse": {
       "type": "object",
       "title": "ResetUserPasswordResponse 重置用户密码响应。"
+    },
+    "RestoreCIBody": {
+      "type": "object",
+      "title": "RestoreCIRequest 恢复资源请求。"
+    },
+    "RestoreCIResponse": {
+      "type": "object",
+      "properties": {
+        "ci": {
+          "$ref": "#/definitions/CmdbCI",
+          "title": "ci 恢复后的资源。"
+        }
+      },
+      "title": "RestoreCIResponse 恢复资源响应。"
     },
     "RobotChannelConfig": {
       "type": "object",
@@ -9226,6 +10013,42 @@
       },
       "title": "SubscriptionPref 单渠道订阅偏好值：恰设其一——地址类渠道（email）用\nsubscribed（true=订阅，收件地址取用户资料）；机器人渠道（钉钉/企微/飞书）\n可用 target 指定目标群（'$group:ops' 约定），或 subscribed=true 走默认绑定。"
     },
+    "SyncConflict": {
+      "type": "object",
+      "properties": {
+        "modelCode": {
+          "type": "string",
+          "title": "model_code 资源类型编码。"
+        },
+        "modelName": {
+          "type": "string",
+          "title": "model_name 资源类型名。"
+        },
+        "externalId": {
+          "type": "string",
+          "title": "external_id 外部系统标识。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 采集到的资源名称。"
+        },
+        "reason": {
+          "type": "string",
+          "title": "reason 未能写入的原因。"
+        },
+        "firstSeen": {
+          "type": "string",
+          "format": "date-time",
+          "title": "first_seen 首次出现时间。"
+        },
+        "lastSeen": {
+          "type": "string",
+          "format": "date-time",
+          "title": "last_seen 最近一次对账时间。"
+        }
+      },
+      "title": "SyncConflict 一条未解决的同步冲突。"
+    },
     "SyncRun": {
       "type": "object",
       "properties": {
@@ -9524,6 +10347,24 @@
       },
       "title": "TriggerSyncResponse 触发同步响应。"
     },
+    "UniqueConflict": {
+      "type": "object",
+      "properties": {
+        "count": {
+          "type": "string",
+          "format": "int64",
+          "title": "count 该组资源数。"
+        },
+        "names": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "names 资源名称样例（至多 5 个；调用者数据范围受限时为空）。"
+        }
+      },
+      "title": "UniqueConflict 一组在某字段组上取值相同的资源。"
+    },
     "UnlinkCIBody": {
       "type": "object",
       "properties": {
@@ -9652,7 +10493,7 @@
         },
         "unique": {
           "type": "boolean",
-          "title": "unique 唯一。"
+          "title": "unique 已停用：唯一约束改由唯一规则维护；与当前派生值不同时返回 400。"
         },
         "enumValues": {
           "type": "array",
@@ -10047,6 +10888,33 @@
         }
       },
       "title": "UpdateTemplateResponse 更新模板响应：返回更新后的模板（version 已 +1）。"
+    },
+    "UpdateUniqueRuleBody": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "name 规则名。"
+        },
+        "fieldCodes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "field_codes 字段编码整组替换（非空时生效）；与当前相同视为不变。变更时须 1-5 个且不重复\n（业务层校验；此处上限放宽，以便存量迁移来的超限规则回传原字段组改名）。"
+        }
+      },
+      "title": "UpdateUniqueRuleRequest 更新唯一规则请求；未传字段不更新。"
+    },
+    "UpdateUniqueRuleResponse": {
+      "type": "object",
+      "properties": {
+        "rule": {
+          "$ref": "#/definitions/CmdbUniqueRule",
+          "title": "rule 更新后的规则。"
+        }
+      },
+      "title": "UpdateUniqueRuleResponse 更新唯一规则响应。"
     },
     "UpdateUserBody": {
       "type": "object",

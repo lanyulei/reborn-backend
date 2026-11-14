@@ -238,6 +238,10 @@ func (uc *WorkerUsecase) collectAndReconcile(ctx context.Context, task *Task, sr
 		return Counts{}, nil, err
 	}
 	counts := Counts{Discovered: discovered}
+	// 对账前刷新暂存表统计（见 StagingRepo.RefreshStats）；失败不影响正确性，只记日志。
+	if err := uc.staging.RefreshStats(ctx); err != nil {
+		log.WarnContext(ctx, "refresh staging stats failed: reconcile may be slow on large batches", "error", err)
+	}
 	// 空集保护：采集成功但一条资源都没有时，不做消失判定（避免凭据/权限变更导致整批退役）。
 	skipDisappear := discovered == 0
 	if skipDisappear {
@@ -278,18 +282,15 @@ func (uc *WorkerUsecase) collectAndReconcile(ctx context.Context, task *Task, sr
 					"model", model, "model_enabled", len(fields) > 0)
 			}
 		}
-		var manual, unique []string
+		var manual []string
 		for _, f := range fields {
 			if f.Owner == cmdbcontract.FieldOwnerManual {
 				manual = append(manual, f.Code)
 			}
-			if f.Unique {
-				unique = append(unique, f.Code)
-			}
 		}
 		c, errs, err := uc.reconcile.ReconcileModel(ctx, ReconcileParams{
 			RunID: task.RunID, ModelCode: model, Source: source, Env: src.Env, Grace: grace,
-			ManualKeys: manual, UniqueCodes: unique, SkipDisappear: skip,
+			ManualKeys: manual, SkipDisappear: skip,
 		})
 		if err != nil {
 			return counts, samples, fmt.Errorf("reconcile %s: %w", model, err)

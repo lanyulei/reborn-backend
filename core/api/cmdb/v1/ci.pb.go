@@ -466,6 +466,8 @@ type ExportCIsRequest struct {
 	RelTargetId *string `protobuf:"bytes,9,opt,name=rel_target_id,json=relTargetId,proto3,oneof" json:"rel_target_id,omitempty"`
 	// rel_none 该方向上无任何关联，可选。
 	RelNone *bool `protobuf:"varint,10,opt,name=rel_none,json=relNone,proto3,oneof" json:"rel_none,omitempty"`
+	// owner 负责人精确匹配（与列表一致），可选。
+	Owner *string `protobuf:"bytes,11,opt,name=owner,proto3,oneof" json:"owner,omitempty"`
 	// format 导出格式：csv（缺省）/ json。
 	Format        *string `protobuf:"bytes,20,opt,name=format,proto3,oneof" json:"format,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -572,6 +574,13 @@ func (x *ExportCIsRequest) GetRelNone() bool {
 	return false
 }
 
+func (x *ExportCIsRequest) GetOwner() string {
+	if x != nil && x.Owner != nil {
+		return *x.Owner
+	}
+	return ""
+}
+
 func (x *ExportCIsRequest) GetFormat() string {
 	if x != nil && x.Format != nil {
 		return *x.Format
@@ -618,6 +627,10 @@ type CmdbCI struct {
 	SourceName string `protobuf:"bytes,17,opt,name=source_name,json=sourceName,proto3" json:"source_name,omitempty"`
 	// source_deleted 同步来源的采集源已删除。
 	SourceDeleted bool `protobuf:"varint,18,opt,name=source_deleted,json=sourceDeleted,proto3" json:"source_deleted,omitempty"`
+	// owner_name 负责人为系统用户（owner 存用户 ID）时的显示名；否则为空，展示 owner 原文。
+	OwnerName string `protobuf:"bytes,19,opt,name=owner_name,json=ownerName,proto3" json:"owner_name,omitempty"`
+	// delete_time 删除时间；仅回收站列表（deleted=true）返回。
+	DeleteTime    *timestamppb.Timestamp `protobuf:"bytes,20,opt,name=delete_time,json=deleteTime,proto3" json:"delete_time,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -776,6 +789,20 @@ func (x *CmdbCI) GetSourceDeleted() bool {
 		return x.SourceDeleted
 	}
 	return false
+}
+
+func (x *CmdbCI) GetOwnerName() string {
+	if x != nil {
+		return x.OwnerName
+	}
+	return ""
+}
+
+func (x *CmdbCI) GetDeleteTime() *timestamppb.Timestamp {
+	if x != nil {
+		return x.DeleteTime
+	}
+	return nil
 }
 
 // RelationSummary 资源在某个关系类型某个方向上的关联统计（详情页面板头）。
@@ -1178,7 +1205,13 @@ type ListCIsRequest struct {
 	// rel_none 为真 = 筛选该关系方向上没有任何关联的资源。
 	RelNone *bool `protobuf:"varint,12,opt,name=rel_none,json=relNone,proto3,oneof" json:"rel_none,omitempty"`
 	// cursor 游标分页：上一页返回的 next_cursor；提供时忽略 page。
-	Cursor        *string `protobuf:"bytes,13,opt,name=cursor,proto3,oneof" json:"cursor,omitempty"`
+	Cursor *string `protobuf:"bytes,13,opt,name=cursor,proto3,oneof" json:"cursor,omitempty"`
+	// owner 负责人精确匹配（用户 ID 或原文），可选。
+	Owner *string `protobuf:"bytes,14,opt,name=owner,proto3,oneof" json:"owner,omitempty"`
+	// deleted 为真 = 查询回收站（已删除的资源）；缺省只查未删除。
+	Deleted *bool `protobuf:"varint,15,opt,name=deleted,proto3,oneof" json:"deleted,omitempty"`
+	// issue 数据质量问题筛选（与数据质量看板同口径，只含在册资源），可选。
+	Issue         *string `protobuf:"bytes,16,opt,name=issue,proto3,oneof" json:"issue,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1300,6 +1333,27 @@ func (x *ListCIsRequest) GetRelNone() bool {
 func (x *ListCIsRequest) GetCursor() string {
 	if x != nil && x.Cursor != nil {
 		return *x.Cursor
+	}
+	return ""
+}
+
+func (x *ListCIsRequest) GetOwner() string {
+	if x != nil && x.Owner != nil {
+		return *x.Owner
+	}
+	return ""
+}
+
+func (x *ListCIsRequest) GetDeleted() bool {
+	if x != nil && x.Deleted != nil {
+		return *x.Deleted
+	}
+	return false
+}
+
+func (x *ListCIsRequest) GetIssue() string {
+	if x != nil && x.Issue != nil {
+		return *x.Issue
 	}
 	return ""
 }
@@ -2018,6 +2072,573 @@ func (*DeleteCIResponse) Descriptor() ([]byte, []int) {
 	return file_cmdb_v1_ci_proto_rawDescGZIP(), []int{23}
 }
 
+// RestoreCIRequest 恢复资源请求。
+type RestoreCIRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// id 资源标识。
+	Id            string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RestoreCIRequest) Reset() {
+	*x = RestoreCIRequest{}
+	mi := &file_cmdb_v1_ci_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RestoreCIRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RestoreCIRequest) ProtoMessage() {}
+
+func (x *RestoreCIRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cmdb_v1_ci_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RestoreCIRequest.ProtoReflect.Descriptor instead.
+func (*RestoreCIRequest) Descriptor() ([]byte, []int) {
+	return file_cmdb_v1_ci_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *RestoreCIRequest) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+// RestoreCIResponse 恢复资源响应。
+type RestoreCIResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// ci 恢复后的资源。
+	Ci            *CmdbCI `protobuf:"bytes,1,opt,name=ci,proto3" json:"ci,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RestoreCIResponse) Reset() {
+	*x = RestoreCIResponse{}
+	mi := &file_cmdb_v1_ci_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RestoreCIResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RestoreCIResponse) ProtoMessage() {}
+
+func (x *RestoreCIResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_cmdb_v1_ci_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RestoreCIResponse.ProtoReflect.Descriptor instead.
+func (*RestoreCIResponse) Descriptor() ([]byte, []int) {
+	return file_cmdb_v1_ci_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *RestoreCIResponse) GetCi() *CmdbCI {
+	if x != nil {
+		return x.Ci
+	}
+	return nil
+}
+
+// BatchUpdateCIsRequest 批量编辑请求；未传字段不修改。
+type BatchUpdateCIsRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// ids 资源标识，1-100 个且不重复。
+	Ids []string `protobuf:"bytes,1,rep,name=ids,proto3" json:"ids,omitempty"`
+	// owner 负责人（用户 ID 或原文）；空串 = 清空。
+	Owner *string `protobuf:"bytes,2,opt,name=owner,proto3,oneof" json:"owner,omitempty"`
+	// env 环境。
+	Env *string `protobuf:"bytes,3,opt,name=env,proto3,oneof" json:"env,omitempty"`
+	// add_tags 追加的标签。
+	AddTags []string `protobuf:"bytes,4,rep,name=add_tags,json=addTags,proto3" json:"add_tags,omitempty"`
+	// remove_tags 移除的标签。
+	RemoveTags []string `protobuf:"bytes,5,rep,name=remove_tags,json=removeTags,proto3" json:"remove_tags,omitempty"`
+	// attrs 属性增量（键为字段编码；值为 null 清空）。所选资源须属于同一类型的字段才能通过校验。
+	Attrs         *structpb.Struct `protobuf:"bytes,6,opt,name=attrs,proto3" json:"attrs,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BatchUpdateCIsRequest) Reset() {
+	*x = BatchUpdateCIsRequest{}
+	mi := &file_cmdb_v1_ci_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BatchUpdateCIsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BatchUpdateCIsRequest) ProtoMessage() {}
+
+func (x *BatchUpdateCIsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cmdb_v1_ci_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BatchUpdateCIsRequest.ProtoReflect.Descriptor instead.
+func (*BatchUpdateCIsRequest) Descriptor() ([]byte, []int) {
+	return file_cmdb_v1_ci_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *BatchUpdateCIsRequest) GetIds() []string {
+	if x != nil {
+		return x.Ids
+	}
+	return nil
+}
+
+func (x *BatchUpdateCIsRequest) GetOwner() string {
+	if x != nil && x.Owner != nil {
+		return *x.Owner
+	}
+	return ""
+}
+
+func (x *BatchUpdateCIsRequest) GetEnv() string {
+	if x != nil && x.Env != nil {
+		return *x.Env
+	}
+	return ""
+}
+
+func (x *BatchUpdateCIsRequest) GetAddTags() []string {
+	if x != nil {
+		return x.AddTags
+	}
+	return nil
+}
+
+func (x *BatchUpdateCIsRequest) GetRemoveTags() []string {
+	if x != nil {
+		return x.RemoveTags
+	}
+	return nil
+}
+
+func (x *BatchUpdateCIsRequest) GetAttrs() *structpb.Struct {
+	if x != nil {
+		return x.Attrs
+	}
+	return nil
+}
+
+// BatchTransitionCIsRequest 批量变更状态请求。
+type BatchTransitionCIsRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// ids 资源标识，1-100 个且不重复。
+	Ids []string `protobuf:"bytes,1,rep,name=ids,proto3" json:"ids,omitempty"`
+	// status 目标状态。
+	Status        string `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BatchTransitionCIsRequest) Reset() {
+	*x = BatchTransitionCIsRequest{}
+	mi := &file_cmdb_v1_ci_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BatchTransitionCIsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BatchTransitionCIsRequest) ProtoMessage() {}
+
+func (x *BatchTransitionCIsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cmdb_v1_ci_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BatchTransitionCIsRequest.ProtoReflect.Descriptor instead.
+func (*BatchTransitionCIsRequest) Descriptor() ([]byte, []int) {
+	return file_cmdb_v1_ci_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *BatchTransitionCIsRequest) GetIds() []string {
+	if x != nil {
+		return x.Ids
+	}
+	return nil
+}
+
+func (x *BatchTransitionCIsRequest) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+// BatchDeleteCIsRequest 批量删除请求。
+type BatchDeleteCIsRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// ids 资源标识，1-100 个且不重复。
+	Ids           []string `protobuf:"bytes,1,rep,name=ids,proto3" json:"ids,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BatchDeleteCIsRequest) Reset() {
+	*x = BatchDeleteCIsRequest{}
+	mi := &file_cmdb_v1_ci_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BatchDeleteCIsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BatchDeleteCIsRequest) ProtoMessage() {}
+
+func (x *BatchDeleteCIsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cmdb_v1_ci_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BatchDeleteCIsRequest.ProtoReflect.Descriptor instead.
+func (*BatchDeleteCIsRequest) Descriptor() ([]byte, []int) {
+	return file_cmdb_v1_ci_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *BatchDeleteCIsRequest) GetIds() []string {
+	if x != nil {
+		return x.Ids
+	}
+	return nil
+}
+
+// BatchCIResult 批量操作的单条结果。
+type BatchCIResult struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// id 资源标识。
+	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	// name 资源名称（无权或不存在时为空）。
+	Name string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	// ok 是否成功。
+	Ok bool `protobuf:"varint,3,opt,name=ok,proto3" json:"ok,omitempty"`
+	// message 失败原因。
+	Message       string `protobuf:"bytes,4,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BatchCIResult) Reset() {
+	*x = BatchCIResult{}
+	mi := &file_cmdb_v1_ci_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BatchCIResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BatchCIResult) ProtoMessage() {}
+
+func (x *BatchCIResult) ProtoReflect() protoreflect.Message {
+	mi := &file_cmdb_v1_ci_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BatchCIResult.ProtoReflect.Descriptor instead.
+func (*BatchCIResult) Descriptor() ([]byte, []int) {
+	return file_cmdb_v1_ci_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *BatchCIResult) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *BatchCIResult) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *BatchCIResult) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
+func (x *BatchCIResult) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+// BatchCIsResponse 批量操作响应。
+type BatchCIsResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// succeeded / failed 统计。
+	Succeeded int32 `protobuf:"varint,1,opt,name=succeeded,proto3" json:"succeeded,omitempty"`
+	Failed    int32 `protobuf:"varint,2,opt,name=failed,proto3" json:"failed,omitempty"`
+	// results 逐条结果（与请求 ids 同序）。
+	Results       []*BatchCIResult `protobuf:"bytes,3,rep,name=results,proto3" json:"results,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BatchCIsResponse) Reset() {
+	*x = BatchCIsResponse{}
+	mi := &file_cmdb_v1_ci_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BatchCIsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BatchCIsResponse) ProtoMessage() {}
+
+func (x *BatchCIsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_cmdb_v1_ci_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BatchCIsResponse.ProtoReflect.Descriptor instead.
+func (*BatchCIsResponse) Descriptor() ([]byte, []int) {
+	return file_cmdb_v1_ci_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *BatchCIsResponse) GetSucceeded() int32 {
+	if x != nil {
+		return x.Succeeded
+	}
+	return 0
+}
+
+func (x *BatchCIsResponse) GetFailed() int32 {
+	if x != nil {
+		return x.Failed
+	}
+	return 0
+}
+
+func (x *BatchCIsResponse) GetResults() []*BatchCIResult {
+	if x != nil {
+		return x.Results
+	}
+	return nil
+}
+
+// ListOwnerCandidatesRequest 查询可选负责人请求。
+type ListOwnerCandidatesRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// keyword 用户名 / 昵称模糊匹配，可选。
+	Keyword       *string `protobuf:"bytes,1,opt,name=keyword,proto3,oneof" json:"keyword,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListOwnerCandidatesRequest) Reset() {
+	*x = ListOwnerCandidatesRequest{}
+	mi := &file_cmdb_v1_ci_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListOwnerCandidatesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListOwnerCandidatesRequest) ProtoMessage() {}
+
+func (x *ListOwnerCandidatesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cmdb_v1_ci_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListOwnerCandidatesRequest.ProtoReflect.Descriptor instead.
+func (*ListOwnerCandidatesRequest) Descriptor() ([]byte, []int) {
+	return file_cmdb_v1_ci_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *ListOwnerCandidatesRequest) GetKeyword() string {
+	if x != nil && x.Keyword != nil {
+		return *x.Keyword
+	}
+	return ""
+}
+
+// OwnerCandidate 可选负责人。
+type OwnerCandidate struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// id 用户标识。
+	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	// name 显示名（昵称优先，否则用户名）。
+	Name          string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OwnerCandidate) Reset() {
+	*x = OwnerCandidate{}
+	mi := &file_cmdb_v1_ci_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OwnerCandidate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OwnerCandidate) ProtoMessage() {}
+
+func (x *OwnerCandidate) ProtoReflect() protoreflect.Message {
+	mi := &file_cmdb_v1_ci_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OwnerCandidate.ProtoReflect.Descriptor instead.
+func (*OwnerCandidate) Descriptor() ([]byte, []int) {
+	return file_cmdb_v1_ci_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *OwnerCandidate) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *OwnerCandidate) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+// ListOwnerCandidatesResponse 查询可选负责人响应。
+type ListOwnerCandidatesResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// items 至多 50 个，按显示名排序。
+	Items         []*OwnerCandidate `protobuf:"bytes,1,rep,name=items,proto3" json:"items,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListOwnerCandidatesResponse) Reset() {
+	*x = ListOwnerCandidatesResponse{}
+	mi := &file_cmdb_v1_ci_proto_msgTypes[33]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListOwnerCandidatesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListOwnerCandidatesResponse) ProtoMessage() {}
+
+func (x *ListOwnerCandidatesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_cmdb_v1_ci_proto_msgTypes[33]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListOwnerCandidatesResponse.ProtoReflect.Descriptor instead.
+func (*ListOwnerCandidatesResponse) Descriptor() ([]byte, []int) {
+	return file_cmdb_v1_ci_proto_rawDescGZIP(), []int{33}
+}
+
+func (x *ListOwnerCandidatesResponse) GetItems() []*OwnerCandidate {
+	if x != nil {
+		return x.Items
+	}
+	return nil
+}
+
 // ListCIHistoryRequest 查询变更历史请求。
 type ListCIHistoryRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -2033,7 +2654,7 @@ type ListCIHistoryRequest struct {
 
 func (x *ListCIHistoryRequest) Reset() {
 	*x = ListCIHistoryRequest{}
-	mi := &file_cmdb_v1_ci_proto_msgTypes[24]
+	mi := &file_cmdb_v1_ci_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2045,7 +2666,7 @@ func (x *ListCIHistoryRequest) String() string {
 func (*ListCIHistoryRequest) ProtoMessage() {}
 
 func (x *ListCIHistoryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cmdb_v1_ci_proto_msgTypes[24]
+	mi := &file_cmdb_v1_ci_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2058,7 +2679,7 @@ func (x *ListCIHistoryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListCIHistoryRequest.ProtoReflect.Descriptor instead.
 func (*ListCIHistoryRequest) Descriptor() ([]byte, []int) {
-	return file_cmdb_v1_ci_proto_rawDescGZIP(), []int{24}
+	return file_cmdb_v1_ci_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *ListCIHistoryRequest) GetId() string {
@@ -2095,7 +2716,7 @@ type ListCIHistoryResponse struct {
 
 func (x *ListCIHistoryResponse) Reset() {
 	*x = ListCIHistoryResponse{}
-	mi := &file_cmdb_v1_ci_proto_msgTypes[25]
+	mi := &file_cmdb_v1_ci_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2107,7 +2728,7 @@ func (x *ListCIHistoryResponse) String() string {
 func (*ListCIHistoryResponse) ProtoMessage() {}
 
 func (x *ListCIHistoryResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cmdb_v1_ci_proto_msgTypes[25]
+	mi := &file_cmdb_v1_ci_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2120,7 +2741,7 @@ func (x *ListCIHistoryResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListCIHistoryResponse.ProtoReflect.Descriptor instead.
 func (*ListCIHistoryResponse) Descriptor() ([]byte, []int) {
-	return file_cmdb_v1_ci_proto_rawDescGZIP(), []int{25}
+	return file_cmdb_v1_ci_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *ListCIHistoryResponse) GetItems() []*CmdbHistory {
@@ -2150,7 +2771,7 @@ type SearchCIsRequest struct {
 
 func (x *SearchCIsRequest) Reset() {
 	*x = SearchCIsRequest{}
-	mi := &file_cmdb_v1_ci_proto_msgTypes[26]
+	mi := &file_cmdb_v1_ci_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2162,7 +2783,7 @@ func (x *SearchCIsRequest) String() string {
 func (*SearchCIsRequest) ProtoMessage() {}
 
 func (x *SearchCIsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cmdb_v1_ci_proto_msgTypes[26]
+	mi := &file_cmdb_v1_ci_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2175,7 +2796,7 @@ func (x *SearchCIsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SearchCIsRequest.ProtoReflect.Descriptor instead.
 func (*SearchCIsRequest) Descriptor() ([]byte, []int) {
-	return file_cmdb_v1_ci_proto_rawDescGZIP(), []int{26}
+	return file_cmdb_v1_ci_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *SearchCIsRequest) GetQ() string {
@@ -2207,7 +2828,7 @@ type SearchHit struct {
 
 func (x *SearchHit) Reset() {
 	*x = SearchHit{}
-	mi := &file_cmdb_v1_ci_proto_msgTypes[27]
+	mi := &file_cmdb_v1_ci_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2219,7 +2840,7 @@ func (x *SearchHit) String() string {
 func (*SearchHit) ProtoMessage() {}
 
 func (x *SearchHit) ProtoReflect() protoreflect.Message {
-	mi := &file_cmdb_v1_ci_proto_msgTypes[27]
+	mi := &file_cmdb_v1_ci_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2232,7 +2853,7 @@ func (x *SearchHit) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SearchHit.ProtoReflect.Descriptor instead.
 func (*SearchHit) Descriptor() ([]byte, []int) {
-	return file_cmdb_v1_ci_proto_rawDescGZIP(), []int{27}
+	return file_cmdb_v1_ci_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *SearchHit) GetCi() *CmdbCI {
@@ -2267,7 +2888,7 @@ type SearchCIsResponse struct {
 
 func (x *SearchCIsResponse) Reset() {
 	*x = SearchCIsResponse{}
-	mi := &file_cmdb_v1_ci_proto_msgTypes[28]
+	mi := &file_cmdb_v1_ci_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2279,7 +2900,7 @@ func (x *SearchCIsResponse) String() string {
 func (*SearchCIsResponse) ProtoMessage() {}
 
 func (x *SearchCIsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cmdb_v1_ci_proto_msgTypes[28]
+	mi := &file_cmdb_v1_ci_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2292,7 +2913,7 @@ func (x *SearchCIsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SearchCIsResponse.ProtoReflect.Descriptor instead.
 func (*SearchCIsResponse) Descriptor() ([]byte, []int) {
-	return file_cmdb_v1_ci_proto_rawDescGZIP(), []int{28}
+	return file_cmdb_v1_ci_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *SearchCIsResponse) GetItems() []*SearchHit {
@@ -2348,7 +2969,7 @@ const file_cmdb_v1_ci_proto_rawDesc = "" +
 	"\aupdated\x18\x03 \x01(\x05R\aupdated\x12\x18\n" +
 	"\askipped\x18\x04 \x01(\x05R\askipped\x12\x16\n" +
 	"\x06failed\x18\x05 \x01(\x05R\x06failed\x122\n" +
-	"\aresults\x18\x06 \x03(\v2\x18.cmdb.v1.ImportRowResultR\aresults\"\x80\x05\n" +
+	"\aresults\x18\x06 \x03(\v2\x18.cmdb.v1.ImportRowResultR\aresults\"\xae\x05\n" +
 	"\x10ExportCIsRequest\x12(\n" +
 	"\n" +
 	"model_code\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@R\tmodelCode\x12'\n" +
@@ -2361,8 +2982,9 @@ const file_cmdb_v1_ci_proto_rawDesc = "" +
 	"\rrel_direction\x18\b \x01(\tB\x19\xbaH\x16r\x14R\boutgoingR\bincomingH\x05R\frelDirection\x88\x01\x01\x121\n" +
 	"\rrel_target_id\x18\t \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01H\x06R\vrelTargetId\x88\x01\x01\x12\x1e\n" +
 	"\brel_none\x18\n" +
-	" \x01(\bH\aR\arelNone\x88\x01\x01\x12-\n" +
-	"\x06format\x18\x14 \x01(\tB\x10\xbaH\rr\vR\x03csvR\x04jsonH\bR\x06format\x88\x01\x01B\n" +
+	" \x01(\bH\aR\arelNone\x88\x01\x01\x12\"\n" +
+	"\x05owner\x18\v \x01(\tB\a\xbaH\x04r\x02\x18@H\bR\x05owner\x88\x01\x01\x12-\n" +
+	"\x06format\x18\x14 \x01(\tB\x10\xbaH\rr\vR\x03csvR\x04jsonH\tR\x06format\x88\x01\x01B\n" +
 	"\n" +
 	"\b_keywordB\t\n" +
 	"\a_statusB\x06\n" +
@@ -2371,8 +2993,9 @@ const file_cmdb_v1_ci_proto_rawDesc = "" +
 	"\t_rel_typeB\x10\n" +
 	"\x0e_rel_directionB\x10\n" +
 	"\x0e_rel_target_idB\v\n" +
-	"\t_rel_noneB\t\n" +
-	"\a_format\"\xda\x04\n" +
+	"\t_rel_noneB\b\n" +
+	"\x06_ownerB\t\n" +
+	"\a_format\"\xb6\x05\n" +
 	"\x06CmdbCI\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
@@ -2398,7 +3021,11 @@ const file_cmdb_v1_ci_proto_rawDesc = "" +
 	"updateTime\x12\x1f\n" +
 	"\vsource_name\x18\x11 \x01(\tR\n" +
 	"sourceName\x12%\n" +
-	"\x0esource_deleted\x18\x12 \x01(\bR\rsourceDeleted\"\xa1\x01\n" +
+	"\x0esource_deleted\x18\x12 \x01(\bR\rsourceDeleted\x12\x1d\n" +
+	"\n" +
+	"owner_name\x18\x13 \x01(\tR\townerName\x12;\n" +
+	"\vdelete_time\x18\x14 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"deleteTime\"\xa1\x01\n" +
 	"\x0fRelationSummary\x12#\n" +
 	"\rrelation_type\x18\x01 \x01(\tR\frelationType\x12\x1c\n" +
 	"\tdirection\x18\x02 \x01(\tR\tdirection\x12\x12\n" +
@@ -2419,14 +3046,14 @@ const file_cmdb_v1_ci_proto_rawDesc = "" +
 	"\aci_name\x18\t \x01(\tR\x06ciName\x12\x1d\n" +
 	"\n" +
 	"model_code\x18\n" +
-	" \x01(\tR\tmodelCode\"\xd8\x03\n" +
+	" \x01(\tR\tmodelCode\"\xe1\x03\n" +
 	"\x12ListHistoryRequest\x12\x1b\n" +
 	"\x04page\x18\x01 \x01(\x03B\a\xbaH\x04\"\x02(\x01R\x04page\x12&\n" +
 	"\tpage_size\x18\x02 \x01(\x05B\t\xbaH\x06\x1a\x04\x18d(\x01R\bpageSize\x12+\n" +
 	"\n" +
-	"model_code\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x18@H\x00R\tmodelCode\x88\x01\x01\x12T\n" +
-	"\x06action\x18\x04 \x01(\tB7\xbaH4r2R\x06createR\x06updateR\n" +
-	"transitionR\x06deleteR\x04linkR\x06unlinkH\x01R\x06action\x88\x01\x01\x12(\n" +
+	"model_code\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x18@H\x00R\tmodelCode\x88\x01\x01\x12]\n" +
+	"\x06action\x18\x04 \x01(\tB@\xbaH=r;R\x06createR\x06updateR\n" +
+	"transitionR\x06deleteR\arestoreR\x04linkR\x06unlinkH\x01R\x06action\x88\x01\x01\x12(\n" +
 	"\boperator\x18\x05 \x01(\tB\a\xbaH\x04r\x02\x18@H\x02R\boperator\x88\x01\x01\x12'\n" +
 	"\akeyword\x18\x06 \x01(\tB\b\xbaH\x05r\x03\x18\x80\x01H\x03R\akeyword\x88\x01\x01\x123\n" +
 	"\x04from\x18\a \x01(\v2\x1a.google.protobuf.TimestampH\x04R\x04from\x88\x01\x01\x12/\n" +
@@ -2440,7 +3067,7 @@ const file_cmdb_v1_ci_proto_rawDesc = "" +
 	"\x03_to\"W\n" +
 	"\x13ListHistoryResponse\x12*\n" +
 	"\x05items\x18\x01 \x03(\v2\x14.cmdb.v1.CmdbHistoryR\x05items\x12\x14\n" +
-	"\x05total\x18\x02 \x01(\x03R\x05total\"\xcd\x05\n" +
+	"\x05total\x18\x02 \x01(\x03R\x05total\"\x87\a\n" +
 	"\x0eListCIsRequest\x12\x1b\n" +
 	"\x04page\x18\x01 \x01(\x03B\a\xbaH\x04\"\x02(\x01R\x04page\x12&\n" +
 	"\tpage_size\x18\x02 \x01(\x05B\t\xbaH\x06\x1a\x04\x18d(\x01R\bpageSize\x12+\n" +
@@ -2456,7 +3083,11 @@ const file_cmdb_v1_ci_proto_rawDesc = "" +
 	" \x01(\tB\x19\xbaH\x16r\x14R\boutgoingR\bincomingH\x06R\frelDirection\x88\x01\x01\x121\n" +
 	"\rrel_target_id\x18\v \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01H\aR\vrelTargetId\x88\x01\x01\x12\x1e\n" +
 	"\brel_none\x18\f \x01(\bH\bR\arelNone\x88\x01\x01\x12%\n" +
-	"\x06cursor\x18\r \x01(\tB\b\xbaH\x05r\x03\x18\x80\x01H\tR\x06cursor\x88\x01\x01B\r\n" +
+	"\x06cursor\x18\r \x01(\tB\b\xbaH\x05r\x03\x18\x80\x01H\tR\x06cursor\x88\x01\x01\x12\"\n" +
+	"\x05owner\x18\x0e \x01(\tB\a\xbaH\x04r\x02\x18@H\n" +
+	"R\x05owner\x88\x01\x01\x12\x1d\n" +
+	"\adeleted\x18\x0f \x01(\bH\vR\adeleted\x88\x01\x01\x12U\n" +
+	"\x05issue\x18\x10 \x01(\tB:\xbaH7r5R\x10missing_requiredR\bno_ownerR\x06orphanR\x05staleR\boutdatedH\fR\x05issue\x88\x01\x01B\r\n" +
 	"\v_model_codeB\n" +
 	"\n" +
 	"\b_keywordB\t\n" +
@@ -2467,7 +3098,11 @@ const file_cmdb_v1_ci_proto_rawDesc = "" +
 	"\x0e_rel_directionB\x10\n" +
 	"\x0e_rel_target_idB\v\n" +
 	"\t_rel_noneB\t\n" +
-	"\a_cursor\"o\n" +
+	"\a_cursorB\b\n" +
+	"\x06_ownerB\n" +
+	"\n" +
+	"\b_deletedB\b\n" +
+	"\x06_issue\"o\n" +
 	"\x0fListCIsResponse\x12%\n" +
 	"\x05items\x18\x01 \x03(\v2\x0f.cmdb.v1.CmdbCIR\x05items\x12\x14\n" +
 	"\x05total\x18\x02 \x01(\x03R\x05total\x12\x1f\n" +
@@ -2525,7 +3160,46 @@ const file_cmdb_v1_ci_proto_rawDesc = "" +
 	"\x02ci\x18\x01 \x01(\v2\x0f.cmdb.v1.CmdbCIR\x02ci\"+\n" +
 	"\x0fDeleteCIRequest\x12\x18\n" +
 	"\x02id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\"\x12\n" +
-	"\x10DeleteCIResponse\"u\n" +
+	"\x10DeleteCIResponse\",\n" +
+	"\x10RestoreCIRequest\x12\x18\n" +
+	"\x02id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\"4\n" +
+	"\x11RestoreCIResponse\x12\x1f\n" +
+	"\x02ci\x18\x01 \x01(\v2\x0f.cmdb.v1.CmdbCIR\x02ci\"\xa3\x02\n" +
+	"\x15BatchUpdateCIsRequest\x12%\n" +
+	"\x03ids\x18\x01 \x03(\tB\x13\xbaH\x10\x92\x01\r\b\x01\x10d\x18\x01\"\x05r\x03\xb0\x01\x01R\x03ids\x12\"\n" +
+	"\x05owner\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x18@H\x00R\x05owner\x88\x01\x01\x12\x1e\n" +
+	"\x03env\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x18 H\x01R\x03env\x88\x01\x01\x12+\n" +
+	"\badd_tags\x18\x04 \x03(\tB\x10\xbaH\r\x92\x01\n" +
+	"\x10\x14\"\x06r\x04\x10\x01\x18@R\aaddTags\x121\n" +
+	"\vremove_tags\x18\x05 \x03(\tB\x10\xbaH\r\x92\x01\n" +
+	"\x10\x14\"\x06r\x04\x10\x01\x18@R\n" +
+	"removeTags\x12-\n" +
+	"\x05attrs\x18\x06 \x01(\v2\x17.google.protobuf.StructR\x05attrsB\b\n" +
+	"\x06_ownerB\x06\n" +
+	"\x04_env\"\x89\x01\n" +
+	"\x19BatchTransitionCIsRequest\x12%\n" +
+	"\x03ids\x18\x01 \x03(\tB\x13\xbaH\x10\x92\x01\r\b\x01\x10d\x18\x01\"\x05r\x03\xb0\x01\x01R\x03ids\x12E\n" +
+	"\x06status\x18\x02 \x01(\tB-\xbaH*r(R\bplanningR\x06activeR\vmaintenanceR\aretiredR\x06status\">\n" +
+	"\x15BatchDeleteCIsRequest\x12%\n" +
+	"\x03ids\x18\x01 \x03(\tB\x13\xbaH\x10\x92\x01\r\b\x01\x10d\x18\x01\"\x05r\x03\xb0\x01\x01R\x03ids\"]\n" +
+	"\rBatchCIResult\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x0e\n" +
+	"\x02ok\x18\x03 \x01(\bR\x02ok\x12\x18\n" +
+	"\amessage\x18\x04 \x01(\tR\amessage\"z\n" +
+	"\x10BatchCIsResponse\x12\x1c\n" +
+	"\tsucceeded\x18\x01 \x01(\x05R\tsucceeded\x12\x16\n" +
+	"\x06failed\x18\x02 \x01(\x05R\x06failed\x120\n" +
+	"\aresults\x18\x03 \x03(\v2\x16.cmdb.v1.BatchCIResultR\aresults\"P\n" +
+	"\x1aListOwnerCandidatesRequest\x12&\n" +
+	"\akeyword\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x18@H\x00R\akeyword\x88\x01\x01B\n" +
+	"\n" +
+	"\b_keyword\"4\n" +
+	"\x0eOwnerCandidate\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\"L\n" +
+	"\x1bListOwnerCandidatesResponse\x12-\n" +
+	"\x05items\x18\x01 \x03(\v2\x17.cmdb.v1.OwnerCandidateR\x05items\"u\n" +
 	"\x14ListCIHistoryRequest\x12\x18\n" +
 	"\x02id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\x12\x1b\n" +
 	"\x04page\x18\x02 \x01(\x03B\a\xbaH\x04\"\x02(\x01R\x04page\x12&\n" +
@@ -2543,15 +3217,19 @@ const file_cmdb_v1_ci_proto_rawDesc = "" +
 	"\rmatched_field\x18\x02 \x01(\tR\fmatchedField\x12#\n" +
 	"\rmatched_value\x18\x03 \x01(\tR\fmatchedValue\"=\n" +
 	"\x11SearchCIsResponse\x12(\n" +
-	"\x05items\x18\x01 \x03(\v2\x12.cmdb.v1.SearchHitR\x05items2\xb6\n" +
-	"\n" +
+	"\x05items\x18\x01 \x03(\v2\x12.cmdb.v1.SearchHitR\x05items2\x8b\x10\n" +
 	"\rCmdbCIService\x12k\n" +
 	"\aListCIs\x12\x17.cmdb.v1.ListCIsRequest\x1a\x18.cmdb.v1.ListCIsResponse\"-\xc2\xf3\x18\x12查询资源列表\x82\xd3\xe4\x93\x02\x11\x12\x0f/api/v1/cmdb/ci\x12j\n" +
 	"\x05GetCI\x12\x15.cmdb.v1.GetCIRequest\x1a\x16.cmdb.v1.GetCIResponse\"2\xc2\xf3\x18\x12查询资源详情\x82\xd3\xe4\x93\x02\x16\x12\x14/api/v1/cmdb/ci/{id}\x12k\n" +
 	"\bCreateCI\x12\x18.cmdb.v1.CreateCIRequest\x1a\x19.cmdb.v1.CreateCIResponse\"*\xc2\xf3\x18\f创建资源\x82\xd3\xe4\x93\x02\x14:\x01*\"\x0f/api/v1/cmdb/ci\x12p\n" +
 	"\bUpdateCI\x12\x18.cmdb.v1.UpdateCIRequest\x1a\x19.cmdb.v1.UpdateCIResponse\"/\xc2\xf3\x18\f更新资源\x82\xd3\xe4\x93\x02\x19:\x01*\x1a\x14/api/v1/cmdb/ci/{id}\x12\x8d\x01\n" +
 	"\fTransitionCI\x12\x1c.cmdb.v1.TransitionCIRequest\x1a\x1d.cmdb.v1.TransitionCIResponse\"@\xc2\xf3\x18\x12变更资源状态\x82\xd3\xe4\x93\x02$:\x01*\"\x1f/api/v1/cmdb/ci/{id}:transition\x12m\n" +
-	"\bDeleteCI\x12\x18.cmdb.v1.DeleteCIRequest\x1a\x19.cmdb.v1.DeleteCIResponse\",\xc2\xf3\x18\f删除资源\x82\xd3\xe4\x93\x02\x16*\x14/api/v1/cmdb/ci/{id}\x12\x90\x01\n" +
+	"\bDeleteCI\x12\x18.cmdb.v1.DeleteCIRequest\x1a\x19.cmdb.v1.DeleteCIResponse\",\xc2\xf3\x18\f删除资源\x82\xd3\xe4\x93\x02\x16*\x14/api/v1/cmdb/ci/{id}\x12{\n" +
+	"\tRestoreCI\x12\x19.cmdb.v1.RestoreCIRequest\x1a\x1a.cmdb.v1.RestoreCIResponse\"7\xc2\xf3\x18\f恢复资源\x82\xd3\xe4\x93\x02!:\x01*\"\x1c/api/v1/cmdb/ci/{id}:restore\x12\x89\x01\n" +
+	"\x0eBatchUpdateCIs\x12\x1e.cmdb.v1.BatchUpdateCIsRequest\x1a\x19.cmdb.v1.BatchCIsResponse\"<\xc2\xf3\x18\x12批量编辑资源\x82\xd3\xe4\x93\x02 :\x01*\"\x1b/api/v1/cmdb/ci:batchUpdate\x12\x9b\x01\n" +
+	"\x12BatchTransitionCIs\x12\".cmdb.v1.BatchTransitionCIsRequest\x1a\x19.cmdb.v1.BatchCIsResponse\"F\xc2\xf3\x18\x18批量变更资源状态\x82\xd3\xe4\x93\x02$:\x01*\"\x1f/api/v1/cmdb/ci:batchTransition\x12\x89\x01\n" +
+	"\x0eBatchDeleteCIs\x12\x1e.cmdb.v1.BatchDeleteCIsRequest\x1a\x19.cmdb.v1.BatchCIsResponse\"<\xc2\xf3\x18\x12批量删除资源\x82\xd3\xe4\x93\x02 :\x01*\"\x1b/api/v1/cmdb/ci:batchDelete\x12\x9f\x01\n" +
+	"\x13ListOwnerCandidates\x12#.cmdb.v1.ListOwnerCandidatesRequest\x1a$.cmdb.v1.ListOwnerCandidatesResponse\"=\xc2\xf3\x18\x15查询可选负责人\x82\xd3\xe4\x93\x02\x1e\x12\x1c/api/v1/cmdb/owner-candidate\x12\x90\x01\n" +
 	"\rListCIHistory\x12\x1d.cmdb.v1.ListCIHistoryRequest\x1a\x1e.cmdb.v1.ListCIHistoryResponse\"@\xc2\xf3\x18\x18查询资源变更历史\x82\xd3\xe4\x93\x02\x1e\x12\x1c/api/v1/cmdb/ci/{id}/history\x12u\n" +
 	"\tImportCIs\x12\x19.cmdb.v1.ImportCIsRequest\x1a\x1a.cmdb.v1.ImportCIsResponse\"1\xc2\xf3\x18\f导入资源\x82\xd3\xe4\x93\x02\x1b:\x01*\"\x16/api/v1/cmdb/ci:import\x12l\n" +
 	"\tExportCIs\x12\x19.cmdb.v1.ExportCIsRequest\x1a\x14.google.api.HttpBody\".\xc2\xf3\x18\f导出资源\x82\xd3\xe4\x93\x02\x18\x12\x16/api/v1/cmdb/ci:export\x12x\n" +
@@ -2570,96 +3248,121 @@ func file_cmdb_v1_ci_proto_rawDescGZIP() []byte {
 	return file_cmdb_v1_ci_proto_rawDescData
 }
 
-var file_cmdb_v1_ci_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
+var file_cmdb_v1_ci_proto_msgTypes = make([]protoimpl.MessageInfo, 39)
 var file_cmdb_v1_ci_proto_goTypes = []any{
-	(*ImportRow)(nil),             // 0: cmdb.v1.ImportRow
-	(*ImportRelation)(nil),        // 1: cmdb.v1.ImportRelation
-	(*ImportCIsRequest)(nil),      // 2: cmdb.v1.ImportCIsRequest
-	(*ImportRowResult)(nil),       // 3: cmdb.v1.ImportRowResult
-	(*ImportCIsResponse)(nil),     // 4: cmdb.v1.ImportCIsResponse
-	(*ExportCIsRequest)(nil),      // 5: cmdb.v1.ExportCIsRequest
-	(*CmdbCI)(nil),                // 6: cmdb.v1.CmdbCI
-	(*RelationSummary)(nil),       // 7: cmdb.v1.RelationSummary
-	(*CmdbHistory)(nil),           // 8: cmdb.v1.CmdbHistory
-	(*ListHistoryRequest)(nil),    // 9: cmdb.v1.ListHistoryRequest
-	(*ListHistoryResponse)(nil),   // 10: cmdb.v1.ListHistoryResponse
-	(*ListCIsRequest)(nil),        // 11: cmdb.v1.ListCIsRequest
-	(*ListCIsResponse)(nil),       // 12: cmdb.v1.ListCIsResponse
-	(*GetCIRequest)(nil),          // 13: cmdb.v1.GetCIRequest
-	(*GetCIResponse)(nil),         // 14: cmdb.v1.GetCIResponse
-	(*CreateCIRequest)(nil),       // 15: cmdb.v1.CreateCIRequest
-	(*CreateCIResponse)(nil),      // 16: cmdb.v1.CreateCIResponse
-	(*UpdateCIRequest)(nil),       // 17: cmdb.v1.UpdateCIRequest
-	(*TagList)(nil),               // 18: cmdb.v1.TagList
-	(*UpdateCIResponse)(nil),      // 19: cmdb.v1.UpdateCIResponse
-	(*TransitionCIRequest)(nil),   // 20: cmdb.v1.TransitionCIRequest
-	(*TransitionCIResponse)(nil),  // 21: cmdb.v1.TransitionCIResponse
-	(*DeleteCIRequest)(nil),       // 22: cmdb.v1.DeleteCIRequest
-	(*DeleteCIResponse)(nil),      // 23: cmdb.v1.DeleteCIResponse
-	(*ListCIHistoryRequest)(nil),  // 24: cmdb.v1.ListCIHistoryRequest
-	(*ListCIHistoryResponse)(nil), // 25: cmdb.v1.ListCIHistoryResponse
-	(*SearchCIsRequest)(nil),      // 26: cmdb.v1.SearchCIsRequest
-	(*SearchHit)(nil),             // 27: cmdb.v1.SearchHit
-	(*SearchCIsResponse)(nil),     // 28: cmdb.v1.SearchCIsResponse
-	(*structpb.Struct)(nil),       // 29: google.protobuf.Struct
-	(*timestamppb.Timestamp)(nil), // 30: google.protobuf.Timestamp
-	(*httpbody.HttpBody)(nil),     // 31: google.api.HttpBody
+	(*ImportRow)(nil),                   // 0: cmdb.v1.ImportRow
+	(*ImportRelation)(nil),              // 1: cmdb.v1.ImportRelation
+	(*ImportCIsRequest)(nil),            // 2: cmdb.v1.ImportCIsRequest
+	(*ImportRowResult)(nil),             // 3: cmdb.v1.ImportRowResult
+	(*ImportCIsResponse)(nil),           // 4: cmdb.v1.ImportCIsResponse
+	(*ExportCIsRequest)(nil),            // 5: cmdb.v1.ExportCIsRequest
+	(*CmdbCI)(nil),                      // 6: cmdb.v1.CmdbCI
+	(*RelationSummary)(nil),             // 7: cmdb.v1.RelationSummary
+	(*CmdbHistory)(nil),                 // 8: cmdb.v1.CmdbHistory
+	(*ListHistoryRequest)(nil),          // 9: cmdb.v1.ListHistoryRequest
+	(*ListHistoryResponse)(nil),         // 10: cmdb.v1.ListHistoryResponse
+	(*ListCIsRequest)(nil),              // 11: cmdb.v1.ListCIsRequest
+	(*ListCIsResponse)(nil),             // 12: cmdb.v1.ListCIsResponse
+	(*GetCIRequest)(nil),                // 13: cmdb.v1.GetCIRequest
+	(*GetCIResponse)(nil),               // 14: cmdb.v1.GetCIResponse
+	(*CreateCIRequest)(nil),             // 15: cmdb.v1.CreateCIRequest
+	(*CreateCIResponse)(nil),            // 16: cmdb.v1.CreateCIResponse
+	(*UpdateCIRequest)(nil),             // 17: cmdb.v1.UpdateCIRequest
+	(*TagList)(nil),                     // 18: cmdb.v1.TagList
+	(*UpdateCIResponse)(nil),            // 19: cmdb.v1.UpdateCIResponse
+	(*TransitionCIRequest)(nil),         // 20: cmdb.v1.TransitionCIRequest
+	(*TransitionCIResponse)(nil),        // 21: cmdb.v1.TransitionCIResponse
+	(*DeleteCIRequest)(nil),             // 22: cmdb.v1.DeleteCIRequest
+	(*DeleteCIResponse)(nil),            // 23: cmdb.v1.DeleteCIResponse
+	(*RestoreCIRequest)(nil),            // 24: cmdb.v1.RestoreCIRequest
+	(*RestoreCIResponse)(nil),           // 25: cmdb.v1.RestoreCIResponse
+	(*BatchUpdateCIsRequest)(nil),       // 26: cmdb.v1.BatchUpdateCIsRequest
+	(*BatchTransitionCIsRequest)(nil),   // 27: cmdb.v1.BatchTransitionCIsRequest
+	(*BatchDeleteCIsRequest)(nil),       // 28: cmdb.v1.BatchDeleteCIsRequest
+	(*BatchCIResult)(nil),               // 29: cmdb.v1.BatchCIResult
+	(*BatchCIsResponse)(nil),            // 30: cmdb.v1.BatchCIsResponse
+	(*ListOwnerCandidatesRequest)(nil),  // 31: cmdb.v1.ListOwnerCandidatesRequest
+	(*OwnerCandidate)(nil),              // 32: cmdb.v1.OwnerCandidate
+	(*ListOwnerCandidatesResponse)(nil), // 33: cmdb.v1.ListOwnerCandidatesResponse
+	(*ListCIHistoryRequest)(nil),        // 34: cmdb.v1.ListCIHistoryRequest
+	(*ListCIHistoryResponse)(nil),       // 35: cmdb.v1.ListCIHistoryResponse
+	(*SearchCIsRequest)(nil),            // 36: cmdb.v1.SearchCIsRequest
+	(*SearchHit)(nil),                   // 37: cmdb.v1.SearchHit
+	(*SearchCIsResponse)(nil),           // 38: cmdb.v1.SearchCIsResponse
+	(*structpb.Struct)(nil),             // 39: google.protobuf.Struct
+	(*timestamppb.Timestamp)(nil),       // 40: google.protobuf.Timestamp
+	(*httpbody.HttpBody)(nil),           // 41: google.api.HttpBody
 }
 var file_cmdb_v1_ci_proto_depIdxs = []int32{
-	29, // 0: cmdb.v1.ImportRow.attrs:type_name -> google.protobuf.Struct
+	39, // 0: cmdb.v1.ImportRow.attrs:type_name -> google.protobuf.Struct
 	1,  // 1: cmdb.v1.ImportRow.relations:type_name -> cmdb.v1.ImportRelation
 	0,  // 2: cmdb.v1.ImportCIsRequest.rows:type_name -> cmdb.v1.ImportRow
 	3,  // 3: cmdb.v1.ImportCIsResponse.results:type_name -> cmdb.v1.ImportRowResult
-	29, // 4: cmdb.v1.ExportCIsRequest.attrs:type_name -> google.protobuf.Struct
-	29, // 5: cmdb.v1.CmdbCI.attrs:type_name -> google.protobuf.Struct
-	30, // 6: cmdb.v1.CmdbCI.last_synced_at:type_name -> google.protobuf.Timestamp
-	30, // 7: cmdb.v1.CmdbCI.create_time:type_name -> google.protobuf.Timestamp
-	30, // 8: cmdb.v1.CmdbCI.update_time:type_name -> google.protobuf.Timestamp
-	29, // 9: cmdb.v1.CmdbHistory.diff:type_name -> google.protobuf.Struct
-	30, // 10: cmdb.v1.CmdbHistory.create_time:type_name -> google.protobuf.Timestamp
-	30, // 11: cmdb.v1.ListHistoryRequest.from:type_name -> google.protobuf.Timestamp
-	30, // 12: cmdb.v1.ListHistoryRequest.to:type_name -> google.protobuf.Timestamp
-	8,  // 13: cmdb.v1.ListHistoryResponse.items:type_name -> cmdb.v1.CmdbHistory
-	29, // 14: cmdb.v1.ListCIsRequest.attrs:type_name -> google.protobuf.Struct
-	6,  // 15: cmdb.v1.ListCIsResponse.items:type_name -> cmdb.v1.CmdbCI
-	6,  // 16: cmdb.v1.GetCIResponse.ci:type_name -> cmdb.v1.CmdbCI
-	7,  // 17: cmdb.v1.GetCIResponse.relations:type_name -> cmdb.v1.RelationSummary
-	29, // 18: cmdb.v1.CreateCIRequest.attrs:type_name -> google.protobuf.Struct
-	6,  // 19: cmdb.v1.CreateCIResponse.ci:type_name -> cmdb.v1.CmdbCI
-	18, // 20: cmdb.v1.UpdateCIRequest.tags:type_name -> cmdb.v1.TagList
-	29, // 21: cmdb.v1.UpdateCIRequest.attrs:type_name -> google.protobuf.Struct
-	6,  // 22: cmdb.v1.UpdateCIResponse.ci:type_name -> cmdb.v1.CmdbCI
-	6,  // 23: cmdb.v1.TransitionCIResponse.ci:type_name -> cmdb.v1.CmdbCI
-	8,  // 24: cmdb.v1.ListCIHistoryResponse.items:type_name -> cmdb.v1.CmdbHistory
-	6,  // 25: cmdb.v1.SearchHit.ci:type_name -> cmdb.v1.CmdbCI
-	27, // 26: cmdb.v1.SearchCIsResponse.items:type_name -> cmdb.v1.SearchHit
-	11, // 27: cmdb.v1.CmdbCIService.ListCIs:input_type -> cmdb.v1.ListCIsRequest
-	13, // 28: cmdb.v1.CmdbCIService.GetCI:input_type -> cmdb.v1.GetCIRequest
-	15, // 29: cmdb.v1.CmdbCIService.CreateCI:input_type -> cmdb.v1.CreateCIRequest
-	17, // 30: cmdb.v1.CmdbCIService.UpdateCI:input_type -> cmdb.v1.UpdateCIRequest
-	20, // 31: cmdb.v1.CmdbCIService.TransitionCI:input_type -> cmdb.v1.TransitionCIRequest
-	22, // 32: cmdb.v1.CmdbCIService.DeleteCI:input_type -> cmdb.v1.DeleteCIRequest
-	24, // 33: cmdb.v1.CmdbCIService.ListCIHistory:input_type -> cmdb.v1.ListCIHistoryRequest
-	2,  // 34: cmdb.v1.CmdbCIService.ImportCIs:input_type -> cmdb.v1.ImportCIsRequest
-	5,  // 35: cmdb.v1.CmdbCIService.ExportCIs:input_type -> cmdb.v1.ExportCIsRequest
-	26, // 36: cmdb.v1.CmdbCIService.SearchCIs:input_type -> cmdb.v1.SearchCIsRequest
-	9,  // 37: cmdb.v1.CmdbCIService.ListHistory:input_type -> cmdb.v1.ListHistoryRequest
-	12, // 38: cmdb.v1.CmdbCIService.ListCIs:output_type -> cmdb.v1.ListCIsResponse
-	14, // 39: cmdb.v1.CmdbCIService.GetCI:output_type -> cmdb.v1.GetCIResponse
-	16, // 40: cmdb.v1.CmdbCIService.CreateCI:output_type -> cmdb.v1.CreateCIResponse
-	19, // 41: cmdb.v1.CmdbCIService.UpdateCI:output_type -> cmdb.v1.UpdateCIResponse
-	21, // 42: cmdb.v1.CmdbCIService.TransitionCI:output_type -> cmdb.v1.TransitionCIResponse
-	23, // 43: cmdb.v1.CmdbCIService.DeleteCI:output_type -> cmdb.v1.DeleteCIResponse
-	25, // 44: cmdb.v1.CmdbCIService.ListCIHistory:output_type -> cmdb.v1.ListCIHistoryResponse
-	4,  // 45: cmdb.v1.CmdbCIService.ImportCIs:output_type -> cmdb.v1.ImportCIsResponse
-	31, // 46: cmdb.v1.CmdbCIService.ExportCIs:output_type -> google.api.HttpBody
-	28, // 47: cmdb.v1.CmdbCIService.SearchCIs:output_type -> cmdb.v1.SearchCIsResponse
-	10, // 48: cmdb.v1.CmdbCIService.ListHistory:output_type -> cmdb.v1.ListHistoryResponse
-	38, // [38:49] is the sub-list for method output_type
-	27, // [27:38] is the sub-list for method input_type
-	27, // [27:27] is the sub-list for extension type_name
-	27, // [27:27] is the sub-list for extension extendee
-	0,  // [0:27] is the sub-list for field type_name
+	39, // 4: cmdb.v1.ExportCIsRequest.attrs:type_name -> google.protobuf.Struct
+	39, // 5: cmdb.v1.CmdbCI.attrs:type_name -> google.protobuf.Struct
+	40, // 6: cmdb.v1.CmdbCI.last_synced_at:type_name -> google.protobuf.Timestamp
+	40, // 7: cmdb.v1.CmdbCI.create_time:type_name -> google.protobuf.Timestamp
+	40, // 8: cmdb.v1.CmdbCI.update_time:type_name -> google.protobuf.Timestamp
+	40, // 9: cmdb.v1.CmdbCI.delete_time:type_name -> google.protobuf.Timestamp
+	39, // 10: cmdb.v1.CmdbHistory.diff:type_name -> google.protobuf.Struct
+	40, // 11: cmdb.v1.CmdbHistory.create_time:type_name -> google.protobuf.Timestamp
+	40, // 12: cmdb.v1.ListHistoryRequest.from:type_name -> google.protobuf.Timestamp
+	40, // 13: cmdb.v1.ListHistoryRequest.to:type_name -> google.protobuf.Timestamp
+	8,  // 14: cmdb.v1.ListHistoryResponse.items:type_name -> cmdb.v1.CmdbHistory
+	39, // 15: cmdb.v1.ListCIsRequest.attrs:type_name -> google.protobuf.Struct
+	6,  // 16: cmdb.v1.ListCIsResponse.items:type_name -> cmdb.v1.CmdbCI
+	6,  // 17: cmdb.v1.GetCIResponse.ci:type_name -> cmdb.v1.CmdbCI
+	7,  // 18: cmdb.v1.GetCIResponse.relations:type_name -> cmdb.v1.RelationSummary
+	39, // 19: cmdb.v1.CreateCIRequest.attrs:type_name -> google.protobuf.Struct
+	6,  // 20: cmdb.v1.CreateCIResponse.ci:type_name -> cmdb.v1.CmdbCI
+	18, // 21: cmdb.v1.UpdateCIRequest.tags:type_name -> cmdb.v1.TagList
+	39, // 22: cmdb.v1.UpdateCIRequest.attrs:type_name -> google.protobuf.Struct
+	6,  // 23: cmdb.v1.UpdateCIResponse.ci:type_name -> cmdb.v1.CmdbCI
+	6,  // 24: cmdb.v1.TransitionCIResponse.ci:type_name -> cmdb.v1.CmdbCI
+	6,  // 25: cmdb.v1.RestoreCIResponse.ci:type_name -> cmdb.v1.CmdbCI
+	39, // 26: cmdb.v1.BatchUpdateCIsRequest.attrs:type_name -> google.protobuf.Struct
+	29, // 27: cmdb.v1.BatchCIsResponse.results:type_name -> cmdb.v1.BatchCIResult
+	32, // 28: cmdb.v1.ListOwnerCandidatesResponse.items:type_name -> cmdb.v1.OwnerCandidate
+	8,  // 29: cmdb.v1.ListCIHistoryResponse.items:type_name -> cmdb.v1.CmdbHistory
+	6,  // 30: cmdb.v1.SearchHit.ci:type_name -> cmdb.v1.CmdbCI
+	37, // 31: cmdb.v1.SearchCIsResponse.items:type_name -> cmdb.v1.SearchHit
+	11, // 32: cmdb.v1.CmdbCIService.ListCIs:input_type -> cmdb.v1.ListCIsRequest
+	13, // 33: cmdb.v1.CmdbCIService.GetCI:input_type -> cmdb.v1.GetCIRequest
+	15, // 34: cmdb.v1.CmdbCIService.CreateCI:input_type -> cmdb.v1.CreateCIRequest
+	17, // 35: cmdb.v1.CmdbCIService.UpdateCI:input_type -> cmdb.v1.UpdateCIRequest
+	20, // 36: cmdb.v1.CmdbCIService.TransitionCI:input_type -> cmdb.v1.TransitionCIRequest
+	22, // 37: cmdb.v1.CmdbCIService.DeleteCI:input_type -> cmdb.v1.DeleteCIRequest
+	24, // 38: cmdb.v1.CmdbCIService.RestoreCI:input_type -> cmdb.v1.RestoreCIRequest
+	26, // 39: cmdb.v1.CmdbCIService.BatchUpdateCIs:input_type -> cmdb.v1.BatchUpdateCIsRequest
+	27, // 40: cmdb.v1.CmdbCIService.BatchTransitionCIs:input_type -> cmdb.v1.BatchTransitionCIsRequest
+	28, // 41: cmdb.v1.CmdbCIService.BatchDeleteCIs:input_type -> cmdb.v1.BatchDeleteCIsRequest
+	31, // 42: cmdb.v1.CmdbCIService.ListOwnerCandidates:input_type -> cmdb.v1.ListOwnerCandidatesRequest
+	34, // 43: cmdb.v1.CmdbCIService.ListCIHistory:input_type -> cmdb.v1.ListCIHistoryRequest
+	2,  // 44: cmdb.v1.CmdbCIService.ImportCIs:input_type -> cmdb.v1.ImportCIsRequest
+	5,  // 45: cmdb.v1.CmdbCIService.ExportCIs:input_type -> cmdb.v1.ExportCIsRequest
+	36, // 46: cmdb.v1.CmdbCIService.SearchCIs:input_type -> cmdb.v1.SearchCIsRequest
+	9,  // 47: cmdb.v1.CmdbCIService.ListHistory:input_type -> cmdb.v1.ListHistoryRequest
+	12, // 48: cmdb.v1.CmdbCIService.ListCIs:output_type -> cmdb.v1.ListCIsResponse
+	14, // 49: cmdb.v1.CmdbCIService.GetCI:output_type -> cmdb.v1.GetCIResponse
+	16, // 50: cmdb.v1.CmdbCIService.CreateCI:output_type -> cmdb.v1.CreateCIResponse
+	19, // 51: cmdb.v1.CmdbCIService.UpdateCI:output_type -> cmdb.v1.UpdateCIResponse
+	21, // 52: cmdb.v1.CmdbCIService.TransitionCI:output_type -> cmdb.v1.TransitionCIResponse
+	23, // 53: cmdb.v1.CmdbCIService.DeleteCI:output_type -> cmdb.v1.DeleteCIResponse
+	25, // 54: cmdb.v1.CmdbCIService.RestoreCI:output_type -> cmdb.v1.RestoreCIResponse
+	30, // 55: cmdb.v1.CmdbCIService.BatchUpdateCIs:output_type -> cmdb.v1.BatchCIsResponse
+	30, // 56: cmdb.v1.CmdbCIService.BatchTransitionCIs:output_type -> cmdb.v1.BatchCIsResponse
+	30, // 57: cmdb.v1.CmdbCIService.BatchDeleteCIs:output_type -> cmdb.v1.BatchCIsResponse
+	33, // 58: cmdb.v1.CmdbCIService.ListOwnerCandidates:output_type -> cmdb.v1.ListOwnerCandidatesResponse
+	35, // 59: cmdb.v1.CmdbCIService.ListCIHistory:output_type -> cmdb.v1.ListCIHistoryResponse
+	4,  // 60: cmdb.v1.CmdbCIService.ImportCIs:output_type -> cmdb.v1.ImportCIsResponse
+	41, // 61: cmdb.v1.CmdbCIService.ExportCIs:output_type -> google.api.HttpBody
+	38, // 62: cmdb.v1.CmdbCIService.SearchCIs:output_type -> cmdb.v1.SearchCIsResponse
+	10, // 63: cmdb.v1.CmdbCIService.ListHistory:output_type -> cmdb.v1.ListHistoryResponse
+	48, // [48:64] is the sub-list for method output_type
+	32, // [32:48] is the sub-list for method input_type
+	32, // [32:32] is the sub-list for extension type_name
+	32, // [32:32] is the sub-list for extension extendee
+	0,  // [0:32] is the sub-list for field type_name
 }
 
 func init() { file_cmdb_v1_ci_proto_init() }
@@ -2675,13 +3378,15 @@ func file_cmdb_v1_ci_proto_init() {
 	file_cmdb_v1_ci_proto_msgTypes[15].OneofWrappers = []any{}
 	file_cmdb_v1_ci_proto_msgTypes[17].OneofWrappers = []any{}
 	file_cmdb_v1_ci_proto_msgTypes[26].OneofWrappers = []any{}
+	file_cmdb_v1_ci_proto_msgTypes[31].OneofWrappers = []any{}
+	file_cmdb_v1_ci_proto_msgTypes[36].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cmdb_v1_ci_proto_rawDesc), len(file_cmdb_v1_ci_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   29,
+			NumMessages:   39,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

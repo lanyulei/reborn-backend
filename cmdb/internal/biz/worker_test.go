@@ -29,13 +29,15 @@ type fakeStore struct {
 	active    map[string]bool // 类型 → 该来源下仍有未退役资源
 	finished  []finishCall
 	staging   map[string][]*Resource
-	cleared   []string
-	fields    map[string][]ModelField
-	reconcile []ReconcileParams
-	relations []string
-	recErr    error
-	counts    Counts
-	samples   []cmdbcontract.RunError
+	// statsRefreshed 对账前刷新暂存表统计的次数。
+	statsRefreshed int
+	cleared        []string
+	fields         map[string][]ModelField
+	reconcile      []ReconcileParams
+	relations      []string
+	recErr         error
+	counts         Counts
+	samples        []cmdbcontract.RunError
 }
 
 type finishCall struct {
@@ -48,9 +50,9 @@ func newFakeStore() *fakeStore {
 	return &fakeStore{
 		staging: map[string][]*Resource{},
 		fields: map[string][]ModelField{
-			cmdbcontract.ModelCloudHost:      {{Code: "instance_id", Owner: "both", Unique: true}, {Code: "private_ip", Owner: "both"}, {Code: "owner_note", Owner: "manual"}},
-			cmdbcontract.ModelPhysicalServer: {{Code: "ip", Owner: "both", Unique: true}},
-			cmdbcontract.ModelVirtualMachine: {{Code: "ip", Owner: "both", Unique: true}},
+			cmdbcontract.ModelCloudHost:      {{Code: "instance_id", Owner: "both"}, {Code: "private_ip", Owner: "both"}, {Code: "owner_note", Owner: "manual"}},
+			cmdbcontract.ModelPhysicalServer: {{Code: "ip", Owner: "both"}},
+			cmdbcontract.ModelVirtualMachine: {{Code: "ip", Owner: "both"}},
 		},
 	}
 }
@@ -116,6 +118,13 @@ func (f *fakeStore) Count(_ context.Context, runID string) (int32, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return int32(len(f.staging[runID])), nil //nolint:gosec // 测试桩，行数远小于 int32 上界
+}
+
+func (f *fakeStore) RefreshStats(context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.statsRefreshed++
+	return nil
 }
 
 func (f *fakeStore) Clear(_ context.Context, runID string) error {
@@ -243,9 +252,12 @@ func TestWorker_Success(t *testing.T) {
 	if len(store.reconcile) != 1 {
 		t.Fatalf("reconcile calls = %d", len(store.reconcile))
 	}
+	if store.statsRefreshed != 1 {
+		t.Fatalf("staging stats must be refreshed once before reconcile, got %d", store.statsRefreshed)
+	}
 	p := store.reconcile[0]
 	if p.ModelCode != cmdbcontract.ModelCloudHost || p.Source != "sync:src-1" || p.Env != "prod" || p.Grace != time.Minute ||
-		len(p.ManualKeys) != 1 || p.ManualKeys[0] != "owner_note" || len(p.UniqueCodes) != 1 || p.SkipDisappear {
+		len(p.ManualKeys) != 1 || p.ManualKeys[0] != "owner_note" || p.SkipDisappear {
 		t.Fatalf("reconcile params = %+v", p)
 	}
 	if len(store.relations) != 1 || store.relations[0] != "run-1|sync:src-1" {

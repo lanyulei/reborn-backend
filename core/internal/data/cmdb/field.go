@@ -96,7 +96,8 @@ func (r *fieldRepo) Create(ctx context.Context, f *biz.Field) error {
 		`INSERT INTO cmdb_model_field (id, model_code, code, name, type, required, "unique", enum_values, enum_labels, ref_model, rule,
 		   owner, list_visible, sort, description, indexed, sensitive, create_time, update_time)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
-		f.ID, f.ModelCode, f.Code, f.Name, f.Type, f.Required, f.Unique, enumRaw, labelsRaw, f.RefModel, ruleRaw,
+		// "unique" 为派生标记（被唯一规则引用），新字段恒为 false，由规则变更维护。
+		f.ID, f.ModelCode, f.Code, f.Name, f.Type, f.Required, false, enumRaw, labelsRaw, f.RefModel, ruleRaw,
 		f.Owner, f.ListVisible, f.Sort, f.Description, f.Indexed, f.Sensitive, f.CreateTime, f.UpdateTime)
 	if err != nil {
 		if isUniqueViolation(err, "uq_cmdb_model_field_code") {
@@ -170,9 +171,6 @@ func (r *fieldRepo) Update(ctx context.Context, modelCode, id string, upd biz.Fi
 	if upd.Required != nil {
 		add("required", *upd.Required)
 	}
-	if upd.Unique != nil {
-		add(`"unique"`, *upd.Unique)
-	}
 	if upd.EnumValues != nil {
 		raw, err := marshalEnum(*upd.EnumValues)
 		if err != nil {
@@ -221,6 +219,15 @@ func (r *fieldRepo) Update(ctx context.Context, modelCode, id string, upd biz.Fi
 	stmt := "UPDATE cmdb_model_field SET " + strings.Join(sets, ", ") +
 		", update_time = now() WHERE model_code = $" + strconv.Itoa(len(args)-1) + " AND id = $" + strconv.Itoa(len(args))
 	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+		// 设为敏感：与唯一规则变更互斥，锁内确认该字段未被规则引用（敏感字段不可唯一）。
+		if upd.Sensitive != nil && *upd.Sensitive {
+			if err := lockUniqueRuleDef(ctx, tx, modelCode); err != nil {
+				return err
+			}
+			if err := checkFieldNotInUniqueRule(ctx, tx, modelCode, id); err != nil {
+				return err
+			}
+		}
 		tag, err := tx.Exec(ctx, stmt, args...)
 		if err != nil {
 			return fmt.Errorf("update cmdb field: %w", err)
@@ -228,59 +235,43 @@ func (r *fieldRepo) Update(ctx context.Context, modelCode, id string, upd biz.Fi
 		if tag.RowsAffected() == 0 {
 			return biz.ErrFieldNotFound
 		}
-		if upd.Unique == nil {
-			return nil
-		}
-		// unique 变化：同事务重算该类型资源的唯一键；存量数据重复则整体回滚、拒绝变更。
-		if _, err := tx.Exec(ctx, stmtRecomputeUniqueKey, modelCode); err != nil {
-			if isUniqueViolation(err, "uq_cmdb_ci_model_unique_key") {
-				return biz.ErrCIDuplicate
-			}
-			return fmt.Errorf("recompute cmdb ci unique key: %w", err)
-		}
 		return nil
 	})
 }
 
-// stmtRecomputeUniqueKey 按当前唯一字段重算某类型全部未删除资源的 unique_key
-// （口径同 kit/cmdbcontract.UniqueKey：唯一且未废弃字段 code 升序 `code=value|...`，缺失 / null 跳过）。
-const stmtRecomputeUniqueKey = `
-UPDATE cmdb_ci c SET unique_key = k.key
-FROM (
-    SELECT c2.id, COALESCE((
-        SELECT string_agg(f.code || '=' || (c2.attrs ->> f.code), '|' ORDER BY f.code COLLATE "C")
-        FROM cmdb_model_field f
-        WHERE f.model_code = c2.model_code AND f."unique" AND NOT f.deprecated
-          AND jsonb_typeof(c2.attrs -> f.code) <> 'null'), '') AS key
-    FROM cmdb_ci c2 WHERE c2.model_code = $1 AND c2.delete_time IS NULL
-) k
-WHERE c.id = k.id AND c.unique_key <> k.key`
+// checkFieldNotInUniqueRule 字段被任一唯一规则引用时返回 ErrFieldInUse（调用方已持有定义锁）。
+func checkFieldNotInUniqueRule(ctx context.Context, tx pgx.Tx, modelCode, fieldID string) error {
+	var used bool
+	if err := tx.QueryRow(ctx,
+		`SELECT EXISTS (
+		     SELECT 1 FROM cmdb_model_unique_rule r JOIN cmdb_model_field f ON f.model_code = r.model_code AND f.code = ANY (r.field_codes)
+		     WHERE f.model_code = $1 AND f.id = $2)`, modelCode, fieldID).Scan(&used); err != nil {
+		return fmt.Errorf("check cmdb field usage: %w", err)
+	}
+	if used {
+		return biz.ErrFieldInUse
+	}
+	return nil
+}
 
-// Deprecate implements biz.FieldRepo.
+// Deprecate implements biz.FieldRepo：与唯一规则变更互斥，被规则引用的字段拒绝废弃。
 func (r *fieldRepo) Deprecate(ctx context.Context, modelCode, id string) error {
 	r.cache.invalidate(modelCode)
 	defer r.cache.invalidate(modelCode) // 写后再失效：防并发读把旧定义重新缓存
 	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
-		var wasUnique bool
-		err := tx.QueryRow(ctx,
-			`UPDATE cmdb_model_field SET deprecated = true, update_time = now()
-			 WHERE model_code = $1 AND id = $2 RETURNING "unique"`, modelCode, id).Scan(&wasUnique)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return biz.ErrFieldNotFound
+		if err := lockUniqueRuleDef(ctx, tx, modelCode); err != nil {
+			return err
 		}
+		if err := checkFieldNotInUniqueRule(ctx, tx, modelCode, id); err != nil {
+			return err
+		}
+		tag, err := tx.Exec(ctx,
+			`UPDATE cmdb_model_field SET deprecated = true, update_time = now() WHERE model_code = $1 AND id = $2`, modelCode, id)
 		if err != nil {
 			return fmt.Errorf("deprecate cmdb field: %w", err)
 		}
-		if !wasUnique {
-			return nil
-		}
-		// 废弃的是唯一字段：它不再参与唯一键，同事务重算；若剩余唯一字段因此
-		// 出现重复，整体回滚、拒绝废弃（与切换 unique 开关同一口径）。
-		if _, err := tx.Exec(ctx, stmtRecomputeUniqueKey, modelCode); err != nil {
-			if isUniqueViolation(err, "uq_cmdb_ci_model_unique_key") {
-				return biz.ErrCIDuplicate
-			}
-			return fmt.Errorf("recompute cmdb ci unique key: %w", err)
+		if tag.RowsAffected() == 0 {
+			return biz.ErrFieldNotFound
 		}
 		return nil
 	})

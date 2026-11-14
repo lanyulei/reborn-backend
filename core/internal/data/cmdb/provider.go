@@ -9,11 +9,12 @@ import (
 // ProviderSet is cmdb 域 data providers。
 var ProviderSet = wire.NewSet(
 	NewModelRepo, NewFieldRepo, NewRelationTypeRepo, NewCIRepo, NewRelationRepo, NewHistoryRepo, NewViewRepo, NewScopeRepo, NewSyncSourceRepo, NewSyncTaskRepo, NewSyncRunRepo, NewSyncSecretBox, NewAttrIndexer,
-	NewGroupRepo, NewFavoriteRepo, NewSchemaAuditRepo, NewOverviewRepo,
+	NewGroupRepo, NewFavoriteRepo, NewSchemaAuditRepo, NewOverviewRepo, NewUniqueRuleRepo,
 	wire.Bind(new(biz.ModelRepo), new(*modelRepo)),
 	wire.Bind(new(biz.FieldRepo), new(*fieldRepo)),
 	wire.Bind(new(biz.RelationTypeRepo), new(*relationTypeRepo)),
 	wire.Bind(new(biz.CIRepo), new(*ciRepo)),
+	wire.Bind(new(biz.OwnerDirectory), new(*ciRepo)),
 	wire.Bind(new(biz.RelationRepo), new(*relationRepo)),
 	wire.Bind(new(biz.HistoryRepo), new(*historyRepo)),
 	wire.Bind(new(biz.ViewRepo), new(*viewRepo)),
@@ -27,4 +28,5 @@ var ProviderSet = wire.NewSet(
 	wire.Bind(new(biz.FavoriteRepo), new(*favoriteRepo)),
 	wire.Bind(new(biz.SchemaAuditRepo), new(*schemaAuditRepo)),
 	wire.Bind(new(biz.OverviewRepo), new(*overviewRepo)),
+	wire.Bind(new(biz.UniqueRuleRepo), new(uniqueRuleRepo)),
 )

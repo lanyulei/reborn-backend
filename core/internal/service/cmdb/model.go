@@ -28,11 +28,14 @@ func actorFromContext(ctx context.Context) (biz.Actor, error) {
 
 // CmdbModelService 实现 CmdbModelServiceServer。
 type CmdbModelService struct {
-	uc *biz.ModelUsecase
+	uc    *biz.ModelUsecase
+	guard scopeGuard
 }
 
 // NewCmdbModelService new a CmdbModelService.
-func NewCmdbModelService(uc *biz.ModelUsecase) *CmdbModelService { return &CmdbModelService{uc: uc} }
+func NewCmdbModelService(uc *biz.ModelUsecase, scopes *biz.ScopeUsecase) *CmdbModelService {
+	return &CmdbModelService{uc: uc, guard: newScopeGuard(scopes)}
+}
 
 // ListModels implements proto CmdbModelService/ListModels.
 func (s *CmdbModelService) ListModels(ctx context.Context, req *v1.ListModelsRequest) (*v1.ListModelsResponse, error) {
@@ -61,6 +64,13 @@ func (s *CmdbModelService) GetModel(ctx context.Context, req *v1.GetModelRequest
 	}
 	for _, t := range types {
 		resp.RelationTypes = append(resp.RelationTypes, toProtoRelationType(t))
+	}
+	rules, err := s.uc.ListUniqueRules(ctx, req.GetCode())
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rules {
+		resp.UniqueRules = append(resp.UniqueRules, toProtoUniqueRule(r))
 	}
 	return resp, nil
 }
@@ -140,6 +150,62 @@ func (s *CmdbModelService) DeleteField(ctx context.Context, req *v1.DeleteFieldR
 		return nil, err
 	}
 	return &v1.DeleteFieldResponse{}, nil
+}
+
+// CreateUniqueRule implements proto CmdbModelService/CreateUniqueRule.
+func (s *CmdbModelService) CreateUniqueRule(ctx context.Context, req *v1.CreateUniqueRuleRequest) (*v1.CreateUniqueRuleResponse, error) {
+	r, err := s.uc.CreateUniqueRule(withActor(ctx), &biz.UniqueRule{
+		ModelCode: req.GetModelCode(), Name: req.GetName(), FieldCodes: req.GetFieldCodes(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &v1.CreateUniqueRuleResponse{Rule: toProtoUniqueRule(r)}, nil
+}
+
+// UpdateUniqueRule implements proto CmdbModelService/UpdateUniqueRule.
+func (s *CmdbModelService) UpdateUniqueRule(ctx context.Context, req *v1.UpdateUniqueRuleRequest) (*v1.UpdateUniqueRuleResponse, error) {
+	upd := biz.UniqueRuleUpdate{Name: req.Name}
+	// proto3 repeated 无 presence：非空即整组替换（规则至少 1 个字段，空组无合法含义）。
+	if codes := req.GetFieldCodes(); len(codes) > 0 {
+		upd.FieldCodes = &codes
+	}
+	r, err := s.uc.UpdateUniqueRule(withActor(ctx), req.GetModelCode(), req.GetId(), upd)
+	if err != nil {
+		return nil, err
+	}
+	return &v1.UpdateUniqueRuleResponse{Rule: toProtoUniqueRule(r)}, nil
+}
+
+// DeleteUniqueRule implements proto CmdbModelService/DeleteUniqueRule.
+func (s *CmdbModelService) DeleteUniqueRule(ctx context.Context, req *v1.DeleteUniqueRuleRequest) (*v1.DeleteUniqueRuleResponse, error) {
+	if err := s.uc.DeleteUniqueRule(withActor(ctx), req.GetModelCode(), req.GetId()); err != nil {
+		return nil, err
+	}
+	return &v1.DeleteUniqueRuleResponse{}, nil
+}
+
+// CheckUniqueRule implements proto CmdbModelService/CheckUniqueRule：重复组数对所有调用者可见
+// （否则无法判断规则能否建立）；资源名称样例只给数据范围不受限的调用者——重复的资源可能
+// 落在其可见范围之外。
+func (s *CmdbModelService) CheckUniqueRule(ctx context.Context, req *v1.CheckUniqueRuleRequest) (*v1.CheckUniqueRuleResponse, error) {
+	groups, samples, err := s.uc.CheckUniqueRule(ctx, req.GetModelCode(), req.GetFieldCodes())
+	if err != nil {
+		return nil, err
+	}
+	scope, err := s.guard.resolve(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resp := &v1.CheckUniqueRuleResponse{ConflictGroups: groups, Samples: make([]*v1.UniqueConflict, 0, len(samples))}
+	for _, c := range samples {
+		item := &v1.UniqueConflict{Count: c.Count}
+		if scope.Unrestricted {
+			item.Names = c.Names
+		}
+		resp.Samples = append(resp.Samples, item)
+	}
+	return resp, nil
 }
 
 // ListRelationTypes implements proto CmdbModelService/ListRelationTypes.
@@ -241,6 +307,13 @@ func toProtoModel(m *biz.Model) *v1.CmdbModel {
 		Code: m.Code, Name: m.Name, Category: m.Category, Icon: m.Icon, Description: m.Description,
 		Status: m.Status, Builtin: m.Builtin, CiCount: m.CICount,
 		CreateTime: timestamppb.New(m.CreateTime), UpdateTime: timestamppb.New(m.UpdateTime),
+	}
+}
+
+func toProtoUniqueRule(r *biz.UniqueRule) *v1.CmdbUniqueRule {
+	return &v1.CmdbUniqueRule{
+		Id: r.ID, ModelCode: r.ModelCode, Name: r.Name, FieldCodes: r.FieldCodes,
+		CreateTime: timestamppb.New(r.CreateTime), UpdateTime: timestamppb.New(r.UpdateTime),
 	}
 }
 

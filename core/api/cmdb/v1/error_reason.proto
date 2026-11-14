@@ -72,4 +72,16 @@ enum ErrorReason {
   CMDB_GROUP_CODE_EXISTS = 29 [(errors.code) = 409];
   // CMDB_GROUP_IN_USE 模型分组为内置分组或其下仍有模型，不可删除，映射 HTTP 409。
   CMDB_GROUP_IN_USE = 30 [(errors.code) = 409];
+  // CMDB_UNIQUE_RULE_NOT_FOUND 唯一规则不存在，映射 HTTP 404。
+  CMDB_UNIQUE_RULE_NOT_FOUND = 31 [(errors.code) = 404];
+  // CMDB_UNIQUE_RULE_INVALID 唯一规则定义不合法（字段不存在 / 已废弃 / 类型不支持 / 超出数量上限），映射 HTTP 400。
+  CMDB_UNIQUE_RULE_INVALID = 32 [(errors.code) = 400];
+  // CMDB_UNIQUE_RULE_EXISTS 规则名或字段组与同类型内已有规则重复，映射 HTTP 409。
+  CMDB_UNIQUE_RULE_EXISTS = 33 [(errors.code) = 409];
+  // CMDB_UNIQUE_RULE_CONFLICT 存量资源在该规则下已有重复（需先清理数据），映射 HTTP 409。
+  CMDB_UNIQUE_RULE_CONFLICT = 34 [(errors.code) = 409];
+  // CMDB_FIELD_IN_USE 字段被唯一规则引用，不可废弃 / 设为敏感，映射 HTTP 409。
+  CMDB_FIELD_IN_USE = 35 [(errors.code) = 409];
+  // CMDB_UNIQUE_RULE_BUSY 该类型有在途的资源写入（如同步对账），规则变更暂不可进行，稍后重试即可，映射 HTTP 409。
+  CMDB_UNIQUE_RULE_BUSY = 36 [(errors.code) = 409];
 }

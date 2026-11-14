@@ -38,7 +38,7 @@ func newIntegrationCmdbData(t *testing.T) *basedata.Data {
 	}
 	t.Cleanup(cleanup)
 	ctx := context.Background()
-	if _, err := d.Pool.Exec(ctx, "TRUNCATE TABLE cmdb_sync_staging, cmdb_sync_run, cmdb_sync_task, cmdb_sync_source, cmdb_relation, cmdb_ci_history, cmdb_ci, cmdb_model_field, cmdb_relation_type, cmdb_model_view, cmdb_role_scope, cmdb_model CASCADE"); err != nil {
+	if _, err := d.Pool.Exec(ctx, "TRUNCATE TABLE cmdb_sync_staging, cmdb_sync_run, cmdb_sync_task, cmdb_sync_source, cmdb_relation, cmdb_ci_history, cmdb_ci, cmdb_ci_unique, cmdb_model_unique_rule, cmdb_model_field, cmdb_relation_type, cmdb_model_view, cmdb_role_scope, cmdb_model CASCADE"); err != nil {
 		t.Fatalf("truncate cmdb tables: %v", err)
 	}
 	return d
@@ -85,7 +85,7 @@ func TestIntegration_CmdbRepos(t *testing.T) {
 		t.Fatalf("duplicate model error = %v", err)
 	}
 	maxLen := int32(64)
-	ipField := &biz.Field{ID: mustID(t), ModelCode: "it_host", Code: "ip", Name: "IP", Type: biz.FieldTypeIP, Required: true, Unique: true, Owner: "manual", ListVisible: true, Sort: 1, CreateTime: now, UpdateTime: now}
+	ipField := &biz.Field{ID: mustID(t), ModelCode: "it_host", Code: "ip", Name: "IP", Type: biz.FieldTypeIP, Required: true, Owner: "manual", ListVisible: true, Sort: 1, CreateTime: now, UpdateTime: now}
 	kindField := &biz.Field{ID: mustID(t), ModelCode: "it_part", Code: "kind", Name: "Kind", Type: biz.FieldTypeEnum, EnumValues: []string{"a", "b"}, Rule: biz.FieldRule{MaxLen: &maxLen}, Owner: "manual", CreateTime: now, UpdateTime: now}
 	for _, f := range []*biz.Field{ipField, kindField} {
 		if err := fields.Create(ctx, f); err != nil {
@@ -107,8 +107,15 @@ func TestIntegration_CmdbRepos(t *testing.T) {
 		t.Fatalf("applicable relation types = %d err=%v", len(applicable), err)
 	}
 
-	// 资源：jsonb attrs、text[] tags、唯一键、乐观锁。
-	host := &biz.CI{ID: mustID(t), ModelCode: "it_host", Name: "h1", Status: "active", Env: "prod", Tags: []string{"web", "db"}, Source: "manual", UniqueKey: "ip=10.0.0.1", Attrs: map[string]any{"ip": "10.0.0.1", "cores": int64(8)}, Version: 1, CreateUser: mustID(t), CreateTime: now, UpdateTime: now}
+	// 唯一约束经唯一规则建立（字段上的 unique 只是派生标记）。
+	uniqueRules := NewUniqueRuleRepo(fields)
+	ipRule := &biz.UniqueRule{ID: mustID(t), ModelCode: "it_host", Name: "IP", FieldCodes: []string{"ip"}, CreateTime: now, UpdateTime: now}
+	if err := uniqueRules.Create(ctx, ipRule, biz.MaxUniqueRulesPerModel); err != nil {
+		t.Fatalf("create unique rule: %v", err)
+	}
+
+	// 资源：jsonb attrs、text[] tags、唯一规则、乐观锁。
+	host := &biz.CI{ID: mustID(t), ModelCode: "it_host", Name: "h1", Status: "active", Env: "prod", Tags: []string{"web", "db"}, Source: "manual", Attrs: map[string]any{"ip": "10.0.0.1", "cores": int64(8)}, Version: 1, CreateUser: mustID(t), CreateTime: now, UpdateTime: now}
 	if err := cis.Create(ctx, host, hist(t, host.ID, "create")); err != nil {
 		t.Fatalf("create ci: %v", err)
 	}
@@ -163,7 +170,7 @@ func TestIntegration_CmdbRepos(t *testing.T) {
 	if err != nil || total != 1 || related[0].CI.ID != part.ID || related[0].CI.Attrs["kind"] != "a" {
 		t.Fatalf("list related = %+v total=%d err=%v", related, total, err)
 	}
-	host2 := &biz.CI{ID: mustID(t), ModelCode: "it_host", Name: "h2", Status: "active", Tags: []string{}, Source: "manual", UniqueKey: "ip=10.0.0.2", Attrs: map[string]any{"ip": "10.0.0.2"}, Version: 1, CreateTime: now, UpdateTime: now}
+	host2 := &biz.CI{ID: mustID(t), ModelCode: "it_host", Name: "h2", Status: "active", Tags: []string{}, Source: "manual", Attrs: map[string]any{"ip": "10.0.0.2"}, Version: 1, CreateTime: now, UpdateTime: now}
 	if err := cis.Create(ctx, host2, hist(t, host2.ID, "create")); err != nil {
 		t.Fatal(err)
 	}
@@ -207,6 +214,13 @@ func TestIntegration_CmdbRepos(t *testing.T) {
 	}
 	if err := relTypes.SoftDelete(ctx, "it_has_part", time.Now()); err != nil {
 		t.Fatalf("soft delete relation type: %v", err)
+	}
+	// 被唯一规则引用的字段不可废弃；删掉规则后可以。
+	if err := fields.Deprecate(ctx, "it_host", ipField.ID); !errors.Is(err, biz.ErrFieldInUse) {
+		t.Fatalf("deprecate field in unique rule error = %v", err)
+	}
+	if err := uniqueRules.Delete(ctx, "it_host", ipRule.ID); err != nil {
+		t.Fatalf("delete unique rule: %v", err)
 	}
 	if err := fields.Deprecate(ctx, "it_host", ipField.ID); err != nil {
 		t.Fatalf("deprecate field: %v", err)

@@ -25,7 +25,7 @@ func NewMetaRepo(data *Data) *metaRepo { return &metaRepo{data: data} }
 // Fields implements biz.MetaRepo（类型须启用且未删除；字段未废弃）。
 func (r *metaRepo) Fields(ctx context.Context, modelCode string) ([]biz.ModelField, error) {
 	rows, err := r.data.Pool.Query(ctx,
-		`SELECT f.code, f.owner, f."unique" FROM cmdb_model_field f JOIN cmdb_model m ON m.code = f.model_code
+		`SELECT f.code, f.owner FROM cmdb_model_field f JOIN cmdb_model m ON m.code = f.model_code
 		 WHERE f.model_code = $1 AND NOT f.deprecated AND m.status = 1 AND m.delete_time IS NULL ORDER BY f.sort, f.code`, modelCode)
 	if err != nil {
 		return nil, fmt.Errorf("query model fields: %w", err)
@@ -34,7 +34,7 @@ func (r *metaRepo) Fields(ctx context.Context, modelCode string) ([]biz.ModelFie
 	out := make([]biz.ModelField, 0, 8)
 	for rows.Next() {
 		var f biz.ModelField
-		if err := rows.Scan(&f.Code, &f.Owner, &f.Unique); err != nil {
+		if err := rows.Scan(&f.Code, &f.Owner); err != nil {
 			return nil, fmt.Errorf("scan model field: %w", err)
 		}
 		out = append(out, f)

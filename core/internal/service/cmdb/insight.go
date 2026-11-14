@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"slices"
+	"strings"
 
 	v1 "github.com/lanyulei/reborn/backend/core/api/cmdb/v1"
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/cmdb"
@@ -132,6 +134,41 @@ func (s *CmdbInsightService) GetOverview(ctx context.Context, req *v1.GetOvervie
 	}
 	for _, p := range ov.Trend {
 		resp.Trend = append(resp.Trend, &v1.OverviewTrendPoint{Date: p.Date, Action: p.Action, Count: p.Count})
+	}
+	return resp, nil
+}
+
+// GetQuality implements proto CmdbInsightService/GetQuality（数据范围同 GetOverview）。
+func (s *CmdbInsightService) GetQuality(ctx context.Context, _ *v1.GetQualityRequest) (*v1.GetQualityResponse, error) {
+	scope, err := s.guard.resolve(ctx)
+	if err != nil {
+		return nil, err
+	}
+	filter := biz.OverviewFilter{}
+	if !scope.Unrestricted {
+		filter.ModelCodes = keys(scope.Models)
+		if !scope.EnvUnrestricted {
+			filter.Envs = keys(scope.Envs)
+		}
+	}
+	rows, err := s.uc.Quality(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	// 问题多的模型在前。
+	issues := func(q *biz.QualityRow) int64 { return q.MissingRequired + q.NoOwner + q.Orphan + q.Stale + q.Outdated }
+	slices.SortFunc(rows, func(a, b *biz.QualityRow) int {
+		if d := issues(b) - issues(a); d != 0 {
+			return int(min(max(d, -1), 1))
+		}
+		return strings.Compare(a.ModelCode, b.ModelCode)
+	})
+	resp := &v1.GetQualityResponse{Items: make([]*v1.QualityRow, 0, len(rows)), OutdatedDays: biz.QualityOutdatedDays}
+	for _, q := range rows {
+		resp.Items = append(resp.Items, &v1.QualityRow{
+			ModelCode: q.ModelCode, ModelName: q.ModelName, Total: q.Total, MissingRequired: q.MissingRequired,
+			NoOwner: q.NoOwner, Orphan: q.Orphan, Stale: q.Stale, Outdated: q.Outdated,
+		})
 	}
 	return resp, nil
 }

@@ -31,6 +31,7 @@ const (
 	ActionDelete     = cmdbcontract.ActionDelete
 	ActionLink       = cmdbcontract.ActionLink
 	ActionUnlink     = cmdbcontract.ActionUnlink
+	ActionRestore    = cmdbcontract.ActionRestore
 )
 
 // transitions 状态机：允许的 from → to。
@@ -58,18 +59,21 @@ type CI struct {
 	Tags         []string
 	Source       string
 	ExternalID   string
-	UniqueKey    string
 	Attrs        map[string]any
 	LastSyncedAt *time.Time
 	// SourceName / SourceDeleted 同步来源的采集源名称与是否已删除（manual 为空）。
 	SourceName    string
 	SourceDeleted bool
-	Stale         bool
-	Version       int64
-	CreateUser    string
-	UpdateUser    string
-	CreateTime    time.Time
-	UpdateTime    time.Time
+	// OwnerName 负责人为系统用户（Owner 存用户 ID）时的显示名；否则为空。
+	OwnerName string
+	// DeleteTime 删除时间（仅回收站查询返回）。
+	DeleteTime *time.Time
+	Stale      bool
+	Version    int64
+	CreateUser string
+	UpdateUser string
+	CreateTime time.Time
+	UpdateTime time.Time
 }
 
 // CIFilter 资源列表过滤；零值不过滤，Attrs 为属性等值过滤。
@@ -94,7 +98,24 @@ type CIFilter struct {
 	Envs  []string
 	Tag   string
 	Attrs map[string]any
+	// Owner 负责人精确匹配（用户 ID 或原文）。
+	Owner string
+	// Deleted 为真查询回收站（已删除的资源），否则只查未删除。
+	Deleted bool
+	// Issue 数据质量问题（Issue* 常量）；与数据质量看板同口径，只含在册（未退役）资源。
+	Issue string
 }
+
+// 数据质量问题类别。
+const (
+	IssueMissingRequired = "missing_required"
+	IssueNoOwner         = "no_owner"
+	IssueOrphan          = "orphan"
+	IssueStale           = "stale"
+	IssueOutdated        = "outdated"
+	// QualityOutdatedDays "长期未更新"的天数阈值。
+	QualityOutdatedDays = 180
+)
 
 // HistoryFilter 全局变更审计条件（ModelCodes / Envs 由数据范围守卫叠加）。
 type HistoryFilter struct {
@@ -199,6 +220,11 @@ type CIRepo interface {
 	// Update 以 expectedVersion 条件更新全部可变列并 +1 版本；不匹配返回 ErrCIVersionConflict。
 	Update(ctx context.Context, ci *CI, expectedVersion int64, h *History) error
 	SoftDelete(ctx context.Context, id string, at time.Time, h *History) error
+	// GetDeleted 取回收站中的资源；不存在或未删除返回 ErrCINotFound。
+	GetDeleted(ctx context.Context, id string) (*CI, error)
+	// Restore 恢复已删除的资源（版本 +1，历史同事务）：名称 / 唯一规则 / 同源外部标识已被
+	// 其它未删除资源占用时返回 ErrCIDuplicate。
+	Restore(ctx context.Context, ci *CI, at time.Time, h *History) error
 	// ExistsInModel 报告资源是否存在且属于该类型（ref 字段校验）。
 	ExistsInModel(ctx context.Context, modelCode, id string) (bool, error)
 	// Search 名称 / 外部标识 / 标签 / 属性值子串匹配；名称命中优先，其次更新时间倒序。
@@ -228,11 +254,27 @@ type CIUsecase struct {
 	relations  RelationRepo
 	history    HistoryRepo
 	relationUC *RelationUsecase
+	owners     OwnerDirectory
+}
+
+// OwnerCandidate 可选负责人（系统用户的最小投影：不含邮箱、手机号等）。
+type OwnerCandidate struct {
+	ID   string
+	Name string
+}
+
+// OwnerCandidateLimit 可选负责人单次返回上限。
+const OwnerCandidateLimit = 50
+
+// OwnerDirectory 负责人目录（data 层读系统用户表实现）。
+type OwnerDirectory interface {
+	// ListOwnerCandidates 启用且未删除的用户，按显示名排序；keyword 匹配用户名 / 昵称。
+	ListOwnerCandidates(ctx context.Context, keyword string, limit int) ([]OwnerCandidate, error)
 }
 
 // NewCIUsecase new a CIUsecase.
-func NewCIUsecase(models ModelRepo, fields FieldRepo, relTypes RelationTypeRepo, cis CIRepo, relations RelationRepo, history HistoryRepo, relationUC *RelationUsecase) *CIUsecase {
-	return &CIUsecase{models: models, fields: fields, relTypes: relTypes, cis: cis, relations: relations, history: history, relationUC: relationUC}
+func NewCIUsecase(models ModelRepo, fields FieldRepo, relTypes RelationTypeRepo, cis CIRepo, relations RelationRepo, history HistoryRepo, relationUC *RelationUsecase, owners OwnerDirectory) *CIUsecase {
+	return &CIUsecase{models: models, fields: fields, relTypes: relTypes, cis: cis, relations: relations, history: history, relationUC: relationUC, owners: owners}
 }
 
 // Create 创建资源：类型须启用；属性按字段定义全量校验；ref 字段指向存在的资源。
@@ -263,7 +305,7 @@ func (uc *CIUsecase) Create(ctx context.Context, actor Actor, ci *CI) (*CI, erro
 	if ci.Status == "" {
 		ci.Status = CIStatusActive
 	}
-	ci.ID, ci.Attrs, ci.UniqueKey = id, attrs, UniqueKey(fields, attrs)
+	ci.ID, ci.Attrs = id, attrs
 	ci.Source, ci.Version = actor.source(), 1
 	ci.CreateUser, ci.UpdateUser, ci.CreateTime, ci.UpdateTime = actor.UserID, actor.UserID, now, now
 	if ci.Tags == nil {
@@ -558,7 +600,6 @@ func (uc *CIUsecase) Update(ctx context.Context, actor Actor, id string, expecte
 		}
 		return cur, nil
 	}
-	next.UniqueKey = UniqueKey(fields, next.Attrs)
 	next.Version = cur.Version + 1
 	next.UpdateUser, next.UpdateTime = actor.UserID, time.Now()
 	h, err := newHistory(actor, id, ActionUpdate, map[string]any{"before": before, "after": after})
@@ -708,6 +749,44 @@ func (uc *CIUsecase) Delete(ctx context.Context, actor Actor, id string) error {
 		return err
 	}
 	return uc.cis.SoftDelete(ctx, id, time.Now(), h)
+}
+
+// GetDeleted 回收站中的资源（守卫与恢复用，未脱敏）。
+func (uc *CIUsecase) GetDeleted(ctx context.Context, id string) (*CI, error) {
+	return uc.cis.GetDeleted(ctx, id)
+}
+
+// Restore 从回收站恢复资源：类型须仍存在；名称 / 唯一规则冲突由仓储判定。
+// 恢复后不重校验属性（字段定义可能已变化，与"存量值不重校验"同口径）。
+func (uc *CIUsecase) Restore(ctx context.Context, actor Actor, id string) (*CI, error) {
+	ci, err := uc.cis.GetDeleted(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	m, err := uc.models.Get(ctx, ci.ModelCode)
+	if err != nil {
+		return nil, err
+	}
+	// 与新建同口径：停用的类型不接受新的在册资源。
+	if m.Status != ModelStatusEnabled {
+		return nil, detail(ErrCIInvalid, "model %s is disabled", m.Code)
+	}
+	now := time.Now()
+	ci.Version++
+	ci.UpdateUser, ci.UpdateTime = actor.UserID, now
+	h, err := newHistory(actor, id, ActionRestore, map[string]any{"after": snapshot(ci)})
+	if err != nil {
+		return nil, err
+	}
+	if err := uc.cis.Restore(ctx, ci, now, h); err != nil {
+		return nil, err
+	}
+	return uc.getMasked(ctx, id)
+}
+
+// ListOwnerCandidates 可选负责人。
+func (uc *CIUsecase) ListOwnerCandidates(ctx context.Context, keyword string) ([]OwnerCandidate, error) {
+	return uc.owners.ListOwnerCandidates(ctx, strings.TrimSpace(keyword), OwnerCandidateLimit)
 }
 
 // History 分页查询资源变更历史。

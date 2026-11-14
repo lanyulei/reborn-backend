@@ -261,3 +261,32 @@ func (r *syncRunRepo) ListBySource(ctx context.Context, sourceID string, page, p
 	}
 	return items, total, rows.Err()
 }
+
+// ListConflicts implements biz.SyncRunRepo。
+func (r *syncRunRepo) ListConflicts(ctx context.Context, sourceID string, page, pageSize int64) ([]*biz.SyncConflict, int64, error) {
+	source := cmdbcontract.SourceOf(sourceID)
+	var total int64
+	if err := r.data.Pool.QueryRow(ctx, "SELECT count(*) FROM cmdb_sync_conflict WHERE source = $1", source).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count cmdb sync conflicts: %w", err)
+	}
+	if total == 0 {
+		return nil, 0, nil
+	}
+	rows, err := r.data.Pool.Query(ctx,
+		`SELECT c.model_code, COALESCE(m.name, ''), c.external_id, c.name, c.reason, c.first_seen, c.last_seen
+		 FROM cmdb_sync_conflict c LEFT JOIN cmdb_model m ON m.code = c.model_code
+		 WHERE c.source = $1 ORDER BY c.first_seen, c.model_code, c.external_id LIMIT $2 OFFSET $3`, source, pageSize, (page-1)*pageSize)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list cmdb sync conflicts: %w", err)
+	}
+	defer rows.Close()
+	items := make([]*biz.SyncConflict, 0, pageSize)
+	for rows.Next() {
+		var c biz.SyncConflict
+		if err := rows.Scan(&c.ModelCode, &c.ModelName, &c.ExternalID, &c.Name, &c.Reason, &c.FirstSeen, &c.LastSeen); err != nil {
+			return nil, 0, fmt.Errorf("scan cmdb sync conflict: %w", err)
+		}
+		items = append(items, &c)
+	}
+	return items, total, rows.Err()
+}

@@ -112,6 +112,19 @@ type SyncTaskRepo interface {
 // SyncRunRepo 运行记录仓储接口（控制面只读）。
 type SyncRunRepo interface {
 	ListBySource(ctx context.Context, sourceID string, page, pageSize int64) ([]*SyncRun, int64, error)
+	// ListConflicts 采集源当前未解决的同步冲突（最早出现的在前）。
+	ListConflicts(ctx context.Context, sourceID string, page, pageSize int64) ([]*SyncConflict, int64, error)
+}
+
+// SyncConflict 一条未解决的同步冲突（数据面对账时写入，控制面只读）。
+type SyncConflict struct {
+	ModelCode  string
+	ModelName  string
+	ExternalID string
+	Name       string
+	Reason     string
+	FirstSeen  time.Time
+	LastSeen   time.Time
 }
 
 // CredentialSealer 凭据加密器（data 层以 kit/secretbox 实现；只写不读）。
@@ -283,4 +296,13 @@ func (uc *SyncUsecase) ListRuns(ctx context.Context, sourceID string, page, page
 	}
 	page, pageSize = paging.Normalize(page, pageSize)
 	return uc.runs.ListBySource(ctx, sourceID, page, pageSize)
+}
+
+// ListConflicts 分页查询采集源当前未解决的同步冲突。
+func (uc *SyncUsecase) ListConflicts(ctx context.Context, sourceID string, page, pageSize int64) ([]*SyncConflict, int64, error) {
+	if _, err := uc.sources.Get(ctx, sourceID); err != nil {
+		return nil, 0, err
+	}
+	page, pageSize = paging.Normalize(page, pageSize)
+	return uc.runs.ListConflicts(ctx, sourceID, page, pageSize)
 }

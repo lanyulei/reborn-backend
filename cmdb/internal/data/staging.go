@@ -41,7 +41,7 @@ func (r *stagingRepo) Append(ctx context.Context, runID string, rows []*biz.Reso
 			return fmt.Errorf("marshal relations: %w", err)
 		}
 		batch.Queue(
-			`INSERT INTO cmdb_sync_staging (run_id, model_code, external_id, name, attrs, unique_key, relations) VALUES ($1, $2, $3, $4, $5, '', $6)
+			`INSERT INTO cmdb_sync_staging (run_id, model_code, external_id, name, attrs, relations) VALUES ($1, $2, $3, $4, $5, $6)
 			 ON CONFLICT (run_id, model_code, external_id) DO UPDATE SET name = EXCLUDED.name, attrs = EXCLUDED.attrs, relations = EXCLUDED.relations`,
 			runID, res.ModelCode, res.ExternalID, res.Name, attrs, relations)
 	}
@@ -55,6 +55,16 @@ func (r *stagingRepo) Append(ctx context.Context, runID string, rows []*biz.Reso
 		}
 		return nil
 	})
+}
+
+// RefreshStats implements biz.StagingRepo。暂存表归数据面角色所有（migrations 0049），
+// 故数据面账号可以 ANALYZE；账号无权时 PostgreSQL 只给出 WARNING 并跳过，不报错。
+// 单独一条语句（不在对账事务内）：只在分析期间持有表级 ShareUpdateExclusive 锁。
+func (r *stagingRepo) RefreshStats(ctx context.Context) error {
+	if _, err := r.data.Pool.Exec(ctx, "ANALYZE cmdb_sync_staging"); err != nil {
+		return fmt.Errorf("analyze staging: %w", err)
+	}
+	return nil
 }
 
 // Models implements biz.StagingRepo。

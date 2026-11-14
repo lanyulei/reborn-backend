@@ -20,15 +20,20 @@ import (
 var (
 	_ biz.CIRepo         = (*ciRepo)(nil)
 	_ biz.CIBatchUpdater = (*ciRepo)(nil)
+	_ biz.OwnerDirectory = (*ciRepo)(nil)
 )
 
 // ciSelectColumns 资源查询列序（c = cmdb_ci，m = cmdb_model）。
-const ciSelectColumns = `c.id, c.model_code, m.name, c.name, c.status, c.env, c.owner, c.tags, c.source, c.external_id, c.unique_key,
+const ciSelectColumns = `c.id, c.model_code, m.name, c.name, c.status, c.env, c.owner, c.tags, c.source, c.external_id,
 	c.attrs, c.last_synced_at, c.stale, c.version, c.create_user, c.update_user, c.create_time, c.update_time,
-	COALESCE(ss.name, ''), ss.delete_time IS NOT NULL`
+	COALESCE(ss.name, ''), ss.delete_time IS NOT NULL,
+	COALESCE(NULLIF(ou.nickname, ''), ou.username, ''), c.delete_time`
 
 // ciJoinSource 同步来源采集源（source = sync:<uuid>）；manual 不命中。
-const ciJoinSource = " LEFT JOIN cmdb_sync_source ss ON c.source LIKE 'sync:%' AND ss.id::text = substr(c.source, 6) "
+// 负责人（owner 存用户 ID 时）取显示名；已删除的用户不解析（展示 owner 原文）。
+const ciJoinSource = " LEFT JOIN cmdb_sync_source ss ON c.source LIKE 'sync:%' AND ss.id::text = substr(c.source, 6) " +
+	// owner 形如 UUID 时才转型比较（CASE 惰性求值，自由文本不会转型报错）：等值落在 ou.id 上，可走主键。
+	"LEFT JOIN \"system_user\" ou ON ou.delete_time IS NULL AND ou.id = CASE WHEN c.owner ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' THEN c.owner::uuid END "
 
 const ciFrom = " FROM cmdb_ci c JOIN cmdb_model m ON m.code = c.model_code " + ciJoinSource
 
@@ -37,8 +42,8 @@ func scanCI(scan func(dest ...any) error) (*biz.CI, error) {
 	var attrs []byte
 	var createUser, updateUser *string
 	if err := scan(&ci.ID, &ci.ModelCode, &ci.ModelName, &ci.Name, &ci.Status, &ci.Env, &ci.Owner, &ci.Tags, &ci.Source,
-		&ci.ExternalID, &ci.UniqueKey, &attrs, &ci.LastSyncedAt, &ci.Stale, &ci.Version, &createUser, &updateUser,
-		&ci.CreateTime, &ci.UpdateTime, &ci.SourceName, &ci.SourceDeleted); err != nil {
+		&ci.ExternalID, &attrs, &ci.LastSyncedAt, &ci.Stale, &ci.Version, &createUser, &updateUser,
+		&ci.CreateTime, &ci.UpdateTime, &ci.SourceName, &ci.SourceDeleted, &ci.OwnerName, &ci.DeleteTime); err != nil {
 		return nil, err
 	}
 	ci.Attrs = map[string]any{}
@@ -59,10 +64,17 @@ func scanCI(scan func(dest ...any) error) (*biz.CI, error) {
 	return &ci, nil
 }
 
-// mapCIUniqueViolation 名称/唯一键冲突映射为业务错误。
+// errCIUniqueRuleViolated 事务内标记：资源违反某条唯一规则（cmdb_ci 触发器写 cmdb_ci_unique
+// 时撞唯一索引）。事务回滚后由 explainDuplicate 查出具体规则再转成业务错误。
+var errCIUniqueRuleViolated = errors.New("cmdb ci violates a unique rule")
+
+// mapCIUniqueViolation 名称 / 唯一规则冲突映射为业务错误。
 func mapCIUniqueViolation(err error) error {
-	if isUniqueViolation(err, "uq_cmdb_ci_model_name") || isUniqueViolation(err, "uq_cmdb_ci_model_unique_key") {
-		return biz.ErrCIDuplicate
+	if isUniqueViolation(err, "uq_cmdb_ci_model_name") {
+		return biz.DuplicateName()
+	}
+	if isUniqueViolation(err, "uq_cmdb_ci_unique_rule_key") {
+		return errCIUniqueRuleViolated
 	}
 	if isForeignKeyViolation(err) {
 		return biz.ErrModelNotFound
@@ -83,13 +95,14 @@ func (r *ciRepo) Create(ctx context.Context, ci *biz.CI, h *biz.History) error {
 	if err != nil {
 		return fmt.Errorf("marshal attrs: %w", err)
 	}
-	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+	err = dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+		// 唯一键由 cmdb_ci 的触发器按当前唯一规则写入 cmdb_ci_unique（migrations 0049）。
 		if _, err := tx.Exec(ctx,
-			`INSERT INTO cmdb_ci (id, model_code, name, status, env, owner, tags, source, external_id, unique_key, attrs,
+			`INSERT INTO cmdb_ci (id, model_code, name, status, env, owner, tags, source, external_id, attrs,
 			   version, create_user, update_user, create_time, update_time)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
 			ci.ID, ci.ModelCode, ci.Name, ci.Status, ci.Env, ci.Owner, dbx.TextArray(ci.Tags), ci.Source, ci.ExternalID,
-			ci.UniqueKey, attrs, ci.Version, dbx.NilIfEmpty(ci.CreateUser), dbx.NilIfEmpty(ci.UpdateUser), ci.CreateTime, ci.UpdateTime); err != nil {
+			attrs, ci.Version, dbx.NilIfEmpty(ci.CreateUser), dbx.NilIfEmpty(ci.UpdateUser), ci.CreateTime, ci.UpdateTime); err != nil {
 			if mapped := mapCIUniqueViolation(err); mapped != err {
 				return mapped
 			}
@@ -97,6 +110,34 @@ func (r *ciRepo) Create(ctx context.Context, ci *biz.CI, h *biz.History) error {
 		}
 		return insertHistories(ctx, tx, []*biz.History{h})
 	})
+	return r.explainDuplicate(ctx, err, ci)
+}
+
+// explainDuplicate 把"违反唯一规则"的事务内标记换成指明规则的业务错误：事务已回滚，
+// 按拟写入的属性查出被哪条规则、哪个已有资源占用。只返回规则名与字段，不含对方资源信息。
+// 查不到（对方已并发删除 / 改值）时退回通用的重复错误。其它错误原样返回。
+func (r *ciRepo) explainDuplicate(ctx context.Context, err error, items ...*biz.CI) error {
+	if !errors.Is(err, errCIUniqueRuleViolated) {
+		return err
+	}
+	for _, ci := range items {
+		attrs, mErr := json.Marshal(ci.Attrs)
+		if mErr != nil {
+			continue
+		}
+		var name string
+		var codes []string
+		qErr := r.data.Pool.QueryRow(ctx,
+			`SELECT r.name, r.field_codes
+			 FROM cmdb_model_unique_rule r
+			 JOIN cmdb_ci_unique u ON u.rule_id = r.id AND u.key = cmdb_unique_key($2::jsonb, r.field_codes)
+			 WHERE r.model_code = $1 AND u.ci_id <> $3
+			 ORDER BY r.name LIMIT 1`, ci.ModelCode, attrs, ci.ID).Scan(&name, &codes)
+		if qErr == nil {
+			return biz.DuplicateByRule(name, codes)
+		}
+	}
+	return biz.ErrCIDuplicate
 }
 
 // Get implements biz.CIRepo.
@@ -128,6 +169,9 @@ func (r *ciRepo) GetByName(ctx context.Context, modelCode, name string) (*biz.CI
 // List implements biz.CIRepo：固定列过滤 + tags 包含 + attrs 等值（jsonb @>，走 GIN）。
 func (r *ciRepo) List(ctx context.Context, filter biz.CIFilter, page, pageSize int64) ([]*biz.CI, int64, error) {
 	where := []string{"c.delete_time IS NULL"}
+	if filter.Deleted {
+		where[0] = "c.delete_time IS NOT NULL"
+	}
 	args := make([]any, 0, 8)
 	add := func(cond string, value any) {
 		args = append(args, value)
@@ -153,6 +197,18 @@ func (r *ciRepo) List(ctx context.Context, filter biz.CIFilter, page, pageSize i
 	}
 	if filter.Tag != "" {
 		add("? = ANY(c.tags)", filter.Tag)
+	}
+	if filter.Owner != "" {
+		add("c.owner = ?", filter.Owner)
+	}
+	if cond, needTime := qualityCond(filter.Issue); cond != "" {
+		// 与数据质量看板同口径：只看在册（未退役）资源。
+		add("c.status <> ?", biz.CIStatusRetired)
+		if needTime {
+			add(cond, time.Now().AddDate(0, 0, -biz.QualityOutdatedDays))
+		} else {
+			where = append(where, cond)
+		}
 	}
 	if len(filter.Attrs) > 0 {
 		// 敏感字段不可过滤（防取值探测）：过滤键在该行所属类型下为敏感字段的行一律不命中。
@@ -259,9 +315,10 @@ func scalarText(v any) string {
 
 // Update implements biz.CIRepo：乐观锁条件更新 + 历史同事务。
 func (r *ciRepo) Update(ctx context.Context, ci *biz.CI, expectedVersion int64, h *biz.History) error {
-	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+	err := dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		return updateCI(ctx, tx, ci, expectedVersion, h)
 	})
+	return r.explainDuplicate(ctx, err, ci)
 }
 
 // UpdateBatch implements biz.CIBatchUpdater：多条乐观锁更新 + 历史同一事务
@@ -272,7 +329,7 @@ func (r *ciRepo) UpdateBatch(ctx context.Context, items []*biz.CI, histories []*
 		order[i] = i
 	}
 	slices.SortFunc(order, func(a, b int) int { return strings.Compare(items[a].ID, items[b].ID) })
-	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+	err := dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		for _, i := range order {
 			if err := updateCI(ctx, tx, items[i], items[i].Version-1, histories[i]); err != nil {
 				return err
@@ -280,6 +337,7 @@ func (r *ciRepo) UpdateBatch(ctx context.Context, items []*biz.CI, histories []*
 		}
 		return nil
 	})
+	return r.explainDuplicate(ctx, err, items...)
 }
 
 // updateCI 事务内的单条乐观锁更新 + 历史。
@@ -289,10 +347,10 @@ func updateCI(ctx context.Context, tx pgx.Tx, ci *biz.CI, expectedVersion int64,
 		return fmt.Errorf("marshal attrs: %w", err)
 	}
 	tag, err := tx.Exec(ctx,
-		`UPDATE cmdb_ci SET name = $2, status = $3, env = $4, owner = $5, tags = $6, external_id = $7, unique_key = $8,
-		   attrs = $9, version = $10, update_user = $11, update_time = $12
-		 WHERE id = $1 AND version = $13 AND delete_time IS NULL`,
-		ci.ID, ci.Name, ci.Status, ci.Env, ci.Owner, dbx.TextArray(ci.Tags), ci.ExternalID, ci.UniqueKey,
+		`UPDATE cmdb_ci SET name = $2, status = $3, env = $4, owner = $5, tags = $6, external_id = $7,
+		   attrs = $8, version = $9, update_user = $10, update_time = $11
+		 WHERE id = $1 AND version = $12 AND delete_time IS NULL`,
+		ci.ID, ci.Name, ci.Status, ci.Env, ci.Owner, dbx.TextArray(ci.Tags), ci.ExternalID,
 		attrs, ci.Version, dbx.NilIfEmpty(ci.UpdateUser), ci.UpdateTime, expectedVersion)
 	if err != nil {
 		if mapped := mapCIUniqueViolation(err); mapped != err {
@@ -316,7 +374,8 @@ func updateCI(ctx context.Context, tx pgx.Tx, ci *biz.CI, expectedVersion int64,
 // SoftDelete implements biz.CIRepo.
 func (r *ciRepo) SoftDelete(ctx context.Context, id string, at time.Time, h *biz.History) error {
 	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
-		tag, err := tx.Exec(ctx, "UPDATE cmdb_ci SET delete_time = $2 WHERE id = $1 AND delete_time IS NULL", id, at)
+		// update_time 一并置为删除时刻：回收站按它倒序（最近删除的在前），与索引、游标一致。
+		tag, err := tx.Exec(ctx, "UPDATE cmdb_ci SET delete_time = $2, update_time = $2 WHERE id = $1 AND delete_time IS NULL", id, at)
 		if err != nil {
 			return fmt.Errorf("soft delete cmdb ci: %w", err)
 		}
@@ -325,6 +384,78 @@ func (r *ciRepo) SoftDelete(ctx context.Context, id string, at time.Time, h *biz
 		}
 		return insertHistories(ctx, tx, []*biz.History{h})
 	})
+}
+
+// GetDeleted implements biz.CIRepo.
+func (r *ciRepo) GetDeleted(ctx context.Context, id string) (*biz.CI, error) {
+	row := r.data.Pool.QueryRow(ctx, "SELECT "+ciSelectColumns+ciFrom+"WHERE c.id = $1 AND c.delete_time IS NOT NULL", id)
+	ci, err := scanCI(row.Scan)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, biz.ErrCINotFound
+		}
+		return nil, fmt.Errorf("get deleted cmdb ci: %w", err)
+	}
+	return ci, nil
+}
+
+// Restore implements biz.CIRepo：清除删除标记（触发器随之按当前唯一规则重建键，冲突即失败）。
+func (r *ciRepo) Restore(ctx context.Context, ci *biz.CI, at time.Time, h *biz.History) error {
+	err := dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+		// 同步资源：删除期间同一外部标识可能已被重新发现并新建，恢复会造成对账锚点重复。
+		// 先取类型级排他键锁——对账事务全程持有同一把锁的共享模式（见数据面 reconcile），
+		// 两者因此串行，检查与恢复之间不会插进一条同锚点的新资源；等锁超时返回可重试错误。
+		if ci.ExternalID != "" && strings.HasPrefix(ci.Source, "sync:") {
+			if err := lockWithTimeout(ctx, tx, ci.ModelCode, uniqueRuleLockSQL); err != nil {
+				return err
+			}
+			var taken bool
+			if err := tx.QueryRow(ctx,
+				`SELECT EXISTS (SELECT 1 FROM cmdb_ci WHERE model_code = $1 AND source = $2 AND external_id = $3
+				   AND external_id <> '' AND delete_time IS NULL)`, ci.ModelCode, ci.Source, ci.ExternalID).Scan(&taken); err != nil {
+				return fmt.Errorf("check external id: %w", err)
+			}
+			if taken {
+				return biz.DuplicateExternalID()
+			}
+		}
+		tag, err := tx.Exec(ctx,
+			`UPDATE cmdb_ci SET delete_time = NULL, version = version + 1, update_user = $2, update_time = $3
+			 WHERE id = $1 AND delete_time IS NOT NULL`, ci.ID, dbx.NilIfEmpty(ci.UpdateUser), at)
+		if err != nil {
+			if mapped := mapCIUniqueViolation(err); mapped != err {
+				return mapped
+			}
+			return fmt.Errorf("restore cmdb ci: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			return biz.ErrCINotFound
+		}
+		return insertHistories(ctx, tx, []*biz.History{h})
+	})
+	return r.explainDuplicate(ctx, err, ci)
+}
+
+// ListOwnerCandidates implements biz.OwnerDirectory（只取 ID 与显示名）。
+func (r *ciRepo) ListOwnerCandidates(ctx context.Context, keyword string, limit int) ([]biz.OwnerCandidate, error) {
+	rows, err := r.data.Pool.Query(ctx,
+		// 只按展示出来的名称匹配：不让关键字成为探测登录名的手段。
+		`SELECT id::text, COALESCE(NULLIF(nickname, ''), username) AS name FROM "system_user"
+		 WHERE delete_time IS NULL AND status = 1 AND ($1 = '' OR COALESCE(NULLIF(nickname, ''), username) ILIKE $2)
+		 ORDER BY name, id LIMIT $3`, keyword, dbx.LikeContains(keyword), limit)
+	if err != nil {
+		return nil, fmt.Errorf("list owner candidates: %w", err)
+	}
+	defer rows.Close()
+	items := make([]biz.OwnerCandidate, 0, limit)
+	for rows.Next() {
+		var c biz.OwnerCandidate
+		if err := rows.Scan(&c.ID, &c.Name); err != nil {
+			return nil, fmt.Errorf("scan owner candidate: %w", err)
+		}
+		items = append(items, c)
+	}
+	return items, rows.Err()
 }
 
 // ExistsInModel implements biz.CIRepo.

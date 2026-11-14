@@ -43,6 +43,12 @@ var (
 	ErrGroupNotFound          = errors.NotFound(v1.ErrorReason_CMDB_GROUP_NOT_FOUND.String(), "model group not found")
 	ErrGroupCodeExists        = errors.Conflict(v1.ErrorReason_CMDB_GROUP_CODE_EXISTS.String(), "model group code already exists")
 	ErrGroupInUse             = errors.Conflict(v1.ErrorReason_CMDB_GROUP_IN_USE.String(), "model group is builtin or still has models")
+	ErrUniqueRuleNotFound     = errors.NotFound(v1.ErrorReason_CMDB_UNIQUE_RULE_NOT_FOUND.String(), "unique rule not found")
+	ErrUniqueRuleInvalid      = errors.BadRequest(v1.ErrorReason_CMDB_UNIQUE_RULE_INVALID.String(), "invalid unique rule")
+	ErrUniqueRuleExists       = errors.Conflict(v1.ErrorReason_CMDB_UNIQUE_RULE_EXISTS.String(), "a unique rule with the same name or fields already exists")
+	ErrUniqueRuleConflict     = errors.Conflict(v1.ErrorReason_CMDB_UNIQUE_RULE_CONFLICT.String(), "existing resources violate the unique rule")
+	ErrUniqueRuleBusy         = errors.Conflict(v1.ErrorReason_CMDB_UNIQUE_RULE_BUSY.String(), "resources of this model are being written; retry shortly")
+	ErrFieldInUse             = errors.Conflict(v1.ErrorReason_CMDB_FIELD_IN_USE.String(), "field is referenced by a unique rule")
 	// ErrRoleNotFound 复用 system 域错误码口径（角色不存在）。
 	ErrRoleNotFound = errors.NotFound("ROLE_NOT_FOUND", "role not found")
 )

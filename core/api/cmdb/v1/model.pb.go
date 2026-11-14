@@ -936,7 +936,7 @@ type CmdbField struct {
 	Type string `protobuf:"bytes,5,opt,name=type,proto3" json:"type,omitempty"`
 	// required 必填。
 	Required bool `protobuf:"varint,6,opt,name=required,proto3" json:"required,omitempty"`
-	// unique 同类型内唯一（参与唯一键）。
+	// unique 是否被任一唯一规则引用（只读派生值；唯一约束经唯一规则维护）。
 	Unique bool `protobuf:"varint,7,opt,name=unique,proto3" json:"unique,omitempty"`
 	// enum_values 枚举值（type=enum）。
 	EnumValues []string `protobuf:"bytes,8,rep,name=enum_values,json=enumValues,proto3" json:"enum_values,omitempty"`
@@ -1439,6 +1439,8 @@ type GetModelResponse struct {
 	Fields []*CmdbField `protobuf:"bytes,2,rep,name=fields,proto3" json:"fields,omitempty"`
 	// relation_types 适用于该类型的关系类型（任一端匹配或通配）。
 	RelationTypes []*CmdbRelationType `protobuf:"bytes,3,rep,name=relation_types,json=relationTypes,proto3" json:"relation_types,omitempty"`
+	// unique_rules 唯一规则（按名称排序）。
+	UniqueRules   []*CmdbUniqueRule `protobuf:"bytes,4,rep,name=unique_rules,json=uniqueRules,proto3" json:"unique_rules,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1490,6 +1492,13 @@ func (x *GetModelResponse) GetFields() []*CmdbField {
 func (x *GetModelResponse) GetRelationTypes() []*CmdbRelationType {
 	if x != nil {
 		return x.RelationTypes
+	}
+	return nil
+}
+
+func (x *GetModelResponse) GetUniqueRules() []*CmdbUniqueRule {
+	if x != nil {
+		return x.UniqueRules
 	}
 	return nil
 }
@@ -1855,7 +1864,7 @@ type CreateFieldRequest struct {
 	Type string `protobuf:"bytes,4,opt,name=type,proto3" json:"type,omitempty"`
 	// required 必填，可选。
 	Required *bool `protobuf:"varint,5,opt,name=required,proto3,oneof" json:"required,omitempty"`
-	// unique 唯一，可选。
+	// unique 已停用：唯一约束改由唯一规则维护；传 true 返回 400（保留字段号，兼容仍传 false 的旧客户端）。
 	Unique *bool `protobuf:"varint,6,opt,name=unique,proto3,oneof" json:"unique,omitempty"`
 	// enum_values 枚举值（type=enum 必填），每项 1-64 位，≤100 项。
 	EnumValues []string `protobuf:"bytes,7,rep,name=enum_values,json=enumValues,proto3" json:"enum_values,omitempty"`
@@ -2080,7 +2089,7 @@ type UpdateFieldRequest struct {
 	Name *string `protobuf:"bytes,3,opt,name=name,proto3,oneof" json:"name,omitempty"`
 	// required 必填。
 	Required *bool `protobuf:"varint,4,opt,name=required,proto3,oneof" json:"required,omitempty"`
-	// unique 唯一。
+	// unique 已停用：唯一约束改由唯一规则维护；与当前派生值不同时返回 400。
 	Unique *bool `protobuf:"varint,5,opt,name=unique,proto3,oneof" json:"unique,omitempty"`
 	// enum_values 枚举值整组替换（type=enum）。
 	EnumValues []string `protobuf:"bytes,6,rep,name=enum_values,json=enumValues,proto3" json:"enum_values,omitempty"`
@@ -2370,6 +2379,585 @@ func (*DeleteFieldResponse) Descriptor() ([]byte, []int) {
 	return file_cmdb_v1_model_proto_rawDescGZIP(), []int{31}
 }
 
+// CmdbUniqueRule 唯一规则：field_codes 这组字段的取值在类型内不可重复。
+// 任一字段为空（缺失 / null / 空串）的资源不受该规则约束。
+type CmdbUniqueRule struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// id 规则标识。
+	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	// model_code 所属类型。
+	ModelCode string `protobuf:"bytes,2,opt,name=model_code,json=modelCode,proto3" json:"model_code,omitempty"`
+	// name 规则名（类型内唯一）。
+	Name string `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	// field_codes 字段编码（1 个 = 单字段唯一，多个 = 联合唯一；字典序）。
+	FieldCodes []string `protobuf:"bytes,4,rep,name=field_codes,json=fieldCodes,proto3" json:"field_codes,omitempty"`
+	// create_time 创建时间。
+	CreateTime *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=create_time,json=createTime,proto3" json:"create_time,omitempty"`
+	// update_time 更新时间。
+	UpdateTime    *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=update_time,json=updateTime,proto3" json:"update_time,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CmdbUniqueRule) Reset() {
+	*x = CmdbUniqueRule{}
+	mi := &file_cmdb_v1_model_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CmdbUniqueRule) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CmdbUniqueRule) ProtoMessage() {}
+
+func (x *CmdbUniqueRule) ProtoReflect() protoreflect.Message {
+	mi := &file_cmdb_v1_model_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CmdbUniqueRule.ProtoReflect.Descriptor instead.
+func (*CmdbUniqueRule) Descriptor() ([]byte, []int) {
+	return file_cmdb_v1_model_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *CmdbUniqueRule) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *CmdbUniqueRule) GetModelCode() string {
+	if x != nil {
+		return x.ModelCode
+	}
+	return ""
+}
+
+func (x *CmdbUniqueRule) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *CmdbUniqueRule) GetFieldCodes() []string {
+	if x != nil {
+		return x.FieldCodes
+	}
+	return nil
+}
+
+func (x *CmdbUniqueRule) GetCreateTime() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CreateTime
+	}
+	return nil
+}
+
+func (x *CmdbUniqueRule) GetUpdateTime() *timestamppb.Timestamp {
+	if x != nil {
+		return x.UpdateTime
+	}
+	return nil
+}
+
+// UniqueConflict 一组在某字段组上取值相同的资源。
+type UniqueConflict struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// count 该组资源数。
+	Count int64 `protobuf:"varint,1,opt,name=count,proto3" json:"count,omitempty"`
+	// names 资源名称样例（至多 5 个；调用者数据范围受限时为空）。
+	Names         []string `protobuf:"bytes,2,rep,name=names,proto3" json:"names,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UniqueConflict) Reset() {
+	*x = UniqueConflict{}
+	mi := &file_cmdb_v1_model_proto_msgTypes[33]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UniqueConflict) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UniqueConflict) ProtoMessage() {}
+
+func (x *UniqueConflict) ProtoReflect() protoreflect.Message {
+	mi := &file_cmdb_v1_model_proto_msgTypes[33]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UniqueConflict.ProtoReflect.Descriptor instead.
+func (*UniqueConflict) Descriptor() ([]byte, []int) {
+	return file_cmdb_v1_model_proto_rawDescGZIP(), []int{33}
+}
+
+func (x *UniqueConflict) GetCount() int64 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
+func (x *UniqueConflict) GetNames() []string {
+	if x != nil {
+		return x.Names
+	}
+	return nil
+}
+
+// CreateUniqueRuleRequest 新增唯一规则请求。
+type CreateUniqueRuleRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// model_code 所属类型。
+	ModelCode string `protobuf:"bytes,1,opt,name=model_code,json=modelCode,proto3" json:"model_code,omitempty"`
+	// name 规则名，1-64 位。
+	Name string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	// field_codes 字段编码，1-5 个且不重复。
+	FieldCodes    []string `protobuf:"bytes,3,rep,name=field_codes,json=fieldCodes,proto3" json:"field_codes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateUniqueRuleRequest) Reset() {
+	*x = CreateUniqueRuleRequest{}
+	mi := &file_cmdb_v1_model_proto_msgTypes[34]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateUniqueRuleRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateUniqueRuleRequest) ProtoMessage() {}
+
+func (x *CreateUniqueRuleRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cmdb_v1_model_proto_msgTypes[34]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateUniqueRuleRequest.ProtoReflect.Descriptor instead.
+func (*CreateUniqueRuleRequest) Descriptor() ([]byte, []int) {
+	return file_cmdb_v1_model_proto_rawDescGZIP(), []int{34}
+}
+
+func (x *CreateUniqueRuleRequest) GetModelCode() string {
+	if x != nil {
+		return x.ModelCode
+	}
+	return ""
+}
+
+func (x *CreateUniqueRuleRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *CreateUniqueRuleRequest) GetFieldCodes() []string {
+	if x != nil {
+		return x.FieldCodes
+	}
+	return nil
+}
+
+// CreateUniqueRuleResponse 新增唯一规则响应。
+type CreateUniqueRuleResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// rule 新增的规则。
+	Rule          *CmdbUniqueRule `protobuf:"bytes,1,opt,name=rule,proto3" json:"rule,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateUniqueRuleResponse) Reset() {
+	*x = CreateUniqueRuleResponse{}
+	mi := &file_cmdb_v1_model_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateUniqueRuleResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateUniqueRuleResponse) ProtoMessage() {}
+
+func (x *CreateUniqueRuleResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_cmdb_v1_model_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateUniqueRuleResponse.ProtoReflect.Descriptor instead.
+func (*CreateUniqueRuleResponse) Descriptor() ([]byte, []int) {
+	return file_cmdb_v1_model_proto_rawDescGZIP(), []int{35}
+}
+
+func (x *CreateUniqueRuleResponse) GetRule() *CmdbUniqueRule {
+	if x != nil {
+		return x.Rule
+	}
+	return nil
+}
+
+// UpdateUniqueRuleRequest 更新唯一规则请求；未传字段不更新。
+type UpdateUniqueRuleRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// model_code 所属类型。
+	ModelCode string `protobuf:"bytes,1,opt,name=model_code,json=modelCode,proto3" json:"model_code,omitempty"`
+	// id 规则标识。
+	Id string `protobuf:"bytes,2,opt,name=id,proto3" json:"id,omitempty"`
+	// name 规则名。
+	Name *string `protobuf:"bytes,3,opt,name=name,proto3,oneof" json:"name,omitempty"`
+	// field_codes 字段编码整组替换（非空时生效）；与当前相同视为不变。变更时须 1-5 个且不重复
+	// （业务层校验；此处上限放宽，以便存量迁移来的超限规则回传原字段组改名）。
+	FieldCodes    []string `protobuf:"bytes,4,rep,name=field_codes,json=fieldCodes,proto3" json:"field_codes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateUniqueRuleRequest) Reset() {
+	*x = UpdateUniqueRuleRequest{}
+	mi := &file_cmdb_v1_model_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateUniqueRuleRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateUniqueRuleRequest) ProtoMessage() {}
+
+func (x *UpdateUniqueRuleRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cmdb_v1_model_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateUniqueRuleRequest.ProtoReflect.Descriptor instead.
+func (*UpdateUniqueRuleRequest) Descriptor() ([]byte, []int) {
+	return file_cmdb_v1_model_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *UpdateUniqueRuleRequest) GetModelCode() string {
+	if x != nil {
+		return x.ModelCode
+	}
+	return ""
+}
+
+func (x *UpdateUniqueRuleRequest) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *UpdateUniqueRuleRequest) GetName() string {
+	if x != nil && x.Name != nil {
+		return *x.Name
+	}
+	return ""
+}
+
+func (x *UpdateUniqueRuleRequest) GetFieldCodes() []string {
+	if x != nil {
+		return x.FieldCodes
+	}
+	return nil
+}
+
+// UpdateUniqueRuleResponse 更新唯一规则响应。
+type UpdateUniqueRuleResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// rule 更新后的规则。
+	Rule          *CmdbUniqueRule `protobuf:"bytes,1,opt,name=rule,proto3" json:"rule,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateUniqueRuleResponse) Reset() {
+	*x = UpdateUniqueRuleResponse{}
+	mi := &file_cmdb_v1_model_proto_msgTypes[37]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateUniqueRuleResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateUniqueRuleResponse) ProtoMessage() {}
+
+func (x *UpdateUniqueRuleResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_cmdb_v1_model_proto_msgTypes[37]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateUniqueRuleResponse.ProtoReflect.Descriptor instead.
+func (*UpdateUniqueRuleResponse) Descriptor() ([]byte, []int) {
+	return file_cmdb_v1_model_proto_rawDescGZIP(), []int{37}
+}
+
+func (x *UpdateUniqueRuleResponse) GetRule() *CmdbUniqueRule {
+	if x != nil {
+		return x.Rule
+	}
+	return nil
+}
+
+// DeleteUniqueRuleRequest 删除唯一规则请求。
+type DeleteUniqueRuleRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// model_code 所属类型。
+	ModelCode string `protobuf:"bytes,1,opt,name=model_code,json=modelCode,proto3" json:"model_code,omitempty"`
+	// id 规则标识。
+	Id            string `protobuf:"bytes,2,opt,name=id,proto3" json:"id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteUniqueRuleRequest) Reset() {
+	*x = DeleteUniqueRuleRequest{}
+	mi := &file_cmdb_v1_model_proto_msgTypes[38]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteUniqueRuleRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteUniqueRuleRequest) ProtoMessage() {}
+
+func (x *DeleteUniqueRuleRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cmdb_v1_model_proto_msgTypes[38]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteUniqueRuleRequest.ProtoReflect.Descriptor instead.
+func (*DeleteUniqueRuleRequest) Descriptor() ([]byte, []int) {
+	return file_cmdb_v1_model_proto_rawDescGZIP(), []int{38}
+}
+
+func (x *DeleteUniqueRuleRequest) GetModelCode() string {
+	if x != nil {
+		return x.ModelCode
+	}
+	return ""
+}
+
+func (x *DeleteUniqueRuleRequest) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+// DeleteUniqueRuleResponse 删除唯一规则响应。
+type DeleteUniqueRuleResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteUniqueRuleResponse) Reset() {
+	*x = DeleteUniqueRuleResponse{}
+	mi := &file_cmdb_v1_model_proto_msgTypes[39]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteUniqueRuleResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteUniqueRuleResponse) ProtoMessage() {}
+
+func (x *DeleteUniqueRuleResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_cmdb_v1_model_proto_msgTypes[39]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteUniqueRuleResponse.ProtoReflect.Descriptor instead.
+func (*DeleteUniqueRuleResponse) Descriptor() ([]byte, []int) {
+	return file_cmdb_v1_model_proto_rawDescGZIP(), []int{39}
+}
+
+// CheckUniqueRuleRequest 预检唯一规则请求。
+type CheckUniqueRuleRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// model_code 所属类型。
+	ModelCode string `protobuf:"bytes,1,opt,name=model_code,json=modelCode,proto3" json:"model_code,omitempty"`
+	// field_codes 字段编码，1-5 个且不重复。
+	FieldCodes    []string `protobuf:"bytes,2,rep,name=field_codes,json=fieldCodes,proto3" json:"field_codes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckUniqueRuleRequest) Reset() {
+	*x = CheckUniqueRuleRequest{}
+	mi := &file_cmdb_v1_model_proto_msgTypes[40]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckUniqueRuleRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckUniqueRuleRequest) ProtoMessage() {}
+
+func (x *CheckUniqueRuleRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cmdb_v1_model_proto_msgTypes[40]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckUniqueRuleRequest.ProtoReflect.Descriptor instead.
+func (*CheckUniqueRuleRequest) Descriptor() ([]byte, []int) {
+	return file_cmdb_v1_model_proto_rawDescGZIP(), []int{40}
+}
+
+func (x *CheckUniqueRuleRequest) GetModelCode() string {
+	if x != nil {
+		return x.ModelCode
+	}
+	return ""
+}
+
+func (x *CheckUniqueRuleRequest) GetFieldCodes() []string {
+	if x != nil {
+		return x.FieldCodes
+	}
+	return nil
+}
+
+// CheckUniqueRuleResponse 预检唯一规则响应。
+type CheckUniqueRuleResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// conflict_groups 取值重复的组数（0 = 可以建立该规则）。
+	ConflictGroups int64 `protobuf:"varint,1,opt,name=conflict_groups,json=conflictGroups,proto3" json:"conflict_groups,omitempty"`
+	// samples 重复组样例（至多 5 组）。
+	Samples       []*UniqueConflict `protobuf:"bytes,2,rep,name=samples,proto3" json:"samples,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckUniqueRuleResponse) Reset() {
+	*x = CheckUniqueRuleResponse{}
+	mi := &file_cmdb_v1_model_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckUniqueRuleResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckUniqueRuleResponse) ProtoMessage() {}
+
+func (x *CheckUniqueRuleResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_cmdb_v1_model_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckUniqueRuleResponse.ProtoReflect.Descriptor instead.
+func (*CheckUniqueRuleResponse) Descriptor() ([]byte, []int) {
+	return file_cmdb_v1_model_proto_rawDescGZIP(), []int{41}
+}
+
+func (x *CheckUniqueRuleResponse) GetConflictGroups() int64 {
+	if x != nil {
+		return x.ConflictGroups
+	}
+	return 0
+}
+
+func (x *CheckUniqueRuleResponse) GetSamples() []*UniqueConflict {
+	if x != nil {
+		return x.Samples
+	}
+	return nil
+}
+
 // ListRelationTypesRequest 查询关系类型请求。
 type ListRelationTypesRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -2381,7 +2969,7 @@ type ListRelationTypesRequest struct {
 
 func (x *ListRelationTypesRequest) Reset() {
 	*x = ListRelationTypesRequest{}
-	mi := &file_cmdb_v1_model_proto_msgTypes[32]
+	mi := &file_cmdb_v1_model_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2393,7 +2981,7 @@ func (x *ListRelationTypesRequest) String() string {
 func (*ListRelationTypesRequest) ProtoMessage() {}
 
 func (x *ListRelationTypesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cmdb_v1_model_proto_msgTypes[32]
+	mi := &file_cmdb_v1_model_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2406,7 +2994,7 @@ func (x *ListRelationTypesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRelationTypesRequest.ProtoReflect.Descriptor instead.
 func (*ListRelationTypesRequest) Descriptor() ([]byte, []int) {
-	return file_cmdb_v1_model_proto_rawDescGZIP(), []int{32}
+	return file_cmdb_v1_model_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *ListRelationTypesRequest) GetModelCode() string {
@@ -2427,7 +3015,7 @@ type ListRelationTypesResponse struct {
 
 func (x *ListRelationTypesResponse) Reset() {
 	*x = ListRelationTypesResponse{}
-	mi := &file_cmdb_v1_model_proto_msgTypes[33]
+	mi := &file_cmdb_v1_model_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2439,7 +3027,7 @@ func (x *ListRelationTypesResponse) String() string {
 func (*ListRelationTypesResponse) ProtoMessage() {}
 
 func (x *ListRelationTypesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cmdb_v1_model_proto_msgTypes[33]
+	mi := &file_cmdb_v1_model_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2452,7 +3040,7 @@ func (x *ListRelationTypesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRelationTypesResponse.ProtoReflect.Descriptor instead.
 func (*ListRelationTypesResponse) Descriptor() ([]byte, []int) {
-	return file_cmdb_v1_model_proto_rawDescGZIP(), []int{33}
+	return file_cmdb_v1_model_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *ListRelationTypesResponse) GetItems() []*CmdbRelationType {
@@ -2489,7 +3077,7 @@ type CreateRelationTypeRequest struct {
 
 func (x *CreateRelationTypeRequest) Reset() {
 	*x = CreateRelationTypeRequest{}
-	mi := &file_cmdb_v1_model_proto_msgTypes[34]
+	mi := &file_cmdb_v1_model_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2501,7 +3089,7 @@ func (x *CreateRelationTypeRequest) String() string {
 func (*CreateRelationTypeRequest) ProtoMessage() {}
 
 func (x *CreateRelationTypeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cmdb_v1_model_proto_msgTypes[34]
+	mi := &file_cmdb_v1_model_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2514,7 +3102,7 @@ func (x *CreateRelationTypeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateRelationTypeRequest.ProtoReflect.Descriptor instead.
 func (*CreateRelationTypeRequest) Descriptor() ([]byte, []int) {
-	return file_cmdb_v1_model_proto_rawDescGZIP(), []int{34}
+	return file_cmdb_v1_model_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *CreateRelationTypeRequest) GetCode() string {
@@ -2591,7 +3179,7 @@ type CreateRelationTypeResponse struct {
 
 func (x *CreateRelationTypeResponse) Reset() {
 	*x = CreateRelationTypeResponse{}
-	mi := &file_cmdb_v1_model_proto_msgTypes[35]
+	mi := &file_cmdb_v1_model_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2603,7 +3191,7 @@ func (x *CreateRelationTypeResponse) String() string {
 func (*CreateRelationTypeResponse) ProtoMessage() {}
 
 func (x *CreateRelationTypeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cmdb_v1_model_proto_msgTypes[35]
+	mi := &file_cmdb_v1_model_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2616,7 +3204,7 @@ func (x *CreateRelationTypeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateRelationTypeResponse.ProtoReflect.Descriptor instead.
 func (*CreateRelationTypeResponse) Descriptor() ([]byte, []int) {
-	return file_cmdb_v1_model_proto_rawDescGZIP(), []int{35}
+	return file_cmdb_v1_model_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *CreateRelationTypeResponse) GetRelationType() *CmdbRelationType {
@@ -2647,7 +3235,7 @@ type UpdateRelationTypeRequest struct {
 
 func (x *UpdateRelationTypeRequest) Reset() {
 	*x = UpdateRelationTypeRequest{}
-	mi := &file_cmdb_v1_model_proto_msgTypes[36]
+	mi := &file_cmdb_v1_model_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2659,7 +3247,7 @@ func (x *UpdateRelationTypeRequest) String() string {
 func (*UpdateRelationTypeRequest) ProtoMessage() {}
 
 func (x *UpdateRelationTypeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cmdb_v1_model_proto_msgTypes[36]
+	mi := &file_cmdb_v1_model_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2672,7 +3260,7 @@ func (x *UpdateRelationTypeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateRelationTypeRequest.ProtoReflect.Descriptor instead.
 func (*UpdateRelationTypeRequest) Descriptor() ([]byte, []int) {
-	return file_cmdb_v1_model_proto_rawDescGZIP(), []int{36}
+	return file_cmdb_v1_model_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *UpdateRelationTypeRequest) GetCode() string {
@@ -2728,7 +3316,7 @@ type UpdateRelationTypeResponse struct {
 
 func (x *UpdateRelationTypeResponse) Reset() {
 	*x = UpdateRelationTypeResponse{}
-	mi := &file_cmdb_v1_model_proto_msgTypes[37]
+	mi := &file_cmdb_v1_model_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2740,7 +3328,7 @@ func (x *UpdateRelationTypeResponse) String() string {
 func (*UpdateRelationTypeResponse) ProtoMessage() {}
 
 func (x *UpdateRelationTypeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cmdb_v1_model_proto_msgTypes[37]
+	mi := &file_cmdb_v1_model_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2753,7 +3341,7 @@ func (x *UpdateRelationTypeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateRelationTypeResponse.ProtoReflect.Descriptor instead.
 func (*UpdateRelationTypeResponse) Descriptor() ([]byte, []int) {
-	return file_cmdb_v1_model_proto_rawDescGZIP(), []int{37}
+	return file_cmdb_v1_model_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *UpdateRelationTypeResponse) GetRelationType() *CmdbRelationType {
@@ -2774,7 +3362,7 @@ type DeleteRelationTypeRequest struct {
 
 func (x *DeleteRelationTypeRequest) Reset() {
 	*x = DeleteRelationTypeRequest{}
-	mi := &file_cmdb_v1_model_proto_msgTypes[38]
+	mi := &file_cmdb_v1_model_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2786,7 +3374,7 @@ func (x *DeleteRelationTypeRequest) String() string {
 func (*DeleteRelationTypeRequest) ProtoMessage() {}
 
 func (x *DeleteRelationTypeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cmdb_v1_model_proto_msgTypes[38]
+	mi := &file_cmdb_v1_model_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2799,7 +3387,7 @@ func (x *DeleteRelationTypeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteRelationTypeRequest.ProtoReflect.Descriptor instead.
 func (*DeleteRelationTypeRequest) Descriptor() ([]byte, []int) {
-	return file_cmdb_v1_model_proto_rawDescGZIP(), []int{38}
+	return file_cmdb_v1_model_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *DeleteRelationTypeRequest) GetCode() string {
@@ -2818,7 +3406,7 @@ type DeleteRelationTypeResponse struct {
 
 func (x *DeleteRelationTypeResponse) Reset() {
 	*x = DeleteRelationTypeResponse{}
-	mi := &file_cmdb_v1_model_proto_msgTypes[39]
+	mi := &file_cmdb_v1_model_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2830,7 +3418,7 @@ func (x *DeleteRelationTypeResponse) String() string {
 func (*DeleteRelationTypeResponse) ProtoMessage() {}
 
 func (x *DeleteRelationTypeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cmdb_v1_model_proto_msgTypes[39]
+	mi := &file_cmdb_v1_model_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2843,7 +3431,7 @@ func (x *DeleteRelationTypeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteRelationTypeResponse.ProtoReflect.Descriptor instead.
 func (*DeleteRelationTypeResponse) Descriptor() ([]byte, []int) {
-	return file_cmdb_v1_model_proto_rawDescGZIP(), []int{39}
+	return file_cmdb_v1_model_proto_rawDescGZIP(), []int{49}
 }
 
 var File_cmdb_v1_model_proto protoreflect.FileDescriptor
@@ -2984,11 +3572,12 @@ const file_cmdb_v1_model_proto_rawDesc = "" +
 	"\x05items\x18\x01 \x03(\v2\x12.cmdb.v1.CmdbModelR\x05items\x12\x14\n" +
 	"\x05total\x18\x02 \x01(\x03R\x05total\"0\n" +
 	"\x0fGetModelRequest\x12\x1d\n" +
-	"\x04code\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@R\x04code\"\xaa\x01\n" +
+	"\x04code\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@R\x04code\"\xe6\x01\n" +
 	"\x10GetModelResponse\x12(\n" +
 	"\x05model\x18\x01 \x01(\v2\x12.cmdb.v1.CmdbModelR\x05model\x12*\n" +
 	"\x06fields\x18\x02 \x03(\v2\x12.cmdb.v1.CmdbFieldR\x06fields\x12@\n" +
-	"\x0erelation_types\x18\x03 \x03(\v2\x19.cmdb.v1.CmdbRelationTypeR\rrelationTypes\"\x8d\x02\n" +
+	"\x0erelation_types\x18\x03 \x03(\v2\x19.cmdb.v1.CmdbRelationTypeR\rrelationTypes\x12:\n" +
+	"\funique_rules\x18\x04 \x03(\v2\x17.cmdb.v1.CmdbUniqueRuleR\vuniqueRules\"\x8d\x02\n" +
 	"\x12CreateModelRequest\x121\n" +
 	"\x04code\x18\x01 \x01(\tB\x1d\xbaH\x1ar\x182\x16^[a-z][a-z0-9_]{1,63}$R\x04code\x12\x1d\n" +
 	"\x04name\x18\x02 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@R\x04name\x129\n" +
@@ -3095,7 +3684,52 @@ const file_cmdb_v1_model_proto_rawDesc = "" +
 	"\n" +
 	"model_code\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@R\tmodelCode\x12\x18\n" +
 	"\x02id\x18\x02 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\"\x15\n" +
-	"\x13DeleteFieldResponse\"V\n" +
+	"\x13DeleteFieldResponse\"\xee\x01\n" +
+	"\x0eCmdbUniqueRule\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
+	"\n" +
+	"model_code\x18\x02 \x01(\tR\tmodelCode\x12\x12\n" +
+	"\x04name\x18\x03 \x01(\tR\x04name\x12\x1f\n" +
+	"\vfield_codes\x18\x04 \x03(\tR\n" +
+	"fieldCodes\x12;\n" +
+	"\vcreate_time\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"createTime\x12;\n" +
+	"\vupdate_time\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"updateTime\"<\n" +
+	"\x0eUniqueConflict\x12\x14\n" +
+	"\x05count\x18\x01 \x01(\x03R\x05count\x12\x14\n" +
+	"\x05names\x18\x02 \x03(\tR\x05names\"\xad\x01\n" +
+	"\x17CreateUniqueRuleRequest\x12(\n" +
+	"\n" +
+	"model_code\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@R\tmodelCode\x12\x1d\n" +
+	"\x04name\x18\x02 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@R\x04name\x12I\n" +
+	"\vfield_codes\x18\x03 \x03(\tB(\xbaH%\x92\x01\"\b\x01\x10\x05\x18\x01\"\x1ar\x182\x16^[a-z][a-z0-9_]{0,63}$R\n" +
+	"fieldCodes\"G\n" +
+	"\x18CreateUniqueRuleResponse\x12+\n" +
+	"\x04rule\x18\x01 \x01(\v2\x17.cmdb.v1.CmdbUniqueRuleR\x04rule\"\xd3\x01\n" +
+	"\x17UpdateUniqueRuleRequest\x12(\n" +
+	"\n" +
+	"model_code\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@R\tmodelCode\x12\x18\n" +
+	"\x02id\x18\x02 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\x12\"\n" +
+	"\x04name\x18\x03 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@H\x00R\x04name\x88\x01\x01\x12G\n" +
+	"\vfield_codes\x18\x04 \x03(\tB&\xbaH#\x92\x01 \x10@\x18\x01\"\x1ar\x182\x16^[a-z][a-z0-9_]{0,63}$R\n" +
+	"fieldCodesB\a\n" +
+	"\x05_name\"G\n" +
+	"\x18UpdateUniqueRuleResponse\x12+\n" +
+	"\x04rule\x18\x01 \x01(\v2\x17.cmdb.v1.CmdbUniqueRuleR\x04rule\"]\n" +
+	"\x17DeleteUniqueRuleRequest\x12(\n" +
+	"\n" +
+	"model_code\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@R\tmodelCode\x12\x18\n" +
+	"\x02id\x18\x02 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\"\x1a\n" +
+	"\x18DeleteUniqueRuleResponse\"\x8d\x01\n" +
+	"\x16CheckUniqueRuleRequest\x12(\n" +
+	"\n" +
+	"model_code\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@R\tmodelCode\x12I\n" +
+	"\vfield_codes\x18\x02 \x03(\tB(\xbaH%\x92\x01\"\b\x01\x10\x05\x18\x01\"\x1ar\x182\x16^[a-z][a-z0-9_]{0,63}$R\n" +
+	"fieldCodes\"u\n" +
+	"\x17CheckUniqueRuleResponse\x12'\n" +
+	"\x0fconflict_groups\x18\x01 \x01(\x03R\x0econflictGroups\x121\n" +
+	"\asamples\x18\x02 \x03(\v2\x17.cmdb.v1.UniqueConflictR\asamples\"V\n" +
 	"\x18ListRelationTypesRequest\x12+\n" +
 	"\n" +
 	"model_code\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x18@H\x00R\tmodelCode\x88\x01\x01B\r\n" +
@@ -3135,7 +3769,7 @@ const file_cmdb_v1_model_proto_rawDesc = "" +
 	"\rrelation_type\x18\x01 \x01(\v2\x19.cmdb.v1.CmdbRelationTypeR\frelationType\":\n" +
 	"\x19DeleteRelationTypeRequest\x12\x1d\n" +
 	"\x04code\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@R\x04code\"\x1c\n" +
-	"\x1aDeleteRelationTypeResponse2\x8a\x10\n" +
+	"\x1aDeleteRelationTypeResponse2\xb4\x15\n" +
 	"\x10CmdbModelService\x12}\n" +
 	"\n" +
 	"ListModels\x12\x1a.cmdb.v1.ListModelsRequest\x1a\x1b.cmdb.v1.ListModelsResponse\"6\xc2\xf3\x18\x18查询资源类型列表\x82\xd3\xe4\x93\x02\x14\x12\x12/api/v1/cmdb/model\x12~\n" +
@@ -3145,7 +3779,11 @@ const file_cmdb_v1_model_proto_rawDesc = "" +
 	"\vDeleteModel\x12\x1b.cmdb.v1.DeleteModelRequest\x1a\x1c.cmdb.v1.DeleteModelResponse\"7\xc2\xf3\x18\x12删除资源类型\x82\xd3\xe4\x93\x02\x1b*\x19/api/v1/cmdb/model/{code}\x12\x90\x01\n" +
 	"\vCreateField\x12\x1b.cmdb.v1.CreateFieldRequest\x1a\x1c.cmdb.v1.CreateFieldResponse\"F\xc2\xf3\x18\x12新增类型字段\x82\xd3\xe4\x93\x02*:\x01*\"%/api/v1/cmdb/model/{model_code}/field\x12\x95\x01\n" +
 	"\vUpdateField\x12\x1b.cmdb.v1.UpdateFieldRequest\x1a\x1c.cmdb.v1.UpdateFieldResponse\"K\xc2\xf3\x18\x12更新类型字段\x82\xd3\xe4\x93\x02/:\x01*\x1a*/api/v1/cmdb/model/{model_code}/field/{id}\x12\x92\x01\n" +
-	"\vDeleteField\x12\x1b.cmdb.v1.DeleteFieldRequest\x1a\x1c.cmdb.v1.DeleteFieldResponse\"H\xc2\xf3\x18\x12废弃类型字段\x82\xd3\xe4\x93\x02,**/api/v1/cmdb/model/{model_code}/field/{id}\x12\x9a\x01\n" +
+	"\vDeleteField\x12\x1b.cmdb.v1.DeleteFieldRequest\x1a\x1c.cmdb.v1.DeleteFieldResponse\"H\xc2\xf3\x18\x12废弃类型字段\x82\xd3\xe4\x93\x02,**/api/v1/cmdb/model/{model_code}/field/{id}\x12\xa5\x01\n" +
+	"\x10CreateUniqueRule\x12 .cmdb.v1.CreateUniqueRuleRequest\x1a!.cmdb.v1.CreateUniqueRuleResponse\"L\xc2\xf3\x18\x12新增唯一规则\x82\xd3\xe4\x93\x020:\x01*\"+/api/v1/cmdb/model/{model_code}/unique-rule\x12\xaa\x01\n" +
+	"\x10UpdateUniqueRule\x12 .cmdb.v1.UpdateUniqueRuleRequest\x1a!.cmdb.v1.UpdateUniqueRuleResponse\"Q\xc2\xf3\x18\x12更新唯一规则\x82\xd3\xe4\x93\x025:\x01*\x1a0/api/v1/cmdb/model/{model_code}/unique-rule/{id}\x12\xa7\x01\n" +
+	"\x10DeleteUniqueRule\x12 .cmdb.v1.DeleteUniqueRuleRequest\x1a!.cmdb.v1.DeleteUniqueRuleResponse\"N\xc2\xf3\x18\x12删除唯一规则\x82\xd3\xe4\x93\x022*0/api/v1/cmdb/model/{model_code}/unique-rule/{id}\x12\xa8\x01\n" +
+	"\x0fCheckUniqueRule\x12\x1f.cmdb.v1.CheckUniqueRuleRequest\x1a .cmdb.v1.CheckUniqueRuleResponse\"R\xc2\xf3\x18\x12预检唯一规则\x82\xd3\xe4\x93\x026:\x01*\"1/api/v1/cmdb/model/{model_code}/unique-rule:check\x12\x9a\x01\n" +
 	"\x11ListRelationTypes\x12!.cmdb.v1.ListRelationTypesRequest\x1a\".cmdb.v1.ListRelationTypesResponse\">\xc2\xf3\x18\x18查询关系类型列表\x82\xd3\xe4\x93\x02\x1c\x12\x1a/api/v1/cmdb/relation-type\x12\x9a\x01\n" +
 	"\x12CreateRelationType\x12\".cmdb.v1.CreateRelationTypeRequest\x1a#.cmdb.v1.CreateRelationTypeResponse\";\xc2\xf3\x18\x12创建关系类型\x82\xd3\xe4\x93\x02\x1f:\x01*\"\x1a/api/v1/cmdb/relation-type\x12\xa1\x01\n" +
 	"\x12UpdateRelationType\x12\".cmdb.v1.UpdateRelationTypeRequest\x1a#.cmdb.v1.UpdateRelationTypeResponse\"B\xc2\xf3\x18\x12更新关系类型\x82\xd3\xe4\x93\x02&:\x01*\x1a!/api/v1/cmdb/relation-type/{code}\x12\x9e\x01\n" +
@@ -3170,7 +3808,7 @@ func file_cmdb_v1_model_proto_rawDescGZIP() []byte {
 	return file_cmdb_v1_model_proto_rawDescData
 }
 
-var file_cmdb_v1_model_proto_msgTypes = make([]protoimpl.MessageInfo, 43)
+var file_cmdb_v1_model_proto_msgTypes = make([]protoimpl.MessageInfo, 53)
 var file_cmdb_v1_model_proto_goTypes = []any{
 	(*ViewSection)(nil),                // 0: cmdb.v1.ViewSection
 	(*GetModelViewRequest)(nil),        // 1: cmdb.v1.GetModelViewRequest
@@ -3204,18 +3842,28 @@ var file_cmdb_v1_model_proto_goTypes = []any{
 	(*UpdateFieldResponse)(nil),        // 29: cmdb.v1.UpdateFieldResponse
 	(*DeleteFieldRequest)(nil),         // 30: cmdb.v1.DeleteFieldRequest
 	(*DeleteFieldResponse)(nil),        // 31: cmdb.v1.DeleteFieldResponse
-	(*ListRelationTypesRequest)(nil),   // 32: cmdb.v1.ListRelationTypesRequest
-	(*ListRelationTypesResponse)(nil),  // 33: cmdb.v1.ListRelationTypesResponse
-	(*CreateRelationTypeRequest)(nil),  // 34: cmdb.v1.CreateRelationTypeRequest
-	(*CreateRelationTypeResponse)(nil), // 35: cmdb.v1.CreateRelationTypeResponse
-	(*UpdateRelationTypeRequest)(nil),  // 36: cmdb.v1.UpdateRelationTypeRequest
-	(*UpdateRelationTypeResponse)(nil), // 37: cmdb.v1.UpdateRelationTypeResponse
-	(*DeleteRelationTypeRequest)(nil),  // 38: cmdb.v1.DeleteRelationTypeRequest
-	(*DeleteRelationTypeResponse)(nil), // 39: cmdb.v1.DeleteRelationTypeResponse
-	nil,                                // 40: cmdb.v1.CmdbField.EnumLabelsEntry
-	nil,                                // 41: cmdb.v1.CreateFieldRequest.EnumLabelsEntry
-	nil,                                // 42: cmdb.v1.UpdateFieldRequest.EnumLabelsEntry
-	(*timestamppb.Timestamp)(nil),      // 43: google.protobuf.Timestamp
+	(*CmdbUniqueRule)(nil),             // 32: cmdb.v1.CmdbUniqueRule
+	(*UniqueConflict)(nil),             // 33: cmdb.v1.UniqueConflict
+	(*CreateUniqueRuleRequest)(nil),    // 34: cmdb.v1.CreateUniqueRuleRequest
+	(*CreateUniqueRuleResponse)(nil),   // 35: cmdb.v1.CreateUniqueRuleResponse
+	(*UpdateUniqueRuleRequest)(nil),    // 36: cmdb.v1.UpdateUniqueRuleRequest
+	(*UpdateUniqueRuleResponse)(nil),   // 37: cmdb.v1.UpdateUniqueRuleResponse
+	(*DeleteUniqueRuleRequest)(nil),    // 38: cmdb.v1.DeleteUniqueRuleRequest
+	(*DeleteUniqueRuleResponse)(nil),   // 39: cmdb.v1.DeleteUniqueRuleResponse
+	(*CheckUniqueRuleRequest)(nil),     // 40: cmdb.v1.CheckUniqueRuleRequest
+	(*CheckUniqueRuleResponse)(nil),    // 41: cmdb.v1.CheckUniqueRuleResponse
+	(*ListRelationTypesRequest)(nil),   // 42: cmdb.v1.ListRelationTypesRequest
+	(*ListRelationTypesResponse)(nil),  // 43: cmdb.v1.ListRelationTypesResponse
+	(*CreateRelationTypeRequest)(nil),  // 44: cmdb.v1.CreateRelationTypeRequest
+	(*CreateRelationTypeResponse)(nil), // 45: cmdb.v1.CreateRelationTypeResponse
+	(*UpdateRelationTypeRequest)(nil),  // 46: cmdb.v1.UpdateRelationTypeRequest
+	(*UpdateRelationTypeResponse)(nil), // 47: cmdb.v1.UpdateRelationTypeResponse
+	(*DeleteRelationTypeRequest)(nil),  // 48: cmdb.v1.DeleteRelationTypeRequest
+	(*DeleteRelationTypeResponse)(nil), // 49: cmdb.v1.DeleteRelationTypeResponse
+	nil,                                // 50: cmdb.v1.CmdbField.EnumLabelsEntry
+	nil,                                // 51: cmdb.v1.CreateFieldRequest.EnumLabelsEntry
+	nil,                                // 52: cmdb.v1.UpdateFieldRequest.EnumLabelsEntry
+	(*timestamppb.Timestamp)(nil),      // 53: google.protobuf.Timestamp
 }
 var file_cmdb_v1_model_proto_depIdxs = []int32{
 	0,  // 0: cmdb.v1.GetModelViewResponse.sections:type_name -> cmdb.v1.ViewSection
@@ -3223,64 +3871,78 @@ var file_cmdb_v1_model_proto_depIdxs = []int32{
 	0,  // 2: cmdb.v1.UpdateModelViewResponse.sections:type_name -> cmdb.v1.ViewSection
 	5,  // 3: cmdb.v1.ListRoleScopesResponse.items:type_name -> cmdb.v1.RoleScope
 	5,  // 4: cmdb.v1.SetRoleScopeResponse.scope:type_name -> cmdb.v1.RoleScope
-	43, // 5: cmdb.v1.CmdbModel.create_time:type_name -> google.protobuf.Timestamp
-	43, // 6: cmdb.v1.CmdbModel.update_time:type_name -> google.protobuf.Timestamp
-	40, // 7: cmdb.v1.CmdbField.enum_labels:type_name -> cmdb.v1.CmdbField.EnumLabelsEntry
+	53, // 5: cmdb.v1.CmdbModel.create_time:type_name -> google.protobuf.Timestamp
+	53, // 6: cmdb.v1.CmdbModel.update_time:type_name -> google.protobuf.Timestamp
+	50, // 7: cmdb.v1.CmdbField.enum_labels:type_name -> cmdb.v1.CmdbField.EnumLabelsEntry
 	13, // 8: cmdb.v1.CmdbField.rule:type_name -> cmdb.v1.FieldRule
 	12, // 9: cmdb.v1.ListModelsResponse.items:type_name -> cmdb.v1.CmdbModel
 	12, // 10: cmdb.v1.GetModelResponse.model:type_name -> cmdb.v1.CmdbModel
 	14, // 11: cmdb.v1.GetModelResponse.fields:type_name -> cmdb.v1.CmdbField
 	15, // 12: cmdb.v1.GetModelResponse.relation_types:type_name -> cmdb.v1.CmdbRelationType
-	12, // 13: cmdb.v1.CreateModelResponse.model:type_name -> cmdb.v1.CmdbModel
-	12, // 14: cmdb.v1.UpdateModelResponse.model:type_name -> cmdb.v1.CmdbModel
-	13, // 15: cmdb.v1.CreateFieldRequest.rule:type_name -> cmdb.v1.FieldRule
-	41, // 16: cmdb.v1.CreateFieldRequest.enum_labels:type_name -> cmdb.v1.CreateFieldRequest.EnumLabelsEntry
-	14, // 17: cmdb.v1.CreateFieldResponse.field:type_name -> cmdb.v1.CmdbField
-	13, // 18: cmdb.v1.UpdateFieldRequest.rule:type_name -> cmdb.v1.FieldRule
-	42, // 19: cmdb.v1.UpdateFieldRequest.enum_labels:type_name -> cmdb.v1.UpdateFieldRequest.EnumLabelsEntry
-	14, // 20: cmdb.v1.UpdateFieldResponse.field:type_name -> cmdb.v1.CmdbField
-	15, // 21: cmdb.v1.ListRelationTypesResponse.items:type_name -> cmdb.v1.CmdbRelationType
-	15, // 22: cmdb.v1.CreateRelationTypeResponse.relation_type:type_name -> cmdb.v1.CmdbRelationType
-	15, // 23: cmdb.v1.UpdateRelationTypeResponse.relation_type:type_name -> cmdb.v1.CmdbRelationType
-	16, // 24: cmdb.v1.CmdbModelService.ListModels:input_type -> cmdb.v1.ListModelsRequest
-	18, // 25: cmdb.v1.CmdbModelService.GetModel:input_type -> cmdb.v1.GetModelRequest
-	20, // 26: cmdb.v1.CmdbModelService.CreateModel:input_type -> cmdb.v1.CreateModelRequest
-	22, // 27: cmdb.v1.CmdbModelService.UpdateModel:input_type -> cmdb.v1.UpdateModelRequest
-	24, // 28: cmdb.v1.CmdbModelService.DeleteModel:input_type -> cmdb.v1.DeleteModelRequest
-	26, // 29: cmdb.v1.CmdbModelService.CreateField:input_type -> cmdb.v1.CreateFieldRequest
-	28, // 30: cmdb.v1.CmdbModelService.UpdateField:input_type -> cmdb.v1.UpdateFieldRequest
-	30, // 31: cmdb.v1.CmdbModelService.DeleteField:input_type -> cmdb.v1.DeleteFieldRequest
-	32, // 32: cmdb.v1.CmdbModelService.ListRelationTypes:input_type -> cmdb.v1.ListRelationTypesRequest
-	34, // 33: cmdb.v1.CmdbModelService.CreateRelationType:input_type -> cmdb.v1.CreateRelationTypeRequest
-	36, // 34: cmdb.v1.CmdbModelService.UpdateRelationType:input_type -> cmdb.v1.UpdateRelationTypeRequest
-	38, // 35: cmdb.v1.CmdbModelService.DeleteRelationType:input_type -> cmdb.v1.DeleteRelationTypeRequest
-	1,  // 36: cmdb.v1.CmdbModelService.GetModelView:input_type -> cmdb.v1.GetModelViewRequest
-	3,  // 37: cmdb.v1.CmdbModelService.UpdateModelView:input_type -> cmdb.v1.UpdateModelViewRequest
-	6,  // 38: cmdb.v1.CmdbScopeService.ListRoleScopes:input_type -> cmdb.v1.ListRoleScopesRequest
-	8,  // 39: cmdb.v1.CmdbScopeService.SetRoleScope:input_type -> cmdb.v1.SetRoleScopeRequest
-	10, // 40: cmdb.v1.CmdbScopeService.GetMyScope:input_type -> cmdb.v1.GetMyScopeRequest
-	17, // 41: cmdb.v1.CmdbModelService.ListModels:output_type -> cmdb.v1.ListModelsResponse
-	19, // 42: cmdb.v1.CmdbModelService.GetModel:output_type -> cmdb.v1.GetModelResponse
-	21, // 43: cmdb.v1.CmdbModelService.CreateModel:output_type -> cmdb.v1.CreateModelResponse
-	23, // 44: cmdb.v1.CmdbModelService.UpdateModel:output_type -> cmdb.v1.UpdateModelResponse
-	25, // 45: cmdb.v1.CmdbModelService.DeleteModel:output_type -> cmdb.v1.DeleteModelResponse
-	27, // 46: cmdb.v1.CmdbModelService.CreateField:output_type -> cmdb.v1.CreateFieldResponse
-	29, // 47: cmdb.v1.CmdbModelService.UpdateField:output_type -> cmdb.v1.UpdateFieldResponse
-	31, // 48: cmdb.v1.CmdbModelService.DeleteField:output_type -> cmdb.v1.DeleteFieldResponse
-	33, // 49: cmdb.v1.CmdbModelService.ListRelationTypes:output_type -> cmdb.v1.ListRelationTypesResponse
-	35, // 50: cmdb.v1.CmdbModelService.CreateRelationType:output_type -> cmdb.v1.CreateRelationTypeResponse
-	37, // 51: cmdb.v1.CmdbModelService.UpdateRelationType:output_type -> cmdb.v1.UpdateRelationTypeResponse
-	39, // 52: cmdb.v1.CmdbModelService.DeleteRelationType:output_type -> cmdb.v1.DeleteRelationTypeResponse
-	2,  // 53: cmdb.v1.CmdbModelService.GetModelView:output_type -> cmdb.v1.GetModelViewResponse
-	4,  // 54: cmdb.v1.CmdbModelService.UpdateModelView:output_type -> cmdb.v1.UpdateModelViewResponse
-	7,  // 55: cmdb.v1.CmdbScopeService.ListRoleScopes:output_type -> cmdb.v1.ListRoleScopesResponse
-	9,  // 56: cmdb.v1.CmdbScopeService.SetRoleScope:output_type -> cmdb.v1.SetRoleScopeResponse
-	11, // 57: cmdb.v1.CmdbScopeService.GetMyScope:output_type -> cmdb.v1.GetMyScopeResponse
-	41, // [41:58] is the sub-list for method output_type
-	24, // [24:41] is the sub-list for method input_type
-	24, // [24:24] is the sub-list for extension type_name
-	24, // [24:24] is the sub-list for extension extendee
-	0,  // [0:24] is the sub-list for field type_name
+	32, // 13: cmdb.v1.GetModelResponse.unique_rules:type_name -> cmdb.v1.CmdbUniqueRule
+	12, // 14: cmdb.v1.CreateModelResponse.model:type_name -> cmdb.v1.CmdbModel
+	12, // 15: cmdb.v1.UpdateModelResponse.model:type_name -> cmdb.v1.CmdbModel
+	13, // 16: cmdb.v1.CreateFieldRequest.rule:type_name -> cmdb.v1.FieldRule
+	51, // 17: cmdb.v1.CreateFieldRequest.enum_labels:type_name -> cmdb.v1.CreateFieldRequest.EnumLabelsEntry
+	14, // 18: cmdb.v1.CreateFieldResponse.field:type_name -> cmdb.v1.CmdbField
+	13, // 19: cmdb.v1.UpdateFieldRequest.rule:type_name -> cmdb.v1.FieldRule
+	52, // 20: cmdb.v1.UpdateFieldRequest.enum_labels:type_name -> cmdb.v1.UpdateFieldRequest.EnumLabelsEntry
+	14, // 21: cmdb.v1.UpdateFieldResponse.field:type_name -> cmdb.v1.CmdbField
+	53, // 22: cmdb.v1.CmdbUniqueRule.create_time:type_name -> google.protobuf.Timestamp
+	53, // 23: cmdb.v1.CmdbUniqueRule.update_time:type_name -> google.protobuf.Timestamp
+	32, // 24: cmdb.v1.CreateUniqueRuleResponse.rule:type_name -> cmdb.v1.CmdbUniqueRule
+	32, // 25: cmdb.v1.UpdateUniqueRuleResponse.rule:type_name -> cmdb.v1.CmdbUniqueRule
+	33, // 26: cmdb.v1.CheckUniqueRuleResponse.samples:type_name -> cmdb.v1.UniqueConflict
+	15, // 27: cmdb.v1.ListRelationTypesResponse.items:type_name -> cmdb.v1.CmdbRelationType
+	15, // 28: cmdb.v1.CreateRelationTypeResponse.relation_type:type_name -> cmdb.v1.CmdbRelationType
+	15, // 29: cmdb.v1.UpdateRelationTypeResponse.relation_type:type_name -> cmdb.v1.CmdbRelationType
+	16, // 30: cmdb.v1.CmdbModelService.ListModels:input_type -> cmdb.v1.ListModelsRequest
+	18, // 31: cmdb.v1.CmdbModelService.GetModel:input_type -> cmdb.v1.GetModelRequest
+	20, // 32: cmdb.v1.CmdbModelService.CreateModel:input_type -> cmdb.v1.CreateModelRequest
+	22, // 33: cmdb.v1.CmdbModelService.UpdateModel:input_type -> cmdb.v1.UpdateModelRequest
+	24, // 34: cmdb.v1.CmdbModelService.DeleteModel:input_type -> cmdb.v1.DeleteModelRequest
+	26, // 35: cmdb.v1.CmdbModelService.CreateField:input_type -> cmdb.v1.CreateFieldRequest
+	28, // 36: cmdb.v1.CmdbModelService.UpdateField:input_type -> cmdb.v1.UpdateFieldRequest
+	30, // 37: cmdb.v1.CmdbModelService.DeleteField:input_type -> cmdb.v1.DeleteFieldRequest
+	34, // 38: cmdb.v1.CmdbModelService.CreateUniqueRule:input_type -> cmdb.v1.CreateUniqueRuleRequest
+	36, // 39: cmdb.v1.CmdbModelService.UpdateUniqueRule:input_type -> cmdb.v1.UpdateUniqueRuleRequest
+	38, // 40: cmdb.v1.CmdbModelService.DeleteUniqueRule:input_type -> cmdb.v1.DeleteUniqueRuleRequest
+	40, // 41: cmdb.v1.CmdbModelService.CheckUniqueRule:input_type -> cmdb.v1.CheckUniqueRuleRequest
+	42, // 42: cmdb.v1.CmdbModelService.ListRelationTypes:input_type -> cmdb.v1.ListRelationTypesRequest
+	44, // 43: cmdb.v1.CmdbModelService.CreateRelationType:input_type -> cmdb.v1.CreateRelationTypeRequest
+	46, // 44: cmdb.v1.CmdbModelService.UpdateRelationType:input_type -> cmdb.v1.UpdateRelationTypeRequest
+	48, // 45: cmdb.v1.CmdbModelService.DeleteRelationType:input_type -> cmdb.v1.DeleteRelationTypeRequest
+	1,  // 46: cmdb.v1.CmdbModelService.GetModelView:input_type -> cmdb.v1.GetModelViewRequest
+	3,  // 47: cmdb.v1.CmdbModelService.UpdateModelView:input_type -> cmdb.v1.UpdateModelViewRequest
+	6,  // 48: cmdb.v1.CmdbScopeService.ListRoleScopes:input_type -> cmdb.v1.ListRoleScopesRequest
+	8,  // 49: cmdb.v1.CmdbScopeService.SetRoleScope:input_type -> cmdb.v1.SetRoleScopeRequest
+	10, // 50: cmdb.v1.CmdbScopeService.GetMyScope:input_type -> cmdb.v1.GetMyScopeRequest
+	17, // 51: cmdb.v1.CmdbModelService.ListModels:output_type -> cmdb.v1.ListModelsResponse
+	19, // 52: cmdb.v1.CmdbModelService.GetModel:output_type -> cmdb.v1.GetModelResponse
+	21, // 53: cmdb.v1.CmdbModelService.CreateModel:output_type -> cmdb.v1.CreateModelResponse
+	23, // 54: cmdb.v1.CmdbModelService.UpdateModel:output_type -> cmdb.v1.UpdateModelResponse
+	25, // 55: cmdb.v1.CmdbModelService.DeleteModel:output_type -> cmdb.v1.DeleteModelResponse
+	27, // 56: cmdb.v1.CmdbModelService.CreateField:output_type -> cmdb.v1.CreateFieldResponse
+	29, // 57: cmdb.v1.CmdbModelService.UpdateField:output_type -> cmdb.v1.UpdateFieldResponse
+	31, // 58: cmdb.v1.CmdbModelService.DeleteField:output_type -> cmdb.v1.DeleteFieldResponse
+	35, // 59: cmdb.v1.CmdbModelService.CreateUniqueRule:output_type -> cmdb.v1.CreateUniqueRuleResponse
+	37, // 60: cmdb.v1.CmdbModelService.UpdateUniqueRule:output_type -> cmdb.v1.UpdateUniqueRuleResponse
+	39, // 61: cmdb.v1.CmdbModelService.DeleteUniqueRule:output_type -> cmdb.v1.DeleteUniqueRuleResponse
+	41, // 62: cmdb.v1.CmdbModelService.CheckUniqueRule:output_type -> cmdb.v1.CheckUniqueRuleResponse
+	43, // 63: cmdb.v1.CmdbModelService.ListRelationTypes:output_type -> cmdb.v1.ListRelationTypesResponse
+	45, // 64: cmdb.v1.CmdbModelService.CreateRelationType:output_type -> cmdb.v1.CreateRelationTypeResponse
+	47, // 65: cmdb.v1.CmdbModelService.UpdateRelationType:output_type -> cmdb.v1.UpdateRelationTypeResponse
+	49, // 66: cmdb.v1.CmdbModelService.DeleteRelationType:output_type -> cmdb.v1.DeleteRelationTypeResponse
+	2,  // 67: cmdb.v1.CmdbModelService.GetModelView:output_type -> cmdb.v1.GetModelViewResponse
+	4,  // 68: cmdb.v1.CmdbModelService.UpdateModelView:output_type -> cmdb.v1.UpdateModelViewResponse
+	7,  // 69: cmdb.v1.CmdbScopeService.ListRoleScopes:output_type -> cmdb.v1.ListRoleScopesResponse
+	9,  // 70: cmdb.v1.CmdbScopeService.SetRoleScope:output_type -> cmdb.v1.SetRoleScopeResponse
+	11, // 71: cmdb.v1.CmdbScopeService.GetMyScope:output_type -> cmdb.v1.GetMyScopeResponse
+	51, // [51:72] is the sub-list for method output_type
+	30, // [30:51] is the sub-list for method input_type
+	30, // [30:30] is the sub-list for extension type_name
+	30, // [30:30] is the sub-list for extension extendee
+	0,  // [0:30] is the sub-list for field type_name
 }
 
 func init() { file_cmdb_v1_model_proto_init() }
@@ -3295,16 +3957,17 @@ func file_cmdb_v1_model_proto_init() {
 	file_cmdb_v1_model_proto_msgTypes[22].OneofWrappers = []any{}
 	file_cmdb_v1_model_proto_msgTypes[26].OneofWrappers = []any{}
 	file_cmdb_v1_model_proto_msgTypes[28].OneofWrappers = []any{}
-	file_cmdb_v1_model_proto_msgTypes[32].OneofWrappers = []any{}
-	file_cmdb_v1_model_proto_msgTypes[34].OneofWrappers = []any{}
 	file_cmdb_v1_model_proto_msgTypes[36].OneofWrappers = []any{}
+	file_cmdb_v1_model_proto_msgTypes[42].OneofWrappers = []any{}
+	file_cmdb_v1_model_proto_msgTypes[44].OneofWrappers = []any{}
+	file_cmdb_v1_model_proto_msgTypes[46].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cmdb_v1_model_proto_rawDesc), len(file_cmdb_v1_model_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   43,
+			NumMessages:   53,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

@@ -444,3 +444,87 @@ func IsCmdbGroupInUse(err error) bool {
 func ErrorCmdbGroupInUse(format string, args ...interface{}) *errors.Error {
 	return errors.New(409, ErrorReason_CMDB_GROUP_IN_USE.String(), fmt.Sprintf(format, args...))
 }
+
+// CMDB_UNIQUE_RULE_NOT_FOUND 唯一规则不存在，映射 HTTP 404。
+func IsCmdbUniqueRuleNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := errors.FromError(err)
+	return e.Reason == ErrorReason_CMDB_UNIQUE_RULE_NOT_FOUND.String() && e.Code == 404
+}
+
+// CMDB_UNIQUE_RULE_NOT_FOUND 唯一规则不存在，映射 HTTP 404。
+func ErrorCmdbUniqueRuleNotFound(format string, args ...interface{}) *errors.Error {
+	return errors.New(404, ErrorReason_CMDB_UNIQUE_RULE_NOT_FOUND.String(), fmt.Sprintf(format, args...))
+}
+
+// CMDB_UNIQUE_RULE_INVALID 唯一规则定义不合法（字段不存在 / 已废弃 / 类型不支持 / 超出数量上限），映射 HTTP 400。
+func IsCmdbUniqueRuleInvalid(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := errors.FromError(err)
+	return e.Reason == ErrorReason_CMDB_UNIQUE_RULE_INVALID.String() && e.Code == 400
+}
+
+// CMDB_UNIQUE_RULE_INVALID 唯一规则定义不合法（字段不存在 / 已废弃 / 类型不支持 / 超出数量上限），映射 HTTP 400。
+func ErrorCmdbUniqueRuleInvalid(format string, args ...interface{}) *errors.Error {
+	return errors.New(400, ErrorReason_CMDB_UNIQUE_RULE_INVALID.String(), fmt.Sprintf(format, args...))
+}
+
+// CMDB_UNIQUE_RULE_EXISTS 规则名或字段组与同类型内已有规则重复，映射 HTTP 409。
+func IsCmdbUniqueRuleExists(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := errors.FromError(err)
+	return e.Reason == ErrorReason_CMDB_UNIQUE_RULE_EXISTS.String() && e.Code == 409
+}
+
+// CMDB_UNIQUE_RULE_EXISTS 规则名或字段组与同类型内已有规则重复，映射 HTTP 409。
+func ErrorCmdbUniqueRuleExists(format string, args ...interface{}) *errors.Error {
+	return errors.New(409, ErrorReason_CMDB_UNIQUE_RULE_EXISTS.String(), fmt.Sprintf(format, args...))
+}
+
+// CMDB_UNIQUE_RULE_CONFLICT 存量资源在该规则下已有重复（需先清理数据），映射 HTTP 409。
+func IsCmdbUniqueRuleConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := errors.FromError(err)
+	return e.Reason == ErrorReason_CMDB_UNIQUE_RULE_CONFLICT.String() && e.Code == 409
+}
+
+// CMDB_UNIQUE_RULE_CONFLICT 存量资源在该规则下已有重复（需先清理数据），映射 HTTP 409。
+func ErrorCmdbUniqueRuleConflict(format string, args ...interface{}) *errors.Error {
+	return errors.New(409, ErrorReason_CMDB_UNIQUE_RULE_CONFLICT.String(), fmt.Sprintf(format, args...))
+}
+
+// CMDB_FIELD_IN_USE 字段被唯一规则引用，不可废弃 / 设为敏感，映射 HTTP 409。
+func IsCmdbFieldInUse(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := errors.FromError(err)
+	return e.Reason == ErrorReason_CMDB_FIELD_IN_USE.String() && e.Code == 409
+}
+
+// CMDB_FIELD_IN_USE 字段被唯一规则引用，不可废弃 / 设为敏感，映射 HTTP 409。
+func ErrorCmdbFieldInUse(format string, args ...interface{}) *errors.Error {
+	return errors.New(409, ErrorReason_CMDB_FIELD_IN_USE.String(), fmt.Sprintf(format, args...))
+}
+
+// CMDB_UNIQUE_RULE_BUSY 该类型有在途的资源写入（如同步对账），规则变更暂不可进行，稍后重试即可，映射 HTTP 409。
+func IsCmdbUniqueRuleBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := errors.FromError(err)
+	return e.Reason == ErrorReason_CMDB_UNIQUE_RULE_BUSY.String() && e.Code == 409
+}
+
+// CMDB_UNIQUE_RULE_BUSY 该类型有在途的资源写入（如同步对账），规则变更暂不可进行，稍后重试即可，映射 HTTP 409。
+func ErrorCmdbUniqueRuleBusy(format string, args ...interface{}) *errors.Error {
+	return errors.New(409, ErrorReason_CMDB_UNIQUE_RULE_BUSY.String(), fmt.Sprintf(format, args...))
+}

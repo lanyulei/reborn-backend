@@ -72,6 +72,38 @@ service CmdbModelService {
     };
     option (system.v1.title) = "废弃类型字段";
   }
+  // CreateUniqueRule 新增唯一规则：一条规则 = 一组字段取值在类型内不可重复（单字段唯一 / 多字段联合唯一）；
+  // 存量资源在该规则下已有重复时拒绝（409，附冲突样例）。读取随 GetModel 返回。
+  rpc CreateUniqueRule(CreateUniqueRuleRequest) returns (CreateUniqueRuleResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/cmdb/model/{model_code}/unique-rule"
+      body: "*"
+    };
+    option (system.v1.title) = "新增唯一规则";
+  }
+  // UpdateUniqueRule 更新唯一规则（名称 / 字段组）；字段组变化时重算该规则下全部资源的键，存量重复则拒绝。
+  rpc UpdateUniqueRule(UpdateUniqueRuleRequest) returns (UpdateUniqueRuleResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/cmdb/model/{model_code}/unique-rule/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "更新唯一规则";
+  }
+  // DeleteUniqueRule 删除唯一规则（解除该组字段的唯一约束）。
+  rpc DeleteUniqueRule(DeleteUniqueRuleRequest) returns (DeleteUniqueRuleResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/cmdb/model/{model_code}/unique-rule/{id}"
+    };
+    option (system.v1.title) = "删除唯一规则";
+  }
+  // CheckUniqueRule 预检：按给定字段组统计存量资源中的重复（只读，不落库）。
+  rpc CheckUniqueRule(CheckUniqueRuleRequest) returns (CheckUniqueRuleResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/cmdb/model/{model_code}/unique-rule:check"
+      body: "*"
+    };
+    option (system.v1.title) = "预检唯一规则";
+  }
   // ListRelationTypes 查询关系类型（可按资源类型过滤出适用的关系）。
   rpc ListRelationTypes(ListRelationTypesRequest) returns (ListRelationTypesResponse) {
     option (google.api.http) = {
@@ -331,7 +363,7 @@ message CmdbField {
   string type = 5;
   // required 必填。
   bool required = 6;
-  // unique 同类型内唯一（参与唯一键）。
+  // unique 是否被任一唯一规则引用（只读派生值；唯一约束经唯一规则维护）。
   bool unique = 7;
   // enum_values 枚举值（type=enum）。
   repeated string enum_values = 8;
@@ -423,6 +455,8 @@ message GetModelResponse {
   repeated CmdbField fields = 2;
   // relation_types 适用于该类型的关系类型（任一端匹配或通配）。
   repeated CmdbRelationType relation_types = 3;
+  // unique_rules 唯一规则（按名称排序）。
+  repeated CmdbUniqueRule unique_rules = 4;
 }
 
 // CreateModelRequest 创建资源类型请求。
@@ -516,7 +550,7 @@ message CreateFieldRequest {
   }];
   // required 必填，可选。
   optional bool required = 5;
-  // unique 唯一，可选。
+  // unique 已停用：唯一约束改由唯一规则维护；传 true 返回 400（保留字段号，兼容仍传 false 的旧客户端）。
   optional bool unique = 6;
   // enum_values 枚举值（type=enum 必填），每项 1-64 位，≤100 项。
   repeated string enum_values = 7 [(buf.validate.field).repeated = {
@@ -577,7 +611,7 @@ message UpdateFieldRequest {
   }];
   // required 必填。
   optional bool required = 4;
-  // unique 唯一。
+  // unique 已停用：唯一约束改由唯一规则维护；与当前派生值不同时返回 400。
   optional bool unique = 5;
   // enum_values 枚举值整组替换（type=enum）。
   repeated string enum_values = 6 [(buf.validate.field).repeated = {
@@ -633,6 +667,131 @@ message DeleteFieldRequest {
 
 // DeleteFieldResponse 废弃类型字段响应。
 message DeleteFieldResponse {}
+
+// CmdbUniqueRule 唯一规则：field_codes 这组字段的取值在类型内不可重复。
+// 任一字段为空（缺失 / null / 空串）的资源不受该规则约束。
+message CmdbUniqueRule {
+  // id 规则标识。
+  string id = 1;
+  // model_code 所属类型。
+  string model_code = 2;
+  // name 规则名（类型内唯一）。
+  string name = 3;
+  // field_codes 字段编码（1 个 = 单字段唯一，多个 = 联合唯一；字典序）。
+  repeated string field_codes = 4;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 5;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 6;
+}
+
+// UniqueConflict 一组在某字段组上取值相同的资源。
+message UniqueConflict {
+  // count 该组资源数。
+  int64 count = 1;
+  // names 资源名称样例（至多 5 个；调用者数据范围受限时为空）。
+  repeated string names = 2;
+}
+
+// CreateUniqueRuleRequest 新增唯一规则请求。
+message CreateUniqueRuleRequest {
+  // model_code 所属类型。
+  string model_code = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // name 规则名，1-64 位。
+  string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // field_codes 字段编码，1-5 个且不重复。
+  repeated string field_codes = 3 [(buf.validate.field).repeated = {
+    min_items: 1
+    max_items: 5
+    unique: true
+    items: {
+      string: {pattern: "^[a-z][a-z0-9_]{0,63}$"}
+    }
+  }];
+}
+
+// CreateUniqueRuleResponse 新增唯一规则响应。
+message CreateUniqueRuleResponse {
+  // rule 新增的规则。
+  CmdbUniqueRule rule = 1;
+}
+
+// UpdateUniqueRuleRequest 更新唯一规则请求；未传字段不更新。
+message UpdateUniqueRuleRequest {
+  // model_code 所属类型。
+  string model_code = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // id 规则标识。
+  string id = 2 [(buf.validate.field).string.uuid = true];
+  // name 规则名。
+  optional string name = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // field_codes 字段编码整组替换（非空时生效）；与当前相同视为不变。变更时须 1-5 个且不重复
+  // （业务层校验；此处上限放宽，以便存量迁移来的超限规则回传原字段组改名）。
+  repeated string field_codes = 4 [(buf.validate.field).repeated = {
+    max_items: 64
+    unique: true
+    items: {
+      string: {pattern: "^[a-z][a-z0-9_]{0,63}$"}
+    }
+  }];
+}
+
+// UpdateUniqueRuleResponse 更新唯一规则响应。
+message UpdateUniqueRuleResponse {
+  // rule 更新后的规则。
+  CmdbUniqueRule rule = 1;
+}
+
+// DeleteUniqueRuleRequest 删除唯一规则请求。
+message DeleteUniqueRuleRequest {
+  // model_code 所属类型。
+  string model_code = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // id 规则标识。
+  string id = 2 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteUniqueRuleResponse 删除唯一规则响应。
+message DeleteUniqueRuleResponse {}
+
+// CheckUniqueRuleRequest 预检唯一规则请求。
+message CheckUniqueRuleRequest {
+  // model_code 所属类型。
+  string model_code = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // field_codes 字段编码，1-5 个且不重复。
+  repeated string field_codes = 2 [(buf.validate.field).repeated = {
+    min_items: 1
+    max_items: 5
+    unique: true
+    items: {
+      string: {pattern: "^[a-z][a-z0-9_]{0,63}$"}
+    }
+  }];
+}
+
+// CheckUniqueRuleResponse 预检唯一规则响应。
+message CheckUniqueRuleResponse {
+  // conflict_groups 取值重复的组数（0 = 可以建立该规则）。
+  int64 conflict_groups = 1;
+  // samples 重复组样例（至多 5 组）。
+  repeated UniqueConflict samples = 2;
+}
 
 // ListRelationTypesRequest 查询关系类型请求。
 message ListRelationTypesRequest {

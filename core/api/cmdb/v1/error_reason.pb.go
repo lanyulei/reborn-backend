@@ -89,6 +89,18 @@ const (
 	ErrorReason_CMDB_GROUP_CODE_EXISTS ErrorReason = 29
 	// CMDB_GROUP_IN_USE 模型分组为内置分组或其下仍有模型，不可删除，映射 HTTP 409。
 	ErrorReason_CMDB_GROUP_IN_USE ErrorReason = 30
+	// CMDB_UNIQUE_RULE_NOT_FOUND 唯一规则不存在，映射 HTTP 404。
+	ErrorReason_CMDB_UNIQUE_RULE_NOT_FOUND ErrorReason = 31
+	// CMDB_UNIQUE_RULE_INVALID 唯一规则定义不合法（字段不存在 / 已废弃 / 类型不支持 / 超出数量上限），映射 HTTP 400。
+	ErrorReason_CMDB_UNIQUE_RULE_INVALID ErrorReason = 32
+	// CMDB_UNIQUE_RULE_EXISTS 规则名或字段组与同类型内已有规则重复，映射 HTTP 409。
+	ErrorReason_CMDB_UNIQUE_RULE_EXISTS ErrorReason = 33
+	// CMDB_UNIQUE_RULE_CONFLICT 存量资源在该规则下已有重复（需先清理数据），映射 HTTP 409。
+	ErrorReason_CMDB_UNIQUE_RULE_CONFLICT ErrorReason = 34
+	// CMDB_FIELD_IN_USE 字段被唯一规则引用，不可废弃 / 设为敏感，映射 HTTP 409。
+	ErrorReason_CMDB_FIELD_IN_USE ErrorReason = 35
+	// CMDB_UNIQUE_RULE_BUSY 该类型有在途的资源写入（如同步对账），规则变更暂不可进行，稍后重试即可，映射 HTTP 409。
+	ErrorReason_CMDB_UNIQUE_RULE_BUSY ErrorReason = 36
 )
 
 // Enum value maps for ErrorReason.
@@ -125,6 +137,12 @@ var (
 		28: "CMDB_GROUP_NOT_FOUND",
 		29: "CMDB_GROUP_CODE_EXISTS",
 		30: "CMDB_GROUP_IN_USE",
+		31: "CMDB_UNIQUE_RULE_NOT_FOUND",
+		32: "CMDB_UNIQUE_RULE_INVALID",
+		33: "CMDB_UNIQUE_RULE_EXISTS",
+		34: "CMDB_UNIQUE_RULE_CONFLICT",
+		35: "CMDB_FIELD_IN_USE",
+		36: "CMDB_UNIQUE_RULE_BUSY",
 	}
 	ErrorReason_value = map[string]int32{
 		"CMDB_UNSPECIFIED":               0,
@@ -158,6 +176,12 @@ var (
 		"CMDB_GROUP_NOT_FOUND":           28,
 		"CMDB_GROUP_CODE_EXISTS":         29,
 		"CMDB_GROUP_IN_USE":              30,
+		"CMDB_UNIQUE_RULE_NOT_FOUND":     31,
+		"CMDB_UNIQUE_RULE_INVALID":       32,
+		"CMDB_UNIQUE_RULE_EXISTS":        33,
+		"CMDB_UNIQUE_RULE_CONFLICT":      34,
+		"CMDB_FIELD_IN_USE":              35,
+		"CMDB_UNIQUE_RULE_BUSY":          36,
 	}
 )
 
@@ -192,7 +216,7 @@ var File_cmdb_v1_error_reason_proto protoreflect.FileDescriptor
 
 const file_cmdb_v1_error_reason_proto_rawDesc = "" +
 	"\n" +
-	"\x1acmdb/v1/error_reason.proto\x12\acmdb.v1\x1a\x13errors/errors.proto*\x89\b\n" +
+	"\x1acmdb/v1/error_reason.proto\x12\acmdb.v1\x1a\x13errors/errors.proto*\xd9\t\n" +
 	"\vErrorReason\x12\x14\n" +
 	"\x10CMDB_UNSPECIFIED\x10\x00\x12\x1e\n" +
 	"\x14CMDB_MODEL_NOT_FOUND\x10\x01\x1a\x04\xa8E\x94\x03\x12 \n" +
@@ -225,7 +249,13 @@ const file_cmdb_v1_error_reason_proto_rawDesc = "" +
 	"\x17CMDB_SECRET_UNAVAILABLE\x10\x1b\x1a\x04\xa8E\xf7\x03\x12\x1e\n" +
 	"\x14CMDB_GROUP_NOT_FOUND\x10\x1c\x1a\x04\xa8E\x94\x03\x12 \n" +
 	"\x16CMDB_GROUP_CODE_EXISTS\x10\x1d\x1a\x04\xa8E\x99\x03\x12\x1b\n" +
-	"\x11CMDB_GROUP_IN_USE\x10\x1e\x1a\x04\xa8E\x99\x03\x1a\x04\xa0E\xf4\x03B8Z6github.com/lanyulei/reborn/backend/core/api/cmdb/v1;v1b\x06proto3"
+	"\x11CMDB_GROUP_IN_USE\x10\x1e\x1a\x04\xa8E\x99\x03\x12$\n" +
+	"\x1aCMDB_UNIQUE_RULE_NOT_FOUND\x10\x1f\x1a\x04\xa8E\x94\x03\x12\"\n" +
+	"\x18CMDB_UNIQUE_RULE_INVALID\x10 \x1a\x04\xa8E\x90\x03\x12!\n" +
+	"\x17CMDB_UNIQUE_RULE_EXISTS\x10!\x1a\x04\xa8E\x99\x03\x12#\n" +
+	"\x19CMDB_UNIQUE_RULE_CONFLICT\x10\"\x1a\x04\xa8E\x99\x03\x12\x1b\n" +
+	"\x11CMDB_FIELD_IN_USE\x10#\x1a\x04\xa8E\x99\x03\x12\x1f\n" +
+	"\x15CMDB_UNIQUE_RULE_BUSY\x10$\x1a\x04\xa8E\x99\x03\x1a\x04\xa0E\xf4\x03B8Z6github.com/lanyulei/reborn/backend/core/api/cmdb/v1;v1b\x06proto3"
 
 var (
 	file_cmdb_v1_error_reason_proto_rawDescOnce sync.Once

@@ -65,6 +65,13 @@ service CmdbSyncService {
     };
     option (system.v1.title) = "查询同步运行记录";
   }
+  // ListConflicts 分页查询采集源当前未解决的同步冲突（因名称 / 唯一规则冲突而未能写入的采集行）。
+  rpc ListConflicts(ListConflictsRequest) returns (ListConflictsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/cmdb/sync/source/{id}/conflict"
+    };
+    option (system.v1.title) = "查询同步冲突";
+  }
   // RotateWebhook 生成/轮换回调令牌：明文只在本响应返回一次，库中只存哈希。
   rpc RotateWebhook(RotateWebhookRequest) returns (RotateWebhookResponse) {
     option (google.api.http) = {
@@ -309,6 +316,45 @@ message ListRunsRequest {
 message ListRunsResponse {
   // items 当前页数据。
   repeated SyncRun items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// ListConflictsRequest 查询同步冲突请求。
+message ListConflictsRequest {
+  // id 采集源标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // page 页码，从 1 开始。
+  int64 page = 2 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 3 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+}
+
+// SyncConflict 一条未解决的同步冲突。
+message SyncConflict {
+  // model_code 资源类型编码。
+  string model_code = 1;
+  // model_name 资源类型名。
+  string model_name = 2;
+  // external_id 外部系统标识。
+  string external_id = 3;
+  // name 采集到的资源名称。
+  string name = 4;
+  // reason 未能写入的原因。
+  string reason = 5;
+  // first_seen 首次出现时间。
+  google.protobuf.Timestamp first_seen = 6;
+  // last_seen 最近一次对账时间。
+  google.protobuf.Timestamp last_seen = 7;
+}
+
+// ListConflictsResponse 查询同步冲突响应。
+message ListConflictsResponse {
+  // items 当前页数据（最早出现的在前）。
+  repeated SyncConflict items = 1;
   // total 总数。
   int64 total = 2;
 }

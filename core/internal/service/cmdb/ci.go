@@ -6,12 +6,14 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
 	v1 "github.com/lanyulei/reborn/backend/core/api/cmdb/v1"
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/cmdb"
 
+	kerrors "github.com/go-kratos/kratos/v3/errors"
 	"google.golang.org/genproto/googleapis/api/httpbody"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -72,7 +74,7 @@ func (s *CmdbCIService) ExportCIs(ctx context.Context, req *v1.ExportCIsRequest)
 	// 与 ListCIs 同一组筛选条件：导出的就是当前列表看到的那批资源
 	filter := biz.CIFilter{
 		ModelCode: req.GetModelCode(), Keyword: req.GetKeyword(), Status: req.GetStatus(), Env: req.GetEnv(),
-		Tag: req.GetTag(), Attrs: req.GetAttrs().AsMap(),
+		Tag: req.GetTag(), Attrs: req.GetAttrs().AsMap(), Owner: req.GetOwner(),
 		RelType: req.GetRelType(), RelDirection: req.GetRelDirection(), RelTargetID: req.GetRelTargetId(), RelNone: req.GetRelNone(),
 	}
 	if filter.RelType != "" && filter.RelDirection == "" {
@@ -253,6 +255,7 @@ func (s *CmdbCIService) ListCIs(ctx context.Context, req *v1.ListCIsRequest) (*v
 		ModelCode: req.GetModelCode(), Keyword: req.GetKeyword(), Status: req.GetStatus(),
 		Env: req.GetEnv(), Tag: req.GetTag(), Attrs: req.GetAttrs().AsMap(), Cursor: req.GetCursor(),
 		RelType: req.GetRelType(), RelDirection: req.GetRelDirection(), RelTargetID: req.GetRelTargetId(), RelNone: req.GetRelNone(),
+		Owner: req.GetOwner(), Deleted: req.GetDeleted(), Issue: req.GetIssue(),
 	}
 	if filter.RelType != "" && filter.RelDirection == "" {
 		filter.RelDirection = biz.DirectionOutgoing
@@ -405,6 +408,139 @@ func (s *CmdbCIService) DeleteCI(ctx context.Context, req *v1.DeleteCIRequest) (
 	return &v1.DeleteCIResponse{}, nil
 }
 
+// RestoreCI implements proto CmdbCIService/RestoreCI。
+func (s *CmdbCIService) RestoreCI(ctx context.Context, req *v1.RestoreCIRequest) (*v1.RestoreCIResponse, error) {
+	actor, err := actorFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.guard.requireCI(ctx, s.uc.GetDeleted, req.GetId()); err != nil {
+		return nil, err
+	}
+	ci, err := s.uc.Restore(ctx, actor, req.GetId())
+	if err != nil {
+		return nil, err
+	}
+	p, err := toProtoCI(ci)
+	if err != nil {
+		return nil, err
+	}
+	return &v1.RestoreCIResponse{Ci: p}, nil
+}
+
+// batch 逐条执行批量操作：每条先读取并校验数据范围，再执行 fn；单条失败不影响其它条，
+// 原因随结果返回（与导入的逐行结果同口径）。数据范围只解析一次。
+func (s *CmdbCIService) batch(ctx context.Context, ids []string, fn func(actor biz.Actor, scope biz.Scope, ci *biz.CI) error) (*v1.BatchCIsResponse, error) {
+	actor, err := actorFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scope, err := s.guard.resolve(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resp := &v1.BatchCIsResponse{Results: make([]*v1.BatchCIResult, 0, len(ids))}
+	for _, id := range ids {
+		// 请求被取消（客户端断开 / 超时）：不再继续处理剩余条目。
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		res := &v1.BatchCIResult{Id: id}
+		ci, err := s.uc.GetByID(ctx, id)
+		if err == nil {
+			if !scope.Allows(ci.ModelCode, ci.Env) {
+				err = biz.ErrScopeForbidden
+			} else {
+				res.Name = ci.Name
+				err = fn(actor, scope, ci)
+			}
+		}
+		if err != nil {
+			res.Message = batchErrorMessage(err)
+			resp.Failed++
+		} else {
+			res.Ok = true
+			resp.Succeeded++
+		}
+		resp.Results = append(resp.Results, res)
+	}
+	return resp, nil
+}
+
+// batchErrorMessage 业务错误取其说明；其它错误（基础设施）不外泄细节。
+func batchErrorMessage(err error) string {
+	if se := kerrors.FromError(err); se != nil && se.Code < 500 && se.Message != "" {
+		return se.Message
+	}
+	return "internal error"
+}
+
+// BatchUpdateCIs implements proto CmdbCIService/BatchUpdateCIs。
+func (s *CmdbCIService) BatchUpdateCIs(ctx context.Context, req *v1.BatchUpdateCIsRequest) (*v1.BatchCIsResponse, error) {
+	var attrs map[string]any
+	if req.Attrs != nil {
+		attrs = req.GetAttrs().AsMap()
+	}
+	return s.batch(ctx, req.GetIds(), func(actor biz.Actor, scope biz.Scope, ci *biz.CI) error {
+		// 环境变更后也须在范围内（与单条编辑一致）。
+		if req.Env != nil && req.GetEnv() != ci.Env && !scope.Allows(ci.ModelCode, req.GetEnv()) {
+			return biz.ErrScopeForbidden
+		}
+		upd := biz.CIUpdate{Owner: req.Owner, Env: req.Env, Attrs: attrs}
+		if len(req.GetAddTags()) > 0 || len(req.GetRemoveTags()) > 0 {
+			tags := make([]string, 0, len(ci.Tags)+len(req.GetAddTags()))
+			for _, t := range ci.Tags {
+				if !slices.Contains(req.GetRemoveTags(), t) {
+					tags = append(tags, t)
+				}
+			}
+			for _, t := range req.GetAddTags() {
+				if !slices.Contains(tags, t) {
+					tags = append(tags, t)
+				}
+			}
+			if len(tags) > biz.MaxCITags {
+				return biz.TooManyTagsError()
+			}
+			upd.Tags = &tags
+		}
+		_, err := s.uc.Update(ctx, actor, ci.ID, ci.Version, upd)
+		return err
+	})
+}
+
+// BatchTransitionCIs implements proto CmdbCIService/BatchTransitionCIs。
+func (s *CmdbCIService) BatchTransitionCIs(ctx context.Context, req *v1.BatchTransitionCIsRequest) (*v1.BatchCIsResponse, error) {
+	return s.batch(ctx, req.GetIds(), func(actor biz.Actor, scope biz.Scope, ci *biz.CI) error {
+		// 已处于目标状态（如被同批前一条的级联退役带到）：视为成功。
+		if ci.Status == req.GetStatus() {
+			return nil
+		}
+		_, err := s.uc.Transition(ctx, actor, scope, ci.ID, ci.Version, req.GetStatus())
+		return err
+	})
+}
+
+// BatchDeleteCIs implements proto CmdbCIService/BatchDeleteCIs。
+func (s *CmdbCIService) BatchDeleteCIs(ctx context.Context, req *v1.BatchDeleteCIsRequest) (*v1.BatchCIsResponse, error) {
+	return s.batch(ctx, req.GetIds(), func(actor biz.Actor, _ biz.Scope, ci *biz.CI) error {
+		return s.uc.Delete(ctx, actor, ci.ID)
+	})
+}
+
+// ListOwnerCandidates implements proto CmdbCIService/ListOwnerCandidates。
+func (s *CmdbCIService) ListOwnerCandidates(ctx context.Context, req *v1.ListOwnerCandidatesRequest) (*v1.ListOwnerCandidatesResponse, error) {
+	items, err := s.uc.ListOwnerCandidates(ctx, req.GetKeyword())
+	if err != nil {
+		return nil, err
+	}
+	resp := &v1.ListOwnerCandidatesResponse{Items: make([]*v1.OwnerCandidate, 0, len(items))}
+	for _, c := range items {
+		resp.Items = append(resp.Items, &v1.OwnerCandidate{Id: c.ID, Name: c.Name})
+	}
+	return resp, nil
+}
+
 // ListCIHistory implements proto CmdbCIService/ListCIHistory.
 func (s *CmdbCIService) ListCIHistory(ctx context.Context, req *v1.ListCIHistoryRequest) (*v1.ListCIHistoryResponse, error) {
 	if _, err := s.guard.requireCI(ctx, s.uc.GetByID, req.GetId()); err != nil {
@@ -480,7 +616,10 @@ func toProtoCI(ci *biz.CI) (*v1.CmdbCI, error) {
 		Id: ci.ID, ModelCode: ci.ModelCode, ModelName: ci.ModelName, Name: ci.Name, Status: ci.Status, Env: ci.Env,
 		Owner: ci.Owner, Tags: ci.Tags, Source: ci.Source, ExternalId: ci.ExternalID, Attrs: attrs, Stale: ci.Stale,
 		Version: ci.Version, CreateTime: timestamppb.New(ci.CreateTime), UpdateTime: timestamppb.New(ci.UpdateTime),
-		SourceName: ci.SourceName, SourceDeleted: ci.SourceDeleted,
+		SourceName: ci.SourceName, SourceDeleted: ci.SourceDeleted, OwnerName: ci.OwnerName,
+	}
+	if ci.DeleteTime != nil {
+		p.DeleteTime = timestamppb.New(*ci.DeleteTime)
 	}
 	if ci.LastSyncedAt != nil {
 		p.LastSyncedAt = timestamppb.New(*ci.LastSyncedAt)

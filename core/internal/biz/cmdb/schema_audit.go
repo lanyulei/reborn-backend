@@ -17,6 +17,7 @@ const (
 	AuditTargetModel        = "model"
 	AuditTargetField        = "field"
 	AuditTargetRelationType = "relation_type"
+	AuditTargetUniqueRule   = "unique_rule"
 
 	AuditActionCreate = "create"
 	AuditActionUpdate = "update"

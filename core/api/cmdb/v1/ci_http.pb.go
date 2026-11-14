@@ -18,6 +18,9 @@ var _ = new(context.Context)
 
 const _ = http.SupportPackageIsVersion3
 
+const OperationCmdbCIServiceBatchDeleteCIs = "/cmdb.v1.CmdbCIService/BatchDeleteCIs"
+const OperationCmdbCIServiceBatchTransitionCIs = "/cmdb.v1.CmdbCIService/BatchTransitionCIs"
+const OperationCmdbCIServiceBatchUpdateCIs = "/cmdb.v1.CmdbCIService/BatchUpdateCIs"
 const OperationCmdbCIServiceCreateCI = "/cmdb.v1.CmdbCIService/CreateCI"
 const OperationCmdbCIServiceDeleteCI = "/cmdb.v1.CmdbCIService/DeleteCI"
 const OperationCmdbCIServiceExportCIs = "/cmdb.v1.CmdbCIService/ExportCIs"
@@ -26,11 +29,19 @@ const OperationCmdbCIServiceImportCIs = "/cmdb.v1.CmdbCIService/ImportCIs"
 const OperationCmdbCIServiceListCIHistory = "/cmdb.v1.CmdbCIService/ListCIHistory"
 const OperationCmdbCIServiceListCIs = "/cmdb.v1.CmdbCIService/ListCIs"
 const OperationCmdbCIServiceListHistory = "/cmdb.v1.CmdbCIService/ListHistory"
+const OperationCmdbCIServiceListOwnerCandidates = "/cmdb.v1.CmdbCIService/ListOwnerCandidates"
+const OperationCmdbCIServiceRestoreCI = "/cmdb.v1.CmdbCIService/RestoreCI"
 const OperationCmdbCIServiceSearchCIs = "/cmdb.v1.CmdbCIService/SearchCIs"
 const OperationCmdbCIServiceTransitionCI = "/cmdb.v1.CmdbCIService/TransitionCI"
 const OperationCmdbCIServiceUpdateCI = "/cmdb.v1.CmdbCIService/UpdateCI"
 
 type CmdbCIServiceHTTPServer interface {
+	// BatchDeleteCIs BatchDeleteCIs 批量删除资源（软删，进回收站）；逐条执行、逐条返回结果。
+	BatchDeleteCIs(context.Context, *BatchDeleteCIsRequest) (*BatchCIsResponse, error)
+	// BatchTransitionCIs BatchTransitionCIs 批量变更资源状态；逐条执行、逐条返回结果。
+	BatchTransitionCIs(context.Context, *BatchTransitionCIsRequest) (*BatchCIsResponse, error)
+	// BatchUpdateCIs BatchUpdateCIs 批量修改资源的负责人 / 环境 / 标签 / 属性；逐条执行、逐条返回结果（互不影响）。
+	BatchUpdateCIs(context.Context, *BatchUpdateCIsRequest) (*BatchCIsResponse, error)
 	// CreateCI CreateCI 创建资源；attrs 按类型字段定义校验。
 	CreateCI(context.Context, *CreateCIRequest) (*CreateCIResponse, error)
 	// DeleteCI DeleteCI 删除资源（软删；仍有关系时 409）。
@@ -48,6 +59,10 @@ type CmdbCIServiceHTTPServer interface {
 	ListCIs(context.Context, *ListCIsRequest) (*ListCIsResponse, error)
 	// ListHistory ListHistory 全局变更审计：跨资源按类型 / 动作 / 操作者 / 时间检索。
 	ListHistory(context.Context, *ListHistoryRequest) (*ListHistoryResponse, error)
+	// ListOwnerCandidates ListOwnerCandidates 可选负责人（启用的系统用户，仅 ID 与显示名）；供资源表单与筛选使用。
+	ListOwnerCandidates(context.Context, *ListOwnerCandidatesRequest) (*ListOwnerCandidatesResponse, error)
+	// RestoreCI RestoreCI 从回收站恢复已删除的资源；名称或唯一规则已被其它资源占用时 409。
+	RestoreCI(context.Context, *RestoreCIRequest) (*RestoreCIResponse, error)
 	// SearchCIs SearchCIs 全局搜索：名称 / 外部标识 / 标签 / 任意属性值模糊匹配，跨类型返回前 N 条。
 	SearchCIs(context.Context, *SearchCIsRequest) (*SearchCIsResponse, error)
 	// TransitionCI TransitionCI 资源状态流转（planning → active → maintenance ⇄ active → retired）。
@@ -64,6 +79,11 @@ func RegisterCmdbCIServiceHTTPServer(s *http.Server, srv CmdbCIServiceHTTPServer
 	r.Handle("PUT", "/api/v1/cmdb/ci/{id}", _CmdbCIService_UpdateCI0_HTTP_Handler(srv))
 	r.Handle("POST", "/api/v1/cmdb/ci/{id}:transition", _CmdbCIService_TransitionCI0_HTTP_Handler(srv))
 	r.Handle("DELETE", "/api/v1/cmdb/ci/{id}", _CmdbCIService_DeleteCI0_HTTP_Handler(srv))
+	r.Handle("POST", "/api/v1/cmdb/ci/{id}:restore", _CmdbCIService_RestoreCI0_HTTP_Handler(srv))
+	r.Handle("POST", "/api/v1/cmdb/ci:batchUpdate", _CmdbCIService_BatchUpdateCIs0_HTTP_Handler(srv))
+	r.Handle("POST", "/api/v1/cmdb/ci:batchTransition", _CmdbCIService_BatchTransitionCIs0_HTTP_Handler(srv))
+	r.Handle("POST", "/api/v1/cmdb/ci:batchDelete", _CmdbCIService_BatchDeleteCIs0_HTTP_Handler(srv))
+	r.Handle("GET", "/api/v1/cmdb/owner-candidate", _CmdbCIService_ListOwnerCandidates0_HTTP_Handler(srv))
 	r.Handle("GET", "/api/v1/cmdb/ci/{id}/history", _CmdbCIService_ListCIHistory0_HTTP_Handler(srv))
 	r.Handle("POST", "/api/v1/cmdb/ci:import", _CmdbCIService_ImportCIs0_HTTP_Handler(srv))
 	r.Handle("GET", "/api/v1/cmdb/ci:export", _CmdbCIService_ExportCIs0_HTTP_Handler(srv))
@@ -197,6 +217,104 @@ func _CmdbCIService_DeleteCI0_HTTP_Handler(srv CmdbCIServiceHTTPServer) func(ctx
 	}
 }
 
+func _CmdbCIService_RestoreCI0_HTTP_Handler(srv CmdbCIServiceHTTPServer) func(ctx http.Context) error {
+	return func(ctx http.Context) error {
+		var in RestoreCIRequest
+		if err := ctx.Bind(&in); err != nil {
+			return err
+		}
+		if err := ctx.BindVars(&in); err != nil {
+			return err
+		}
+		http.SetOperation(ctx, OperationCmdbCIServiceRestoreCI)
+		h := ctx.Middleware(func(ctx context.Context, req interface{}) (interface{}, error) {
+			return srv.RestoreCI(ctx, req.(*RestoreCIRequest))
+		})
+		out, err := h(ctx, &in)
+		if err != nil {
+			return err
+		}
+		reply := out.(*RestoreCIResponse)
+		return ctx.Result(200, reply)
+	}
+}
+
+func _CmdbCIService_BatchUpdateCIs0_HTTP_Handler(srv CmdbCIServiceHTTPServer) func(ctx http.Context) error {
+	return func(ctx http.Context) error {
+		var in BatchUpdateCIsRequest
+		if err := ctx.Bind(&in); err != nil {
+			return err
+		}
+		http.SetOperation(ctx, OperationCmdbCIServiceBatchUpdateCIs)
+		h := ctx.Middleware(func(ctx context.Context, req interface{}) (interface{}, error) {
+			return srv.BatchUpdateCIs(ctx, req.(*BatchUpdateCIsRequest))
+		})
+		out, err := h(ctx, &in)
+		if err != nil {
+			return err
+		}
+		reply := out.(*BatchCIsResponse)
+		return ctx.Result(200, reply)
+	}
+}
+
+func _CmdbCIService_BatchTransitionCIs0_HTTP_Handler(srv CmdbCIServiceHTTPServer) func(ctx http.Context) error {
+	return func(ctx http.Context) error {
+		var in BatchTransitionCIsRequest
+		if err := ctx.Bind(&in); err != nil {
+			return err
+		}
+		http.SetOperation(ctx, OperationCmdbCIServiceBatchTransitionCIs)
+		h := ctx.Middleware(func(ctx context.Context, req interface{}) (interface{}, error) {
+			return srv.BatchTransitionCIs(ctx, req.(*BatchTransitionCIsRequest))
+		})
+		out, err := h(ctx, &in)
+		if err != nil {
+			return err
+		}
+		reply := out.(*BatchCIsResponse)
+		return ctx.Result(200, reply)
+	}
+}
+
+func _CmdbCIService_BatchDeleteCIs0_HTTP_Handler(srv CmdbCIServiceHTTPServer) func(ctx http.Context) error {
+	return func(ctx http.Context) error {
+		var in BatchDeleteCIsRequest
+		if err := ctx.Bind(&in); err != nil {
+			return err
+		}
+		http.SetOperation(ctx, OperationCmdbCIServiceBatchDeleteCIs)
+		h := ctx.Middleware(func(ctx context.Context, req interface{}) (interface{}, error) {
+			return srv.BatchDeleteCIs(ctx, req.(*BatchDeleteCIsRequest))
+		})
+		out, err := h(ctx, &in)
+		if err != nil {
+			return err
+		}
+		reply := out.(*BatchCIsResponse)
+		return ctx.Result(200, reply)
+	}
+}
+
+func _CmdbCIService_ListOwnerCandidates0_HTTP_Handler(srv CmdbCIServiceHTTPServer) func(ctx http.Context) error {
+	return func(ctx http.Context) error {
+		var in ListOwnerCandidatesRequest
+		if err := ctx.BindQuery(&in); err != nil {
+			return err
+		}
+		http.SetOperation(ctx, OperationCmdbCIServiceListOwnerCandidates)
+		h := ctx.Middleware(func(ctx context.Context, req interface{}) (interface{}, error) {
+			return srv.ListOwnerCandidates(ctx, req.(*ListOwnerCandidatesRequest))
+		})
+		out, err := h(ctx, &in)
+		if err != nil {
+			return err
+		}
+		reply := out.(*ListOwnerCandidatesResponse)
+		return ctx.Result(200, reply)
+	}
+}
+
 func _CmdbCIService_ListCIHistory0_HTTP_Handler(srv CmdbCIServiceHTTPServer) func(ctx http.Context) error {
 	return func(ctx http.Context) error {
 		var in ListCIHistoryRequest
@@ -296,6 +414,12 @@ func _CmdbCIService_ListHistory0_HTTP_Handler(srv CmdbCIServiceHTTPServer) func(
 }
 
 type CmdbCIServiceHTTPClient interface {
+	// BatchDeleteCIs BatchDeleteCIs 批量删除资源（软删，进回收站）；逐条执行、逐条返回结果。
+	BatchDeleteCIs(ctx context.Context, req *BatchDeleteCIsRequest, opts ...http.CallOption) (rsp *BatchCIsResponse, err error)
+	// BatchTransitionCIs BatchTransitionCIs 批量变更资源状态；逐条执行、逐条返回结果。
+	BatchTransitionCIs(ctx context.Context, req *BatchTransitionCIsRequest, opts ...http.CallOption) (rsp *BatchCIsResponse, err error)
+	// BatchUpdateCIs BatchUpdateCIs 批量修改资源的负责人 / 环境 / 标签 / 属性；逐条执行、逐条返回结果（互不影响）。
+	BatchUpdateCIs(ctx context.Context, req *BatchUpdateCIsRequest, opts ...http.CallOption) (rsp *BatchCIsResponse, err error)
 	// CreateCI CreateCI 创建资源；attrs 按类型字段定义校验。
 	CreateCI(ctx context.Context, req *CreateCIRequest, opts ...http.CallOption) (rsp *CreateCIResponse, err error)
 	// DeleteCI DeleteCI 删除资源（软删；仍有关系时 409）。
@@ -313,6 +437,10 @@ type CmdbCIServiceHTTPClient interface {
 	ListCIs(ctx context.Context, req *ListCIsRequest, opts ...http.CallOption) (rsp *ListCIsResponse, err error)
 	// ListHistory ListHistory 全局变更审计：跨资源按类型 / 动作 / 操作者 / 时间检索。
 	ListHistory(ctx context.Context, req *ListHistoryRequest, opts ...http.CallOption) (rsp *ListHistoryResponse, err error)
+	// ListOwnerCandidates ListOwnerCandidates 可选负责人（启用的系统用户，仅 ID 与显示名）；供资源表单与筛选使用。
+	ListOwnerCandidates(ctx context.Context, req *ListOwnerCandidatesRequest, opts ...http.CallOption) (rsp *ListOwnerCandidatesResponse, err error)
+	// RestoreCI RestoreCI 从回收站恢复已删除的资源；名称或唯一规则已被其它资源占用时 409。
+	RestoreCI(ctx context.Context, req *RestoreCIRequest, opts ...http.CallOption) (rsp *RestoreCIResponse, err error)
 	// SearchCIs SearchCIs 全局搜索：名称 / 外部标识 / 标签 / 任意属性值模糊匹配，跨类型返回前 N 条。
 	SearchCIs(ctx context.Context, req *SearchCIsRequest, opts ...http.CallOption) (rsp *SearchCIsResponse, err error)
 	// TransitionCI TransitionCI 资源状态流转（planning → active → maintenance ⇄ active → retired）。
@@ -327,6 +455,60 @@ type CmdbCIServiceHTTPClientImpl struct {
 
 func NewCmdbCIServiceHTTPClient(client *http.Client) CmdbCIServiceHTTPClient {
 	return &CmdbCIServiceHTTPClientImpl{client}
+}
+
+// BatchDeleteCIs BatchDeleteCIs 批量删除资源（软删，进回收站）；逐条执行、逐条返回结果。
+func (c *CmdbCIServiceHTTPClientImpl) BatchDeleteCIs(ctx context.Context, in *BatchDeleteCIsRequest, opts ...http.CallOption) (*BatchCIsResponse, error) {
+	var out BatchCIsResponse
+	pattern := "/api/v1/cmdb/ci:batchDelete"
+	path := http.BuildPath(pattern, in)
+	opts = append([]http.CallOption{
+		http.Accept("application/protojson"),
+		http.ContentType("application/protojson"),
+		http.Operation(OperationCmdbCIServiceBatchDeleteCIs),
+		http.PathTemplate(pattern),
+	}, opts...)
+	err := c.cc.Invoke(ctx, "POST", path, in, &out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// BatchTransitionCIs BatchTransitionCIs 批量变更资源状态；逐条执行、逐条返回结果。
+func (c *CmdbCIServiceHTTPClientImpl) BatchTransitionCIs(ctx context.Context, in *BatchTransitionCIsRequest, opts ...http.CallOption) (*BatchCIsResponse, error) {
+	var out BatchCIsResponse
+	pattern := "/api/v1/cmdb/ci:batchTransition"
+	path := http.BuildPath(pattern, in)
+	opts = append([]http.CallOption{
+		http.Accept("application/protojson"),
+		http.ContentType("application/protojson"),
+		http.Operation(OperationCmdbCIServiceBatchTransitionCIs),
+		http.PathTemplate(pattern),
+	}, opts...)
+	err := c.cc.Invoke(ctx, "POST", path, in, &out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// BatchUpdateCIs BatchUpdateCIs 批量修改资源的负责人 / 环境 / 标签 / 属性；逐条执行、逐条返回结果（互不影响）。
+func (c *CmdbCIServiceHTTPClientImpl) BatchUpdateCIs(ctx context.Context, in *BatchUpdateCIsRequest, opts ...http.CallOption) (*BatchCIsResponse, error) {
+	var out BatchCIsResponse
+	pattern := "/api/v1/cmdb/ci:batchUpdate"
+	path := http.BuildPath(pattern, in)
+	opts = append([]http.CallOption{
+		http.Accept("application/protojson"),
+		http.ContentType("application/protojson"),
+		http.Operation(OperationCmdbCIServiceBatchUpdateCIs),
+		http.PathTemplate(pattern),
+	}, opts...)
+	err := c.cc.Invoke(ctx, "POST", path, in, &out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // CreateCI CreateCI 创建资源；attrs 按类型字段定义校验。
@@ -462,6 +644,41 @@ func (c *CmdbCIServiceHTTPClientImpl) ListHistory(ctx context.Context, in *ListH
 		http.PathTemplate(pattern),
 	}, opts...)
 	err := c.cc.Invoke(ctx, "GET", path, nil, &out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ListOwnerCandidates ListOwnerCandidates 可选负责人（启用的系统用户，仅 ID 与显示名）；供资源表单与筛选使用。
+func (c *CmdbCIServiceHTTPClientImpl) ListOwnerCandidates(ctx context.Context, in *ListOwnerCandidatesRequest, opts ...http.CallOption) (*ListOwnerCandidatesResponse, error) {
+	var out ListOwnerCandidatesResponse
+	pattern := "/api/v1/cmdb/owner-candidate"
+	path := http.BuildPath(pattern, in, http.WithQueryParams())
+	opts = append([]http.CallOption{
+		http.Accept("application/protojson"),
+		http.Operation(OperationCmdbCIServiceListOwnerCandidates),
+		http.PathTemplate(pattern),
+	}, opts...)
+	err := c.cc.Invoke(ctx, "GET", path, nil, &out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// RestoreCI RestoreCI 从回收站恢复已删除的资源；名称或唯一规则已被其它资源占用时 409。
+func (c *CmdbCIServiceHTTPClientImpl) RestoreCI(ctx context.Context, in *RestoreCIRequest, opts ...http.CallOption) (*RestoreCIResponse, error) {
+	var out RestoreCIResponse
+	pattern := "/api/v1/cmdb/ci/{id}:restore"
+	path := http.BuildPath(pattern, in)
+	opts = append([]http.CallOption{
+		http.Accept("application/protojson"),
+		http.ContentType("application/protojson"),
+		http.Operation(OperationCmdbCIServiceRestoreCI),
+		http.PathTemplate(pattern),
+	}, opts...)
+	err := c.cc.Invoke(ctx, "POST", path, in, &out, opts...)
 	if err != nil {
 		return nil, err
 	}

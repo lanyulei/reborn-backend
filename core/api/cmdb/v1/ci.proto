@@ -59,6 +59,45 @@ service CmdbCIService {
     };
     option (system.v1.title) = "删除资源";
   }
+  // RestoreCI 从回收站恢复已删除的资源；名称或唯一规则已被其它资源占用时 409。
+  rpc RestoreCI(RestoreCIRequest) returns (RestoreCIResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/cmdb/ci/{id}:restore"
+      body: "*"
+    };
+    option (system.v1.title) = "恢复资源";
+  }
+  // BatchUpdateCIs 批量修改资源的负责人 / 环境 / 标签 / 属性；逐条执行、逐条返回结果（互不影响）。
+  rpc BatchUpdateCIs(BatchUpdateCIsRequest) returns (BatchCIsResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/cmdb/ci:batchUpdate"
+      body: "*"
+    };
+    option (system.v1.title) = "批量编辑资源";
+  }
+  // BatchTransitionCIs 批量变更资源状态；逐条执行、逐条返回结果。
+  rpc BatchTransitionCIs(BatchTransitionCIsRequest) returns (BatchCIsResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/cmdb/ci:batchTransition"
+      body: "*"
+    };
+    option (system.v1.title) = "批量变更资源状态";
+  }
+  // BatchDeleteCIs 批量删除资源（软删，进回收站）；逐条执行、逐条返回结果。
+  rpc BatchDeleteCIs(BatchDeleteCIsRequest) returns (BatchCIsResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/cmdb/ci:batchDelete"
+      body: "*"
+    };
+    option (system.v1.title) = "批量删除资源";
+  }
+  // ListOwnerCandidates 可选负责人（启用的系统用户，仅 ID 与显示名）；供资源表单与筛选使用。
+  rpc ListOwnerCandidates(ListOwnerCandidatesRequest) returns (ListOwnerCandidatesResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/cmdb/owner-candidate"
+    };
+    option (system.v1.title) = "查询可选负责人";
+  }
   // ListCIHistory 分页查询资源变更历史（倒序）。
   rpc ListCIHistory(ListCIHistoryRequest) returns (ListCIHistoryResponse) {
     option (google.api.http) = {
@@ -223,6 +262,8 @@ message ExportCIsRequest {
   optional string rel_target_id = 9 [(buf.validate.field).string.uuid = true];
   // rel_none 该方向上无任何关联，可选。
   optional bool rel_none = 10;
+  // owner 负责人精确匹配（与列表一致），可选。
+  optional string owner = 11 [(buf.validate.field).string.max_len = 64];
   // format 导出格式：csv（缺省）/ json。
   optional string format = 20 [(buf.validate.field).string = {
     in: ["csv", "json"]
@@ -267,6 +308,10 @@ message CmdbCI {
   string source_name = 17;
   // source_deleted 同步来源的采集源已删除。
   bool source_deleted = 18;
+  // owner_name 负责人为系统用户（owner 存用户 ID）时的显示名；否则为空，展示 owner 原文。
+  string owner_name = 19;
+  // delete_time 删除时间；仅回收站列表（deleted=true）返回。
+  google.protobuf.Timestamp delete_time = 20;
 }
 
 // RelationSummary 资源在某个关系类型某个方向上的关联统计（详情页面板头）。
@@ -320,7 +365,7 @@ message ListHistoryRequest {
   optional string model_code = 3 [(buf.validate.field).string.max_len = 64];
   // action 动作过滤，可选。
   optional string action = 4 [(buf.validate.field).string = {
-    in: ["create", "update", "transition", "delete", "link", "unlink"]
+    in: ["create", "update", "transition", "delete", "restore", "link", "unlink"]
   }];
   // operator 操作者（用户 ID）过滤，可选。
   optional string operator = 5 [(buf.validate.field).string.max_len = 64];
@@ -374,6 +419,14 @@ message ListCIsRequest {
   optional bool rel_none = 12;
   // cursor 游标分页：上一页返回的 next_cursor；提供时忽略 page。
   optional string cursor = 13 [(buf.validate.field).string.max_len = 128];
+  // owner 负责人精确匹配（用户 ID 或原文），可选。
+  optional string owner = 14 [(buf.validate.field).string.max_len = 64];
+  // deleted 为真 = 查询回收站（已删除的资源）；缺省只查未删除。
+  optional bool deleted = 15;
+  // issue 数据质量问题筛选（与数据质量看板同口径，只含在册资源），可选。
+  optional string issue = 16 [(buf.validate.field).string = {
+    in: ["missing_required", "no_owner", "orphan", "stale", "outdated"]
+  }];
 }
 
 // ListCIsResponse 分页查询资源响应。
@@ -511,6 +564,128 @@ message DeleteCIRequest {
 
 // DeleteCIResponse 删除资源响应。
 message DeleteCIResponse {}
+
+// RestoreCIRequest 恢复资源请求。
+message RestoreCIRequest {
+  // id 资源标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// RestoreCIResponse 恢复资源响应。
+message RestoreCIResponse {
+  // ci 恢复后的资源。
+  CmdbCI ci = 1;
+}
+
+// BatchUpdateCIsRequest 批量编辑请求；未传字段不修改。
+message BatchUpdateCIsRequest {
+  // ids 资源标识，1-100 个且不重复。
+  repeated string ids = 1 [(buf.validate.field).repeated = {
+    min_items: 1
+    max_items: 100
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+  // owner 负责人（用户 ID 或原文）；空串 = 清空。
+  optional string owner = 2 [(buf.validate.field).string.max_len = 64];
+  // env 环境。
+  optional string env = 3 [(buf.validate.field).string.max_len = 32];
+  // add_tags 追加的标签。
+  repeated string add_tags = 4 [(buf.validate.field).repeated = {
+    max_items: 20
+    items: {
+      string: {
+        min_len: 1
+        max_len: 64
+      }
+    }
+  }];
+  // remove_tags 移除的标签。
+  repeated string remove_tags = 5 [(buf.validate.field).repeated = {
+    max_items: 20
+    items: {
+      string: {
+        min_len: 1
+        max_len: 64
+      }
+    }
+  }];
+  // attrs 属性增量（键为字段编码；值为 null 清空）。所选资源须属于同一类型的字段才能通过校验。
+  google.protobuf.Struct attrs = 6;
+}
+
+// BatchTransitionCIsRequest 批量变更状态请求。
+message BatchTransitionCIsRequest {
+  // ids 资源标识，1-100 个且不重复。
+  repeated string ids = 1 [(buf.validate.field).repeated = {
+    min_items: 1
+    max_items: 100
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+  // status 目标状态。
+  string status = 2 [(buf.validate.field).string = {
+    in: ["planning", "active", "maintenance", "retired"]
+  }];
+}
+
+// BatchDeleteCIsRequest 批量删除请求。
+message BatchDeleteCIsRequest {
+  // ids 资源标识，1-100 个且不重复。
+  repeated string ids = 1 [(buf.validate.field).repeated = {
+    min_items: 1
+    max_items: 100
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+}
+
+// BatchCIResult 批量操作的单条结果。
+message BatchCIResult {
+  // id 资源标识。
+  string id = 1;
+  // name 资源名称（无权或不存在时为空）。
+  string name = 2;
+  // ok 是否成功。
+  bool ok = 3;
+  // message 失败原因。
+  string message = 4;
+}
+
+// BatchCIsResponse 批量操作响应。
+message BatchCIsResponse {
+  // succeeded / failed 统计。
+  int32 succeeded = 1;
+  int32 failed = 2;
+  // results 逐条结果（与请求 ids 同序）。
+  repeated BatchCIResult results = 3;
+}
+
+// ListOwnerCandidatesRequest 查询可选负责人请求。
+message ListOwnerCandidatesRequest {
+  // keyword 用户名 / 昵称模糊匹配，可选。
+  optional string keyword = 1 [(buf.validate.field).string.max_len = 64];
+}
+
+// OwnerCandidate 可选负责人。
+message OwnerCandidate {
+  // id 用户标识。
+  string id = 1;
+  // name 显示名（昵称优先，否则用户名）。
+  string name = 2;
+}
+
+// ListOwnerCandidatesResponse 查询可选负责人响应。
+message ListOwnerCandidatesResponse {
+  // items 至多 50 个，按显示名排序。
+  repeated OwnerCandidate items = 1;
+}
 
 // ListCIHistoryRequest 查询变更历史请求。
 message ListCIHistoryRequest {

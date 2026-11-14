@@ -10,13 +10,13 @@ func ptr[T any](v T) *T { return &v }
 
 func testFields() []*Field {
 	return []*Field{
-		{Code: "ip", Type: FieldTypeIP, Required: true, Unique: true},
+		{Code: "ip", Type: FieldTypeIP, Required: true},
 		{Code: "cores", Type: FieldTypeInt, Rule: FieldRule{Min: ptr(1.0), Max: ptr(64.0)}},
 		{Code: "ratio", Type: FieldTypeFloat},
 		{Code: "on", Type: FieldTypeBool},
 		{Code: "kind", Type: FieldTypeEnum, EnumValues: []string{"a", "b"}},
 		{Code: "since", Type: FieldTypeDatetime},
-		{Code: "name", Type: FieldTypeString, Unique: true, Rule: FieldRule{Pattern: ptr("^[a-z]+$"), MaxLen: ptr(int32(5))}},
+		{Code: "name", Type: FieldTypeString, Rule: FieldRule{Pattern: ptr("^[a-z]+$"), MaxLen: ptr(int32(5))}},
 		{Code: "meta", Type: FieldTypeJSON},
 		{Code: "old", Type: FieldTypeString, Deprecated: true},
 	}
@@ -62,18 +62,6 @@ func TestValidateAttrs(t *testing.T) {
 	}
 	if _, err := ValidateAttrs(fields, map[string]any{"cores": "two"}, true); !errors.Is(err, ErrCIInvalid) {
 		t.Fatalf("partial still validates types: %v", err)
-	}
-}
-
-func TestUniqueKey(t *testing.T) {
-	t.Parallel()
-	fields := testFields()
-	key := UniqueKey(fields, map[string]any{"ip": "10.0.0.1", "name": "abc", "cores": int64(8)})
-	if key != "ip=10.0.0.1|name=abc" {
-		t.Fatalf("UniqueKey() = %q", key)
-	}
-	if UniqueKey(fields, map[string]any{"cores": int64(8)}) != "" {
-		t.Fatal("no unique values must yield empty key")
 	}
 }
 

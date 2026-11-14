@@ -39,8 +39,8 @@ func newIntegrationData(t *testing.T) *Data {
 	}
 	t.Cleanup(cleanup)
 	ctx := context.Background()
-	if _, err := d.Pool.Exec(ctx, `TRUNCATE TABLE cmdb_sync_staging, cmdb_sync_run, cmdb_sync_task, cmdb_sync_source, cmdb_relation, cmdb_ci_history, cmdb_ci,
-		cmdb_model_field, cmdb_relation_type, cmdb_model_view, cmdb_role_scope, cmdb_model CASCADE`); err != nil {
+	if _, err := d.Pool.Exec(ctx, `TRUNCATE TABLE cmdb_sync_conflict, cmdb_sync_staging, cmdb_sync_run, cmdb_sync_task, cmdb_sync_source, cmdb_relation, cmdb_ci_history, cmdb_ci,
+		cmdb_ci_unique, cmdb_model_unique_rule, cmdb_model_field, cmdb_relation_type, cmdb_model_view, cmdb_role_scope, cmdb_model CASCADE`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 	// 最小元数据：host（ip 唯一、rack 人工）/ vm（ip 唯一）/ host_runs_vm。
@@ -53,6 +53,11 @@ func newIntegrationData(t *testing.T) *Data {
 		   (gen_random_uuid(), 'virtual_machine', 'ip', 'IP', 'ip', true, 'both', true),
 		   (gen_random_uuid(), 'virtual_machine', 'vcpu', 'vCPU', 'int', false, 'both', true),
 		   (gen_random_uuid(), 'cloud_host', 'instance_id', '实例', 'string', true, 'both', true)`,
+		// 唯一规则（0049）：各类型一条单字段规则；字段的 unique 列只是派生标记。
+		`INSERT INTO cmdb_model_unique_rule (id, model_code, name, field_codes) VALUES
+		   (gen_random_uuid(), 'physical_server', 'IP', '{ip}'),
+		   (gen_random_uuid(), 'virtual_machine', 'IP', '{ip}'),
+		   (gen_random_uuid(), 'cloud_host', '实例', '{instance_id}')`,
 		`INSERT INTO cmdb_relation_type (code, name, forward_name, backward_name, src_model, dst_model, cardinality) VALUES
 		   ('host_runs_vm', '运行', '运行的虚拟机', '所在物理机', 'physical_server', 'virtual_machine', 'one_to_many')`,
 	} {
@@ -84,19 +89,21 @@ func insertSource(t *testing.T, d *Data, grace int32, enabled bool, next time.Ti
 }
 
 type ciRow struct {
-	ID, Name, Status, UniqueKey string
-	Attrs                       map[string]any
-	Version                     int64
-	Stale                       bool
-	Missing                     *time.Time
+	ID, Name, Status string
+	// UniqueKeys 该资源在 cmdb_ci_unique 中的键数（每条适用且字段非空的规则一行）。
+	UniqueKeys int
+	Attrs      map[string]any
+	Version    int64
+	Stale      bool
+	Missing    *time.Time
 }
 
 func loadCI(t *testing.T, d *Data, model, source, external string) *ciRow {
 	t.Helper()
 	var r ciRow
 	err := d.Pool.QueryRow(context.Background(),
-		"SELECT id, name, status, unique_key, attrs, version, stale, missing_since FROM cmdb_ci WHERE model_code = $1 AND source = $2 AND external_id = $3 AND delete_time IS NULL",
-		model, source, external).Scan(&r.ID, &r.Name, &r.Status, &r.UniqueKey, &r.Attrs, &r.Version, &r.Stale, &r.Missing)
+		"SELECT id, name, status, (SELECT count(*) FROM cmdb_ci_unique u WHERE u.ci_id = cmdb_ci.id), attrs, version, stale, missing_since FROM cmdb_ci WHERE model_code = $1 AND source = $2 AND external_id = $3 AND delete_time IS NULL",
+		model, source, external).Scan(&r.ID, &r.Name, &r.Status, &r.UniqueKeys, &r.Attrs, &r.Version, &r.Stale, &r.Missing)
 	if err != nil {
 		return nil
 	}
@@ -123,16 +130,13 @@ func TestIntegration_ReconcileLifecycle(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var manual, unique []string
+		var manual []string
 		for _, f := range fields {
 			if f.Owner == cmdbcontract.FieldOwnerManual {
 				manual = append(manual, f.Code)
 			}
-			if f.Unique {
-				unique = append(unique, f.Code)
-			}
 		}
-		return biz.ReconcileParams{RunID: runID, ModelCode: model, Source: source, Env: "prod", Grace: 0, ManualKeys: manual, UniqueCodes: unique, SkipDisappear: skip}
+		return biz.ReconcileParams{RunID: runID, ModelCode: model, Source: source, Env: "prod", Grace: 0, ManualKeys: manual, SkipDisappear: skip}
 	}
 	// 既有人工资源：名称与同步数据冲突。
 	if _, err := d.Pool.Exec(ctx, "INSERT INTO cmdb_ci (id, model_code, name, source, attrs) VALUES ($1, 'physical_server', 'manual-dup', 'manual', '{}')", mustID(t)); err != nil {
@@ -175,7 +179,7 @@ func TestIntegration_ReconcileLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	host1 := loadCI(t, d, "physical_server", source, "host-1")
-	if host1 == nil || host1.UniqueKey != "ip=10.0.0.1" || host1.Attrs["rack"] != nil || host1.Attrs["cpu_cores"] != float64(32) {
+	if host1 == nil || host1.UniqueKeys != 1 || host1.Attrs["rack"] != nil || host1.Attrs["cpu_cores"] != float64(32) {
 		t.Fatalf("host1 = %+v", host1)
 	}
 	if countHistory(t, d, host1.ID, "create") != 1 || countHistory(t, d, host1.ID, "link") != 1 {

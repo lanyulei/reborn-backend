@@ -89,9 +89,8 @@ type Collector interface {
 
 // ModelField 类型字段元数据（对账所需子集）。
 type ModelField struct {
-	Code   string
-	Owner  string
-	Unique bool
+	Code  string
+	Owner string
 }
 
 // MetaRepo 类型元数据只读仓储。
@@ -134,6 +133,10 @@ type StagingRepo interface {
 	Models(ctx context.Context, runID string) ([]string, error)
 	// Count 返回本次运行暂存总行数。
 	Count(ctx context.Context, runID string) (int32, error)
+	// RefreshStats 刷新暂存表的规划器统计信息。暂存行刚批量写入、通常尚无统计——规划器会把
+	// 本次运行的行数估成 1，对账的集合语句被排成逐行嵌套循环，大批量下是平方复杂度。
+	// 尽力而为：失败只影响性能，不影响结果。
+	RefreshStats(ctx context.Context) error
 	// Clear 清理本次运行的暂存行。
 	Clear(ctx context.Context, runID string) error
 }
@@ -141,7 +144,7 @@ type StagingRepo interface {
 // ReconcileRepo 对账仓储：集合 SQL，一类型一事务。
 type ReconcileRepo interface {
 	// ReconcileModel 对单一类型执行 touch / update / insert / disappear / retire，并写历史；
-	// manualKeys 为人工归属字段（同步不得覆盖），uniqueCodes 为唯一字段（拼唯一键）。
+	// manualKeys 为人工归属字段（同步不得覆盖）；唯一约束由 data 层按唯一规则在库内判定。
 	ReconcileModel(ctx context.Context, p ReconcileParams) (Counts, []cmdbcontract.RunError, error)
 	// HasActive 报告该来源在该类型下是否仍有未退役、未删除的资源（按类型空集保护的告警依据）。
 	HasActive(ctx context.Context, modelCode, source string) (bool, error)
@@ -151,13 +154,12 @@ type ReconcileRepo interface {
 
 // ReconcileParams 单类型对账参数。
 type ReconcileParams struct {
-	RunID       string
-	ModelCode   string
-	Source      string
-	Env         string
-	Grace       time.Duration
-	ManualKeys  []string
-	UniqueCodes []string
+	RunID      string
+	ModelCode  string
+	Source     string
+	Env        string
+	Grace      time.Duration
+	ManualKeys []string
 	// SkipDisappear 为真时不做消失/退役判定（本次采集整体或该类型为空集、类型停用时的保护）。
 	SkipDisappear bool
 }

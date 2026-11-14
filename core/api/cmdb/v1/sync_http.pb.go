@@ -21,6 +21,7 @@ const OperationCmdbSyncServiceCreateSource = "/cmdb.v1.CmdbSyncService/CreateSou
 const OperationCmdbSyncServiceDeleteSource = "/cmdb.v1.CmdbSyncService/DeleteSource"
 const OperationCmdbSyncServiceDisableWebhook = "/cmdb.v1.CmdbSyncService/DisableWebhook"
 const OperationCmdbSyncServiceGetSource = "/cmdb.v1.CmdbSyncService/GetSource"
+const OperationCmdbSyncServiceListConflicts = "/cmdb.v1.CmdbSyncService/ListConflicts"
 const OperationCmdbSyncServiceListRuns = "/cmdb.v1.CmdbSyncService/ListRuns"
 const OperationCmdbSyncServiceListSources = "/cmdb.v1.CmdbSyncService/ListSources"
 const OperationCmdbSyncServiceRotateWebhook = "/cmdb.v1.CmdbSyncService/RotateWebhook"
@@ -36,6 +37,8 @@ type CmdbSyncServiceHTTPServer interface {
 	DisableWebhook(context.Context, *DisableWebhookRequest) (*DisableWebhookResponse, error)
 	// GetSource GetSource 查询采集源详情（不含凭据）。
 	GetSource(context.Context, *GetSourceRequest) (*GetSourceResponse, error)
+	// ListConflicts ListConflicts 分页查询采集源当前未解决的同步冲突（因名称 / 唯一规则冲突而未能写入的采集行）。
+	ListConflicts(context.Context, *ListConflictsRequest) (*ListConflictsResponse, error)
 	// ListRuns ListRuns 分页查询采集源的运行记录（时间倒序）。
 	ListRuns(context.Context, *ListRunsRequest) (*ListRunsResponse, error)
 	// ListSources ListSources 分页查询采集源。
@@ -57,6 +60,7 @@ func RegisterCmdbSyncServiceHTTPServer(s *http.Server, srv CmdbSyncServiceHTTPSe
 	r.Handle("DELETE", "/api/v1/cmdb/sync/source/{id}", _CmdbSyncService_DeleteSource0_HTTP_Handler(srv))
 	r.Handle("POST", "/api/v1/cmdb/sync/source/{id}:trigger", _CmdbSyncService_TriggerSync0_HTTP_Handler(srv))
 	r.Handle("GET", "/api/v1/cmdb/sync/source/{id}/run", _CmdbSyncService_ListRuns0_HTTP_Handler(srv))
+	r.Handle("GET", "/api/v1/cmdb/sync/source/{id}/conflict", _CmdbSyncService_ListConflicts0_HTTP_Handler(srv))
 	r.Handle("POST", "/api/v1/cmdb/sync/source/{id}/webhook", _CmdbSyncService_RotateWebhook0_HTTP_Handler(srv))
 	r.Handle("DELETE", "/api/v1/cmdb/sync/source/{id}/webhook", _CmdbSyncService_DisableWebhook0_HTTP_Handler(srv))
 }
@@ -209,6 +213,28 @@ func _CmdbSyncService_ListRuns0_HTTP_Handler(srv CmdbSyncServiceHTTPServer) func
 	}
 }
 
+func _CmdbSyncService_ListConflicts0_HTTP_Handler(srv CmdbSyncServiceHTTPServer) func(ctx http.Context) error {
+	return func(ctx http.Context) error {
+		var in ListConflictsRequest
+		if err := ctx.BindQuery(&in); err != nil {
+			return err
+		}
+		if err := ctx.BindVars(&in); err != nil {
+			return err
+		}
+		http.SetOperation(ctx, OperationCmdbSyncServiceListConflicts)
+		h := ctx.Middleware(func(ctx context.Context, req interface{}) (interface{}, error) {
+			return srv.ListConflicts(ctx, req.(*ListConflictsRequest))
+		})
+		out, err := h(ctx, &in)
+		if err != nil {
+			return err
+		}
+		reply := out.(*ListConflictsResponse)
+		return ctx.Result(200, reply)
+	}
+}
+
 func _CmdbSyncService_RotateWebhook0_HTTP_Handler(srv CmdbSyncServiceHTTPServer) func(ctx http.Context) error {
 	return func(ctx http.Context) error {
 		var in RotateWebhookRequest
@@ -262,6 +288,8 @@ type CmdbSyncServiceHTTPClient interface {
 	DisableWebhook(ctx context.Context, req *DisableWebhookRequest, opts ...http.CallOption) (rsp *DisableWebhookResponse, err error)
 	// GetSource GetSource 查询采集源详情（不含凭据）。
 	GetSource(ctx context.Context, req *GetSourceRequest, opts ...http.CallOption) (rsp *GetSourceResponse, err error)
+	// ListConflicts ListConflicts 分页查询采集源当前未解决的同步冲突（因名称 / 唯一规则冲突而未能写入的采集行）。
+	ListConflicts(ctx context.Context, req *ListConflictsRequest, opts ...http.CallOption) (rsp *ListConflictsResponse, err error)
 	// ListRuns ListRuns 分页查询采集源的运行记录（时间倒序）。
 	ListRuns(ctx context.Context, req *ListRunsRequest, opts ...http.CallOption) (rsp *ListRunsResponse, err error)
 	// ListSources ListSources 分页查询采集源。
@@ -342,6 +370,23 @@ func (c *CmdbSyncServiceHTTPClientImpl) GetSource(ctx context.Context, in *GetSo
 	opts = append([]http.CallOption{
 		http.Accept("application/protojson"),
 		http.Operation(OperationCmdbSyncServiceGetSource),
+		http.PathTemplate(pattern),
+	}, opts...)
+	err := c.cc.Invoke(ctx, "GET", path, nil, &out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ListConflicts ListConflicts 分页查询采集源当前未解决的同步冲突（因名称 / 唯一规则冲突而未能写入的采集行）。
+func (c *CmdbSyncServiceHTTPClientImpl) ListConflicts(ctx context.Context, in *ListConflictsRequest, opts ...http.CallOption) (*ListConflictsResponse, error) {
+	var out ListConflictsResponse
+	pattern := "/api/v1/cmdb/sync/source/{id}/conflict"
+	path := http.BuildPath(pattern, in, http.WithQueryParams())
+	opts = append([]http.CallOption{
+		http.Accept("application/protojson"),
+		http.Operation(OperationCmdbSyncServiceListConflicts),
 		http.PathTemplate(pattern),
 	}, opts...)
 	err := c.cc.Invoke(ctx, "GET", path, nil, &out, opts...)

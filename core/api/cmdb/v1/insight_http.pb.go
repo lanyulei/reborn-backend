@@ -20,6 +20,7 @@ const _ = http.SupportPackageIsVersion3
 const OperationCmdbInsightServiceCreateModelGroup = "/cmdb.v1.CmdbInsightService/CreateModelGroup"
 const OperationCmdbInsightServiceDeleteModelGroup = "/cmdb.v1.CmdbInsightService/DeleteModelGroup"
 const OperationCmdbInsightServiceGetOverview = "/cmdb.v1.CmdbInsightService/GetOverview"
+const OperationCmdbInsightServiceGetQuality = "/cmdb.v1.CmdbInsightService/GetQuality"
 const OperationCmdbInsightServiceListFavorites = "/cmdb.v1.CmdbInsightService/ListFavorites"
 const OperationCmdbInsightServiceListModelGroups = "/cmdb.v1.CmdbInsightService/ListModelGroups"
 const OperationCmdbInsightServiceListSchemaAudit = "/cmdb.v1.CmdbInsightService/ListSchemaAudit"
@@ -34,6 +35,9 @@ type CmdbInsightServiceHTTPServer interface {
 	// GetOverview GetOverview 运营概览：模型 / 资源 / 关系总数，按模型、状态、环境、来源的资源分布，
 	// 以及近 N 天的变更趋势；受当前用户数据范围约束。
 	GetOverview(context.Context, *GetOverviewRequest) (*GetOverviewResponse, error)
+	// GetQuality GetQuality 数据质量：按模型统计在册（未删除、未退役）资源中缺必填项 / 无负责人 /
+	// 无任何关联 / 同步陈旧 / 长期未更新的数量；受当前用户数据范围约束。
+	GetQuality(context.Context, *GetQualityRequest) (*GetQualityResponse, error)
 	// ListFavorites ListFavorites 查询当前用户收藏的模型编码。
 	ListFavorites(context.Context, *ListFavoritesRequest) (*ListFavoritesResponse, error)
 	// ListModelGroups ListModelGroups 查询全部模型分组（按 sort、编码升序，含各分组的模型数）。
@@ -55,6 +59,7 @@ func RegisterCmdbInsightServiceHTTPServer(s *http.Server, srv CmdbInsightService
 	r.Handle("GET", "/api/v1/cmdb/favorite", _CmdbInsightService_ListFavorites0_HTTP_Handler(srv))
 	r.Handle("PUT", "/api/v1/cmdb/favorite/{model_code}", _CmdbInsightService_SetFavorite0_HTTP_Handler(srv))
 	r.Handle("GET", "/api/v1/cmdb/overview", _CmdbInsightService_GetOverview0_HTTP_Handler(srv))
+	r.Handle("GET", "/api/v1/cmdb/quality", _CmdbInsightService_GetQuality0_HTTP_Handler(srv))
 	r.Handle("GET", "/api/v1/cmdb/schema-audit", _CmdbInsightService_ListSchemaAudit0_HTTP_Handler(srv))
 }
 
@@ -200,6 +205,25 @@ func _CmdbInsightService_GetOverview0_HTTP_Handler(srv CmdbInsightServiceHTTPSer
 	}
 }
 
+func _CmdbInsightService_GetQuality0_HTTP_Handler(srv CmdbInsightServiceHTTPServer) func(ctx http.Context) error {
+	return func(ctx http.Context) error {
+		var in GetQualityRequest
+		if err := ctx.BindQuery(&in); err != nil {
+			return err
+		}
+		http.SetOperation(ctx, OperationCmdbInsightServiceGetQuality)
+		h := ctx.Middleware(func(ctx context.Context, req interface{}) (interface{}, error) {
+			return srv.GetQuality(ctx, req.(*GetQualityRequest))
+		})
+		out, err := h(ctx, &in)
+		if err != nil {
+			return err
+		}
+		reply := out.(*GetQualityResponse)
+		return ctx.Result(200, reply)
+	}
+}
+
 func _CmdbInsightService_ListSchemaAudit0_HTTP_Handler(srv CmdbInsightServiceHTTPServer) func(ctx http.Context) error {
 	return func(ctx http.Context) error {
 		var in ListSchemaAuditRequest
@@ -227,6 +251,9 @@ type CmdbInsightServiceHTTPClient interface {
 	// GetOverview GetOverview 运营概览：模型 / 资源 / 关系总数，按模型、状态、环境、来源的资源分布，
 	// 以及近 N 天的变更趋势；受当前用户数据范围约束。
 	GetOverview(ctx context.Context, req *GetOverviewRequest, opts ...http.CallOption) (rsp *GetOverviewResponse, err error)
+	// GetQuality GetQuality 数据质量：按模型统计在册（未删除、未退役）资源中缺必填项 / 无负责人 /
+	// 无任何关联 / 同步陈旧 / 长期未更新的数量；受当前用户数据范围约束。
+	GetQuality(ctx context.Context, req *GetQualityRequest, opts ...http.CallOption) (rsp *GetQualityResponse, err error)
 	// ListFavorites ListFavorites 查询当前用户收藏的模型编码。
 	ListFavorites(ctx context.Context, req *ListFavoritesRequest, opts ...http.CallOption) (rsp *ListFavoritesResponse, err error)
 	// ListModelGroups ListModelGroups 查询全部模型分组（按 sort、编码升序，含各分组的模型数）。
@@ -291,6 +318,24 @@ func (c *CmdbInsightServiceHTTPClientImpl) GetOverview(ctx context.Context, in *
 	opts = append([]http.CallOption{
 		http.Accept("application/protojson"),
 		http.Operation(OperationCmdbInsightServiceGetOverview),
+		http.PathTemplate(pattern),
+	}, opts...)
+	err := c.cc.Invoke(ctx, "GET", path, nil, &out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GetQuality GetQuality 数据质量：按模型统计在册（未删除、未退役）资源中缺必填项 / 无负责人 /
+// 无任何关联 / 同步陈旧 / 长期未更新的数量；受当前用户数据范围约束。
+func (c *CmdbInsightServiceHTTPClientImpl) GetQuality(ctx context.Context, in *GetQualityRequest, opts ...http.CallOption) (*GetQualityResponse, error) {
+	var out GetQualityResponse
+	pattern := "/api/v1/cmdb/quality"
+	path := http.BuildPath(pattern, in, http.WithQueryParams())
+	opts = append([]http.CallOption{
+		http.Accept("application/protojson"),
+		http.Operation(OperationCmdbInsightServiceGetQuality),
 		http.PathTemplate(pattern),
 	}, opts...)
 	err := c.cc.Invoke(ctx, "GET", path, nil, &out, opts...)

@@ -92,6 +92,20 @@ type Overview struct {
 // OverviewRepo 运营概览只读仓储接口（聚合查询）。
 type OverviewRepo interface {
 	Stats(ctx context.Context, filter OverviewFilter) (*Overview, error)
+	// Quality 按模型的数据质量计数（只统计未删除、未退役的资源）。
+	Quality(ctx context.Context, filter OverviewFilter, outdatedBefore time.Time) ([]*QualityRow, error)
+}
+
+// QualityRow 一个模型的数据质量计数。
+type QualityRow struct {
+	ModelCode       string
+	ModelName       string
+	Total           int64
+	MissingRequired int64
+	NoOwner         int64
+	Orphan          int64
+	Stale           int64
+	Outdated        int64
 }
 
 // InsightUsecase 资源目录与运营视角用例：模型分组、收藏、概览统计、模型变更审计查询。
@@ -204,6 +218,11 @@ func (uc *InsightUsecase) Overview(ctx context.Context, filter OverviewFilter, d
 	}
 	out.Days = days
 	return out, nil
+}
+
+// Quality 数据质量：按模型统计各类问题的资源数。
+func (uc *InsightUsecase) Quality(ctx context.Context, filter OverviewFilter) ([]*QualityRow, error) {
+	return uc.overview.Quality(ctx, filter, time.Now().AddDate(0, 0, -QualityOutdatedDays))
 }
 
 // ListSchemaAudit 分页查询模型变更审计（时间倒序）。

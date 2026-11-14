@@ -207,6 +207,62 @@ func (s *CmdbStore) Overviews() biz.OverviewRepo { return cmdbOverviewView{s} }
 
 func inScope(set []string, value string) bool { return set == nil || slices.Contains(set, value) }
 
+// issueMatch 资源是否命中某类数据质量问题（口径同 data 层）。
+func (s *CmdbStore) issueMatch(ci *biz.CI, issue string, outdatedBefore time.Time) bool {
+	switch issue {
+	case biz.IssueNoOwner:
+		return ci.Owner == ""
+	case biz.IssueStale:
+		return ci.Stale
+	case biz.IssueOutdated:
+		return ci.UpdateTime.Before(outdatedBefore)
+	case biz.IssueOrphan:
+		for _, r := range s.relations {
+			if r.SrcID == ci.ID || r.DstID == ci.ID {
+				return false
+			}
+		}
+		return true
+	case biz.IssueMissingRequired:
+		for _, f := range s.fields {
+			if f.ModelCode == ci.ModelCode && f.Required && !f.Deprecated {
+				if v, ok := ci.Attrs[f.Code]; !ok || v == nil || v == "" {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func (v cmdbOverviewView) Quality(_ context.Context, filter biz.OverviewFilter, outdatedBefore time.Time) ([]*biz.QualityRow, error) {
+	v.s.mu.RLock()
+	defer v.s.mu.RUnlock()
+	byModel := map[string]*biz.QualityRow{}
+	for _, e := range v.s.cis {
+		ci := e.ci
+		if e.deleted || ci.Status == biz.CIStatusRetired || !inScope(filter.ModelCodes, ci.ModelCode) || !inScope(filter.Envs, ci.Env) {
+			continue
+		}
+		q := byModel[ci.ModelCode]
+		if q == nil {
+			q = &biz.QualityRow{ModelCode: ci.ModelCode, ModelName: ci.ModelName}
+			byModel[ci.ModelCode] = q
+		}
+		q.Total++
+		for issue, n := range map[string]*int64{biz.IssueMissingRequired: &q.MissingRequired, biz.IssueNoOwner: &q.NoOwner, biz.IssueOrphan: &q.Orphan, biz.IssueStale: &q.Stale, biz.IssueOutdated: &q.Outdated} {
+			if v.s.issueMatch(&ci, issue, outdatedBefore) {
+				*n++
+			}
+		}
+	}
+	out := make([]*biz.QualityRow, 0, len(byModel))
+	for _, q := range byModel {
+		out = append(out, q)
+	}
+	return out, nil
+}
+
 func (v cmdbOverviewView) Stats(_ context.Context, filter biz.OverviewFilter) (*biz.Overview, error) {
 	v.s.mu.RLock()
 	defer v.s.mu.RUnlock()

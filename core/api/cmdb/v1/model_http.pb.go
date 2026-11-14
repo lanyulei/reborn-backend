@@ -17,12 +17,15 @@ var _ = new(context.Context)
 
 const _ = http.SupportPackageIsVersion3
 
+const OperationCmdbModelServiceCheckUniqueRule = "/cmdb.v1.CmdbModelService/CheckUniqueRule"
 const OperationCmdbModelServiceCreateField = "/cmdb.v1.CmdbModelService/CreateField"
 const OperationCmdbModelServiceCreateModel = "/cmdb.v1.CmdbModelService/CreateModel"
 const OperationCmdbModelServiceCreateRelationType = "/cmdb.v1.CmdbModelService/CreateRelationType"
+const OperationCmdbModelServiceCreateUniqueRule = "/cmdb.v1.CmdbModelService/CreateUniqueRule"
 const OperationCmdbModelServiceDeleteField = "/cmdb.v1.CmdbModelService/DeleteField"
 const OperationCmdbModelServiceDeleteModel = "/cmdb.v1.CmdbModelService/DeleteModel"
 const OperationCmdbModelServiceDeleteRelationType = "/cmdb.v1.CmdbModelService/DeleteRelationType"
+const OperationCmdbModelServiceDeleteUniqueRule = "/cmdb.v1.CmdbModelService/DeleteUniqueRule"
 const OperationCmdbModelServiceGetModel = "/cmdb.v1.CmdbModelService/GetModel"
 const OperationCmdbModelServiceGetModelView = "/cmdb.v1.CmdbModelService/GetModelView"
 const OperationCmdbModelServiceListModels = "/cmdb.v1.CmdbModelService/ListModels"
@@ -31,20 +34,28 @@ const OperationCmdbModelServiceUpdateField = "/cmdb.v1.CmdbModelService/UpdateFi
 const OperationCmdbModelServiceUpdateModel = "/cmdb.v1.CmdbModelService/UpdateModel"
 const OperationCmdbModelServiceUpdateModelView = "/cmdb.v1.CmdbModelService/UpdateModelView"
 const OperationCmdbModelServiceUpdateRelationType = "/cmdb.v1.CmdbModelService/UpdateRelationType"
+const OperationCmdbModelServiceUpdateUniqueRule = "/cmdb.v1.CmdbModelService/UpdateUniqueRule"
 
 type CmdbModelServiceHTTPServer interface {
+	// CheckUniqueRule CheckUniqueRule 预检：按给定字段组统计存量资源中的重复（只读，不落库）。
+	CheckUniqueRule(context.Context, *CheckUniqueRuleRequest) (*CheckUniqueRuleResponse, error)
 	// CreateField CreateField 为资源类型新增字段。
 	CreateField(context.Context, *CreateFieldRequest) (*CreateFieldResponse, error)
 	// CreateModel CreateModel 创建资源类型。
 	CreateModel(context.Context, *CreateModelRequest) (*CreateModelResponse, error)
 	// CreateRelationType CreateRelationType 创建关系类型。
 	CreateRelationType(context.Context, *CreateRelationTypeRequest) (*CreateRelationTypeResponse, error)
+	// CreateUniqueRule CreateUniqueRule 新增唯一规则：一条规则 = 一组字段取值在类型内不可重复（单字段唯一 / 多字段联合唯一）；
+	// 存量资源在该规则下已有重复时拒绝（409，附冲突样例）。读取随 GetModel 返回。
+	CreateUniqueRule(context.Context, *CreateUniqueRuleRequest) (*CreateUniqueRuleResponse, error)
 	// DeleteField DeleteField 废弃字段（标记 deprecated，不删除已有数据）。
 	DeleteField(context.Context, *DeleteFieldRequest) (*DeleteFieldResponse, error)
 	// DeleteModel DeleteModel 删除资源类型（软删；仍有资源或关系类型引用时 409）。
 	DeleteModel(context.Context, *DeleteModelRequest) (*DeleteModelResponse, error)
 	// DeleteRelationType DeleteRelationType 删除关系类型（软删；仍有关系实例时 409）。
 	DeleteRelationType(context.Context, *DeleteRelationTypeRequest) (*DeleteRelationTypeResponse, error)
+	// DeleteUniqueRule DeleteUniqueRule 删除唯一规则（解除该组字段的唯一约束）。
+	DeleteUniqueRule(context.Context, *DeleteUniqueRuleRequest) (*DeleteUniqueRuleResponse, error)
 	// GetModel GetModel 查询资源类型详情（含字段定义与适用的关系类型）。
 	GetModel(context.Context, *GetModelRequest) (*GetModelResponse, error)
 	// GetModelView GetModelView 查询类型的详情页布局；未配置时返回按字段与适用关系生成的缺省布局。
@@ -61,6 +72,8 @@ type CmdbModelServiceHTTPServer interface {
 	UpdateModelView(context.Context, *UpdateModelViewRequest) (*UpdateModelViewResponse, error)
 	// UpdateRelationType UpdateRelationType 更新关系类型（编码与两端类型不可改）。
 	UpdateRelationType(context.Context, *UpdateRelationTypeRequest) (*UpdateRelationTypeResponse, error)
+	// UpdateUniqueRule UpdateUniqueRule 更新唯一规则（名称 / 字段组）；字段组变化时重算该规则下全部资源的键，存量重复则拒绝。
+	UpdateUniqueRule(context.Context, *UpdateUniqueRuleRequest) (*UpdateUniqueRuleResponse, error)
 }
 
 func RegisterCmdbModelServiceHTTPServer(s *http.Server, srv CmdbModelServiceHTTPServer) {
@@ -73,6 +86,10 @@ func RegisterCmdbModelServiceHTTPServer(s *http.Server, srv CmdbModelServiceHTTP
 	r.Handle("POST", "/api/v1/cmdb/model/{model_code}/field", _CmdbModelService_CreateField0_HTTP_Handler(srv))
 	r.Handle("PUT", "/api/v1/cmdb/model/{model_code}/field/{id}", _CmdbModelService_UpdateField0_HTTP_Handler(srv))
 	r.Handle("DELETE", "/api/v1/cmdb/model/{model_code}/field/{id}", _CmdbModelService_DeleteField0_HTTP_Handler(srv))
+	r.Handle("POST", "/api/v1/cmdb/model/{model_code}/unique-rule", _CmdbModelService_CreateUniqueRule0_HTTP_Handler(srv))
+	r.Handle("PUT", "/api/v1/cmdb/model/{model_code}/unique-rule/{id}", _CmdbModelService_UpdateUniqueRule0_HTTP_Handler(srv))
+	r.Handle("DELETE", "/api/v1/cmdb/model/{model_code}/unique-rule/{id}", _CmdbModelService_DeleteUniqueRule0_HTTP_Handler(srv))
+	r.Handle("POST", "/api/v1/cmdb/model/{model_code}/unique-rule:check", _CmdbModelService_CheckUniqueRule0_HTTP_Handler(srv))
 	r.Handle("GET", "/api/v1/cmdb/relation-type", _CmdbModelService_ListRelationTypes0_HTTP_Handler(srv))
 	r.Handle("POST", "/api/v1/cmdb/relation-type", _CmdbModelService_CreateRelationType0_HTTP_Handler(srv))
 	r.Handle("PUT", "/api/v1/cmdb/relation-type/{code}", _CmdbModelService_UpdateRelationType0_HTTP_Handler(srv))
@@ -251,6 +268,94 @@ func _CmdbModelService_DeleteField0_HTTP_Handler(srv CmdbModelServiceHTTPServer)
 	}
 }
 
+func _CmdbModelService_CreateUniqueRule0_HTTP_Handler(srv CmdbModelServiceHTTPServer) func(ctx http.Context) error {
+	return func(ctx http.Context) error {
+		var in CreateUniqueRuleRequest
+		if err := ctx.Bind(&in); err != nil {
+			return err
+		}
+		if err := ctx.BindVars(&in); err != nil {
+			return err
+		}
+		http.SetOperation(ctx, OperationCmdbModelServiceCreateUniqueRule)
+		h := ctx.Middleware(func(ctx context.Context, req interface{}) (interface{}, error) {
+			return srv.CreateUniqueRule(ctx, req.(*CreateUniqueRuleRequest))
+		})
+		out, err := h(ctx, &in)
+		if err != nil {
+			return err
+		}
+		reply := out.(*CreateUniqueRuleResponse)
+		return ctx.Result(200, reply)
+	}
+}
+
+func _CmdbModelService_UpdateUniqueRule0_HTTP_Handler(srv CmdbModelServiceHTTPServer) func(ctx http.Context) error {
+	return func(ctx http.Context) error {
+		var in UpdateUniqueRuleRequest
+		if err := ctx.Bind(&in); err != nil {
+			return err
+		}
+		if err := ctx.BindVars(&in); err != nil {
+			return err
+		}
+		http.SetOperation(ctx, OperationCmdbModelServiceUpdateUniqueRule)
+		h := ctx.Middleware(func(ctx context.Context, req interface{}) (interface{}, error) {
+			return srv.UpdateUniqueRule(ctx, req.(*UpdateUniqueRuleRequest))
+		})
+		out, err := h(ctx, &in)
+		if err != nil {
+			return err
+		}
+		reply := out.(*UpdateUniqueRuleResponse)
+		return ctx.Result(200, reply)
+	}
+}
+
+func _CmdbModelService_DeleteUniqueRule0_HTTP_Handler(srv CmdbModelServiceHTTPServer) func(ctx http.Context) error {
+	return func(ctx http.Context) error {
+		var in DeleteUniqueRuleRequest
+		if err := ctx.BindQuery(&in); err != nil {
+			return err
+		}
+		if err := ctx.BindVars(&in); err != nil {
+			return err
+		}
+		http.SetOperation(ctx, OperationCmdbModelServiceDeleteUniqueRule)
+		h := ctx.Middleware(func(ctx context.Context, req interface{}) (interface{}, error) {
+			return srv.DeleteUniqueRule(ctx, req.(*DeleteUniqueRuleRequest))
+		})
+		out, err := h(ctx, &in)
+		if err != nil {
+			return err
+		}
+		reply := out.(*DeleteUniqueRuleResponse)
+		return ctx.Result(200, reply)
+	}
+}
+
+func _CmdbModelService_CheckUniqueRule0_HTTP_Handler(srv CmdbModelServiceHTTPServer) func(ctx http.Context) error {
+	return func(ctx http.Context) error {
+		var in CheckUniqueRuleRequest
+		if err := ctx.Bind(&in); err != nil {
+			return err
+		}
+		if err := ctx.BindVars(&in); err != nil {
+			return err
+		}
+		http.SetOperation(ctx, OperationCmdbModelServiceCheckUniqueRule)
+		h := ctx.Middleware(func(ctx context.Context, req interface{}) (interface{}, error) {
+			return srv.CheckUniqueRule(ctx, req.(*CheckUniqueRuleRequest))
+		})
+		out, err := h(ctx, &in)
+		if err != nil {
+			return err
+		}
+		reply := out.(*CheckUniqueRuleResponse)
+		return ctx.Result(200, reply)
+	}
+}
+
 func _CmdbModelService_ListRelationTypes0_HTTP_Handler(srv CmdbModelServiceHTTPServer) func(ctx http.Context) error {
 	return func(ctx http.Context) error {
 		var in ListRelationTypesRequest
@@ -378,18 +483,25 @@ func _CmdbModelService_UpdateModelView0_HTTP_Handler(srv CmdbModelServiceHTTPSer
 }
 
 type CmdbModelServiceHTTPClient interface {
+	// CheckUniqueRule CheckUniqueRule 预检：按给定字段组统计存量资源中的重复（只读，不落库）。
+	CheckUniqueRule(ctx context.Context, req *CheckUniqueRuleRequest, opts ...http.CallOption) (rsp *CheckUniqueRuleResponse, err error)
 	// CreateField CreateField 为资源类型新增字段。
 	CreateField(ctx context.Context, req *CreateFieldRequest, opts ...http.CallOption) (rsp *CreateFieldResponse, err error)
 	// CreateModel CreateModel 创建资源类型。
 	CreateModel(ctx context.Context, req *CreateModelRequest, opts ...http.CallOption) (rsp *CreateModelResponse, err error)
 	// CreateRelationType CreateRelationType 创建关系类型。
 	CreateRelationType(ctx context.Context, req *CreateRelationTypeRequest, opts ...http.CallOption) (rsp *CreateRelationTypeResponse, err error)
+	// CreateUniqueRule CreateUniqueRule 新增唯一规则：一条规则 = 一组字段取值在类型内不可重复（单字段唯一 / 多字段联合唯一）；
+	// 存量资源在该规则下已有重复时拒绝（409，附冲突样例）。读取随 GetModel 返回。
+	CreateUniqueRule(ctx context.Context, req *CreateUniqueRuleRequest, opts ...http.CallOption) (rsp *CreateUniqueRuleResponse, err error)
 	// DeleteField DeleteField 废弃字段（标记 deprecated，不删除已有数据）。
 	DeleteField(ctx context.Context, req *DeleteFieldRequest, opts ...http.CallOption) (rsp *DeleteFieldResponse, err error)
 	// DeleteModel DeleteModel 删除资源类型（软删；仍有资源或关系类型引用时 409）。
 	DeleteModel(ctx context.Context, req *DeleteModelRequest, opts ...http.CallOption) (rsp *DeleteModelResponse, err error)
 	// DeleteRelationType DeleteRelationType 删除关系类型（软删；仍有关系实例时 409）。
 	DeleteRelationType(ctx context.Context, req *DeleteRelationTypeRequest, opts ...http.CallOption) (rsp *DeleteRelationTypeResponse, err error)
+	// DeleteUniqueRule DeleteUniqueRule 删除唯一规则（解除该组字段的唯一约束）。
+	DeleteUniqueRule(ctx context.Context, req *DeleteUniqueRuleRequest, opts ...http.CallOption) (rsp *DeleteUniqueRuleResponse, err error)
 	// GetModel GetModel 查询资源类型详情（含字段定义与适用的关系类型）。
 	GetModel(ctx context.Context, req *GetModelRequest, opts ...http.CallOption) (rsp *GetModelResponse, err error)
 	// GetModelView GetModelView 查询类型的详情页布局；未配置时返回按字段与适用关系生成的缺省布局。
@@ -406,6 +518,8 @@ type CmdbModelServiceHTTPClient interface {
 	UpdateModelView(ctx context.Context, req *UpdateModelViewRequest, opts ...http.CallOption) (rsp *UpdateModelViewResponse, err error)
 	// UpdateRelationType UpdateRelationType 更新关系类型（编码与两端类型不可改）。
 	UpdateRelationType(ctx context.Context, req *UpdateRelationTypeRequest, opts ...http.CallOption) (rsp *UpdateRelationTypeResponse, err error)
+	// UpdateUniqueRule UpdateUniqueRule 更新唯一规则（名称 / 字段组）；字段组变化时重算该规则下全部资源的键，存量重复则拒绝。
+	UpdateUniqueRule(ctx context.Context, req *UpdateUniqueRuleRequest, opts ...http.CallOption) (rsp *UpdateUniqueRuleResponse, err error)
 }
 
 type CmdbModelServiceHTTPClientImpl struct {
@@ -414,6 +528,24 @@ type CmdbModelServiceHTTPClientImpl struct {
 
 func NewCmdbModelServiceHTTPClient(client *http.Client) CmdbModelServiceHTTPClient {
 	return &CmdbModelServiceHTTPClientImpl{client}
+}
+
+// CheckUniqueRule CheckUniqueRule 预检：按给定字段组统计存量资源中的重复（只读，不落库）。
+func (c *CmdbModelServiceHTTPClientImpl) CheckUniqueRule(ctx context.Context, in *CheckUniqueRuleRequest, opts ...http.CallOption) (*CheckUniqueRuleResponse, error) {
+	var out CheckUniqueRuleResponse
+	pattern := "/api/v1/cmdb/model/{model_code}/unique-rule:check"
+	path := http.BuildPath(pattern, in)
+	opts = append([]http.CallOption{
+		http.Accept("application/protojson"),
+		http.ContentType("application/protojson"),
+		http.Operation(OperationCmdbModelServiceCheckUniqueRule),
+		http.PathTemplate(pattern),
+	}, opts...)
+	err := c.cc.Invoke(ctx, "POST", path, in, &out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // CreateField CreateField 为资源类型新增字段。
@@ -470,6 +602,25 @@ func (c *CmdbModelServiceHTTPClientImpl) CreateRelationType(ctx context.Context,
 	return &out, nil
 }
 
+// CreateUniqueRule CreateUniqueRule 新增唯一规则：一条规则 = 一组字段取值在类型内不可重复（单字段唯一 / 多字段联合唯一）；
+// 存量资源在该规则下已有重复时拒绝（409，附冲突样例）。读取随 GetModel 返回。
+func (c *CmdbModelServiceHTTPClientImpl) CreateUniqueRule(ctx context.Context, in *CreateUniqueRuleRequest, opts ...http.CallOption) (*CreateUniqueRuleResponse, error) {
+	var out CreateUniqueRuleResponse
+	pattern := "/api/v1/cmdb/model/{model_code}/unique-rule"
+	path := http.BuildPath(pattern, in)
+	opts = append([]http.CallOption{
+		http.Accept("application/protojson"),
+		http.ContentType("application/protojson"),
+		http.Operation(OperationCmdbModelServiceCreateUniqueRule),
+		http.PathTemplate(pattern),
+	}, opts...)
+	err := c.cc.Invoke(ctx, "POST", path, in, &out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // DeleteField DeleteField 废弃字段（标记 deprecated，不删除已有数据）。
 func (c *CmdbModelServiceHTTPClientImpl) DeleteField(ctx context.Context, in *DeleteFieldRequest, opts ...http.CallOption) (*DeleteFieldResponse, error) {
 	var out DeleteFieldResponse
@@ -512,6 +663,23 @@ func (c *CmdbModelServiceHTTPClientImpl) DeleteRelationType(ctx context.Context,
 	opts = append([]http.CallOption{
 		http.Accept("application/protojson"),
 		http.Operation(OperationCmdbModelServiceDeleteRelationType),
+		http.PathTemplate(pattern),
+	}, opts...)
+	err := c.cc.Invoke(ctx, "DELETE", path, nil, &out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// DeleteUniqueRule DeleteUniqueRule 删除唯一规则（解除该组字段的唯一约束）。
+func (c *CmdbModelServiceHTTPClientImpl) DeleteUniqueRule(ctx context.Context, in *DeleteUniqueRuleRequest, opts ...http.CallOption) (*DeleteUniqueRuleResponse, error) {
+	var out DeleteUniqueRuleResponse
+	pattern := "/api/v1/cmdb/model/{model_code}/unique-rule/{id}"
+	path := http.BuildPath(pattern, in, http.WithQueryParams())
+	opts = append([]http.CallOption{
+		http.Accept("application/protojson"),
+		http.Operation(OperationCmdbModelServiceDeleteUniqueRule),
 		http.PathTemplate(pattern),
 	}, opts...)
 	err := c.cc.Invoke(ctx, "DELETE", path, nil, &out, opts...)
@@ -652,6 +820,24 @@ func (c *CmdbModelServiceHTTPClientImpl) UpdateRelationType(ctx context.Context,
 		http.Accept("application/protojson"),
 		http.ContentType("application/protojson"),
 		http.Operation(OperationCmdbModelServiceUpdateRelationType),
+		http.PathTemplate(pattern),
+	}, opts...)
+	err := c.cc.Invoke(ctx, "PUT", path, in, &out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// UpdateUniqueRule UpdateUniqueRule 更新唯一规则（名称 / 字段组）；字段组变化时重算该规则下全部资源的键，存量重复则拒绝。
+func (c *CmdbModelServiceHTTPClientImpl) UpdateUniqueRule(ctx context.Context, in *UpdateUniqueRuleRequest, opts ...http.CallOption) (*UpdateUniqueRuleResponse, error) {
+	var out UpdateUniqueRuleResponse
+	pattern := "/api/v1/cmdb/model/{model_code}/unique-rule/{id}"
+	path := http.BuildPath(pattern, in)
+	opts = append([]http.CallOption{
+		http.Accept("application/protojson"),
+		http.ContentType("application/protojson"),
+		http.Operation(OperationCmdbModelServiceUpdateUniqueRule),
 		http.PathTemplate(pattern),
 	}, opts...)
 	err := c.cc.Invoke(ctx, "PUT", path, in, &out, opts...)

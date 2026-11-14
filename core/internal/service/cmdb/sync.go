@@ -202,3 +202,19 @@ func (s *CmdbSyncService) ListRuns(ctx context.Context, req *v1.ListRunsRequest)
 	}
 	return resp, nil
 }
+
+// ListConflicts implements proto CmdbSyncService/ListConflicts。
+func (s *CmdbSyncService) ListConflicts(ctx context.Context, req *v1.ListConflictsRequest) (*v1.ListConflictsResponse, error) {
+	items, total, err := s.uc.ListConflicts(ctx, req.GetId(), req.GetPage(), int64(req.GetPageSize()))
+	if err != nil {
+		return nil, err
+	}
+	resp := &v1.ListConflictsResponse{Items: make([]*v1.SyncConflict, 0, len(items)), Total: total}
+	for _, c := range items {
+		resp.Items = append(resp.Items, &v1.SyncConflict{
+			ModelCode: c.ModelCode, ModelName: c.ModelName, ExternalId: c.ExternalID, Name: c.Name, Reason: c.Reason,
+			FirstSeen: timestamppb.New(c.FirstSeen), LastSeen: timestamppb.New(c.LastSeen),
+		})
+	}
+	return resp, nil
+}

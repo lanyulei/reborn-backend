@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/cmdb"
 	basedata "github.com/lanyulei/reborn/backend/core/internal/data"
@@ -284,6 +285,64 @@ func scopeConds(filter biz.OverviewFilter, args []any) (string, []any) {
 		conds += " AND c.env = ANY($" + strconv.Itoa(len(args)) + ")"
 	}
 	return conds, args
+}
+
+// 数据质量各问题的判定条件（c = cmdb_ci）。看板计数与列表筛选共用，保证口径一致。
+const (
+	// 必填字段取值缺失：键不存在 / null / 空串。
+	qualityMissingRequired = `EXISTS (SELECT 1 FROM cmdb_model_field qf WHERE qf.model_code = c.model_code AND qf.required AND NOT qf.deprecated
+		AND COALESCE(c.attrs ->> qf.code, '') = '')`
+	qualityNoOwner = `c.owner = ''`
+	// 无任何关联：两个方向都没有关系（走 idx_cmdb_relation_src / _dst）。
+	qualityOrphan = `NOT EXISTS (SELECT 1 FROM cmdb_relation qr WHERE qr.src_id = c.id)
+		AND NOT EXISTS (SELECT 1 FROM cmdb_relation qr WHERE qr.dst_id = c.id)`
+	qualityStale = `c.stale`
+)
+
+// qualityCond 列表筛选用的问题条件；outdated 需要一个时间参数（返回 needTime = true）。
+func qualityCond(issue string) (cond string, needTime bool) {
+	switch issue {
+	case biz.IssueMissingRequired:
+		return qualityMissingRequired, false
+	case biz.IssueNoOwner:
+		return qualityNoOwner, false
+	case biz.IssueOrphan:
+		return qualityOrphan, false
+	case biz.IssueStale:
+		return qualityStale, false
+	case biz.IssueOutdated:
+		return "c.update_time < ?", true
+	default:
+		return "", false
+	}
+}
+
+// Quality implements biz.OverviewRepo：一次扫描在册资源，按模型聚合各问题计数。
+func (r *overviewRepo) Quality(ctx context.Context, filter biz.OverviewFilter, outdatedBefore time.Time) ([]*biz.QualityRow, error) {
+	scope, args := scopeConds(filter, []any{biz.CIStatusRetired, outdatedBefore})
+	rows, err := r.data.Pool.Query(ctx,
+		`SELECT c.model_code, m.name, count(*),
+		        count(*) FILTER (WHERE `+qualityMissingRequired+`),
+		        count(*) FILTER (WHERE `+qualityNoOwner+`),
+		        count(*) FILTER (WHERE `+qualityOrphan+`),
+		        count(*) FILTER (WHERE `+qualityStale+`),
+		        count(*) FILTER (WHERE c.update_time < $2)
+		 FROM cmdb_ci c JOIN cmdb_model m ON m.code = c.model_code
+		 WHERE c.delete_time IS NULL AND c.status <> $1`+scope+`
+		 GROUP BY c.model_code, m.name`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("cmdb quality: %w", err)
+	}
+	defer rows.Close()
+	items := make([]*biz.QualityRow, 0, 16)
+	for rows.Next() {
+		var q biz.QualityRow
+		if err := rows.Scan(&q.ModelCode, &q.ModelName, &q.Total, &q.MissingRequired, &q.NoOwner, &q.Orphan, &q.Stale, &q.Outdated); err != nil {
+			return nil, fmt.Errorf("scan cmdb quality: %w", err)
+		}
+		items = append(items, &q)
+	}
+	return items, rows.Err()
 }
 
 // Stats implements biz.OverviewRepo：全部聚合均为单次 GROUP BY，资源数量级下走既有索引。

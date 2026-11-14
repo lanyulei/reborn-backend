@@ -89,12 +89,13 @@ type FieldRule struct {
 
 // Field 类型字段定义。
 type Field struct {
-	ID         string
-	ModelCode  string
-	Code       string
-	Name       string
-	Type       string
-	Required   bool
+	ID        string
+	ModelCode string
+	Code      string
+	Name      string
+	Type      string
+	Required  bool
+	// Unique 只读派生值：被任一唯一规则引用（唯一约束经唯一规则维护，见 UniqueRule）。
 	Unique     bool
 	EnumValues []string
 	// EnumLabels 枚举展示值（实际值 → 展示值）；仅显示层使用，可为空。
@@ -116,8 +117,9 @@ type Field struct {
 
 // FieldUpdate 字段部分更新；nil 不更新（EnumValues/Rule 非 nil 整组替换）。
 type FieldUpdate struct {
-	Name       *string
-	Required   *bool
+	Name     *string
+	Required *bool
+	// Unique 已停用（唯一约束经唯一规则维护）：与当前派生值不同时拒绝，不落库。
 	Unique     *bool
 	EnumValues *[]string
 	// EnumLabels 随 EnumValues 整组替换（proto3 map 无 presence，由服务层联动置位）。
@@ -182,6 +184,7 @@ type FieldRepo interface {
 	Get(ctx context.Context, modelCode, id string) (*Field, error)
 	ListByModel(ctx context.Context, modelCode string) ([]*Field, error)
 	Update(ctx context.Context, modelCode, id string, upd FieldUpdate) error
+	// Deprecate 废弃字段；字段仍被唯一规则引用时返回 ErrFieldInUse（与规则变更同一把锁，无竞争窗口）。
 	Deprecate(ctx context.Context, modelCode, id string) error
 }
 
@@ -197,19 +200,20 @@ type RelationTypeRepo interface {
 
 // ModelUsecase 资源模型用例：类型、字段、关系类型的维护与校验。
 type ModelUsecase struct {
-	models    ModelRepo
-	fields    FieldRepo
-	relTypes  RelationTypeRepo
-	relations RelationRepo
-	views     ViewRepo
-	indexer   AttrIndexer
-	groups    GroupRepo
-	audits    SchemaAuditRepo
+	models      ModelRepo
+	fields      FieldRepo
+	relTypes    RelationTypeRepo
+	relations   RelationRepo
+	views       ViewRepo
+	indexer     AttrIndexer
+	groups      GroupRepo
+	audits      SchemaAuditRepo
+	uniqueRules UniqueRuleRepo
 }
 
 // NewModelUsecase new a ModelUsecase.
-func NewModelUsecase(models ModelRepo, fields FieldRepo, relTypes RelationTypeRepo, relations RelationRepo, views ViewRepo, indexer AttrIndexer, groups GroupRepo, audits SchemaAuditRepo) *ModelUsecase {
-	return &ModelUsecase{models: models, fields: fields, relTypes: relTypes, relations: relations, views: views, indexer: indexer, groups: groups, audits: audits}
+func NewModelUsecase(models ModelRepo, fields FieldRepo, relTypes RelationTypeRepo, relations RelationRepo, views ViewRepo, indexer AttrIndexer, groups GroupRepo, audits SchemaAuditRepo, uniqueRules UniqueRuleRepo) *ModelUsecase {
+	return &ModelUsecase{models: models, fields: fields, relTypes: relTypes, relations: relations, views: views, indexer: indexer, groups: groups, audits: audits, uniqueRules: uniqueRules}
 }
 
 // CreateModel 创建资源类型（缺省启用）；所属分组须存在。
@@ -313,6 +317,10 @@ func (uc *ModelUsecase) CreateField(ctx context.Context, f *Field) (*Field, erro
 	if _, err := uc.models.Get(ctx, f.ModelCode); err != nil {
 		return nil, err
 	}
+	// 唯一约束经唯一规则维护；字段上的开关已停用（明确拒绝，不静默忽略）。
+	if f.Unique {
+		return nil, detail(ErrFieldInvalid, "unique is managed by unique rules; create a unique rule instead")
+	}
 	if f.Owner == "" {
 		f.Owner = FieldOwnerManual
 	}
@@ -359,9 +367,20 @@ func (uc *ModelUsecase) UpdateField(ctx context.Context, modelCode, id string, u
 	if cur.Type != FieldTypeEnum || upd.EnumValues == nil {
 		upd.EnumValues, upd.EnumLabels = nil, nil
 	}
-	// unique 未变化时不下发（仓储在 unique 变化时重算该类型资源的唯一键）。
-	if upd.Unique != nil && *upd.Unique == cur.Unique {
-		upd.Unique = nil
+	// 唯一约束经唯一规则维护：unique 与当前派生值一致时忽略（兼容旧客户端回传），不同则拒绝。
+	if upd.Unique != nil && *upd.Unique != cur.Unique {
+		return nil, detail(ErrFieldInvalid, "unique is managed by unique rules; edit the unique rules instead")
+	}
+	upd.Unique = nil
+	// 被唯一规则引用的字段不可设为敏感（唯一性会成为取值探测手段）。
+	if upd.Sensitive != nil && *upd.Sensitive && !cur.Sensitive {
+		rules, err := uc.uniqueRules.ListByField(ctx, modelCode, cur.Code)
+		if err != nil {
+			return nil, err
+		}
+		if len(rules) > 0 {
+			return nil, detail(ErrFieldInUse, "field %q is used by unique rule %q; remove it from the rule first", cur.Code, rules[0].Name)
+		}
 	}
 	enumValues, rule := cur.EnumValues, cur.Rule
 	enumLabels := cur.EnumLabels
@@ -410,11 +429,19 @@ func (uc *ModelUsecase) UpdateField(ctx context.Context, modelCode, id string, u
 	return after, nil
 }
 
-// DeprecateField 废弃字段（数据保留，不再展示与校验）。
+// DeprecateField 废弃字段（数据保留，不再展示与校验）；仍被唯一规则引用时拒绝。
 func (uc *ModelUsecase) DeprecateField(ctx context.Context, modelCode, id string) error {
 	cur, err := uc.fields.Get(ctx, modelCode, id)
 	if err != nil {
 		return err
+	}
+	// 先给出指明规则的错误；仓储在锁内再判一次（并发建规则时兜底）。
+	rules, err := uc.uniqueRules.ListByField(ctx, modelCode, cur.Code)
+	if err != nil {
+		return err
+	}
+	if len(rules) > 0 {
+		return detail(ErrFieldInUse, "field %q is used by unique rule %q; remove it from the rule first", cur.Code, rules[0].Name)
 	}
 	if err := uc.fields.Deprecate(ctx, modelCode, id); err != nil {
 		return err
