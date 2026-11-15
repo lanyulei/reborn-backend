@@ -85,7 +85,7 @@ func (s *CmdbRelationService) Neighbors(ctx context.Context, req *v1.NeighborsRe
 	if err != nil {
 		return nil, err
 	}
-	nodes, edges, truncated, err := s.uc.Neighbors(ctx, req.GetCiId(), req.GetDepth(), req.GetMaxNodes())
+	nodes, edges, truncated, err := s.uc.Neighbors(ctx, req.GetCiId(), req.GetFlow(), req.GetDepth(), req.GetMaxNodes())
 	if err != nil {
 		return nil, err
 	}

@@ -60,6 +60,8 @@ var (
 type ToolSpec struct {
 	// Name 工具名 <Service>_<Method>，满足模型侧 ^[a-zA-Z0-9_-]{1,64}$。
 	Name string
+	// Module 所属功能模块（proto 包名首段：cmdb / notify / oncall / system），按模块加载工具用。
+	Module string
 	// Operation proto full method（/pkg.Service/Method），审计与日志用。
 	Operation string
 	// Code 授权 code（md5(Operation)），与 system_permission 同口径，权限过滤用。
@@ -68,7 +70,7 @@ type ToolSpec struct {
 	Title string
 	// Description 给模型的说明（title + HTTP 方法与路径）。
 	Description string
-	// Write 是否写操作（方法名不以 Get/List 开头）；写操作执行前须用户确认。
+	// Write 是否写操作（非 GET 且未标记为只读预览）；写操作执行前须用户确认。
 	Write bool
 	// HTTPMethod 回环调用的 HTTP 动词。
 	HTTPMethod string
@@ -227,6 +229,9 @@ type MessageRepo interface {
 	// 避免每轮加载全量历史。截断点可能落在 assistant 调用块中间（首部出现
 	// 无主 tool 消息），由 contextWindow 在发送侧丢弃。
 	ListRecent(ctx context.Context, conversationID string, limit int) ([]*Message, error)
+	// UpdateToolCalls 覆写一条 assistant 消息的 tool_calls（调用结束后把参数里的
+	// 敏感值打码落库）；消息不存在视为成功。
+	UpdateToolCalls(ctx context.Context, m *Message) error
 }
 
 // ToolCallRepo 工具调用审计仓储接口（data 层实现）。

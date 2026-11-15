@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 
+	oncallv1 "github.com/lanyulei/reborn/backend/core/api/oncall/v1"
 	v1 "github.com/lanyulei/reborn/backend/core/api/system/v1"
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
 	"github.com/lanyulei/reborn/backend/core/internal/pkg/operator"
@@ -28,6 +29,9 @@ var authExempt = map[string]struct{}{
 	v1.OperationSystemConfigServiceGetSystemLogo: {},
 	// 查看用户头像：<img> 直载（无 Authorization 头），匿名可读；上传接口不免检。
 	v1.OperationAuthServiceGetUserAvatar: {},
+	// 公共值班日历：凭地址里不可猜测的令牌访问（库内只存哈希，可过期可作废），
+	// 免登录页面不携带 Authorization 头；管理接口不免检。
+	oncallv1.OperationOncallShareServiceGetPublicCalendar: {},
 }
 
 // authMiddleware 组装鉴权中间件：白名单外的全部方法要求 Authorization: Bearer

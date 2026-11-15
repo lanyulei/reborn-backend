@@ -79,6 +79,18 @@
       "description": "NotifyTemplateService 通知模板管理服务：模板按 biz × event_type × channel_type\n三维覆盖（'*' 通配），渲染解析链 (biz,event,channel) \u003e (biz,event,*) \u003e\n(biz,*,channel) \u003e (biz,*,*) \u003e 内置默认模板。subject/body 为 Go template，\n写入前经语法解析与渲染变量白名单校验（变量：Title/Payload/Severity/Count/\nSamples/BizID/EventTime；零函数注册）；更新即 version+1，历史通知可复现。"
     },
     {
+      "name": "OncallGroupService",
+      "description": "OncallGroupService 值班分组：分组、成员与变更记录。查看类接口凭接口权限即可；\n修改类接口另要求操作者是该分组管理员或超级管理员（403 ONCALL_FORBIDDEN）。"
+    },
+    {
+      "name": "OncallScheduleService",
+      "description": "OncallScheduleService 值班表与班次：值班表配置、排班预览、班次查询、替班与\n当前值班人。值班表为全天连续值班，按轮转名单顺序接力；保存配置即重排全部\n尚未开始的自动班次（进行中、已过去的班次与替班班次不受影响）。"
+    },
+    {
+      "name": "OncallShareService",
+      "description": "OncallShareService 公共值班日历地址：免登录的只读日历。\n令牌为 32 字节随机数（base64url）。库内存两份：SHA-256（匿名访问按它查找）与\nAES-256-GCM 密文（供有管理权的人再次查看地址），明文不落库。\n分组、值班表范围由分组管理员管理；个人范围只能由本人管理。"
+    },
+    {
       "name": "RoleService",
       "description": "RoleService 角色管理服务。"
     },
@@ -447,6 +459,102 @@
         ]
       }
     },
+    "/api/v1/cmdb/ci-view": {
+      "get": {
+        "summary": "ListCIViews 当前用户在某模型下保存的资源列表视图（命名的筛选条件）。",
+        "operationId": "CmdbInsightService_ListCIViews",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListCIViewsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "modelCode",
+            "description": "model_code 模型编码。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "CmdbInsightService"
+        ]
+      },
+      "put": {
+        "summary": "SaveCIView 保存视图（同名覆盖）；每个模型至多 20 个。",
+        "operationId": "CmdbInsightService_SaveCIView",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/SaveCIViewResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/SaveCIViewRequest"
+            }
+          }
+        ],
+        "tags": [
+          "CmdbInsightService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/ci-view:delete": {
+      "post": {
+        "summary": "DeleteCIView 删除视图（幂等）。",
+        "operationId": "CmdbInsightService_DeleteCIView",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/DeleteCIViewResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/DeleteCIViewRequest"
+            }
+          }
+        ],
+        "tags": [
+          "CmdbInsightService"
+        ]
+      }
+    },
     "/api/v1/cmdb/ci/{ciId}/neighbors": {
       "get": {
         "summary": "Neighbors 资源拓扑：以当前资源为中心按层展开关联（层数 ≤3、节点 ≤500）。",
@@ -488,6 +596,13 @@
             "required": false,
             "type": "integer",
             "format": "int32"
+          },
+          {
+            "name": "flow",
+            "description": "flow 展开方向（影响分析）：缺省两个方向；downstream 只沿关系方向向下（本资源影响谁）；\nupstream 只逆关系方向向上（本资源依赖谁）。",
+            "in": "query",
+            "required": false,
+            "type": "string"
           }
         ],
         "tags": [
@@ -784,6 +899,46 @@
         ]
       }
     },
+    "/api/v1/cmdb/ci/{id}/at": {
+      "get": {
+        "summary": "GetCIAt 时间点回溯：按变更历史倒推资源在指定时刻的状态（基本信息与属性；不含关联）。",
+        "operationId": "CmdbCIService_GetCIAt",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetCIAtResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 资源标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "time",
+            "description": "time 回溯到的时刻。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          }
+        ],
+        "tags": [
+          "CmdbCIService"
+        ]
+      }
+    },
     "/api/v1/cmdb/ci/{id}/history": {
       "get": {
         "summary": "ListCIHistory 分页查询资源变更历史（倒序）。",
@@ -904,6 +1059,46 @@
             "required": true,
             "schema": {
               "$ref": "#/definitions/TransitionCIBody"
+            }
+          }
+        ],
+        "tags": [
+          "CmdbCIService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/ci/{id}:unclaim": {
+      "post": {
+        "summary": "UnclaimCI 解除同步托管：把由采集源维护的资源改回人工维护（来源置为 manual、清空外部标识），\n之后同步不再更新或退役它。认领错了、或想自行接管某条同步资源时使用。",
+        "operationId": "CmdbCIService_UnclaimCI",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UnclaimCIResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 资源标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UnclaimCIBody"
             }
           }
         ],
@@ -1113,6 +1308,20 @@
             "in": "query",
             "required": false,
             "type": "string"
+          },
+          {
+            "name": "issue",
+            "description": "issue 数据质量问题筛选（与列表一致），可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "withRelations",
+            "description": "with_relations 同时导出关联（CSV 为 rel:\u003c关系类型\u003e:\u003c方向\u003e[:\u003c对端类型\u003e] 列，与导入格式一致，可原样导回）。",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
           }
         ],
         "tags": [
@@ -2641,6 +2850,46 @@
             "required": false,
             "type": "integer",
             "format": "int32"
+          }
+        ],
+        "tags": [
+          "CmdbSyncService"
+        ]
+      }
+    },
+    "/api/v1/cmdb/sync/source/{id}/conflict:claim": {
+      "post": {
+        "summary": "ClaimConflict 认领：把一条同步冲突绑定到已有的人工资源（该资源改由本采集源同步维护），\n用于\"同一台设备既被人工录入、又被同步发现\"的情况；之后的同步直接更新这条资源。",
+        "operationId": "CmdbSyncService_ClaimConflict",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ClaimConflictResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 采集源标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/ClaimConflictBody"
+            }
           }
         ],
         "tags": [
@@ -4760,6 +5009,1169 @@
         ]
       }
     },
+    "/api/v1/oncall/change-log": {
+      "get": {
+        "summary": "ListChangeLogs 分页查询分组的变更记录（按时间倒序）。",
+        "operationId": "OncallGroupService_ListChangeLogs",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListChangeLogsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "page",
+            "description": "page 页码，从 1 开始。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "page_size 每页数量，1-100。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "groupId",
+            "description": "group_id 所属分组。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "scheduleId",
+            "description": "schedule_id 相关值班表，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "OncallGroupService"
+        ]
+      }
+    },
+    "/api/v1/oncall/current": {
+      "get": {
+        "summary": "GetCurrentDuty 查询此刻的值班人与下一次交接时间。",
+        "operationId": "OncallScheduleService_GetCurrentDuty",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetCurrentDutyResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "groupId",
+            "description": "group_id 所属分组，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "scheduleId",
+            "description": "schedule_id 值班表，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "OncallScheduleService"
+        ]
+      }
+    },
+    "/api/v1/oncall/group": {
+      "get": {
+        "summary": "ListGroups 分页查询值班分组（含成员数、值班表数与当前用户在组内的身份）。",
+        "operationId": "OncallGroupService_ListGroups",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListGroupsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "page",
+            "description": "page 页码，从 1 开始。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "page_size 每页数量，1-100。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "keyword",
+            "description": "keyword 名称模糊匹配，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "mine",
+            "description": "mine 仅返回我所在的分组，可选。",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          }
+        ],
+        "tags": [
+          "OncallGroupService"
+        ]
+      },
+      "post": {
+        "summary": "CreateGroup 新建分组；创建人自动成为管理员。",
+        "operationId": "OncallGroupService_CreateGroup",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/CreateGroupResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/CreateGroupRequest"
+            }
+          }
+        ],
+        "tags": [
+          "OncallGroupService"
+        ]
+      }
+    },
+    "/api/v1/oncall/group/{groupId}/member": {
+      "get": {
+        "summary": "ListGroupMembers 查询分组全部成员（管理员在前，其次按加入时间）。",
+        "operationId": "OncallGroupService_ListGroupMembers",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListGroupMembersResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "groupId",
+            "description": "group_id 分组唯一标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "OncallGroupService"
+        ]
+      },
+      "post": {
+        "summary": "AddGroupMembers 批量添加成员（已在组内的跳过）；用户须存在且可用。",
+        "operationId": "OncallGroupService_AddGroupMembers",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/AddGroupMembersResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "groupId",
+            "description": "group_id 分组唯一标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/AddGroupMembersBody"
+            }
+          }
+        ],
+        "tags": [
+          "OncallGroupService"
+        ]
+      }
+    },
+    "/api/v1/oncall/group/{groupId}/member/{userId}": {
+      "delete": {
+        "summary": "RemoveGroupMember 移出成员；仍在轮转名单内或为最后一名管理员时拒绝。",
+        "operationId": "OncallGroupService_RemoveGroupMember",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/RemoveGroupMemberResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "groupId",
+            "description": "group_id 分组唯一标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "userId",
+            "description": "user_id 用户唯一标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "OncallGroupService"
+        ]
+      },
+      "put": {
+        "summary": "UpdateGroupMember 修改成员身份；不能把最后一名管理员降级。",
+        "operationId": "OncallGroupService_UpdateGroupMember",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UpdateGroupMemberResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "groupId",
+            "description": "group_id 分组唯一标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "userId",
+            "description": "user_id 用户唯一标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UpdateGroupMemberBody"
+            }
+          }
+        ],
+        "tags": [
+          "OncallGroupService"
+        ]
+      }
+    },
+    "/api/v1/oncall/group/{id}": {
+      "get": {
+        "summary": "GetGroup 查询分组详情。",
+        "operationId": "OncallGroupService_GetGroup",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetGroupResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 分组唯一标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "OncallGroupService"
+        ]
+      },
+      "delete": {
+        "summary": "DeleteGroup 删除分组；分组下仍有值班表时拒绝（409 ONCALL_GROUP_IN_USE）。",
+        "operationId": "OncallGroupService_DeleteGroup",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/DeleteGroupResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 分组唯一标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "OncallGroupService"
+        ]
+      },
+      "put": {
+        "summary": "UpdateGroup 修改分组名称与说明。",
+        "operationId": "OncallGroupService_UpdateGroup",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UpdateGroupResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 分组唯一标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UpdateGroupBody"
+            }
+          }
+        ],
+        "tags": [
+          "OncallGroupService"
+        ]
+      }
+    },
+    "/api/v1/oncall/notification-status": {
+      "get": {
+        "summary": "GetNotificationStatus 值班通知是否配通：按事件类型看通知规则里有没有可用的渠道。\n只读检查，用于在值班表页面提示「通知发不出去」并引导去配置。",
+        "operationId": "OncallScheduleService_GetNotificationStatus",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetNotificationStatusResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "tags": [
+          "OncallScheduleService"
+        ]
+      }
+    },
+    "/api/v1/oncall/public/{token}": {
+      "get": {
+        "summary": "GetPublicCalendar 免登录读取日历数据；无效、过期、作废统一 404。",
+        "operationId": "OncallShareService_GetPublicCalendar",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetPublicCalendarResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "token",
+            "description": "token 访问令牌。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "startTime",
+            "description": "start_time 范围开始（含）。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          },
+          {
+            "name": "endTime",
+            "description": "end_time 范围结束（不含）；与开始相距不超过 62 天。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          }
+        ],
+        "tags": [
+          "OncallShareService"
+        ]
+      }
+    },
+    "/api/v1/oncall/schedule": {
+      "get": {
+        "summary": "ListSchedules 查询值班表（可按分组过滤），不分页。",
+        "operationId": "OncallScheduleService_ListSchedules",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListSchedulesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "groupId",
+            "description": "group_id 所属分组，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "OncallScheduleService"
+        ]
+      },
+      "post": {
+        "summary": "CreateSchedule 新建值班表并生成班次。",
+        "operationId": "OncallScheduleService_CreateSchedule",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/CreateScheduleResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/CreateScheduleRequest"
+            }
+          }
+        ],
+        "tags": [
+          "OncallScheduleService"
+        ]
+      }
+    },
+    "/api/v1/oncall/schedule/{id}": {
+      "get": {
+        "summary": "GetSchedule 查询值班表详情。",
+        "operationId": "OncallScheduleService_GetSchedule",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetScheduleResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 值班表唯一标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "OncallScheduleService"
+        ]
+      },
+      "delete": {
+        "summary": "DeleteSchedule 删除值班表（班次一并清除，公共地址随之失效）。",
+        "operationId": "OncallScheduleService_DeleteSchedule",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/DeleteScheduleResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 值班表唯一标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "OncallScheduleService"
+        ]
+      },
+      "put": {
+        "summary": "UpdateSchedule 修改值班表配置并重排尚未开始的自动班次。",
+        "operationId": "OncallScheduleService_UpdateSchedule",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UpdateScheduleResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 值班表唯一标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UpdateScheduleBody"
+            }
+          }
+        ],
+        "tags": [
+          "OncallScheduleService"
+        ]
+      }
+    },
+    "/api/v1/oncall/schedule/{id}/notification": {
+      "get": {
+        "summary": "ListScheduleNotificationResults 查询手动发送的值班通知的投递结果。",
+        "operationId": "OncallScheduleService_ListScheduleNotificationResults",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListScheduleNotificationResultsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 值班表唯一标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "eventIds",
+            "description": "event_ids 发送时返回的事件 ID；只能查询属于该值班表的值班事件。",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "collectionFormat": "multi"
+          }
+        ],
+        "tags": [
+          "OncallScheduleService"
+        ]
+      },
+      "post": {
+        "summary": "SendScheduleNotification 手动发送值班通知：自动通知没有发出时由分组管理员补发。\n上班提醒发给所选班次的主、备值班人；每日播报按路由投递。与自动通知互不影响。",
+        "operationId": "OncallScheduleService_SendScheduleNotification",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/SendScheduleNotificationResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 值班表唯一标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/SendScheduleNotificationBody"
+            }
+          }
+        ],
+        "tags": [
+          "OncallScheduleService"
+        ]
+      }
+    },
+    "/api/v1/oncall/schedule/{id}/status": {
+      "put": {
+        "summary": "UpdateScheduleStatus 启用/停用值班表；停用即结束进行中的班次并清除未开始的班次。",
+        "operationId": "OncallScheduleService_UpdateScheduleStatus",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UpdateScheduleStatusResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 值班表唯一标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UpdateScheduleStatusBody"
+            }
+          }
+        ],
+        "tags": [
+          "OncallScheduleService"
+        ]
+      }
+    },
+    "/api/v1/oncall/schedule:preview": {
+      "post": {
+        "summary": "PreviewSchedule 用草稿配置预览排班与异常，不写库。",
+        "operationId": "OncallScheduleService_PreviewSchedule",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/PreviewScheduleResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/PreviewScheduleRequest"
+            }
+          }
+        ],
+        "tags": [
+          "OncallScheduleService"
+        ]
+      }
+    },
+    "/api/v1/oncall/share-link": {
+      "get": {
+        "summary": "ListShareLinks 查询某个范围下的公共地址（不含令牌）。",
+        "operationId": "OncallShareService_ListShareLinks",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListShareLinksResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "scopeType",
+            "description": "scope_type 范围类型：1=分组 2=值班表 3=个人。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "scopeId",
+            "description": "scope_id 范围对象；个人范围忽略此值，恒为当前用户。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "OncallShareService"
+        ]
+      },
+      "post": {
+        "summary": "CreateShareLink 新建公共地址，返回访问令牌。",
+        "operationId": "OncallShareService_CreateShareLink",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/CreateShareLinkResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/CreateShareLinkRequest"
+            }
+          }
+        ],
+        "tags": [
+          "OncallShareService"
+        ]
+      }
+    },
+    "/api/v1/oncall/share-link/{id}": {
+      "delete": {
+        "summary": "DeleteShareLink 作废公共地址。",
+        "operationId": "OncallShareService_DeleteShareLink",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/DeleteShareLinkResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 地址唯一标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "OncallShareService"
+        ]
+      }
+    },
+    "/api/v1/oncall/share-link/{id}/reset": {
+      "post": {
+        "summary": "ResetShareLink 重置令牌：旧地址立即失效，返回新令牌。",
+        "operationId": "OncallShareService_ResetShareLink",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ResetShareLinkResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 地址唯一标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/ResetShareLinkBody"
+            }
+          }
+        ],
+        "tags": [
+          "OncallShareService"
+        ]
+      }
+    },
+    "/api/v1/oncall/share-link/{id}/token": {
+      "get": {
+        "summary": "GetShareLinkToken 再次查看访问令牌（须有该地址的管理权）。",
+        "operationId": "OncallShareService_GetShareLinkToken",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetShareLinkTokenResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 地址唯一标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "OncallShareService"
+        ]
+      }
+    },
+    "/api/v1/oncall/shift": {
+      "get": {
+        "summary": "ListShifts 按时间范围查询班次，并返回范围内的排班异常；范围上限 100 天。",
+        "operationId": "OncallScheduleService_ListShifts",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListShiftsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "startTime",
+            "description": "start_time 范围开始（含）。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          },
+          {
+            "name": "endTime",
+            "description": "end_time 范围结束（不含）；与开始相距不超过 100 天。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          },
+          {
+            "name": "groupId",
+            "description": "group_id 所属分组，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "scheduleId",
+            "description": "schedule_id 所属值班表，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "userId",
+            "description": "user_id 值班人，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "mine",
+            "description": "mine 仅返回我的班次，可选（优先于 user_id）。",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          }
+        ],
+        "tags": [
+          "OncallScheduleService"
+        ]
+      }
+    },
+    "/api/v1/oncall/shift/override": {
+      "post": {
+        "summary": "CreateOverride 替班：把某段时间的值班人换成另一名分组成员。",
+        "operationId": "OncallScheduleService_CreateOverride",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/CreateOverrideResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/CreateOverrideRequest"
+            }
+          }
+        ],
+        "tags": [
+          "OncallScheduleService"
+        ]
+      }
+    },
+    "/api/v1/oncall/shift/override/{id}": {
+      "delete": {
+        "summary": "RevokeOverride 撤销替班：恢复为自动排班结果（已结束的替班不可撤销）。",
+        "operationId": "OncallScheduleService_RevokeOverride",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/RevokeOverrideResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 替班班次唯一标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "OncallScheduleService"
+        ]
+      }
+    },
+    "/api/v1/oncall/user-candidate": {
+      "get": {
+        "summary": "ListUserCandidates 可选成员（可用的系统用户，仅 ID 与显示名）；供添加成员使用。",
+        "operationId": "OncallGroupService_ListUserCandidates",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListUserCandidatesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "keyword",
+            "description": "keyword 登录名/昵称模糊匹配，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "OncallGroupService"
+        ]
+      }
+    },
     "/api/v1/system/config": {
       "get": {
         "summary": "GetSystemConfig 查询系统配置（未配置过的字段返回空串，前端兜底默认值）。",
@@ -5647,6 +7059,35 @@
     }
   },
   "definitions": {
+    "AddGroupMembersBody": {
+      "type": "object",
+      "properties": {
+        "userIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "user_ids 待添加的用户，1-50 个。"
+        },
+        "role": {
+          "type": "integer",
+          "format": "int32",
+          "title": "role 身份：1=管理员 2=成员。"
+        }
+      },
+      "title": "AddGroupMembersRequest 添加成员请求。"
+    },
+    "AddGroupMembersResponse": {
+      "type": "object",
+      "properties": {
+        "added": {
+          "type": "integer",
+          "format": "int32",
+          "title": "added 实际新增的成员数（已在组内的跳过）。"
+        }
+      },
+      "title": "AddGroupMembersResponse 添加成员响应。"
+    },
     "Any": {
       "type": "object",
       "properties": {
@@ -5909,6 +7350,20 @@
       },
       "title": "BizScope 通知 biz 范围整组替换载荷（更新时须显式携带，空列表 = 清空 = 不限）。"
     },
+    "CIView": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "name 视图名称（同一用户同一模型内唯一）。"
+        },
+        "filters": {
+          "type": "object",
+          "title": "filters 筛选条件（前端筛选表单的值，后端只存取不解释）。"
+        }
+      },
+      "title": "CIView 保存的资源列表视图。"
+    },
     "CatalogElement": {
       "type": "object",
       "properties": {
@@ -5961,6 +7416,49 @@
       },
       "title": "CatalogMenu 目录菜单（页面）：页面默认接口（进页面即调用，不归属于任何\n元素）+ 页面元素及其接口；仅描述页面结构，供授权页展示，授权不级联。"
     },
+    "ChangeLog": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 记录唯一标识。"
+        },
+        "groupId": {
+          "type": "string",
+          "title": "group_id 所属分组。"
+        },
+        "scheduleId": {
+          "type": "string",
+          "title": "schedule_id 相关值班表，可空。"
+        },
+        "action": {
+          "type": "string",
+          "title": "action 操作码：group.create / group.update / member.add / member.update /\nmember.remove / schedule.create / schedule.update / schedule.status /\nschedule.delete / shift.override / shift.revoke / share.create / share.reset /\nshare.delete。"
+        },
+        "summary": {
+          "type": "string",
+          "title": "summary 一句话描述。"
+        },
+        "detail": {
+          "type": "object",
+          "title": "detail 变更前后内容。"
+        },
+        "operatorId": {
+          "type": "string",
+          "title": "operator_id 操作人。"
+        },
+        "operatorName": {
+          "type": "string",
+          "title": "operator_name 操作人显示名。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 操作时间。"
+        }
+      },
+      "title": "ChangeLog 变更记录。"
+    },
     "ChatRequest": {
       "type": "object",
       "properties": {
@@ -6010,6 +7508,28 @@
         }
       },
       "title": "CheckUniqueRuleResponse 预检唯一规则响应。"
+    },
+    "ClaimConflictBody": {
+      "type": "object",
+      "properties": {
+        "modelCode": {
+          "type": "string",
+          "title": "model_code 冲突行的资源类型。"
+        },
+        "externalId": {
+          "type": "string",
+          "title": "external_id 冲突行的外部标识。"
+        },
+        "ciId": {
+          "type": "string",
+          "title": "ci_id 要绑定的已有资源（须为同类型的人工资源）。"
+        }
+      },
+      "title": "ClaimConflictRequest 认领同步冲突请求。"
+    },
+    "ClaimConflictResponse": {
+      "type": "object",
+      "title": "ClaimConflictResponse 认领同步冲突响应。"
     },
     "CmdbCI": {
       "type": "object",
@@ -6656,6 +8176,30 @@
       },
       "title": "CreateFieldResponse 新增类型字段响应。"
     },
+    "CreateGroupRequest": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "name 名称，1-64 字符。"
+        },
+        "description": {
+          "type": "string",
+          "title": "description 说明，可选。"
+        }
+      },
+      "title": "CreateGroupRequest 新建分组请求。"
+    },
+    "CreateGroupResponse": {
+      "type": "object",
+      "properties": {
+        "group": {
+          "$ref": "#/definitions/Group",
+          "title": "group 新建的分组。"
+        }
+      },
+      "title": "CreateGroupResponse 新建分组响应。"
+    },
     "CreateModelGroupRequest": {
       "type": "object",
       "properties": {
@@ -6720,6 +8264,53 @@
         }
       },
       "title": "CreateModelResponse 创建资源类型响应。"
+    },
+    "CreateOverrideRequest": {
+      "type": "object",
+      "properties": {
+        "scheduleId": {
+          "type": "string",
+          "title": "schedule_id 值班表唯一标识。"
+        },
+        "role": {
+          "type": "integer",
+          "format": "int32",
+          "title": "role 角色：1=主值班 2=备值班。"
+        },
+        "userId": {
+          "type": "string",
+          "title": "user_id 替班人，须为分组内可用的成员。"
+        },
+        "startTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "start_time 替班开始：须落在值班表每天的交接时刻上（以天为最小单位）；早于当前时间按当前时间处理。"
+        },
+        "endTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "end_time 替班结束：须落在值班表每天的交接时刻上，晚于开始且不超过已排班范围。"
+        },
+        "remark": {
+          "type": "string",
+          "title": "remark 替班原因。"
+        }
+      },
+      "title": "CreateOverrideRequest 替班请求。"
+    },
+    "CreateOverrideResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/Shift"
+          },
+          "title": "items 生成的替班班次（跨越多个原班次时按原班次边界拆分）。"
+        }
+      },
+      "title": "CreateOverrideResponse 替班响应。"
     },
     "CreateProducerRequest": {
       "type": "object",
@@ -6868,6 +8459,72 @@
         }
       },
       "title": "CreateRouteResponse 创建路由响应。"
+    },
+    "CreateScheduleRequest": {
+      "type": "object",
+      "properties": {
+        "groupId": {
+          "type": "string",
+          "title": "group_id 所属分组。"
+        },
+        "config": {
+          "$ref": "#/definitions/ScheduleConfig",
+          "title": "config 配置。"
+        }
+      },
+      "title": "CreateScheduleRequest 新建值班表请求。"
+    },
+    "CreateScheduleResponse": {
+      "type": "object",
+      "properties": {
+        "schedule": {
+          "$ref": "#/definitions/Schedule",
+          "title": "schedule 新建的值班表。"
+        }
+      },
+      "title": "CreateScheduleResponse 新建值班表响应。"
+    },
+    "CreateShareLinkRequest": {
+      "type": "object",
+      "properties": {
+        "scopeType": {
+          "type": "integer",
+          "format": "int32",
+          "title": "scope_type 范围类型：1=分组 2=值班表 3=个人。"
+        },
+        "scopeId": {
+          "type": "string",
+          "title": "scope_id 范围对象；个人范围忽略此值，恒为当前用户。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 备注名，1-64 字符。"
+        },
+        "showPhone": {
+          "type": "boolean",
+          "title": "show_phone 是否显示值班人手机号。"
+        },
+        "expireTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "expire_time 过期时间，可选；须晚于当前时间。"
+        }
+      },
+      "title": "CreateShareLinkRequest 新建公共地址请求。"
+    },
+    "CreateShareLinkResponse": {
+      "type": "object",
+      "properties": {
+        "link": {
+          "$ref": "#/definitions/ShareLink",
+          "title": "link 新建的公共地址。"
+        },
+        "token": {
+          "type": "string",
+          "title": "token 访问令牌明文；之后可经 GetShareLinkToken 再次查看。"
+        }
+      },
+      "title": "CreateShareLinkResponse 新建公共地址响应。"
     },
     "CreateSilenceRequest": {
       "type": "object",
@@ -7067,9 +8724,62 @@
       },
       "title": "CreateUserResponse 创建用户响应。"
     },
+    "CurrentDuty": {
+      "type": "object",
+      "properties": {
+        "scheduleId": {
+          "type": "string",
+          "title": "schedule_id 值班表唯一标识。"
+        },
+        "scheduleName": {
+          "type": "string",
+          "title": "schedule_name 值班表名称。"
+        },
+        "groupId": {
+          "type": "string",
+          "title": "group_id 所属分组。"
+        },
+        "groupName": {
+          "type": "string",
+          "title": "group_name 所属分组名称。"
+        },
+        "primary": {
+          "$ref": "#/definitions/Shift",
+          "title": "primary 主值班班次，无人值班时为空。"
+        },
+        "backup": {
+          "$ref": "#/definitions/Shift",
+          "title": "backup 备值班班次，未设或无人时为空。"
+        },
+        "nextHandoverTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "next_handover_time 下一次交接时间（主值班班次结束时间），无人值班时为空。"
+        }
+      },
+      "title": "CurrentDuty 某张值班表此刻的值班情况。"
+    },
     "DeleteCIResponse": {
       "type": "object",
       "title": "DeleteCIResponse 删除资源响应。"
+    },
+    "DeleteCIViewRequest": {
+      "type": "object",
+      "properties": {
+        "modelCode": {
+          "type": "string",
+          "title": "model_code 模型编码。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 视图名称。"
+        }
+      },
+      "title": "DeleteCIViewRequest 删除视图请求。"
+    },
+    "DeleteCIViewResponse": {
+      "type": "object",
+      "title": "DeleteCIViewResponse 删除视图响应。"
     },
     "DeleteChannelResponse": {
       "type": "object",
@@ -7082,6 +8792,10 @@
     "DeleteFieldResponse": {
       "type": "object",
       "title": "DeleteFieldResponse 废弃类型字段响应。"
+    },
+    "DeleteGroupResponse": {
+      "type": "object",
+      "title": "DeleteGroupResponse 删除分组响应。"
     },
     "DeleteModelGroupResponse": {
       "type": "object",
@@ -7106,6 +8820,14 @@
     "DeleteRouteResponse": {
       "type": "object",
       "title": "DeleteRouteResponse 删除路由响应。"
+    },
+    "DeleteScheduleResponse": {
+      "type": "object",
+      "title": "DeleteScheduleResponse 删除值班表响应。"
+    },
+    "DeleteShareLinkResponse": {
+      "type": "object",
+      "title": "DeleteShareLinkResponse 作废公共地址响应。"
     },
     "DeleteSilenceResponse": {
       "type": "object",
@@ -7192,6 +8914,20 @@
       },
       "title": "FieldRule 字段校验规则；未设置的项不校验。"
     },
+    "GetCIAtResponse": {
+      "type": "object",
+      "properties": {
+        "ci": {
+          "$ref": "#/definitions/CmdbCI",
+          "title": "ci 该时刻的资源状态（version / update_time 等审计字段无意义，不填）。"
+        },
+        "deleted": {
+          "type": "boolean",
+          "title": "deleted 该时刻资源处于已删除状态（之后被恢复）。"
+        }
+      },
+      "title": "GetCIAtResponse 时间点回溯响应。"
+    },
     "GetCIResponse": {
       "type": "object",
       "properties": {
@@ -7219,6 +8955,20 @@
         }
       },
       "title": "GetChannelResponse 查询渠道响应。"
+    },
+    "GetCurrentDutyResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/CurrentDuty"
+          },
+          "title": "items 各值班表的当前值班情况。"
+        }
+      },
+      "title": "GetCurrentDutyResponse 查询当前值班人响应。"
     },
     "GetDeadLetterResponse": {
       "type": "object",
@@ -7265,6 +9015,16 @@
         }
       },
       "title": "GetEventResponse 事件详情响应：事件 + 发送任务 + 每个任务最近一次投递明细。"
+    },
+    "GetGroupResponse": {
+      "type": "object",
+      "properties": {
+        "group": {
+          "$ref": "#/definitions/Group",
+          "title": "group 分组。"
+        }
+      },
+      "title": "GetGroupResponse 查询分组详情响应。"
     },
     "GetLoginProfileResponse": {
       "type": "object",
@@ -7396,6 +9156,20 @@
       },
       "title": "GetMyScopeResponse 查询我的数据范围响应。"
     },
+    "GetNotificationStatusResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/NotificationStatus"
+          },
+          "title": "items 各类通知的配置状态。"
+        }
+      },
+      "title": "GetNotificationStatusResponse 查询值班通知配置状态响应。"
+    },
     "GetOverviewResponse": {
       "type": "object",
       "properties": {
@@ -7477,6 +9251,33 @@
       },
       "title": "GetProducerResponse 查询生产者响应。"
     },
+    "GetPublicCalendarResponse": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "title": "title 日历标题（分组名、\"分组名 / 值班表名\"或\"某人的值班\"）。"
+        },
+        "scopeType": {
+          "type": "integer",
+          "format": "int32",
+          "title": "scope_type 范围类型：1=分组 2=值班表 3=个人。"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/PublicShift"
+          },
+          "title": "items 与范围相交的班次，按开始时间排序。"
+        },
+        "description": {
+          "type": "string",
+          "title": "description 分组说明（仅分组范围的地址返回）。"
+        }
+      },
+      "title": "GetPublicCalendarResponse 读取公共日历响应。"
+    },
     "GetQualityResponse": {
       "type": "object",
       "properties": {
@@ -7543,6 +9344,26 @@
       },
       "title": "GetRouteResponse 查询路由响应。"
     },
+    "GetScheduleResponse": {
+      "type": "object",
+      "properties": {
+        "schedule": {
+          "$ref": "#/definitions/Schedule",
+          "title": "schedule 值班表。"
+        }
+      },
+      "title": "GetScheduleResponse 查询值班表详情响应。"
+    },
+    "GetShareLinkTokenResponse": {
+      "type": "object",
+      "properties": {
+        "token": {
+          "type": "string",
+          "title": "token 访问令牌明文。"
+        }
+      },
+      "title": "GetShareLinkTokenResponse 查看访问令牌响应。"
+    },
     "GetSilenceResponse": {
       "type": "object",
       "properties": {
@@ -7592,6 +9413,89 @@
         }
       },
       "title": "GetUserResponse 查询用户响应。"
+    },
+    "Group": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 分组唯一标识。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 名称。"
+        },
+        "description": {
+          "type": "string",
+          "title": "description 说明。"
+        },
+        "memberCount": {
+          "type": "integer",
+          "format": "int32",
+          "title": "member_count 成员数。"
+        },
+        "scheduleCount": {
+          "type": "integer",
+          "format": "int32",
+          "title": "schedule_count 值班表数。"
+        },
+        "myRole": {
+          "type": "integer",
+          "format": "int32",
+          "title": "my_role 当前用户在组内的身份：0=非成员 1=管理员 2=成员。"
+        },
+        "canManage": {
+          "type": "boolean",
+          "title": "can_manage 当前用户能否管理本分组（分组管理员或超级管理员）。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 创建时间。"
+        },
+        "updateTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "update_time 更新时间。"
+        }
+      },
+      "title": "Group 值班分组。"
+    },
+    "GroupMember": {
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "title": "user_id 用户唯一标识。"
+        },
+        "username": {
+          "type": "string",
+          "title": "username 登录名。"
+        },
+        "nickname": {
+          "type": "string",
+          "title": "nickname 昵称。"
+        },
+        "role": {
+          "type": "integer",
+          "format": "int32",
+          "title": "role 身份：1=管理员 2=成员。"
+        },
+        "available": {
+          "type": "boolean",
+          "title": "available 用户是否可用（未删除且状态为可用）；不可用的成员无法继续值班。"
+        },
+        "inRotation": {
+          "type": "boolean",
+          "title": "in_rotation 是否在本分组某张值班表的轮转名单内。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 加入时间。"
+        }
+      },
+      "title": "GroupMember 分组成员。"
     },
     "HttpBody": {
       "type": "object",
@@ -7818,6 +9722,20 @@
       },
       "title": "ListCIHistoryResponse 查询变更历史响应。"
     },
+    "ListCIViewsResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/CIView"
+          },
+          "title": "items 按名称排序。"
+        }
+      },
+      "title": "ListCIViewsResponse 查询保存的视图响应。"
+    },
     "ListCIsResponse": {
       "type": "object",
       "properties": {
@@ -7840,6 +9758,25 @@
         }
       },
       "title": "ListCIsResponse 分页查询资源响应。"
+    },
+    "ListChangeLogsResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/ChangeLog"
+          },
+          "title": "items 当前页数据。"
+        },
+        "total": {
+          "type": "string",
+          "format": "int64",
+          "title": "total 总数。"
+        }
+      },
+      "title": "ListChangeLogsResponse 分页查询变更记录响应。"
     },
     "ListChannelHealthResponse": {
       "type": "object",
@@ -7889,6 +9826,10 @@
           "type": "string",
           "format": "int64",
           "title": "total 总数。"
+        },
+        "capped": {
+          "type": "boolean",
+          "title": "capped 清单不完整：某个类型的冲突数达到留存上限，其余未列出（应先排查唯一规则 / 采集配置）。"
         }
       },
       "title": "ListConflictsResponse 查询同步冲突响应。"
@@ -8000,6 +9941,39 @@
         }
       },
       "title": "ListFavoritesResponse 查询收藏响应。"
+    },
+    "ListGroupMembersResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/GroupMember"
+          },
+          "title": "items 全部成员。"
+        }
+      },
+      "title": "ListGroupMembersResponse 查询分组成员响应。"
+    },
+    "ListGroupsResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/Group"
+          },
+          "title": "items 当前页数据。"
+        },
+        "total": {
+          "type": "string",
+          "format": "int64",
+          "title": "total 总数。"
+        }
+      },
+      "title": "ListGroupsResponse 分页查询分组响应。"
     },
     "ListHistoryResponse": {
       "type": "object",
@@ -8251,6 +10225,34 @@
       },
       "title": "ListRunsResponse 查询运行记录响应。"
     },
+    "ListScheduleNotificationResultsResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/NotificationResult"
+          },
+          "title": "items 各事件的投递结果（事件尚未落库或不属于该值班表时不返回）。"
+        }
+      },
+      "title": "ListScheduleNotificationResultsResponse 查询投递结果响应。"
+    },
+    "ListSchedulesResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/Schedule"
+          },
+          "title": "items 值班表（按分组、名称排序）。"
+        }
+      },
+      "title": "ListSchedulesResponse 查询值班表响应。"
+    },
     "ListSchemaAuditResponse": {
       "type": "object",
       "properties": {
@@ -8269,6 +10271,42 @@
         }
       },
       "title": "ListSchemaAuditResponse 查询模型变更审计响应。"
+    },
+    "ListShareLinksResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/ShareLink"
+          },
+          "title": "items 公共地址。"
+        }
+      },
+      "title": "ListShareLinksResponse 查询公共地址响应。"
+    },
+    "ListShiftsResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/Shift"
+          },
+          "title": "items 与范围相交的班次，按开始时间排序。"
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/ShiftIssue"
+          },
+          "title": "issues 范围内尚未过去的排班异常（按相同的分组/值班表条件过滤）；按开始时间最多返回 300 条。"
+        }
+      },
+      "title": "ListShiftsResponse 查询班次响应。"
     },
     "ListSilencesResponse": {
       "type": "object",
@@ -8345,6 +10383,20 @@
         }
       },
       "title": "ListTemplatesResponse 分页查询模板响应。"
+    },
+    "ListUserCandidatesResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/UserCandidate"
+          },
+          "title": "items 匹配的用户，最多 50 个。"
+        }
+      },
+      "title": "ListUserCandidatesResponse 查询可选成员响应。"
     },
     "ListUserRolesResponse": {
       "type": "object",
@@ -8511,6 +10563,113 @@
         }
       },
       "title": "NeighborsResponse 拓扑查询响应。"
+    },
+    "NotificationDelivery": {
+      "type": "object",
+      "properties": {
+        "channelName": {
+          "type": "string",
+          "title": "channel_name 渠道名称。"
+        },
+        "channelType": {
+          "type": "string",
+          "title": "channel_type 渠道类型（email / feishu / dingtalk / wecom / webhook）。"
+        },
+        "recipient": {
+          "type": "string",
+          "title": "recipient 收件地址（邮箱；群机器人为空）。"
+        },
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 投递状态：1=待发送 2=发送中 3=已发送 4=失败重试中 5=已放弃。"
+        },
+        "error": {
+          "type": "string",
+          "title": "error 最近一次失败原因。"
+        }
+      },
+      "title": "NotificationDelivery 一次投递（某个渠道 → 某个收件地址）。"
+    },
+    "NotificationRecipient": {
+      "type": "object",
+      "properties": {
+        "role": {
+          "type": "integer",
+          "format": "int32",
+          "title": "role 角色：1=主值班 2=备值班。"
+        },
+        "userId": {
+          "type": "string",
+          "title": "user_id 用户唯一标识。"
+        },
+        "userName": {
+          "type": "string",
+          "title": "user_name 用户显示名。"
+        },
+        "startTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "start_time 班次开始。"
+        },
+        "endTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "end_time 班次结束。"
+        }
+      },
+      "title": "NotificationRecipient 通知的收件人（上班提醒：班次的值班人）。"
+    },
+    "NotificationResult": {
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "type": "string",
+          "title": "event_id 事件唯一标识。"
+        },
+        "eventType": {
+          "type": "string",
+          "title": "event_type 事件类型。"
+        },
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 路由状态：1=已接收待路由 2=已路由 3=被静默规则抑制 4=没有匹配的路由或渠道。"
+        },
+        "deliveries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/NotificationDelivery"
+          },
+          "title": "deliveries 各渠道的投递情况。"
+        }
+      },
+      "title": "NotificationResult 一个通知事件的投递结果。"
+    },
+    "NotificationStatus": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "integer",
+          "format": "int32",
+          "title": "kind 通知类别：1=个人通知（上班提醒 / 替班变更 / 排班异常）2=每日播报。"
+        },
+        "eventType": {
+          "type": "string",
+          "title": "event_type 用来判定的事件类型。"
+        },
+        "routeName": {
+          "type": "string",
+          "title": "route_name 命中的通知规则名称；没有命中的规则为空。"
+        },
+        "channelCount": {
+          "type": "integer",
+          "format": "int32",
+          "title": "channel_count 该规则上已启用的渠道数；0 表示通知发不出去。"
+        }
+      },
+      "title": "NotificationStatus 一类值班通知的配置状态。"
     },
     "NotifyChannel": {
       "type": "object",
@@ -9313,6 +11472,51 @@
       },
       "title": "PreviewRoutingResponse 路由试算结果。"
     },
+    "PreviewScheduleRequest": {
+      "type": "object",
+      "properties": {
+        "groupId": {
+          "type": "string",
+          "title": "group_id 所属分组。"
+        },
+        "scheduleId": {
+          "type": "string",
+          "title": "schedule_id 编辑已有值班表时传入（跨表撞班检测排除自身），可选。"
+        },
+        "config": {
+          "$ref": "#/definitions/ScheduleConfig",
+          "title": "config 草稿配置。"
+        },
+        "days": {
+          "type": "integer",
+          "format": "int32",
+          "title": "days 预览天数，7-90；缺省 30。"
+        }
+      },
+      "title": "PreviewScheduleRequest 预览排班请求。"
+    },
+    "PreviewScheduleResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/Shift"
+          },
+          "title": "items 按草稿配置计算的班次（不含已有的替班）。"
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/ShiftIssue"
+          },
+          "title": "issues 预览范围内的排班异常。"
+        }
+      },
+      "title": "PreviewScheduleResponse 预览排班响应。"
+    },
     "ProducerSpec": {
       "type": "object",
       "properties": {
@@ -9344,6 +11548,44 @@
         }
       },
       "title": "ProducerSpec 生产者配置载荷：名称 / 事件白名单 / 过期时间（创建与整组\n替换更新共用）。event_whitelist 为空 = 不限事件类型（token scope 仍限定\nbiz）；条目为事件模式：精确 / 前缀通配（'monitor.alert.*'）/ 全匹配（'*'）。"
+    },
+    "PublicShift": {
+      "type": "object",
+      "properties": {
+        "scheduleName": {
+          "type": "string",
+          "title": "schedule_name 值班表名称。"
+        },
+        "role": {
+          "type": "integer",
+          "format": "int32",
+          "title": "role 角色：1=主值班 2=备值班。"
+        },
+        "userName": {
+          "type": "string",
+          "title": "user_name 值班人显示名。"
+        },
+        "phone": {
+          "type": "string",
+          "title": "phone 值班人手机号；地址未开启显示手机号时为空。"
+        },
+        "startTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "start_time 开始时间（含）。"
+        },
+        "endTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "end_time 结束时间（不含）。"
+        },
+        "source": {
+          "type": "integer",
+          "format": "int32",
+          "title": "source 来源：1=自动排班 2=替班。"
+        }
+      },
+      "title": "PublicShift 公共日历中的班次（最小披露）。"
     },
     "QualityRow": {
       "type": "object",
@@ -9459,6 +11701,10 @@
       },
       "title": "RelationSummary 资源在某个关系类型某个方向上的关联统计（详情页面板头）。"
     },
+    "RemoveGroupMemberResponse": {
+      "type": "object",
+      "title": "RemoveGroupMemberResponse 移出成员响应。"
+    },
     "RenderSample": {
       "type": "object",
       "properties": {
@@ -9551,6 +11797,20 @@
       },
       "title": "ReplayEventResponse 事件重发响应：新落库的事件。"
     },
+    "ResetShareLinkBody": {
+      "type": "object",
+      "title": "ResetShareLinkRequest 重置令牌请求。"
+    },
+    "ResetShareLinkResponse": {
+      "type": "object",
+      "properties": {
+        "token": {
+          "type": "string",
+          "title": "token 新的访问令牌明文。"
+        }
+      },
+      "title": "ResetShareLinkResponse 重置令牌响应。"
+    },
     "ResetUserPasswordBody": {
       "type": "object",
       "properties": {
@@ -9578,6 +11838,10 @@
         }
       },
       "title": "RestoreCIResponse 恢复资源响应。"
+    },
+    "RevokeOverrideResponse": {
+      "type": "object",
+      "title": "RevokeOverrideResponse 撤销替班响应。"
     },
     "RobotChannelConfig": {
       "type": "object",
@@ -9793,6 +12057,169 @@
       },
       "title": "RouteSpec 路由规则载荷：一组互为整体的匹配与分发决策（创建/更新共用）；\n数值调优项可选，缺省 severity_min=1、priority=5、aggregate_window_s=0\n（不聚合）、suppress_threshold=500、suppress_duration_m=30。"
     },
+    "SaveCIViewRequest": {
+      "type": "object",
+      "properties": {
+        "modelCode": {
+          "type": "string",
+          "title": "model_code 模型编码。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 视图名称，1-32 位。"
+        },
+        "filters": {
+          "type": "object",
+          "title": "filters 筛选条件，序列化后不超过 4KB。"
+        }
+      },
+      "title": "SaveCIViewRequest 保存视图请求。"
+    },
+    "SaveCIViewResponse": {
+      "type": "object",
+      "title": "SaveCIViewResponse 保存视图响应。"
+    },
+    "Schedule": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 值班表唯一标识。"
+        },
+        "groupId": {
+          "type": "string",
+          "title": "group_id 所属分组。"
+        },
+        "groupName": {
+          "type": "string",
+          "title": "group_name 所属分组名称。"
+        },
+        "config": {
+          "$ref": "#/definitions/ScheduleConfig",
+          "title": "config 配置。"
+        },
+        "members": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/ScheduleMember"
+          },
+          "title": "members 轮转名单（与 config.member_ids 同序，带显示名）。"
+        },
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 状态：1=启用 2=停用。"
+        },
+        "generatedUntil": {
+          "type": "string",
+          "format": "date-time",
+          "title": "generated_until 班次已生成到的时间。"
+        },
+        "canManage": {
+          "type": "boolean",
+          "title": "can_manage 当前用户能否管理本值班表。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 创建时间。"
+        },
+        "updateTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "update_time 更新时间。"
+        }
+      },
+      "title": "Schedule 值班表。"
+    },
+    "ScheduleConfig": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "name 名称，1-64 字符；同一分组内唯一。"
+        },
+        "description": {
+          "type": "string",
+          "title": "description 说明。"
+        },
+        "timezone": {
+          "type": "string",
+          "title": "timezone IANA 时区名（如 Asia/Shanghai）；轮转规则按该时区的本地时间计算。"
+        },
+        "rotationUnit": {
+          "type": "integer",
+          "format": "int32",
+          "title": "rotation_unit 轮转周期单位：1=天 2=周。"
+        },
+        "rotationInterval": {
+          "type": "integer",
+          "format": "int32",
+          "title": "rotation_interval 轮转周期间隔：按天 1-30，按周 1-4。"
+        },
+        "anchorTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "anchor_time 轮转起点，即首次交接时间（取整到分钟）；此后每隔一个周期在同一本地时刻交接。"
+        },
+        "memberIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "member_ids 轮转名单（有序），须为分组成员，最多 50 人。"
+        },
+        "startUserId": {
+          "type": "string",
+          "title": "start_user_id 起始人：轮转起点开始值班的成员；缺省为名单第一位。"
+        },
+        "backupEnabled": {
+          "type": "boolean",
+          "title": "backup_enabled 是否设备值班（主值班在名单中的下一位）。"
+        },
+        "horizonDays": {
+          "type": "integer",
+          "format": "int32",
+          "title": "horizon_days 提前排班天数，7-180。"
+        },
+        "remindMinutes": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "title": "remind_minutes 上班提醒提前量（分钟），最多两个；0 表示交接时刻通知。"
+        },
+        "digestTime": {
+          "type": "string",
+          "title": "digest_time 每日播报时刻（HH:MM，按值班表时区）；不传则不播报。"
+        }
+      },
+      "title": "ScheduleConfig 值班表配置（新建、编辑、预览共用）。"
+    },
+    "ScheduleMember": {
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "title": "user_id 用户唯一标识。"
+        },
+        "username": {
+          "type": "string",
+          "title": "username 登录名。"
+        },
+        "nickname": {
+          "type": "string",
+          "title": "nickname 昵称。"
+        },
+        "available": {
+          "type": "boolean",
+          "title": "available 用户是否可用。"
+        }
+      },
+      "title": "ScheduleMember 轮转名单成员。"
+    },
     "SearchCIsResponse": {
       "type": "object",
       "properties": {
@@ -9824,6 +12251,43 @@
         }
       },
       "title": "SearchHit 搜索命中。"
+    },
+    "SendScheduleNotificationBody": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "integer",
+          "format": "int32",
+          "title": "kind 通知类型：1=上班提醒 2=每日播报。"
+        },
+        "target": {
+          "type": "integer",
+          "format": "int32",
+          "title": "target 上班提醒针对的班次：1=当前班次 2=下一个班次；每日播报忽略。"
+        }
+      },
+      "title": "SendScheduleNotificationRequest 手动发送值班通知请求。"
+    },
+    "SendScheduleNotificationResponse": {
+      "type": "object",
+      "properties": {
+        "eventIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "event_ids 生成的通知事件，用于查询投递结果。"
+        },
+        "recipients": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/NotificationRecipient"
+          },
+          "title": "recipients 上班提醒的收件人；每日播报为空（收件人由路由决定）。"
+        }
+      },
+      "title": "SendScheduleNotificationResponse 手动发送值班通知响应。"
     },
     "SendTestEventBody": {
       "type": "object",
@@ -9934,6 +12398,168 @@
         }
       },
       "title": "SetRoleScopeResponse 设置角色数据范围响应。"
+    },
+    "ShareLink": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 地址唯一标识。"
+        },
+        "scopeType": {
+          "type": "integer",
+          "format": "int32",
+          "title": "scope_type 范围类型：1=分组 2=值班表 3=个人。"
+        },
+        "scopeId": {
+          "type": "string",
+          "title": "scope_id 范围对象（分组/值班表/用户 ID）。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 备注名。"
+        },
+        "showPhone": {
+          "type": "boolean",
+          "title": "show_phone 是否显示值班人手机号。"
+        },
+        "expireTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "expire_time 过期时间；为空表示长期有效。"
+        },
+        "lastAccessTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "last_access_time 最近访问时间（至多每小时更新一次）。"
+        },
+        "creatorName": {
+          "type": "string",
+          "title": "creator_name 创建人显示名。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 创建时间。"
+        }
+      },
+      "title": "ShareLink 公共地址（不含令牌）。"
+    },
+    "Shift": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 班次唯一标识；预览结果为空。"
+        },
+        "scheduleId": {
+          "type": "string",
+          "title": "schedule_id 所属值班表；预览新建值班表时为空。"
+        },
+        "scheduleName": {
+          "type": "string",
+          "title": "schedule_name 值班表名称。"
+        },
+        "groupId": {
+          "type": "string",
+          "title": "group_id 所属分组。"
+        },
+        "role": {
+          "type": "integer",
+          "format": "int32",
+          "title": "role 角色：1=主值班 2=备值班。"
+        },
+        "userId": {
+          "type": "string",
+          "title": "user_id 值班人。"
+        },
+        "userName": {
+          "type": "string",
+          "title": "user_name 值班人显示名。"
+        },
+        "userAvailable": {
+          "type": "boolean",
+          "title": "user_available 值班人是否可用。"
+        },
+        "startTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "start_time 开始时间（含）。"
+        },
+        "endTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "end_time 结束时间（不含）。"
+        },
+        "source": {
+          "type": "integer",
+          "format": "int32",
+          "title": "source 来源：1=自动排班 2=替班。"
+        },
+        "originUserId": {
+          "type": "string",
+          "title": "origin_user_id 替班时的原值班人，可空。"
+        },
+        "originUserName": {
+          "type": "string",
+          "title": "origin_user_name 原值班人显示名。"
+        },
+        "remark": {
+          "type": "string",
+          "title": "remark 替班原因。"
+        }
+      },
+      "title": "Shift 班次。"
+    },
+    "ShiftIssue": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "integer",
+          "format": "int32",
+          "title": "type 异常类型：1=无人值班 2=值班人不可用 3=主备同人 4=跨表撞班 5=连续值班过长。"
+        },
+        "scheduleId": {
+          "type": "string",
+          "title": "schedule_id 所属值班表；预览新建值班表时为空。"
+        },
+        "scheduleName": {
+          "type": "string",
+          "title": "schedule_name 值班表名称。"
+        },
+        "groupId": {
+          "type": "string",
+          "title": "group_id 所属分组。"
+        },
+        "userId": {
+          "type": "string",
+          "title": "user_id 相关值班人，无人值班时为空。"
+        },
+        "userName": {
+          "type": "string",
+          "title": "user_name 相关值班人显示名。"
+        },
+        "startTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "start_time 异常时间段开始。"
+        },
+        "endTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "end_time 异常时间段结束。"
+        },
+        "otherScheduleName": {
+          "type": "string",
+          "title": "other_schedule_name 跨表撞班时的另一张值班表名称（多张时为其中一张）。"
+        },
+        "otherScheduleCount": {
+          "type": "integer",
+          "format": "int32",
+          "title": "other_schedule_count 跨表撞班时对方值班表的数量。"
+        }
+      },
+      "title": "ShiftIssue 排班异常。"
     },
     "SilenceSpec": {
       "type": "object",
@@ -10347,6 +12973,20 @@
       },
       "title": "TriggerSyncResponse 触发同步响应。"
     },
+    "UnclaimCIBody": {
+      "type": "object",
+      "title": "UnclaimCIRequest 解除同步托管请求。"
+    },
+    "UnclaimCIResponse": {
+      "type": "object",
+      "properties": {
+        "ci": {
+          "$ref": "#/definitions/CmdbCI",
+          "title": "ci 解除后的资源。"
+        }
+      },
+      "title": "UnclaimCIResponse 解除同步托管响应。"
+    },
     "UniqueConflict": {
       "type": "object",
       "properties": {
@@ -10551,6 +13191,39 @@
       },
       "title": "UpdateFieldResponse 更新类型字段响应。"
     },
+    "UpdateGroupBody": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "name 名称，1-64 字符。"
+        },
+        "description": {
+          "type": "string",
+          "title": "description 说明。"
+        }
+      },
+      "title": "UpdateGroupRequest 编辑分组请求。"
+    },
+    "UpdateGroupMemberBody": {
+      "type": "object",
+      "properties": {
+        "role": {
+          "type": "integer",
+          "format": "int32",
+          "title": "role 身份：1=管理员 2=成员。"
+        }
+      },
+      "title": "UpdateGroupMemberRequest 修改成员身份请求。"
+    },
+    "UpdateGroupMemberResponse": {
+      "type": "object",
+      "title": "UpdateGroupMemberResponse 修改成员身份响应。"
+    },
+    "UpdateGroupResponse": {
+      "type": "object",
+      "title": "UpdateGroupResponse 编辑分组响应。"
+    },
     "UpdateModelBody": {
       "type": "object",
       "properties": {
@@ -10747,6 +13420,41 @@
         }
       },
       "title": "UpdateRouteResponse 更新路由响应：返回更新后的路由（免二次 GET）。"
+    },
+    "UpdateScheduleBody": {
+      "type": "object",
+      "properties": {
+        "config": {
+          "$ref": "#/definitions/ScheduleConfig",
+          "title": "config 配置（整体替换）。"
+        }
+      },
+      "title": "UpdateScheduleRequest 编辑值班表请求。"
+    },
+    "UpdateScheduleResponse": {
+      "type": "object",
+      "properties": {
+        "schedule": {
+          "$ref": "#/definitions/Schedule",
+          "title": "schedule 更新后的值班表。"
+        }
+      },
+      "title": "UpdateScheduleResponse 编辑值班表响应。"
+    },
+    "UpdateScheduleStatusBody": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 状态：1=启用 2=停用。"
+        }
+      },
+      "title": "UpdateScheduleStatusRequest 启停值班表请求。"
+    },
+    "UpdateScheduleStatusResponse": {
+      "type": "object",
+      "title": "UpdateScheduleStatusResponse 启停值班表响应。"
     },
     "UpdateSilenceBody": {
       "type": "object",
@@ -11102,6 +13810,24 @@
         }
       },
       "title": "User 用户实体（出参，不含密码）。"
+    },
+    "UserCandidate": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 用户唯一标识。"
+        },
+        "username": {
+          "type": "string",
+          "title": "username 登录名。"
+        },
+        "nickname": {
+          "type": "string",
+          "title": "nickname 昵称。"
+        }
+      },
+      "title": "UserCandidate 可选成员（最小披露：不含手机号、邮箱）。"
     },
     "ViewSection": {
       "type": "object",

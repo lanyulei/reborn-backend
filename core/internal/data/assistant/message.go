@@ -53,6 +53,20 @@ func (r *messageRepo) Append(ctx context.Context, m *biz.Message) error {
 	return nil
 }
 
+// UpdateToolCalls implements biz.MessageRepo：只改写 content 里的 tool_calls，其余字段不动。
+func (r *messageRepo) UpdateToolCalls(ctx context.Context, m *biz.Message) error {
+	raw, err := json.Marshal(m.ToolCalls)
+	if err != nil {
+		return fmt.Errorf("marshal assistant tool calls: %w", err)
+	}
+	if _, err := r.data.Pool.Exec(ctx,
+		`UPDATE assistant_message SET content = jsonb_set(content, '{tool_calls}', $3::jsonb)
+		 WHERE id = $1 AND conversation_id = $2`, m.ID, m.ConversationID, raw); err != nil {
+		return fmt.Errorf("update assistant message tool calls: %w", err)
+	}
+	return nil
+}
+
 // List implements biz.MessageRepo：完整历史，按 seq 正序。
 func (r *messageRepo) List(ctx context.Context, conversationID string) ([]*biz.Message, error) {
 	rows, err := r.data.Pool.Query(ctx,

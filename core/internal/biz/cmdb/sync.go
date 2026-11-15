@@ -112,8 +112,27 @@ type SyncTaskRepo interface {
 // SyncRunRepo 运行记录仓储接口（控制面只读）。
 type SyncRunRepo interface {
 	ListBySource(ctx context.Context, sourceID string, page, pageSize int64) ([]*SyncRun, int64, error)
+	// ClaimConflict 把冲突行绑定到已有资源：资源的来源改为该采集源、外部标识改为冲突行的标识，
+	// 版本 +1、写历史并移除冲突行（一事务，与对账互斥）。冲突行不存在返回 ErrSourceInvalid；
+	// 资源不存在 / 不是该类型返回 ErrCINotFound；资源已由同步维护返回 ErrCIInvalid；
+	// 该外部标识已有在册资源返回 ErrCIDuplicate。
+	ClaimConflict(ctx context.Context, claim *ConflictClaim) error
 	// ListConflicts 采集源当前未解决的同步冲突（最早出现的在前）。
 	ListConflicts(ctx context.Context, sourceID string, page, pageSize int64) ([]*SyncConflict, int64, error)
+	// ConflictsCapped 该采集源是否有类型的冲突数达到留存上限（清单不完整）。
+	ConflictsCapped(ctx context.Context, sourceID string) (bool, error)
+}
+
+// ConflictClaim 认领参数。
+type ConflictClaim struct {
+	SourceID   string
+	ModelCode  string
+	ExternalID string
+	CIID       string
+	Actor      Actor
+	At         time.Time
+	// HistoryID 历史记录 ID（仓储在事务内按实际的前后值写入）。
+	HistoryID string
 }
 
 // SyncConflict 一条未解决的同步冲突（数据面对账时写入，控制面只读）。
@@ -305,4 +324,24 @@ func (uc *SyncUsecase) ListConflicts(ctx context.Context, sourceID string, page,
 	}
 	page, pageSize = paging.Normalize(page, pageSize)
 	return uc.runs.ListConflicts(ctx, sourceID, page, pageSize)
+}
+
+// ClaimConflict 认领同步冲突：把冲突行绑定到已有的人工资源。
+func (uc *SyncUsecase) ClaimConflict(ctx context.Context, actor Actor, sourceID, modelCode, externalID, ciID string) error {
+	if _, err := uc.sources.Get(ctx, sourceID); err != nil {
+		return err
+	}
+	id, err := idgen.NewID()
+	if err != nil {
+		return err
+	}
+	return uc.runs.ClaimConflict(ctx, &ConflictClaim{
+		SourceID: sourceID, ModelCode: modelCode, ExternalID: externalID, CIID: ciID,
+		Actor: actor, At: time.Now(), HistoryID: id,
+	})
+}
+
+// ConflictsCapped 冲突清单是否不完整（某类型达到留存上限）。
+func (uc *SyncUsecase) ConflictsCapped(ctx context.Context, sourceID string) (bool, error) {
+	return uc.runs.ConflictsCapped(ctx, sourceID)
 }

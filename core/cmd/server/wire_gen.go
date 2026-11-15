@@ -11,18 +11,22 @@ import (
 	biz3 "github.com/lanyulei/reborn/backend/core/internal/biz/assistant"
 	biz4 "github.com/lanyulei/reborn/backend/core/internal/biz/cmdb"
 	biz2 "github.com/lanyulei/reborn/backend/core/internal/biz/notify"
+	biz5 "github.com/lanyulei/reborn/backend/core/internal/biz/oncall"
 	"github.com/lanyulei/reborn/backend/core/internal/biz/system"
 	"github.com/lanyulei/reborn/backend/core/internal/conf"
 	"github.com/lanyulei/reborn/backend/core/internal/data"
 	data4 "github.com/lanyulei/reborn/backend/core/internal/data/assistant"
 	data5 "github.com/lanyulei/reborn/backend/core/internal/data/cmdb"
 	data3 "github.com/lanyulei/reborn/backend/core/internal/data/notify"
+	data6 "github.com/lanyulei/reborn/backend/core/internal/data/oncall"
 	data2 "github.com/lanyulei/reborn/backend/core/internal/data/system"
 	"github.com/lanyulei/reborn/backend/core/internal/server"
 	service3 "github.com/lanyulei/reborn/backend/core/internal/service/assistant"
 	service4 "github.com/lanyulei/reborn/backend/core/internal/service/cmdb"
 	service2 "github.com/lanyulei/reborn/backend/core/internal/service/notify"
+	service5 "github.com/lanyulei/reborn/backend/core/internal/service/oncall"
 	"github.com/lanyulei/reborn/backend/core/internal/service/system"
+	"github.com/lanyulei/reborn/backend/core/internal/worker"
 	"log/slog"
 )
 
@@ -165,13 +169,33 @@ func wireApp(confServer *conf.Server, confData *conf.Data, security *conf.Securi
 		return nil, nil, err
 	}
 	syncUsecase := biz4.NewSyncUsecase(syncSourceRepo, syncTaskRepo, syncRunRepo, syncSecretBox)
-	cmdbSyncService := service4.NewCmdbSyncService(syncUsecase)
+	cmdbSyncService := service4.NewCmdbSyncService(syncUsecase, ciUsecase, scopeUsecase)
 	favoriteRepo := data5.NewFavoriteRepo(dataData)
 	overviewRepo := data5.NewOverviewRepo(dataData)
-	insightUsecase := biz4.NewInsightUsecase(groupRepo, favoriteRepo, overviewRepo, schemaAuditRepo, modelRepo)
+	ciViewRepo := data5.NewCIViewRepo(dataData)
+	insightUsecase := biz4.NewInsightUsecase(groupRepo, favoriteRepo, overviewRepo, schemaAuditRepo, modelRepo, ciViewRepo)
 	cmdbInsightService := service4.NewCmdbInsightService(insightUsecase, scopeUsecase)
-	httpServer := server.NewHTTPServer(confServer, logger, userService, roleService, authService, systemConfigService, loginLogService, notifyChannelService, notifyTemplateService, notifyRouteService, notifySilenceService, notifySubscriptionService, notifyProducerService, notifyEventService, notifyDispatchService, notifyDeliveryLogService, notifyDeadLetterService, assistantService, assistantChatService, cmdbModelService, cmdbCIService, cmdbRelationService, cmdbScopeService, cmdbSyncService, cmdbInsightService, tokenSigner, authzUsecase)
-	app := newApp(logger, httpServer)
+	store := data6.NewStore(dataData)
+	dataGroupRepo := data6.NewGroupRepo(dataData)
+	groupUsecase := biz5.NewGroupUsecase(store, dataGroupRepo, dataGroupRepo)
+	oncallGroupService := service5.NewOncallGroupService(groupUsecase, userUsecase)
+	scheduleRepo := data6.NewScheduleRepo(dataData)
+	shiftRepo := data6.NewShiftRepo(dataData)
+	notifier := biz5.NewNotifier(notificationUsecase)
+	scheduleUsecase := biz5.NewScheduleUsecase(store, dataGroupRepo, scheduleRepo, shiftRepo, notifier)
+	oncallScheduleService := service5.NewOncallScheduleService(scheduleUsecase, groupUsecase, userUsecase)
+	shareRepo := data6.NewShareRepo(dataData)
+	tokenBox, err := data6.NewTokenBox(notify)
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	shareUsecase := biz5.NewShareUsecase(store, dataGroupRepo, scheduleRepo, shiftRepo, shareRepo, dataGroupRepo, tokenBox)
+	oncallShareService := service5.NewOncallShareService(shareUsecase, userUsecase)
+	httpServer := server.NewHTTPServer(confServer, logger, userService, roleService, authService, systemConfigService, loginLogService, notifyChannelService, notifyTemplateService, notifyRouteService, notifySilenceService, notifySubscriptionService, notifyProducerService, notifyEventService, notifyDispatchService, notifyDeliveryLogService, notifyDeadLetterService, assistantService, assistantChatService, cmdbModelService, cmdbCIService, cmdbRelationService, cmdbScopeService, cmdbSyncService, cmdbInsightService, oncallGroupService, oncallScheduleService, oncallShareService, tokenSigner, authzUsecase)
+	workerUsecase := biz5.NewWorkerUsecase(store, dataGroupRepo, scheduleRepo, shiftRepo, notifier)
+	oncallLoops := worker.NewOncallLoops(workerUsecase, logger)
+	app := newApp(logger, httpServer, oncallLoops)
 	return app, func() {
 		cleanup()
 	}, nil

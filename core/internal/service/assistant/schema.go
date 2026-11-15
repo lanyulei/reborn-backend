@@ -1,8 +1,40 @@
 package service
 
 import (
+	_ "embed"
+	"encoding/json"
+	"strings"
+	"sync"
+	"unicode/utf8"
+
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
+
+// fieldDocJSON 字段全名 → proto 注释；由 make gen 经 gendoc 生成（生成的 Go 代码不保留
+// 注释，而模型要靠它理解枚举取值、时间约束等）。缺失只影响说明，不影响工具可用。
+//
+//go:embed fielddoc.json
+var fieldDocJSON []byte
+
+// maxFieldDocRunes 单个字段说明的长度上限（工具目录随每次模型请求下发，须有界）。
+const maxFieldDocRunes = 160
+
+var fieldDocs = sync.OnceValue(func() map[string]string {
+	docs := map[string]string{}
+	// 文件损坏按没有说明处理：工具目录照常生成。
+	_ = json.Unmarshal(fieldDocJSON, &docs)
+	return docs
+})
+
+// fieldDoc 字段说明：去掉注释开头重复的字段名（"kind 通知类型…" → "通知类型…"），超长截断。
+func fieldDoc(fd protoreflect.FieldDescriptor) string {
+	doc := fieldDocs()[string(fd.FullName())]
+	doc = strings.TrimSpace(strings.TrimPrefix(doc, string(fd.Name())))
+	if utf8.RuneCountInString(doc) > maxFieldDocRunes {
+		doc = string([]rune(doc)[:maxFieldDocRunes]) + "…"
+	}
+	return doc
+}
 
 // maxSchemaDepth 嵌套消息展开深度上限（防递归消息无限展开）。
 const maxSchemaDepth = 6
@@ -35,6 +67,18 @@ func buildObject(md protoreflect.MessageDescriptor, required []string, visiting 
 }
 
 func fieldSchema(fd protoreflect.FieldDescriptor, visiting map[protoreflect.FullName]struct{}, depth int) map[string]any {
+	schema := fieldShape(fd, visiting, depth)
+	// 字段自己的注释优先于类型自带的通用说明（如时间格式提示）。
+	if doc := fieldDoc(fd); doc != "" {
+		if generic, ok := schema["description"].(string); ok && generic != "" {
+			doc += "（" + generic + "）"
+		}
+		schema["description"] = doc
+	}
+	return schema
+}
+
+func fieldShape(fd protoreflect.FieldDescriptor, visiting map[protoreflect.FullName]struct{}, depth int) map[string]any {
 	if fd.IsMap() {
 		return map[string]any{
 			"type":                 "object",

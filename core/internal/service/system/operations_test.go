@@ -8,6 +8,7 @@ import (
 
 	cmdbv1 "github.com/lanyulei/reborn/backend/core/api/cmdb/v1"
 	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
+	oncallv1 "github.com/lanyulei/reborn/backend/core/api/oncall/v1"
 	v1 "github.com/lanyulei/reborn/backend/core/api/system/v1"
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
 
@@ -41,7 +42,8 @@ func TestListOperations(t *testing.T) {
 		// 可授权操作按域分包：新业务域加入 operationFiles 时在此追加前缀，
 		// 防止误挂无关 proto。
 		if !strings.HasPrefix(svc, "system.v1.") && !strings.HasPrefix(svc, "notify.v1.") &&
-			!strings.HasPrefix(svc, "assistant.v1.") && !strings.HasPrefix(svc, "cmdb.v1.") {
+			!strings.HasPrefix(svc, "assistant.v1.") && !strings.HasPrefix(svc, "cmdb.v1.") &&
+			!strings.HasPrefix(svc, "oncall.v1.") {
 			t.Fatalf("operation %q not in an authorized proto package", op.Name)
 		}
 		if op.Title == "" {
@@ -162,6 +164,8 @@ func TestIsAuthzExempt(t *testing.T) {
 		// 头像：上传为本人自助接口；读取为 <img> 直载的静态资源语义
 		v1.OperationAuthServiceUploadMyAvatar,
 		v1.OperationAuthServiceGetUserAvatar,
+		// 公共值班日历：凭不可猜测的地址令牌匿名只读（管理接口不免检）
+		oncallv1.OperationOncallShareServiceGetPublicCalendar,
 	}
 	if len(authzExemptOperations) != len(want) {
 		t.Fatalf("authzExemptOperations has %d members, want exactly %d", len(authzExemptOperations), len(want))

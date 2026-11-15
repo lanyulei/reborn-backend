@@ -581,7 +581,10 @@ type NeighborsRequest struct {
 	// depth 展开层数，1-3，缺省 2。
 	Depth *int32 `protobuf:"varint,2,opt,name=depth,proto3,oneof" json:"depth,omitempty"`
 	// max_nodes 节点上限，1-500，缺省 200。
-	MaxNodes      *int32 `protobuf:"varint,3,opt,name=max_nodes,json=maxNodes,proto3,oneof" json:"max_nodes,omitempty"`
+	MaxNodes *int32 `protobuf:"varint,3,opt,name=max_nodes,json=maxNodes,proto3,oneof" json:"max_nodes,omitempty"`
+	// flow 展开方向（影响分析）：缺省两个方向；downstream 只沿关系方向向下（本资源影响谁）；
+	// upstream 只逆关系方向向上（本资源依赖谁）。
+	Flow          *string `protobuf:"bytes,4,opt,name=flow,proto3,oneof" json:"flow,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -635,6 +638,13 @@ func (x *NeighborsRequest) GetMaxNodes() int32 {
 		return *x.MaxNodes
 	}
 	return 0
+}
+
+func (x *NeighborsRequest) GetFlow() string {
+	if x != nil && x.Flow != nil {
+		return *x.Flow
+	}
+	return ""
 }
 
 // TopologyNode 拓扑节点。
@@ -924,15 +934,18 @@ const file_cmdb_v1_relation_proto_rawDesc = "" +
 	"\x02ci\x18\x02 \x01(\v2\x0f.cmdb.v1.CmdbCIR\x02ci\"U\n" +
 	"\x13ListRelatedResponse\x12(\n" +
 	"\x05items\x18\x01 \x03(\v2\x12.cmdb.v1.RelatedCIR\x05items\x12\x14\n" +
-	"\x05total\x18\x02 \x01(\x03R\x05total\"\x9d\x01\n" +
+	"\x05total\x18\x02 \x01(\x03R\x05total\"\xdc\x01\n" +
 	"\x10NeighborsRequest\x12\x1d\n" +
 	"\x05ci_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x04ciId\x12$\n" +
 	"\x05depth\x18\x02 \x01(\x05B\t\xbaH\x06\x1a\x04\x18\x03(\x01H\x00R\x05depth\x88\x01\x01\x12,\n" +
 	"\tmax_nodes\x18\x03 \x01(\x05B\n" +
-	"\xbaH\a\x1a\x05\x18\xf4\x03(\x01H\x01R\bmaxNodes\x88\x01\x01B\b\n" +
+	"\xbaH\a\x1a\x05\x18\xf4\x03(\x01H\x01R\bmaxNodes\x88\x01\x01\x124\n" +
+	"\x04flow\x18\x04 \x01(\tB\x1b\xbaH\x18r\x16R\n" +
+	"downstreamR\bupstreamH\x02R\x04flow\x88\x01\x01B\b\n" +
 	"\x06_depthB\f\n" +
 	"\n" +
-	"_max_nodes\"\xb0\x01\n" +
+	"_max_nodesB\a\n" +
+	"\x05_flow\"\xb0\x01\n" +
 	"\fTopologyNode\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1d\n" +

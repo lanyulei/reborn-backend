@@ -116,13 +116,13 @@ func newTestServices(t *testing.T) testServices {
 	cmdbScopeUC := bizcmdb.NewScopeUsecase(cmdbData.Scopes(), authzUC, roleUC, cmdbData.Models())
 	syncData := testfake.NewSyncStore()
 	cmdbSyncUC := bizcmdb.NewSyncUsecase(syncData.Sources(), syncData.Tasks(), syncData.Runs(), &testfake.FakeSealer{Enabled: true})
-	cmdbInsightUC := bizcmdb.NewInsightUsecase(cmdbData.Groups(), cmdbData.Favorites(), cmdbData.Overviews(), cmdbData.SchemaAudits(), cmdbData.Models())
+	cmdbInsightUC := bizcmdb.NewInsightUsecase(cmdbData.Groups(), cmdbData.Favorites(), cmdbData.Overviews(), cmdbData.SchemaAudits(), cmdbData.Models(), cmdbData.CIViews())
 	return testServices{
 		cmdbModel:     cmdbservice.NewCmdbModelService(cmdbModelUC, cmdbScopeUC),
 		cmdbCI:        cmdbservice.NewCmdbCIService(cmdbCIUC, cmdbScopeUC),
 		cmdbRelation:  cmdbservice.NewCmdbRelationService(cmdbRelationUC, cmdbCIUC, cmdbScopeUC),
 		cmdbScope:     cmdbservice.NewCmdbScopeService(cmdbScopeUC),
-		cmdbSync:      cmdbservice.NewCmdbSyncService(cmdbSyncUC),
+		cmdbSync:      cmdbservice.NewCmdbSyncService(cmdbSyncUC, cmdbCIUC, cmdbScopeUC),
 		cmdbInsight:   cmdbservice.NewCmdbInsightService(cmdbInsightUC, cmdbScopeUC),
 		syncData:      syncData,
 		cmdbData:      cmdbData,
@@ -194,6 +194,7 @@ func TestNewHTTPServerWithOptions(t *testing.T) {
 		svc.cmdbScope,
 		svc.cmdbSync,
 		svc.cmdbInsight,
+		nil, nil, nil, // 值班域服务：需要 PostgreSQL，由 data 集成测试覆盖
 		svc.signer,
 		svc.authz,
 	)

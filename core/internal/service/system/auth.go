@@ -124,6 +124,9 @@ func UserIDFromContext(ctx context.Context) (string, error) {
 	return ac.Subject, nil
 }
 
+// ClientIP 导出 clientIP 供其它域的匿名接口按来源限速（判定口径见 clientIP）。
+func ClientIP(ctx context.Context) string { return clientIP(ctx) }
+
 // maxUserAgentBytes 是落库 User-Agent 的截断上限（varchar(255)，实际均为 ASCII）。
 const maxUserAgentBytes = 255
 

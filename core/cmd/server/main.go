@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/lanyulei/reborn/backend/core/internal/conf"
+	"github.com/lanyulei/reborn/backend/core/internal/worker"
 	"github.com/lanyulei/reborn/backend/kit/httpx"
 
 	"github.com/go-kratos/kratos/v3"
@@ -15,6 +16,7 @@ import (
 	"github.com/go-kratos/kratos/v3/config/env"
 	"github.com/go-kratos/kratos/v3/config/file"
 	"github.com/go-kratos/kratos/v3/log"
+	"github.com/go-kratos/kratos/v3/transport"
 	"github.com/go-kratos/kratos/v3/transport/http"
 
 	_ "go.uber.org/automaxprocs"
@@ -36,15 +38,15 @@ func init() {
 	flag.StringVar(&flagconf, "conf", "../../configs", "config path, eg: -conf config.yaml")
 }
 
-// newApp 组装 kratos.App；只做装配（仅 HTTP 服务器）。
-func newApp(logger *slog.Logger, hs *http.Server) *kratos.App {
+// newApp 组装 kratos.App；只做装配（HTTP 服务器 + 值班后台循环）。
+func newApp(logger *slog.Logger, hs *http.Server, oncall *worker.OncallLoops) *kratos.App {
 	return kratos.New(
 		kratos.ID(id),
 		kratos.Name(Name),
 		kratos.Version(Version),
 		kratos.Metadata(map[string]string{}),
 		kratos.Logger(logger),
-		kratos.Server(hs),
+		kratos.Server(append([]transport.Server{hs}, oncall.Servers()...)...),
 	)
 }
 

@@ -171,14 +171,23 @@ func (r *syncSourceRepo) Update(ctx context.Context, src *biz.SyncSource, expect
 
 // SoftDelete implements biz.SyncSourceRepo.
 func (r *syncSourceRepo) SoftDelete(ctx context.Context, id string, now time.Time) error {
-	tag, err := r.data.Pool.Exec(ctx, "UPDATE cmdb_sync_source SET delete_time = $1, enabled = false, update_time = $1 WHERE id = $2 AND delete_time IS NULL", now, id)
-	if err != nil {
-		return fmt.Errorf("soft delete cmdb sync source: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return biz.ErrSourceNotFound
-	}
-	return nil
+	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, "UPDATE cmdb_sync_source SET delete_time = $1, enabled = false, update_time = $1 WHERE id = $2 AND delete_time IS NULL", now, id)
+		if err != nil {
+			return fmt.Errorf("soft delete cmdb sync source: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			return biz.ErrSourceNotFound
+		}
+		// 采集源不再同步：它的冲突清单不会再刷新，一并清理。
+		if _, err := tx.Exec(ctx, "DELETE FROM cmdb_sync_conflict WHERE source = $1", cmdbcontract.SourceOf(id)); err != nil {
+			return fmt.Errorf("clear sync conflicts: %w", err)
+		}
+		if _, err := tx.Exec(ctx, "DELETE FROM cmdb_sync_conflict_stat WHERE source = $1", cmdbcontract.SourceOf(id)); err != nil {
+			return fmt.Errorf("clear sync conflict stat: %w", err)
+		}
+		return nil
+	})
 }
 
 // SetWebhookHash implements biz.SyncSourceRepo.
@@ -289,4 +298,95 @@ func (r *syncRunRepo) ListConflicts(ctx context.Context, sourceID string, page, 
 		items = append(items, &c)
 	}
 	return items, total, rows.Err()
+}
+
+// ClaimConflict implements biz.SyncRunRepo。
+func (r *syncRunRepo) ClaimConflict(ctx context.Context, c *biz.ConflictClaim) error {
+	return mapDeadlock(r.claimConflict(ctx, c))
+}
+
+func (r *syncRunRepo) claimConflict(ctx context.Context, c *biz.ConflictClaim) error {
+	source := cmdbcontract.SourceOf(c.SourceID)
+	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+		// 与对账互斥（对账事务全程持有同一把锁的共享模式）：认领期间不会有新的同锚点资源写入。
+		if err := lockWithTimeout(ctx, tx, c.ModelCode, uniqueRuleLockSQL); err != nil {
+			return err
+		}
+		var name string
+		err := tx.QueryRow(ctx,
+			"SELECT name FROM cmdb_sync_conflict WHERE source = $1 AND model_code = $2 AND external_id = $3",
+			source, c.ModelCode, c.ExternalID).Scan(&name)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return biz.ErrConflictNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("check sync conflict: %w", err)
+		}
+		// 采集到的名称若被"另一条"资源占用，认领这条资源解决不了冲突（下次同步仍会因重名跳过），
+		// 而认领又不可撤销——直接拒绝，提示去认领占用名称的那条。
+		var heldByOther bool
+		if err := tx.QueryRow(ctx,
+			"SELECT EXISTS (SELECT 1 FROM cmdb_ci WHERE model_code = $1 AND name = $2 AND id <> $3 AND delete_time IS NULL)",
+			c.ModelCode, name, c.CIID).Scan(&heldByOther); err != nil {
+			return fmt.Errorf("check conflicting name: %w", err)
+		}
+		if heldByOther {
+			return biz.ErrClaimWrongTarget
+		}
+		var taken bool
+		if err := tx.QueryRow(ctx,
+			`SELECT EXISTS (SELECT 1 FROM cmdb_ci WHERE model_code = $1 AND source = $2 AND external_id = $3 AND delete_time IS NULL)`,
+			c.ModelCode, source, c.ExternalID).Scan(&taken); err != nil {
+			return fmt.Errorf("check external id: %w", err)
+		}
+		if taken {
+			return biz.DuplicateExternalID()
+		}
+		var oldSource, oldExternal string
+		err = tx.QueryRow(ctx,
+			"SELECT source, external_id FROM cmdb_ci WHERE id = $1 AND model_code = $2 AND delete_time IS NULL FOR UPDATE",
+			c.CIID, c.ModelCode).Scan(&oldSource, &oldExternal)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return biz.ErrCINotFound
+		}
+		if err != nil {
+			return fmt.Errorf("load cmdb ci: %w", err)
+		}
+		if oldSource != biz.SourceManual {
+			return biz.ErrClaimNotManual
+		}
+		if _, err := tx.Exec(ctx,
+			`UPDATE cmdb_ci SET source = $2, external_id = $3, version = version + 1, update_user = $4, update_time = $5 WHERE id = $1`,
+			c.CIID, source, c.ExternalID, dbx.NilIfEmpty(c.Actor.UserID), c.At); err != nil {
+			return fmt.Errorf("claim cmdb ci: %w", err)
+		}
+		h := &biz.History{
+			ID: c.HistoryID, CIID: c.CIID, Action: biz.ActionUpdate, Operator: c.Actor.UserID, Source: biz.SourceManual,
+			RequestID: c.Actor.RequestID, CreateTime: c.At,
+			Diff: map[string]any{
+				"before": map[string]any{"source": oldSource, "externalId": oldExternal},
+				"after":  map[string]any{"source": source, "externalId": c.ExternalID},
+			},
+		}
+		if err := insertHistories(ctx, tx, []*biz.History{h}); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, "DELETE FROM cmdb_sync_conflict WHERE source = $1 AND model_code = $2 AND external_id = $3",
+			source, c.ModelCode, c.ExternalID); err != nil {
+			return fmt.Errorf("clear sync conflict: %w", err)
+		}
+		return nil
+	})
+}
+
+// ConflictsCapped implements biz.SyncRunRepo。
+func (r *syncRunRepo) ConflictsCapped(ctx context.Context, sourceID string) (bool, error) {
+	// 以数据面记录的真实总数为准（最近一次对账；认领 / 清理清单不会让它漂移）。
+	var capped bool
+	if err := r.data.Pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM cmdb_sync_conflict_stat WHERE source = $1 AND total > $2)`,
+		cmdbcontract.SourceOf(sourceID), cmdbcontract.ConflictStoreLimit).Scan(&capped); err != nil {
+		return false, fmt.Errorf("check cmdb sync conflict cap: %w", err)
+	}
+	return capped, nil
 }

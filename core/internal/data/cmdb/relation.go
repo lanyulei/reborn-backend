@@ -252,7 +252,7 @@ const neighborsRowsPerNode = 4
 
 // Neighbors implements biz.RelationRepo：逐层 BFS（每层一条 SQL，层数 ≤3），两个方向同时展开；
 // 边按关系 ID 去重，节点达上限或单层行数达上限即停止并报告截断。
-func (r *relationRepo) Neighbors(ctx context.Context, ciID string, depth, maxNodes int32) ([]*biz.TopologyNode, []*biz.TopologyEdge, bool, error) {
+func (r *relationRepo) Neighbors(ctx context.Context, ciID, flow string, depth, maxNodes int32) ([]*biz.TopologyNode, []*biz.TopologyEdge, bool, error) {
 	var root biz.TopologyNode
 	if err := r.data.Pool.QueryRow(ctx,
 		`SELECT c.id, c.name, c.model_code, m.name, c.status, c.env FROM cmdb_ci c JOIN cmdb_model m ON m.code = c.model_code
@@ -270,14 +270,22 @@ func (r *relationRepo) Neighbors(ctx context.Context, ciID string, depth, maxNod
 	frontier := []string{ciID}
 	truncated := false
 	rowLimit := int(maxNodes) * neighborsRowsPerNode
+	// 展开方向：对端列与命中条件（均走 idx_cmdb_relation_src / _dst）。
+	peer, match := "CASE WHEN r.src_id = ANY($1::uuid[]) THEN r.dst_id ELSE r.src_id END", "(r.src_id = ANY($1::uuid[]) OR r.dst_id = ANY($1::uuid[]))"
+	switch flow {
+	case biz.FlowDownstream:
+		peer, match = "r.dst_id", "r.src_id = ANY($1::uuid[])"
+	case biz.FlowUpstream:
+		peer, match = "r.src_id", "r.dst_id = ANY($1::uuid[])"
+	}
 	for level := int32(1); level <= depth && len(frontier) > 0 && !truncated; level++ {
 		rows, err := r.data.Pool.Query(ctx,
 			`SELECT r.id, r.type_code, t.forward_name, r.src_id, r.dst_id, c.id, c.name, c.model_code, m.name, c.status, c.env
 			 FROM cmdb_relation r
 			 JOIN cmdb_relation_type t ON t.code = r.type_code
-			 JOIN cmdb_ci c ON c.id = CASE WHEN r.src_id = ANY($1::uuid[]) THEN r.dst_id ELSE r.src_id END
+			 JOIN cmdb_ci c ON c.id = `+peer+`
 			 JOIN cmdb_model m ON m.code = c.model_code
-			 WHERE (r.src_id = ANY($1::uuid[]) OR r.dst_id = ANY($1::uuid[])) AND c.delete_time IS NULL
+			 WHERE `+match+` AND c.delete_time IS NULL
 			 ORDER BY c.name, r.id LIMIT $2`, dbx.TextArray(frontier), rowLimit+1)
 		if err != nil {
 			return nil, nil, false, fmt.Errorf("topology level %d: %w", level, err)
@@ -331,4 +339,29 @@ func (r *relationRepo) Neighbors(ctx context.Context, ciID string, depth, maxNod
 		kept = []*biz.TopologyEdge{}
 	}
 	return nodes, kept, truncated, nil
+}
+
+// ListForExport implements biz.RelationRepo（走 idx_cmdb_relation_src / _dst）。
+func (r *relationRepo) ListForExport(ctx context.Context, ciIDs []string) ([]*biz.ExportRelation, error) {
+	rows, err := r.data.Pool.Query(ctx,
+		`SELECT x.ci_id::text, x.type_code, x.direction, p.model_code, p.name, p.env
+		 FROM (
+		     SELECT r.src_id AS ci_id, r.type_code, $2::text AS direction, r.dst_id AS peer_id FROM cmdb_relation r WHERE r.src_id = ANY($1::uuid[])
+		     UNION ALL
+		     SELECT r.dst_id, r.type_code, $3::text, r.src_id FROM cmdb_relation r WHERE r.dst_id = ANY($1::uuid[])
+		 ) x JOIN cmdb_ci p ON p.id = x.peer_id AND p.delete_time IS NULL
+		 ORDER BY x.ci_id, x.type_code, x.direction, p.name`, dbx.TextArray(ciIDs), biz.DirectionOutgoing, biz.DirectionIncoming)
+	if err != nil {
+		return nil, fmt.Errorf("list relations for export: %w", err)
+	}
+	defer rows.Close()
+	items := make([]*biz.ExportRelation, 0, len(ciIDs))
+	for rows.Next() {
+		var e biz.ExportRelation
+		if err := rows.Scan(&e.CIID, &e.TypeCode, &e.Direction, &e.PeerModel, &e.PeerName, &e.PeerEnv); err != nil {
+			return nil, fmt.Errorf("scan relation for export: %w", err)
+		}
+		items = append(items, &e)
+	}
+	return items, rows.Err()
 }

@@ -38,7 +38,7 @@ func newIntegrationCmdbData(t *testing.T) *basedata.Data {
 	}
 	t.Cleanup(cleanup)
 	ctx := context.Background()
-	if _, err := d.Pool.Exec(ctx, "TRUNCATE TABLE cmdb_sync_staging, cmdb_sync_run, cmdb_sync_task, cmdb_sync_source, cmdb_relation, cmdb_ci_history, cmdb_ci, cmdb_ci_unique, cmdb_model_unique_rule, cmdb_model_field, cmdb_relation_type, cmdb_model_view, cmdb_role_scope, cmdb_model CASCADE"); err != nil {
+	if _, err := d.Pool.Exec(ctx, "TRUNCATE TABLE cmdb_ci_view, cmdb_sync_conflict_stat, cmdb_sync_conflict, cmdb_sync_staging, cmdb_sync_run, cmdb_sync_task, cmdb_sync_source, cmdb_relation, cmdb_ci_history, cmdb_ci, cmdb_ci_unique, cmdb_model_unique_rule, cmdb_model_field, cmdb_relation_type, cmdb_model_view, cmdb_role_scope, cmdb_model CASCADE"); err != nil {
 		t.Fatalf("truncate cmdb tables: %v", err)
 	}
 	return d
@@ -388,14 +388,21 @@ func TestIntegration_CmdbSearchAndTopology(t *testing.T) {
 	if hits, _ = cis.Search(ctx, biz.SearchFilter{Query: "%", Limit: 10}); len(hits) != 0 {
 		t.Fatalf("LIKE metachar must be escaped, got %d", len(hits))
 	}
-	nodes, edges, truncated, err := rels.Neighbors(ctx, h1, 2, 10)
+	nodes, edges, truncated, err := rels.Neighbors(ctx, h1, "", 2, 10)
 	if err != nil || truncated || len(nodes) != 3 || len(edges) != 2 || nodes[0].ID != h1 || nodes[1].Depth != 1 || nodes[2].Depth != 2 || nodes[2].ID != h2 {
 		t.Fatalf("neighbors = %+v edges=%d trunc=%v err=%v", nodes, len(edges), truncated, err)
 	}
-	if nodes, edges, truncated, _ := rels.Neighbors(ctx, h1, 3, 2); len(nodes) != 2 || !truncated || len(edges) != 1 {
+	if nodes, edges, truncated, _ := rels.Neighbors(ctx, h1, "", 3, 2); len(nodes) != 2 || !truncated || len(edges) != 1 {
 		t.Fatalf("truncated neighbors = %d edges=%d trunc=%v", len(nodes), len(edges), truncated)
 	}
-	if _, _, _, err := rels.Neighbors(ctx, mustID(t), 1, 10); !errors.Is(err, biz.ErrCINotFound) {
+	// 影响分析：下游只沿关系方向（h1 → 对端，不折返到 h2）；上游为逆方向（h1 没有上游）。
+	if nodes, edges, _, err := rels.Neighbors(ctx, h1, biz.FlowDownstream, 3, 10); err != nil || len(nodes) != 2 || len(edges) != 1 || edges[0].SrcID != h1 {
+		t.Fatalf("downstream = %+v edges=%+v err=%v", nodes, edges, err)
+	}
+	if nodes, edges, _, err := rels.Neighbors(ctx, h1, biz.FlowUpstream, 3, 10); err != nil || len(nodes) != 1 || len(edges) != 0 {
+		t.Fatalf("upstream = %+v edges=%+v err=%v", nodes, edges, err)
+	}
+	if _, _, _, err := rels.Neighbors(ctx, mustID(t), "", 1, 10); !errors.Is(err, biz.ErrCINotFound) {
 		t.Fatalf("unknown root error = %v", err)
 	}
 }

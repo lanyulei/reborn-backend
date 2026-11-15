@@ -267,6 +267,10 @@ type run struct {
 	tools    []ToolSpec           // 本用户可用工具
 	system   string
 	awaiting bool
+	// routed 工具按模块加载（可用工具很多时）：modules 为可加载的模块，active 为已加载的。
+	routed  bool
+	modules []string
+	active  map[string]bool
 }
 
 // load 加载最近历史（至多 historyLoadLimit 条）、工具目录（按权限过滤）与
@@ -297,7 +301,8 @@ func (r *run) load(ctx context.Context) error {
 		return err
 	}
 	r.tools = filterTools(r.uc.catalog, isAdmin, allowed)
-	r.system = buildSystemPrompt(username, nickname, isAdmin)
+	r.initModules()
+	r.system = buildSystemPrompt(username, nickname, isAdmin, r.routed)
 	return nil
 }
 
@@ -360,7 +365,7 @@ func (r *run) applyConfirmation(ctx context.Context) error {
 // loop 模型 ⇄ 工具循环，直到模型不再调用工具、需要确认或达到步数上限。
 func (r *run) loop(ctx context.Context) error {
 	for step := 0; step < r.uc.cfg.MaxSteps; step++ {
-		completion, err := r.uc.model.Stream(ctx, ChatRequest{System: r.system, Messages: contextWindow(r.messages), Tools: r.tools}, r.onDelta)
+		completion, err := r.uc.model.Stream(ctx, ChatRequest{System: r.system, Messages: contextWindow(r.messages), Tools: r.offeredTools()}, r.onDelta)
 		if err != nil {
 			return r.fail(ctx, err)
 		}
@@ -412,6 +417,9 @@ func (r *run) onDelta(d Delta) error {
 // dispatch 处理模型发出的一个工具调用：建审计记录；读操作立即执行，写操作
 // 置 pending 等确认；未知工具/非法参数直接以失败回灌模型。
 func (r *run) dispatch(ctx context.Context, assistant *Message, ref ToolCallRef) error {
+	if r.routed && ref.Name == LoadToolsName {
+		return r.loadModules(ctx, ref)
+	}
 	id, err := idgen.NewID()
 	if err != nil {
 		return err
@@ -440,6 +448,10 @@ func (r *run) dispatch(ctx context.Context, assistant *Message, ref ToolCallRef)
 		return r.settle(ctx, tc, ToolStatusFailed, nil, "未知工具或当前用户无权使用："+ref.Name)
 	}
 	tc.Title, tc.Operation, tc.OperationCode, tc.Write = spec.Title, spec.Operation, spec.Code, spec.Write
+	if r.routed {
+		// 直接调用了尚未加载模块的工具（如沿用历史里的调用）：照常执行，并把模块带上。
+		r.active[spec.Module] = true
+	}
 	if spec.Write {
 		tc.Status = ToolStatusPending
 	}
@@ -506,6 +518,34 @@ func (r *run) execute(ctx context.Context, tc *ToolCall) error {
 	}
 }
 
+// scrubArguments 调用有了终态之后，把历史里该调用的原始参数换成打码后的副本并落库：
+// 原始参数只为执行保留（待确认的写操作要等用户裁决），执行完就不该再明文留在对话
+// 历史里，也不该在后续轮次再发给模型（如重置密码的新密码）。没有敏感键时不产生写入；
+// 落库失败只记日志——内存里的副本已打码，本轮后续请求不再带出明文。
+func (r *run) scrubArguments(ctx context.Context, callID string) {
+	for i := len(r.messages) - 1; i >= 0; i-- {
+		m := r.messages[i]
+		if m.Role != RoleAssistant {
+			continue
+		}
+		for j := range m.ToolCalls {
+			if m.ToolCalls[j].ID != callID {
+				continue
+			}
+			raw := m.ToolCalls[j].Arguments
+			masked := string(MaskJSON(json.RawMessage(raw)))
+			if masked == raw {
+				return
+			}
+			m.ToolCalls[j].Arguments = masked
+			if err := r.uc.msgs.UpdateToolCalls(ctx, m); err != nil {
+				r.uc.logger.ErrorContext(ctx, "assistant: scrub tool call arguments", "message", m.ID, "error", err)
+			}
+			return
+		}
+	}
+}
+
 // rawArguments 从历史 assistant 消息取该调用（模型侧 ID）的原始参数（未脱敏）。
 func (r *run) rawArguments(callID string) json.RawMessage {
 	for i := len(r.messages) - 1; i >= 0; i-- {
@@ -544,6 +584,7 @@ func (r *run) settle(ctx context.Context, tc *ToolCall, status string, output js
 	if err := r.uc.calls.Finish(wctx, tc); err != nil {
 		return err
 	}
+	r.scrubArguments(wctx, tc.CallID)
 	var content string
 	if status == ToolStatusSucceeded {
 		content = string(tc.Output)
@@ -736,7 +777,7 @@ func toolPayload(tc *ToolCall) ToolCallPayload {
 }
 
 // buildSystemPrompt 组装 system prompt：稳定规则在前（利于模型侧缓存），用户信息在后。
-func buildSystemPrompt(username, nickname string, isAdmin bool) string {
+func buildSystemPrompt(username, nickname string, isAdmin, routed bool) string {
 	var b strings.Builder
 	b.WriteString("你是管理后台的智能助手，以当前登录用户的身份通过工具操作系统。\n")
 	b.WriteString("规则：\n")
@@ -746,6 +787,9 @@ func buildSystemPrompt(username, nickname string, isAdmin bool) string {
 	b.WriteString("4. 工具返回无权限（denied）时如实告知用户缺少相应权限，不要尝试绕过。\n")
 	b.WriteString("5. 列表查询优先小分页（page_size 不超过 20），需要更多再翻页；先查询确认目标再执行修改。\n")
 	b.WriteString("6. 用中文简洁作答；展示多条数据时用 Markdown 表格；不要输出内部 ID 以外的无关细节。\n")
+	if routed {
+		b.WriteString("7. 工具按功能模块加载：需要某个模块的功能时先调用 " + LoadToolsName + " 加载它，再调用具体工具；已加载的模块在本会话内保持可用，不必重复加载。\n")
+	}
 	b.WriteString("当前用户：")
 	b.WriteString(username)
 	if nickname != "" && nickname != username {

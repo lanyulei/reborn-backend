@@ -1400,7 +1400,9 @@ type ListConflictsResponse struct {
 	// items 当前页数据（最早出现的在前）。
 	Items []*SyncConflict `protobuf:"bytes,1,rep,name=items,proto3" json:"items,omitempty"`
 	// total 总数。
-	Total         int64 `protobuf:"varint,2,opt,name=total,proto3" json:"total,omitempty"`
+	Total int64 `protobuf:"varint,2,opt,name=total,proto3" json:"total,omitempty"`
+	// capped 清单不完整：某个类型的冲突数达到留存上限，其余未列出（应先排查唯一规则 / 采集配置）。
+	Capped        bool `protobuf:"varint,3,opt,name=capped,proto3" json:"capped,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1449,6 +1451,123 @@ func (x *ListConflictsResponse) GetTotal() int64 {
 	return 0
 }
 
+func (x *ListConflictsResponse) GetCapped() bool {
+	if x != nil {
+		return x.Capped
+	}
+	return false
+}
+
+// ClaimConflictRequest 认领同步冲突请求。
+type ClaimConflictRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// id 采集源标识。
+	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	// model_code 冲突行的资源类型。
+	ModelCode string `protobuf:"bytes,2,opt,name=model_code,json=modelCode,proto3" json:"model_code,omitempty"`
+	// external_id 冲突行的外部标识。
+	ExternalId string `protobuf:"bytes,3,opt,name=external_id,json=externalId,proto3" json:"external_id,omitempty"`
+	// ci_id 要绑定的已有资源（须为同类型的人工资源）。
+	CiId          string `protobuf:"bytes,4,opt,name=ci_id,json=ciId,proto3" json:"ci_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ClaimConflictRequest) Reset() {
+	*x = ClaimConflictRequest{}
+	mi := &file_cmdb_v1_sync_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClaimConflictRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClaimConflictRequest) ProtoMessage() {}
+
+func (x *ClaimConflictRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cmdb_v1_sync_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClaimConflictRequest.ProtoReflect.Descriptor instead.
+func (*ClaimConflictRequest) Descriptor() ([]byte, []int) {
+	return file_cmdb_v1_sync_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *ClaimConflictRequest) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *ClaimConflictRequest) GetModelCode() string {
+	if x != nil {
+		return x.ModelCode
+	}
+	return ""
+}
+
+func (x *ClaimConflictRequest) GetExternalId() string {
+	if x != nil {
+		return x.ExternalId
+	}
+	return ""
+}
+
+func (x *ClaimConflictRequest) GetCiId() string {
+	if x != nil {
+		return x.CiId
+	}
+	return ""
+}
+
+// ClaimConflictResponse 认领同步冲突响应。
+type ClaimConflictResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ClaimConflictResponse) Reset() {
+	*x = ClaimConflictResponse{}
+	mi := &file_cmdb_v1_sync_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClaimConflictResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClaimConflictResponse) ProtoMessage() {}
+
+func (x *ClaimConflictResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_cmdb_v1_sync_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClaimConflictResponse.ProtoReflect.Descriptor instead.
+func (*ClaimConflictResponse) Descriptor() ([]byte, []int) {
+	return file_cmdb_v1_sync_proto_rawDescGZIP(), []int{20}
+}
+
 // RotateWebhookRequest 轮换回调令牌请求。
 type RotateWebhookRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -1460,7 +1579,7 @@ type RotateWebhookRequest struct {
 
 func (x *RotateWebhookRequest) Reset() {
 	*x = RotateWebhookRequest{}
-	mi := &file_cmdb_v1_sync_proto_msgTypes[19]
+	mi := &file_cmdb_v1_sync_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1472,7 +1591,7 @@ func (x *RotateWebhookRequest) String() string {
 func (*RotateWebhookRequest) ProtoMessage() {}
 
 func (x *RotateWebhookRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cmdb_v1_sync_proto_msgTypes[19]
+	mi := &file_cmdb_v1_sync_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1485,7 +1604,7 @@ func (x *RotateWebhookRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RotateWebhookRequest.ProtoReflect.Descriptor instead.
 func (*RotateWebhookRequest) Descriptor() ([]byte, []int) {
-	return file_cmdb_v1_sync_proto_rawDescGZIP(), []int{19}
+	return file_cmdb_v1_sync_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *RotateWebhookRequest) GetId() string {
@@ -1510,7 +1629,7 @@ type RotateWebhookResponse struct {
 
 func (x *RotateWebhookResponse) Reset() {
 	*x = RotateWebhookResponse{}
-	mi := &file_cmdb_v1_sync_proto_msgTypes[20]
+	mi := &file_cmdb_v1_sync_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1522,7 +1641,7 @@ func (x *RotateWebhookResponse) String() string {
 func (*RotateWebhookResponse) ProtoMessage() {}
 
 func (x *RotateWebhookResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cmdb_v1_sync_proto_msgTypes[20]
+	mi := &file_cmdb_v1_sync_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1535,7 +1654,7 @@ func (x *RotateWebhookResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RotateWebhookResponse.ProtoReflect.Descriptor instead.
 func (*RotateWebhookResponse) Descriptor() ([]byte, []int) {
-	return file_cmdb_v1_sync_proto_rawDescGZIP(), []int{20}
+	return file_cmdb_v1_sync_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *RotateWebhookResponse) GetToken() string {
@@ -1570,7 +1689,7 @@ type DisableWebhookRequest struct {
 
 func (x *DisableWebhookRequest) Reset() {
 	*x = DisableWebhookRequest{}
-	mi := &file_cmdb_v1_sync_proto_msgTypes[21]
+	mi := &file_cmdb_v1_sync_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1582,7 +1701,7 @@ func (x *DisableWebhookRequest) String() string {
 func (*DisableWebhookRequest) ProtoMessage() {}
 
 func (x *DisableWebhookRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cmdb_v1_sync_proto_msgTypes[21]
+	mi := &file_cmdb_v1_sync_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1595,7 +1714,7 @@ func (x *DisableWebhookRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DisableWebhookRequest.ProtoReflect.Descriptor instead.
 func (*DisableWebhookRequest) Descriptor() ([]byte, []int) {
-	return file_cmdb_v1_sync_proto_rawDescGZIP(), []int{21}
+	return file_cmdb_v1_sync_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *DisableWebhookRequest) GetId() string {
@@ -1614,7 +1733,7 @@ type DisableWebhookResponse struct {
 
 func (x *DisableWebhookResponse) Reset() {
 	*x = DisableWebhookResponse{}
-	mi := &file_cmdb_v1_sync_proto_msgTypes[22]
+	mi := &file_cmdb_v1_sync_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1626,7 +1745,7 @@ func (x *DisableWebhookResponse) String() string {
 func (*DisableWebhookResponse) ProtoMessage() {}
 
 func (x *DisableWebhookResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cmdb_v1_sync_proto_msgTypes[22]
+	mi := &file_cmdb_v1_sync_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1639,7 +1758,7 @@ func (x *DisableWebhookResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DisableWebhookResponse.ProtoReflect.Descriptor instead.
 func (*DisableWebhookResponse) Descriptor() ([]byte, []int) {
-	return file_cmdb_v1_sync_proto_rawDescGZIP(), []int{22}
+	return file_cmdb_v1_sync_proto_rawDescGZIP(), []int{24}
 }
 
 var File_cmdb_v1_sync_proto protoreflect.FileDescriptor
@@ -1772,10 +1891,20 @@ const file_cmdb_v1_sync_proto_rawDesc = "" +
 	"\x06reason\x18\x05 \x01(\tR\x06reason\x129\n" +
 	"\n" +
 	"first_seen\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tfirstSeen\x127\n" +
-	"\tlast_seen\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\blastSeen\"Z\n" +
+	"\tlast_seen\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\blastSeen\"r\n" +
 	"\x15ListConflictsResponse\x12+\n" +
 	"\x05items\x18\x01 \x03(\v2\x15.cmdb.v1.SyncConflictR\x05items\x12\x14\n" +
-	"\x05total\x18\x02 \x01(\x03R\x05total\"0\n" +
+	"\x05total\x18\x02 \x01(\x03R\x05total\x12\x16\n" +
+	"\x06capped\x18\x03 \x01(\bR\x06capped\"\xa6\x01\n" +
+	"\x14ClaimConflictRequest\x12\x18\n" +
+	"\x02id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\x12(\n" +
+	"\n" +
+	"model_code\x18\x02 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@R\tmodelCode\x12+\n" +
+	"\vexternal_id\x18\x03 \x01(\tB\n" +
+	"\xbaH\ar\x05\x10\x01\x18\x80\x01R\n" +
+	"externalId\x12\x1d\n" +
+	"\x05ci_id\x18\x04 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x04ciId\"\x17\n" +
+	"\x15ClaimConflictResponse\"0\n" +
 	"\x14RotateWebhookRequest\x12\x18\n" +
 	"\x02id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\"Y\n" +
 	"\x15RotateWebhookResponse\x12\x14\n" +
@@ -1784,7 +1913,7 @@ const file_cmdb_v1_sync_proto_rawDesc = "" +
 	"\x06header\x18\x03 \x01(\tR\x06header\"1\n" +
 	"\x15DisableWebhookRequest\x12\x18\n" +
 	"\x02id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\"\x18\n" +
-	"\x16DisableWebhookResponse2\x8e\v\n" +
+	"\x16DisableWebhookResponse2\xae\f\n" +
 	"\x0fCmdbSyncService\x12\x83\x01\n" +
 	"\vListSources\x12\x1b.cmdb.v1.ListSourcesRequest\x1a\x1c.cmdb.v1.ListSourcesResponse\"9\xc2\xf3\x18\x15查询采集源列表\x82\xd3\xe4\x93\x02\x1a\x12\x18/api/v1/cmdb/sync/source\x12\x82\x01\n" +
 	"\tGetSource\x12\x19.cmdb.v1.GetSourceRequest\x1a\x1a.cmdb.v1.GetSourceResponse\">\xc2\xf3\x18\x15查询采集源详情\x82\xd3\xe4\x93\x02\x1f\x12\x1d/api/v1/cmdb/sync/source/{id}\x12\x83\x01\n" +
@@ -1793,7 +1922,8 @@ const file_cmdb_v1_sync_proto_rawDesc = "" +
 	"\fDeleteSource\x12\x1c.cmdb.v1.DeleteSourceRequest\x1a\x1d.cmdb.v1.DeleteSourceResponse\"8\xc2\xf3\x18\x0f删除采集源\x82\xd3\xe4\x93\x02\x1f*\x1d/api/v1/cmdb/sync/source/{id}\x12\x8a\x01\n" +
 	"\vTriggerSync\x12\x1b.cmdb.v1.TriggerSyncRequest\x1a\x1c.cmdb.v1.TriggerSyncResponse\"@\xc2\xf3\x18\f触发同步\x82\xd3\xe4\x93\x02*:\x01*\"%/api/v1/cmdb/sync/source/{id}:trigger\x12\x86\x01\n" +
 	"\bListRuns\x12\x18.cmdb.v1.ListRunsRequest\x1a\x19.cmdb.v1.ListRunsResponse\"E\xc2\xf3\x18\x18查询同步运行记录\x82\xd3\xe4\x93\x02#\x12!/api/v1/cmdb/sync/source/{id}/run\x12\x94\x01\n" +
-	"\rListConflicts\x12\x1d.cmdb.v1.ListConflictsRequest\x1a\x1e.cmdb.v1.ListConflictsResponse\"D\xc2\xf3\x18\x12查询同步冲突\x82\xd3\xe4\x93\x02(\x12&/api/v1/cmdb/sync/source/{id}/conflict\x12\x96\x01\n" +
+	"\rListConflicts\x12\x1d.cmdb.v1.ListConflictsRequest\x1a\x1e.cmdb.v1.ListConflictsResponse\"D\xc2\xf3\x18\x12查询同步冲突\x82\xd3\xe4\x93\x02(\x12&/api/v1/cmdb/sync/source/{id}/conflict\x12\x9d\x01\n" +
+	"\rClaimConflict\x12\x1d.cmdb.v1.ClaimConflictRequest\x1a\x1e.cmdb.v1.ClaimConflictResponse\"M\xc2\xf3\x18\x12认领同步冲突\x82\xd3\xe4\x93\x021:\x01*\",/api/v1/cmdb/sync/source/{id}/conflict:claim\x12\x96\x01\n" +
 	"\rRotateWebhook\x12\x1d.cmdb.v1.RotateWebhookRequest\x1a\x1e.cmdb.v1.RotateWebhookResponse\"F\xc2\xf3\x18\x12轮换回调令牌\x82\xd3\xe4\x93\x02*:\x01*\"%/api/v1/cmdb/sync/source/{id}/webhook\x12\x90\x01\n" +
 	"\x0eDisableWebhook\x12\x1e.cmdb.v1.DisableWebhookRequest\x1a\x1f.cmdb.v1.DisableWebhookResponse\"=\xc2\xf3\x18\f停用回调\x82\xd3\xe4\x93\x02'*%/api/v1/cmdb/sync/source/{id}/webhookB8Z6github.com/lanyulei/reborn/backend/core/api/cmdb/v1;v1b\x06proto3"
 
@@ -1809,7 +1939,7 @@ func file_cmdb_v1_sync_proto_rawDescGZIP() []byte {
 	return file_cmdb_v1_sync_proto_rawDescData
 }
 
-var file_cmdb_v1_sync_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
+var file_cmdb_v1_sync_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
 var file_cmdb_v1_sync_proto_goTypes = []any{
 	(*SyncSource)(nil),             // 0: cmdb.v1.SyncSource
 	(*SyncRun)(nil),                // 1: cmdb.v1.SyncRun
@@ -1830,31 +1960,33 @@ var file_cmdb_v1_sync_proto_goTypes = []any{
 	(*ListConflictsRequest)(nil),   // 16: cmdb.v1.ListConflictsRequest
 	(*SyncConflict)(nil),           // 17: cmdb.v1.SyncConflict
 	(*ListConflictsResponse)(nil),  // 18: cmdb.v1.ListConflictsResponse
-	(*RotateWebhookRequest)(nil),   // 19: cmdb.v1.RotateWebhookRequest
-	(*RotateWebhookResponse)(nil),  // 20: cmdb.v1.RotateWebhookResponse
-	(*DisableWebhookRequest)(nil),  // 21: cmdb.v1.DisableWebhookRequest
-	(*DisableWebhookResponse)(nil), // 22: cmdb.v1.DisableWebhookResponse
-	(*structpb.Struct)(nil),        // 23: google.protobuf.Struct
-	(*timestamppb.Timestamp)(nil),  // 24: google.protobuf.Timestamp
+	(*ClaimConflictRequest)(nil),   // 19: cmdb.v1.ClaimConflictRequest
+	(*ClaimConflictResponse)(nil),  // 20: cmdb.v1.ClaimConflictResponse
+	(*RotateWebhookRequest)(nil),   // 21: cmdb.v1.RotateWebhookRequest
+	(*RotateWebhookResponse)(nil),  // 22: cmdb.v1.RotateWebhookResponse
+	(*DisableWebhookRequest)(nil),  // 23: cmdb.v1.DisableWebhookRequest
+	(*DisableWebhookResponse)(nil), // 24: cmdb.v1.DisableWebhookResponse
+	(*structpb.Struct)(nil),        // 25: google.protobuf.Struct
+	(*timestamppb.Timestamp)(nil),  // 26: google.protobuf.Timestamp
 }
 var file_cmdb_v1_sync_proto_depIdxs = []int32{
-	23, // 0: cmdb.v1.SyncSource.config:type_name -> google.protobuf.Struct
-	24, // 1: cmdb.v1.SyncSource.next_run_time:type_name -> google.protobuf.Timestamp
-	24, // 2: cmdb.v1.SyncSource.last_run_time:type_name -> google.protobuf.Timestamp
-	24, // 3: cmdb.v1.SyncSource.create_time:type_name -> google.protobuf.Timestamp
-	24, // 4: cmdb.v1.SyncSource.update_time:type_name -> google.protobuf.Timestamp
-	23, // 5: cmdb.v1.SyncRun.errors:type_name -> google.protobuf.Struct
-	24, // 6: cmdb.v1.SyncRun.start_time:type_name -> google.protobuf.Timestamp
-	24, // 7: cmdb.v1.SyncRun.finish_time:type_name -> google.protobuf.Timestamp
+	25, // 0: cmdb.v1.SyncSource.config:type_name -> google.protobuf.Struct
+	26, // 1: cmdb.v1.SyncSource.next_run_time:type_name -> google.protobuf.Timestamp
+	26, // 2: cmdb.v1.SyncSource.last_run_time:type_name -> google.protobuf.Timestamp
+	26, // 3: cmdb.v1.SyncSource.create_time:type_name -> google.protobuf.Timestamp
+	26, // 4: cmdb.v1.SyncSource.update_time:type_name -> google.protobuf.Timestamp
+	25, // 5: cmdb.v1.SyncRun.errors:type_name -> google.protobuf.Struct
+	26, // 6: cmdb.v1.SyncRun.start_time:type_name -> google.protobuf.Timestamp
+	26, // 7: cmdb.v1.SyncRun.finish_time:type_name -> google.protobuf.Timestamp
 	0,  // 8: cmdb.v1.ListSourcesResponse.items:type_name -> cmdb.v1.SyncSource
 	0,  // 9: cmdb.v1.GetSourceResponse.source:type_name -> cmdb.v1.SyncSource
-	23, // 10: cmdb.v1.CreateSourceRequest.config:type_name -> google.protobuf.Struct
+	25, // 10: cmdb.v1.CreateSourceRequest.config:type_name -> google.protobuf.Struct
 	0,  // 11: cmdb.v1.CreateSourceResponse.source:type_name -> cmdb.v1.SyncSource
-	23, // 12: cmdb.v1.UpdateSourceRequest.config:type_name -> google.protobuf.Struct
+	25, // 12: cmdb.v1.UpdateSourceRequest.config:type_name -> google.protobuf.Struct
 	0,  // 13: cmdb.v1.UpdateSourceResponse.source:type_name -> cmdb.v1.SyncSource
 	1,  // 14: cmdb.v1.ListRunsResponse.items:type_name -> cmdb.v1.SyncRun
-	24, // 15: cmdb.v1.SyncConflict.first_seen:type_name -> google.protobuf.Timestamp
-	24, // 16: cmdb.v1.SyncConflict.last_seen:type_name -> google.protobuf.Timestamp
+	26, // 15: cmdb.v1.SyncConflict.first_seen:type_name -> google.protobuf.Timestamp
+	26, // 16: cmdb.v1.SyncConflict.last_seen:type_name -> google.protobuf.Timestamp
 	17, // 17: cmdb.v1.ListConflictsResponse.items:type_name -> cmdb.v1.SyncConflict
 	2,  // 18: cmdb.v1.CmdbSyncService.ListSources:input_type -> cmdb.v1.ListSourcesRequest
 	4,  // 19: cmdb.v1.CmdbSyncService.GetSource:input_type -> cmdb.v1.GetSourceRequest
@@ -1864,20 +1996,22 @@ var file_cmdb_v1_sync_proto_depIdxs = []int32{
 	12, // 23: cmdb.v1.CmdbSyncService.TriggerSync:input_type -> cmdb.v1.TriggerSyncRequest
 	14, // 24: cmdb.v1.CmdbSyncService.ListRuns:input_type -> cmdb.v1.ListRunsRequest
 	16, // 25: cmdb.v1.CmdbSyncService.ListConflicts:input_type -> cmdb.v1.ListConflictsRequest
-	19, // 26: cmdb.v1.CmdbSyncService.RotateWebhook:input_type -> cmdb.v1.RotateWebhookRequest
-	21, // 27: cmdb.v1.CmdbSyncService.DisableWebhook:input_type -> cmdb.v1.DisableWebhookRequest
-	3,  // 28: cmdb.v1.CmdbSyncService.ListSources:output_type -> cmdb.v1.ListSourcesResponse
-	5,  // 29: cmdb.v1.CmdbSyncService.GetSource:output_type -> cmdb.v1.GetSourceResponse
-	7,  // 30: cmdb.v1.CmdbSyncService.CreateSource:output_type -> cmdb.v1.CreateSourceResponse
-	9,  // 31: cmdb.v1.CmdbSyncService.UpdateSource:output_type -> cmdb.v1.UpdateSourceResponse
-	11, // 32: cmdb.v1.CmdbSyncService.DeleteSource:output_type -> cmdb.v1.DeleteSourceResponse
-	13, // 33: cmdb.v1.CmdbSyncService.TriggerSync:output_type -> cmdb.v1.TriggerSyncResponse
-	15, // 34: cmdb.v1.CmdbSyncService.ListRuns:output_type -> cmdb.v1.ListRunsResponse
-	18, // 35: cmdb.v1.CmdbSyncService.ListConflicts:output_type -> cmdb.v1.ListConflictsResponse
-	20, // 36: cmdb.v1.CmdbSyncService.RotateWebhook:output_type -> cmdb.v1.RotateWebhookResponse
-	22, // 37: cmdb.v1.CmdbSyncService.DisableWebhook:output_type -> cmdb.v1.DisableWebhookResponse
-	28, // [28:38] is the sub-list for method output_type
-	18, // [18:28] is the sub-list for method input_type
+	19, // 26: cmdb.v1.CmdbSyncService.ClaimConflict:input_type -> cmdb.v1.ClaimConflictRequest
+	21, // 27: cmdb.v1.CmdbSyncService.RotateWebhook:input_type -> cmdb.v1.RotateWebhookRequest
+	23, // 28: cmdb.v1.CmdbSyncService.DisableWebhook:input_type -> cmdb.v1.DisableWebhookRequest
+	3,  // 29: cmdb.v1.CmdbSyncService.ListSources:output_type -> cmdb.v1.ListSourcesResponse
+	5,  // 30: cmdb.v1.CmdbSyncService.GetSource:output_type -> cmdb.v1.GetSourceResponse
+	7,  // 31: cmdb.v1.CmdbSyncService.CreateSource:output_type -> cmdb.v1.CreateSourceResponse
+	9,  // 32: cmdb.v1.CmdbSyncService.UpdateSource:output_type -> cmdb.v1.UpdateSourceResponse
+	11, // 33: cmdb.v1.CmdbSyncService.DeleteSource:output_type -> cmdb.v1.DeleteSourceResponse
+	13, // 34: cmdb.v1.CmdbSyncService.TriggerSync:output_type -> cmdb.v1.TriggerSyncResponse
+	15, // 35: cmdb.v1.CmdbSyncService.ListRuns:output_type -> cmdb.v1.ListRunsResponse
+	18, // 36: cmdb.v1.CmdbSyncService.ListConflicts:output_type -> cmdb.v1.ListConflictsResponse
+	20, // 37: cmdb.v1.CmdbSyncService.ClaimConflict:output_type -> cmdb.v1.ClaimConflictResponse
+	22, // 38: cmdb.v1.CmdbSyncService.RotateWebhook:output_type -> cmdb.v1.RotateWebhookResponse
+	24, // 39: cmdb.v1.CmdbSyncService.DisableWebhook:output_type -> cmdb.v1.DisableWebhookResponse
+	29, // [29:40] is the sub-list for method output_type
+	18, // [18:29] is the sub-list for method input_type
 	18, // [18:18] is the sub-list for extension type_name
 	18, // [18:18] is the sub-list for extension extendee
 	0,  // [0:18] is the sub-list for field type_name
@@ -1897,7 +2031,7 @@ func file_cmdb_v1_sync_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cmdb_v1_sync_proto_rawDesc), len(file_cmdb_v1_sync_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   23,
+			NumMessages:   25,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

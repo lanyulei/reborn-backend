@@ -1,0 +1,343 @@
+syntax = "proto3";
+
+package oncall.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "buf/validate/validate.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/oncall/v1;v1";
+
+// OncallGroupService 值班分组：分组、成员与变更记录。查看类接口凭接口权限即可；
+// 修改类接口另要求操作者是该分组管理员或超级管理员（403 ONCALL_FORBIDDEN）。
+service OncallGroupService {
+  // ListGroups 分页查询值班分组（含成员数、值班表数与当前用户在组内的身份）。
+  rpc ListGroups(ListGroupsRequest) returns (ListGroupsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/oncall/group"
+    };
+    option (system.v1.title) = "查询值班分组";
+  }
+  // CreateGroup 新建分组；创建人自动成为管理员。
+  rpc CreateGroup(CreateGroupRequest) returns (CreateGroupResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/oncall/group"
+      body: "*"
+    };
+    option (system.v1.title) = "新建值班分组";
+  }
+  // GetGroup 查询分组详情。
+  rpc GetGroup(GetGroupRequest) returns (GetGroupResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/oncall/group/{id}"
+    };
+    option (system.v1.title) = "查询值班分组详情";
+  }
+  // UpdateGroup 修改分组名称与说明。
+  rpc UpdateGroup(UpdateGroupRequest) returns (UpdateGroupResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/oncall/group/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "编辑值班分组";
+  }
+  // DeleteGroup 删除分组；分组下仍有值班表时拒绝（409 ONCALL_GROUP_IN_USE）。
+  rpc DeleteGroup(DeleteGroupRequest) returns (DeleteGroupResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/oncall/group/{id}"
+    };
+    option (system.v1.title) = "删除值班分组";
+  }
+  // ListGroupMembers 查询分组全部成员（管理员在前，其次按加入时间）。
+  rpc ListGroupMembers(ListGroupMembersRequest) returns (ListGroupMembersResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/oncall/group/{group_id}/member"
+    };
+    option (system.v1.title) = "查询分组成员";
+  }
+  // AddGroupMembers 批量添加成员（已在组内的跳过）；用户须存在且可用。
+  rpc AddGroupMembers(AddGroupMembersRequest) returns (AddGroupMembersResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/oncall/group/{group_id}/member"
+      body: "*"
+    };
+    option (system.v1.title) = "添加分组成员";
+  }
+  // UpdateGroupMember 修改成员身份；不能把最后一名管理员降级。
+  rpc UpdateGroupMember(UpdateGroupMemberRequest) returns (UpdateGroupMemberResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/oncall/group/{group_id}/member/{user_id}"
+      body: "*"
+    };
+    option (system.v1.title) = "修改分组成员身份";
+  }
+  // RemoveGroupMember 移出成员；仍在轮转名单内或为最后一名管理员时拒绝。
+  rpc RemoveGroupMember(RemoveGroupMemberRequest) returns (RemoveGroupMemberResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/oncall/group/{group_id}/member/{user_id}"
+    };
+    option (system.v1.title) = "移出分组成员";
+  }
+  // ListUserCandidates 可选成员（可用的系统用户，仅 ID 与显示名）；供添加成员使用。
+  rpc ListUserCandidates(ListUserCandidatesRequest) returns (ListUserCandidatesResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/oncall/user-candidate"
+    };
+    option (system.v1.title) = "查询可选值班成员";
+  }
+  // ListChangeLogs 分页查询分组的变更记录（按时间倒序）。
+  rpc ListChangeLogs(ListChangeLogsRequest) returns (ListChangeLogsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/oncall/change-log"
+    };
+    option (system.v1.title) = "查询值班变更记录";
+  }
+}
+
+// Group 值班分组。
+message Group {
+  // id 分组唯一标识。
+  string id = 1;
+  // name 名称。
+  string name = 2;
+  // description 说明。
+  string description = 3;
+  // member_count 成员数。
+  int32 member_count = 4;
+  // schedule_count 值班表数。
+  int32 schedule_count = 5;
+  // my_role 当前用户在组内的身份：0=非成员 1=管理员 2=成员。
+  int32 my_role = 6;
+  // can_manage 当前用户能否管理本分组（分组管理员或超级管理员）。
+  bool can_manage = 7;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 8;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 9;
+}
+
+// ListGroupsRequest 分页查询分组请求。
+message ListGroupsRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // keyword 名称模糊匹配，可选。
+  optional string keyword = 3 [(buf.validate.field).string.max_len = 64];
+  // mine 仅返回我所在的分组，可选。
+  optional bool mine = 4;
+}
+
+// ListGroupsResponse 分页查询分组响应。
+message ListGroupsResponse {
+  // items 当前页数据。
+  repeated Group items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// CreateGroupRequest 新建分组请求。
+message CreateGroupRequest {
+  // name 名称，1-64 字符。
+  string name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // description 说明，可选。
+  string description = 2 [(buf.validate.field).string.max_len = 255];
+}
+
+// CreateGroupResponse 新建分组响应。
+message CreateGroupResponse {
+  // group 新建的分组。
+  Group group = 1;
+}
+
+// GetGroupRequest 查询分组详情请求。
+message GetGroupRequest {
+  // id 分组唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetGroupResponse 查询分组详情响应。
+message GetGroupResponse {
+  // group 分组。
+  Group group = 1;
+}
+
+// UpdateGroupRequest 编辑分组请求。
+message UpdateGroupRequest {
+  // id 分组唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // name 名称，1-64 字符。
+  string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // description 说明。
+  string description = 3 [(buf.validate.field).string.max_len = 255];
+}
+
+// UpdateGroupResponse 编辑分组响应。
+message UpdateGroupResponse {}
+
+// DeleteGroupRequest 删除分组请求。
+message DeleteGroupRequest {
+  // id 分组唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteGroupResponse 删除分组响应。
+message DeleteGroupResponse {}
+
+// GroupMember 分组成员。
+message GroupMember {
+  // user_id 用户唯一标识。
+  string user_id = 1;
+  // username 登录名。
+  string username = 2;
+  // nickname 昵称。
+  string nickname = 3;
+  // role 身份：1=管理员 2=成员。
+  int32 role = 4;
+  // available 用户是否可用（未删除且状态为可用）；不可用的成员无法继续值班。
+  bool available = 5;
+  // in_rotation 是否在本分组某张值班表的轮转名单内。
+  bool in_rotation = 6;
+  // create_time 加入时间。
+  google.protobuf.Timestamp create_time = 7;
+}
+
+// ListGroupMembersRequest 查询分组成员请求。
+message ListGroupMembersRequest {
+  // group_id 分组唯一标识。
+  string group_id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// ListGroupMembersResponse 查询分组成员响应。
+message ListGroupMembersResponse {
+  // items 全部成员。
+  repeated GroupMember items = 1;
+}
+
+// AddGroupMembersRequest 添加成员请求。
+message AddGroupMembersRequest {
+  // group_id 分组唯一标识。
+  string group_id = 1 [(buf.validate.field).string.uuid = true];
+  // user_ids 待添加的用户，1-50 个。
+  repeated string user_ids = 2 [(buf.validate.field).repeated = {
+    min_items: 1
+    max_items: 50
+    unique: true
+    items: {
+      string: { uuid: true }
+    }
+  }];
+  // role 身份：1=管理员 2=成员。
+  int32 role = 3 [(buf.validate.field).int32 = { in: [1, 2] }];
+}
+
+// AddGroupMembersResponse 添加成员响应。
+message AddGroupMembersResponse {
+  // added 实际新增的成员数（已在组内的跳过）。
+  int32 added = 1;
+}
+
+// UpdateGroupMemberRequest 修改成员身份请求。
+message UpdateGroupMemberRequest {
+  // group_id 分组唯一标识。
+  string group_id = 1 [(buf.validate.field).string.uuid = true];
+  // user_id 用户唯一标识。
+  string user_id = 2 [(buf.validate.field).string.uuid = true];
+  // role 身份：1=管理员 2=成员。
+  int32 role = 3 [(buf.validate.field).int32 = { in: [1, 2] }];
+}
+
+// UpdateGroupMemberResponse 修改成员身份响应。
+message UpdateGroupMemberResponse {}
+
+// RemoveGroupMemberRequest 移出成员请求。
+message RemoveGroupMemberRequest {
+  // group_id 分组唯一标识。
+  string group_id = 1 [(buf.validate.field).string.uuid = true];
+  // user_id 用户唯一标识。
+  string user_id = 2 [(buf.validate.field).string.uuid = true];
+}
+
+// RemoveGroupMemberResponse 移出成员响应。
+message RemoveGroupMemberResponse {}
+
+// UserCandidate 可选成员（最小披露：不含手机号、邮箱）。
+message UserCandidate {
+  // id 用户唯一标识。
+  string id = 1;
+  // username 登录名。
+  string username = 2;
+  // nickname 昵称。
+  string nickname = 3;
+}
+
+// ListUserCandidatesRequest 查询可选成员请求。
+message ListUserCandidatesRequest {
+  // keyword 登录名/昵称模糊匹配，可选。
+  optional string keyword = 1 [(buf.validate.field).string.max_len = 64];
+}
+
+// ListUserCandidatesResponse 查询可选成员响应。
+message ListUserCandidatesResponse {
+  // items 匹配的用户，最多 50 个。
+  repeated UserCandidate items = 1;
+}
+
+// ChangeLog 变更记录。
+message ChangeLog {
+  // id 记录唯一标识。
+  string id = 1;
+  // group_id 所属分组。
+  string group_id = 2;
+  // schedule_id 相关值班表，可空。
+  string schedule_id = 3;
+  // action 操作码：group.create / group.update / member.add / member.update /
+  // member.remove / schedule.create / schedule.update / schedule.status /
+  // schedule.delete / shift.override / shift.revoke / share.create / share.reset /
+  // share.delete。
+  string action = 4;
+  // summary 一句话描述。
+  string summary = 5;
+  // detail 变更前后内容。
+  google.protobuf.Struct detail = 6;
+  // operator_id 操作人。
+  string operator_id = 7;
+  // operator_name 操作人显示名。
+  string operator_name = 8;
+  // create_time 操作时间。
+  google.protobuf.Timestamp create_time = 9;
+}
+
+// ListChangeLogsRequest 分页查询变更记录请求。
+message ListChangeLogsRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // group_id 所属分组。
+  string group_id = 3 [(buf.validate.field).string.uuid = true];
+  // schedule_id 相关值班表，可选。
+  optional string schedule_id = 4 [(buf.validate.field).string.uuid = true];
+}
+
+// ListChangeLogsResponse 分页查询变更记录响应。
+message ListChangeLogsResponse {
+  // items 当前页数据。
+  repeated ChangeLog items = 1;
+  // total 总数。
+  int64 total = 2;
+}

@@ -66,7 +66,19 @@ type RelationKey struct {
 }
 
 // RelationRepo 关系仓储接口。
+// ExportRelation 导出用的一条关联（以被导出资源为视角）。
+type ExportRelation struct {
+	CIID      string
+	TypeCode  string
+	Direction string
+	PeerModel string
+	PeerName  string
+	PeerEnv   string
+}
+
 type RelationRepo interface {
+	// ListForExport 给定资源的全部关联（两个方向；对端未删除），按资源、类型、方向、对端名称排序。
+	ListForExport(ctx context.Context, ciIDs []string) ([]*ExportRelation, error)
 	// Create 建立关系并同事务写入两端历史；已存在返回 ErrRelationExists。
 	Create(ctx context.Context, rel *Relation, histories []*History) error
 	// CreateBatch 同事务建立多条关系并写入历史（任一失败整体回滚）。
@@ -79,8 +91,9 @@ type RelationRepo interface {
 	// Move 同事务：解除 (type, oldSrc, oldDst) 并建立 (type, newSrc, newDst)。
 	Move(ctx context.Context, typeCode string, old, next *Relation, histories []*History) error
 	ListRelated(ctx context.Context, ciID, typeCode, direction, keyword string, page, pageSize int64) ([]*RelatedCI, int64, error)
-	// Neighbors 以 ciID 为中心按层展开（两个方向），节点数达 maxNodes 即停止并报告截断。
-	Neighbors(ctx context.Context, ciID string, depth, maxNodes int32) (nodes []*TopologyNode, edges []*TopologyEdge, truncated bool, err error)
+	// Neighbors 以 ciID 为中心按层展开，节点数达 maxNodes 即停止并报告截断。
+	// flow："" 两个方向；FlowDownstream 只沿 src→dst；FlowUpstream 只沿 dst→src。
+	Neighbors(ctx context.Context, ciID, flow string, depth, maxNodes int32) (nodes []*TopologyNode, edges []*TopologyEdge, truncated bool, err error)
 	// CountByCI 当前资源各关系类型两个方向的关联数。
 	CountByCI(ctx context.Context, ciID string) (map[RelationKey]int64, error)
 	// CountSide 某关系类型下以 id 作为 src（side=outgoing）或 dst（side=incoming）的关系数。
@@ -237,8 +250,14 @@ func (uc *RelationUsecase) ListRelated(ctx context.Context, ciID, typeCode, dire
 	return items, total, nil
 }
 
+// 拓扑展开方向（影响分析）。
+const (
+	FlowDownstream = "downstream"
+	FlowUpstream   = "upstream"
+)
+
 // Neighbors 资源拓扑：depth/maxNodes 非法值回退缺省（2 / 200）并封顶。
-func (uc *RelationUsecase) Neighbors(ctx context.Context, ciID string, depth, maxNodes int32) ([]*TopologyNode, []*TopologyEdge, bool, error) {
+func (uc *RelationUsecase) Neighbors(ctx context.Context, ciID, flow string, depth, maxNodes int32) ([]*TopologyNode, []*TopologyEdge, bool, error) {
 	if _, err := uc.cis.Get(ctx, ciID); err != nil {
 		return nil, nil, false, err
 	}
@@ -248,7 +267,7 @@ func (uc *RelationUsecase) Neighbors(ctx context.Context, ciID string, depth, ma
 	if maxNodes <= 0 {
 		maxNodes = 200
 	}
-	return uc.relations.Neighbors(ctx, ciID, min(depth, TopologyMaxDepth), min(maxNodes, TopologyMaxNodes))
+	return uc.relations.Neighbors(ctx, ciID, flow, min(depth, TopologyMaxDepth), min(maxNodes, TopologyMaxNodes))
 }
 
 func (uc *RelationUsecase) load(ctx context.Context, ciID, typeCode string) (*RelationType, *CI, error) {

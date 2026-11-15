@@ -146,8 +146,18 @@ func TestAssistant_ReadToolRoundTrip(t *testing.T) {
 	if lastEvent(events, "done").Data["status"] != bizassistant.DoneCompleted {
 		t.Fatalf("done = %v", lastEvent(events, "done").Data)
 	}
-	if reqs := svc.chatModel.Requests(); len(reqs) != 2 || !toolNames(reqs[0])["UserService_DeleteUser"] || !strings.Contains(reqs[0].System, "超级管理员") {
-		t.Fatalf("admin must see all tools and be described in prompt: %d requests", len(reqs))
+	reqs := svc.chatModel.Requests()
+	if len(reqs) != 2 || !strings.Contains(reqs[0].System, "超级管理员") {
+		t.Fatalf("admin must be described in prompt: %d requests", len(reqs))
+	}
+	// 超管可用工具很多：按模块加载。首个请求只带元工具；直接调用了 system 模块的工具后，
+	// 该模块的工具随后续请求下发，其它模块仍不下发。
+	first, second := toolNames(reqs[0]), toolNames(reqs[1])
+	if len(first) != 1 || !first[bizassistant.LoadToolsName] || !strings.Contains(reqs[0].System, bizassistant.LoadToolsName) {
+		t.Fatalf("first request must offer only the loader: %v", first)
+	}
+	if !second["UserService_DeleteUser"] || !second[bizassistant.LoadToolsName] || second["OncallGroupService_ListGroups"] {
+		t.Fatalf("second request must offer the system module only: %d tools", len(second))
 	}
 	convID := findEvent(events, "conversation").Data["id"].(string)
 
@@ -399,5 +409,85 @@ func TestAssistant_SecretsMasked(t *testing.T) {
 	}
 	if code, body := doRequest(t, http.MethodPost, ts.URL+"/api/v1/login", `{"username":"carol_ai","password":"P@ssw0rd!x"}`); code != http.StatusOK {
 		t.Fatalf("created user must be able to log in with the raw password: status = %d body = %s", code, body)
+	}
+	// 执行完成后，对话历史里的调用参数也已打码：明文不再留库，也不会在后续轮次发给模型。
+	msgs, err := svc.assistantData.Messages().List(context.Background(), convID)
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	var stored string
+	for _, m := range msgs {
+		for _, ref := range m.ToolCalls {
+			stored += ref.Arguments
+		}
+	}
+	if strings.Contains(stored, "P@ssw0rd!x") || !strings.Contains(stored, "***") || !strings.Contains(stored, "carol_ai") {
+		t.Fatalf("stored tool call arguments must be masked after execution: %s", stored)
+	}
+	svc.chatModel.Reply("还有什么需要？")
+	if code, _, raw := chatSSE(t, ts, bearer, `{"conversationId":"`+convID+`","content":"谢谢"}`); code != http.StatusOK {
+		t.Fatalf("follow-up chat: status = %d body = %s", code, raw)
+	}
+	for _, req := range svc.chatModel.Requests() {
+		for _, m := range req.Messages {
+			for _, ref := range m.ToolCalls {
+				if m.Role == bizassistant.RoleAssistant && strings.Contains(ref.Arguments, "P@ssw0rd!x") && req.Messages[len(req.Messages)-1].Content == "谢谢" {
+					t.Fatalf("raw password sent to the model in a later turn: %s", ref.Arguments)
+				}
+			}
+		}
+	}
+}
+
+// 按模块加载工具：模型先调用元工具加载通知模块，再调用其中的工具。元工具不产生步骤
+// 事件和审计记录；加载结果在同一会话的后续轮次保持（从历史恢复）。
+func TestAssistant_LoadToolsByModule(t *testing.T) {
+	t.Parallel()
+	ts, svc := newTestHTTPServerWithServices(t)
+	bearer := testBearer(t, svc.signer, e2eActorID)
+	svc.chatModel.Call("call_load", bizassistant.LoadToolsName, map[string]any{"modules": []string{"notify", "nope"}}).
+		Call("call_g", "NotifyChannelService_ListChannels", map[string]any{"page": 1, "pageSize": 5}).
+		Reply("目前没有通知渠道。")
+	code, events, raw := chatSSE(t, ts, bearer, `{"content":"有哪些通知渠道"}`)
+	if code != http.StatusOK {
+		t.Fatalf("chat: status = %d body = %s", code, raw)
+	}
+	want := []string{"conversation", "tool_call", "tool_result", "text_delta", "done"}
+	if got := eventTypes(events); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("events = %v, want %v (the loader must not surface as a step)\n%s", got, want, raw)
+	}
+	if findEvent(events, "tool_result").Data["status"] != bizassistant.ToolStatusSucceeded {
+		t.Fatalf("tool_result = %v", findEvent(events, "tool_result").Data)
+	}
+	reqs := svc.chatModel.Requests()
+	if len(reqs) != 3 {
+		t.Fatalf("model requests = %d, want 3", len(reqs))
+	}
+	if first := toolNames(reqs[0]); len(first) != 1 || !first[bizassistant.LoadToolsName] {
+		t.Fatalf("first request tools = %v", first)
+	}
+	loaded := toolNames(reqs[1])
+	if !loaded["NotifyChannelService_ListChannels"] || !loaded["NotifyRouteService_ListRoutes"] || loaded["UserService_ListUsers"] || loaded["OncallGroupService_ListGroups"] {
+		t.Fatalf("after loading notify: %d tools", len(loaded))
+	}
+	// 元工具的结果回灌给了模型（含未知模块提示），协议结构完整。
+	last := reqs[1].Messages[len(reqs[1].Messages)-1]
+	if last.Role != bizassistant.RoleTool || last.ToolCallID != "call_load" || !strings.Contains(last.Content, `"loaded":["notify"]`) || !strings.Contains(last.Content, "nope") {
+		t.Fatalf("loader result = %+v", last)
+	}
+	// 下一轮：通知模块仍然可用，不必重新加载。
+	convID := findEvent(events, "conversation").Data["id"].(string)
+	svc.chatModel.Reply("好的。")
+	if code, _, raw := chatSSE(t, ts, bearer, `{"conversationId":"`+convID+`","content":"继续"}`); code != http.StatusOK {
+		t.Fatalf("follow-up chat: status = %d body = %s", code, raw)
+	}
+	reqs = svc.chatModel.Requests()
+	if again := toolNames(reqs[len(reqs)-1]); !again["NotifyChannelService_ListChannels"] || again["UserService_ListUsers"] {
+		t.Fatalf("loaded modules must persist across turns: %d tools", len(again))
+	}
+	// 历史查询里只有真实的工具步骤。
+	code, body := doRequestWithToken(t, http.MethodGet, ts.URL+"/api/v1/assistant/conversation/"+convID+"/message", bearer, "")
+	if code != http.StatusOK || strings.Contains(body, bizassistant.LoadToolsName) || !strings.Contains(body, "NotifyChannelService_ListChannels") {
+		t.Fatalf("history must not expose the loader: status = %d body = %s", code, body)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/lanyulei/reborn/backend/kit/dbx"
 
@@ -140,4 +141,30 @@ func (r *historyRepo) List(ctx context.Context, filter biz.HistoryFilter, page, 
 		items = append(items, &h)
 	}
 	return items, total, rows.Err()
+}
+
+// ListAfter implements biz.HistoryRepo（按 ci_id + 时间走历史表索引）。
+func (r *historyRepo) ListAfter(ctx context.Context, ciID string, after time.Time, limit int) ([]*biz.History, error) {
+	rows, err := r.data.Pool.Query(ctx,
+		`SELECT id, ci_id, action, diff, operator, source, request_id, create_time FROM cmdb_ci_history
+		 WHERE ci_id = $1 AND create_time > $2 ORDER BY create_time DESC, id DESC LIMIT $3`, ciID, after, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list cmdb history after: %w", err)
+	}
+	defer rows.Close()
+	items := make([]*biz.History, 0, 16)
+	for rows.Next() {
+		var h biz.History
+		var diff []byte
+		if err := rows.Scan(&h.ID, &h.CIID, &h.Action, &diff, &h.Operator, &h.Source, &h.RequestID, &h.CreateTime); err != nil {
+			return nil, fmt.Errorf("scan cmdb history: %w", err)
+		}
+		if len(diff) > 0 {
+			if err := json.Unmarshal(diff, &h.Diff); err != nil {
+				return nil, fmt.Errorf("decode cmdb history diff: %w", err)
+			}
+		}
+		items = append(items, &h)
+	}
+	return items, rows.Err()
 }

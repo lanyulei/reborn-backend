@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 type batchJSON struct {
@@ -286,5 +287,355 @@ func TestCmdb_Quality(t *testing.T) {
 	code, resp := doRequestWithToken(t, http.MethodGet, ts.URL+"/api/v1/cmdb/quality", testBearer(t, svc.signer, user.Id), "")
 	if code != http.StatusOK || strings.Contains(resp, `"host"`) || !strings.Contains(resp, `"part"`) {
 		t.Fatalf("scoped quality: %d %s", code, resp)
+	}
+}
+
+// 关联导出：CSV 的 rel: 列与 JSON 的 relations 与导入格式一致；影响分析按方向展开。
+func TestCmdb_ExportRelationsAndFlow(t *testing.T) {
+	t.Parallel()
+	ts, svc := newTestHTTPServerWithServices(t)
+	admin := testBearer(t, svc.signer, e2eActorID)
+	cmdbSetup(t, ts, admin)
+	mustOK := func(method, url, body string) string {
+		t.Helper()
+		code, resp := doRequestWithToken(t, method, ts.URL+url, admin, body)
+		if code != http.StatusOK {
+			t.Fatalf("%s %s: status = %d body = %s", method, url, code, resp)
+		}
+		return resp
+	}
+	h := createCI(t, ts, admin, `{"modelCode":"host","name":"eh","attrs":{"ip":"10.2.0.1"}}`)
+	p1 := createCI(t, ts, admin, `{"modelCode":"part","name":"ep1","attrs":{"kind":"disk"}}`)
+	p2 := createCI(t, ts, admin, `{"modelCode":"part","name":"ep2","attrs":{"kind":"memory"}}`)
+	sw := createCI(t, ts, admin, `{"modelCode":"switch","name":"esw"}`)
+	mustOK(http.MethodPost, "/api/v1/cmdb/ci/"+h.ID+"/relation", `{"relationType":"host_has_part","direction":"outgoing","targetIds":["`+p1.ID+`","`+p2.ID+`"]}`)
+	mustOK(http.MethodPost, "/api/v1/cmdb/ci/"+h.ID+"/relation", `{"relationType":"host_uplink","direction":"outgoing","targetIds":["`+sw.ID+`"]}`)
+
+	// 缺省不带关联列。
+	if csv := mustOK(http.MethodGet, "/api/v1/cmdb/ci:export?modelCode=host", ""); strings.Contains(csv, "rel:") {
+		t.Fatalf("relations must be opt-in: %s", csv)
+	}
+	csv := mustOK(http.MethodGet, "/api/v1/cmdb/ci:export?modelCode=host&withRelations=true", "")
+	if !strings.Contains(csv, "rel:host_has_part:outgoing,rel:host_uplink:outgoing") || !strings.Contains(csv, "ep1;ep2,esw") {
+		t.Fatalf("csv with relations: %s", csv)
+	}
+	// 对端视角：incoming 列。
+	if csv := mustOK(http.MethodGet, "/api/v1/cmdb/ci:export?modelCode=part&withRelations=true", ""); !strings.Contains(csv, "rel:host_has_part:incoming") || !strings.Contains(csv, ",eh") {
+		t.Fatalf("part csv with relations: %s", csv)
+	}
+	js := strings.ReplaceAll(mustOK(http.MethodGet, "/api/v1/cmdb/ci:export?modelCode=host&withRelations=true&format=json", ""), " ", "")
+	if !strings.Contains(js, `{"relationType":"host_uplink","direction":"outgoing","targetName":"esw"}`) {
+		t.Fatalf("json with relations: %s", js)
+	}
+
+	// 影响分析：从配件向上游能到主机，向下游到不了；从主机向下游到配件与交换机。
+	type topo struct {
+		Nodes []struct {
+			Name string `json:"name"`
+		} `json:"nodes"`
+	}
+	names := func(id, q string) string {
+		var tp topo
+		if err := json.Unmarshal([]byte(mustOK(http.MethodGet, "/api/v1/cmdb/ci/"+id+"/neighbors?depth=3"+q, "")), &tp); err != nil {
+			t.Fatal(err)
+		}
+		out := make([]string, 0, len(tp.Nodes))
+		for _, n := range tp.Nodes {
+			out = append(out, n.Name)
+		}
+		return strings.Join(out, ",")
+	}
+	if got := names(p1.ID, "&flow=upstream"); got != "ep1,eh" {
+		t.Fatalf("upstream of part = %s", got)
+	}
+	if got := names(p1.ID, "&flow=downstream"); got != "ep1" {
+		t.Fatalf("downstream of part = %s", got)
+	}
+	if got := names(h.ID, "&flow=downstream"); !strings.Contains(got, "ep1") || !strings.Contains(got, "esw") {
+		t.Fatalf("downstream of host = %s", got)
+	}
+	// 不分方向时，配件能经主机到达其它配件与交换机。
+	if got := names(p1.ID, ""); !strings.Contains(got, "ep2") || !strings.Contains(got, "esw") {
+		t.Fatalf("undirected from part = %s", got)
+	}
+	if code, _ := doRequestWithToken(t, http.MethodGet, ts.URL+"/api/v1/cmdb/ci/"+h.ID+"/neighbors?flow=sideways", admin, ""); code != http.StatusBadRequest {
+		t.Fatalf("bad flow: status = %d", code)
+	}
+}
+
+// 时间点回溯：按变更历史倒推资源在各时刻的状态。
+func TestCmdb_StateAt(t *testing.T) {
+	t.Parallel()
+	ts, svc := newTestHTTPServerWithServices(t)
+	admin := testBearer(t, svc.signer, e2eActorID)
+	cmdbSetup(t, ts, admin)
+	mustOK := func(method, url, body string) string {
+		t.Helper()
+		code, resp := doRequestWithToken(t, method, ts.URL+url, admin, body)
+		if code != http.StatusOK {
+			t.Fatalf("%s %s: status = %d body = %s", method, url, code, resp)
+		}
+		return resp
+	}
+	h := createCI(t, ts, admin, `{"modelCode":"host","name":"t0","env":"prod","tags":["a"],"attrs":{"ip":"10.3.0.1","cores":4}}`)
+	step := func() { time.Sleep(15 * time.Millisecond) }
+	step()
+	mustOK(http.MethodPut, "/api/v1/cmdb/ci/"+h.ID, `{"version":1,"name":"t1","tags":{"items":["a","b"]},"attrs":{"ip":"10.3.0.2","cores":null}}`)
+	step()
+	mustOK(http.MethodPost, "/api/v1/cmdb/ci/"+h.ID+":transition", `{"version":2,"status":"maintenance"}`)
+	step()
+	mustOK(http.MethodDelete, "/api/v1/cmdb/ci/"+h.ID, "")
+	step()
+	mustOK(http.MethodPost, "/api/v1/cmdb/ci/"+h.ID+":restore", `{}`)
+
+	// 各条变更的发生时间（倒序：restore, delete, transition, update, create）。
+	var hist struct {
+		Items []struct {
+			Action     string `json:"action"`
+			CreateTime string `json:"createTime"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(mustOK(http.MethodGet, "/api/v1/cmdb/ci/"+h.ID+"/history?page=1&pageSize=20", "")), &hist); err != nil || len(hist.Items) != 5 {
+		t.Fatalf("history = %+v err=%v", hist, err)
+	}
+	at := map[string]string{}
+	for _, it := range hist.Items {
+		at[it.Action] = it.CreateTime
+	}
+	type state struct {
+		Ci struct {
+			Name   string         `json:"name"`
+			Status string         `json:"status"`
+			Tags   []string       `json:"tags"`
+			Attrs  map[string]any `json:"attrs"`
+		} `json:"ci"`
+		Deleted bool `json:"deleted"`
+	}
+	get := func(when string) state {
+		t.Helper()
+		var s state
+		if err := json.Unmarshal([]byte(mustOK(http.MethodGet, "/api/v1/cmdb/ci/"+h.ID+"/at?time="+when, "")), &s); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	// 刚创建完：原始名称 / 属性 / 标签。
+	if s := get(at["create"]); s.Ci.Name != "t0" || s.Ci.Status != "active" || s.Ci.Attrs["ip"] != "10.3.0.1" || s.Ci.Attrs["cores"] != float64(4) || strings.Join(s.Ci.Tags, ",") != "a" || s.Deleted {
+		t.Fatalf("state after create = %+v", s)
+	}
+	// 更新之后、流转之前：新名称与属性（cores 已清空），状态仍为在用。
+	if s := get(at["update"]); s.Ci.Name != "t1" || s.Ci.Status != "active" || s.Ci.Attrs["ip"] != "10.3.0.2" || s.Ci.Attrs["cores"] != nil || strings.Join(s.Ci.Tags, ",") != "a,b" {
+		t.Fatalf("state after update = %+v", s)
+	}
+	if s := get(at["transition"]); s.Ci.Status != "maintenance" || s.Deleted {
+		t.Fatalf("state after transition = %+v", s)
+	}
+	// 删除之后、恢复之前：标记为已删除。
+	if s := get(at["delete"]); !s.Deleted || s.Ci.Name != "t1" {
+		t.Fatalf("state while deleted = %+v", s)
+	}
+	if s := get(at["restore"]); s.Deleted || s.Ci.Status != "maintenance" {
+		t.Fatalf("state after restore = %+v", s)
+	}
+	// 创建之前：不存在。缺少时间参数：400。
+	if code, body := doRequestWithToken(t, http.MethodGet, ts.URL+"/api/v1/cmdb/ci/"+h.ID+"/at?time=2000-01-01T00:00:00Z", admin, ""); code != http.StatusNotFound {
+		t.Fatalf("before creation: status = %d body = %s", code, body)
+	}
+	if code, _ := doRequestWithToken(t, http.MethodGet, ts.URL+"/api/v1/cmdb/ci/"+h.ID+"/at", admin, ""); code != http.StatusBadRequest {
+		t.Fatalf("missing time: status = %d", code)
+	}
+}
+
+// 一批加固项：必填字段空串、CSV 防公式注入、关联名称转义、导入不受行序影响、认领须有编辑资源权限、
+// 解除同步托管的前置条件。
+func TestCmdb_Hardening(t *testing.T) {
+	t.Parallel()
+	ts, svc := newTestHTTPServerWithServices(t)
+	admin := testBearer(t, svc.signer, e2eActorID)
+	cmdbSetup(t, ts, admin)
+	do := func(method, url, body string) (int, string) {
+		return doRequestWithToken(t, method, ts.URL+url, admin, body)
+	}
+	mustOK := func(method, url, body string) string {
+		t.Helper()
+		code, resp := do(method, url, body)
+		if code != http.StatusOK {
+			t.Fatalf("%s %s: status = %d body = %s", method, url, code, resp)
+		}
+		return resp
+	}
+
+	// ---- 必填字段写入空串视为未填（新建 / 更新 / 导入）；非必填字段允许空串。
+	mustOK(http.MethodPost, "/api/v1/cmdb/model/host/field", `{"code":"note","name":"备注","type":"string"}`)
+	mustOK(http.MethodPost, "/api/v1/cmdb/model/host/field", `{"code":"site","name":"站点","type":"string","required":true}`)
+	if code, body := do(http.MethodPost, "/api/v1/cmdb/ci", `{"modelCode":"host","name":"r0","attrs":{"ip":"10.4.0.1","site":""}}`); code != http.StatusBadRequest || !strings.Contains(body, "site") {
+		t.Fatalf("create with empty required string: %d %s", code, body)
+	}
+	r1 := createCI(t, ts, admin, `{"modelCode":"host","name":"r1","attrs":{"ip":"10.4.0.1","site":"bj","note":""}}`)
+	if code, body := do(http.MethodPut, "/api/v1/cmdb/ci/"+r1.ID, `{"version":1,"attrs":{"site":""}}`); code != http.StatusBadRequest || !strings.Contains(body, "site") {
+		t.Fatalf("update required to empty string: %d %s", code, body)
+	}
+	mustOK(http.MethodPut, "/api/v1/cmdb/ci/"+r1.ID, `{"version":1,"attrs":{"note":"x"}}`)
+
+	// ---- CSV：以 = + - @ 开头的文本单元格前置单引号；数值不受影响。
+	createCI(t, ts, admin, `{"modelCode":"host","name":"=HYPERLINK(\"http://x\")","env":"+env","owner":"@who","tags":["-t"],"attrs":{"ip":"10.4.0.2","site":"=1+1","cores":8}}`)
+	csv := mustOK(http.MethodGet, "/api/v1/cmdb/ci:export?modelCode=host", "")
+	for _, want := range []string{`"'=HYPERLINK(""http://x"")"`, `'+env`, `'@who`, `'-t`, `'=1+1`, `,8,`} {
+		if !strings.Contains(csv, want) {
+			t.Fatalf("csv must neutralise formula cells, missing %s in:\n%s", want, csv)
+		}
+	}
+	if strings.Contains(csv, "\n=") || strings.Contains(csv, ",=") || strings.Contains(csv, ",@") {
+		t.Fatalf("csv still has a formula-leading cell:\n%s", csv)
+	}
+
+	// ---- 同步只读字段：只对由采集源维护的资源禁止人工修改；人工资源可以维护。
+	mustOK(http.MethodPost, "/api/v1/cmdb/model/host/field", `{"code":"agent","name":"Agent","type":"string","owner":"sync"}`)
+	mustOK(http.MethodPut, "/api/v1/cmdb/ci/"+r1.ID, `{"version":2,"attrs":{"agent":"v1"}}`)
+
+	// ---- 关联列：对端名称含分号时，该关系改用单值列（rel1:，一列一个名称、不拆分、不转义）。
+	sw1 := createCI(t, ts, admin, `{"modelCode":"switch","name":"sw;a"}`)
+	sw2 := createCI(t, ts, admin, `{"modelCode":"switch","name":"sw-b"}`)
+	mustOK(http.MethodPost, "/api/v1/cmdb/ci/"+r1.ID+"/relation", `{"relationType":"host_uplink","direction":"outgoing","targetIds":["`+sw1.ID+`","`+sw2.ID+`"]}`)
+	if csv := mustOK(http.MethodGet, "/api/v1/cmdb/ci:export?modelCode=host&withRelations=true&keyword=r1", ""); !strings.Contains(csv, "rel1:host_uplink:outgoing,rel1:host_uplink:outgoing") ||
+		!strings.Contains(csv, ",sw-b,sw;a") || strings.Contains(csv, `\`) {
+		t.Fatalf("names with a separator must use single-value columns, unescaped:\n%s", csv)
+	}
+
+	// ---- 导入：同一批内互相引用（先出现的行引用后出现的行）不受行序影响；试运行与正式结果一致。
+	mustOK(http.MethodPost, "/api/v1/cmdb/relation-type", `{"code":"host_peer","name":"互备","forwardName":"互备于","backwardName":"被互备","srcModel":"host","dstModel":"host","cardinality":"many_to_many"}`)
+	rows := `[{"name":"imp-a","attrs":{"ip":"10.4.1.1","site":"bj"},"relations":[{"relationType":"host_peer","direction":"outgoing","targetName":"imp-b"}]},
+	          {"name":"imp-b","attrs":{"ip":"10.4.1.2","site":"bj"}}]`
+	for _, dry := range []string{"true", "false"} {
+		resp := mustOK(http.MethodPost, "/api/v1/cmdb/ci:import", `{"modelCode":"host","dryRun":`+dry+`,"rows":`+rows+`}`)
+		if !strings.Contains(resp, `"created":2`) || strings.Contains(resp, "relation failed") || !strings.Contains(resp, "relations linked: 1") {
+			t.Fatalf("import (dryRun=%s) with a forward reference: %s", dry, resp)
+		}
+	}
+	if list := mustOK(http.MethodGet, "/api/v1/cmdb/ci?page=1&pageSize=10&modelCode=host&relType=host_peer&relDirection=outgoing", ""); !strings.Contains(list, `"name":"imp-a"`) {
+		t.Fatalf("forward-referenced relation must exist: %s", list)
+	}
+
+	// ---- 认领：只有采集源权限、没有"编辑资源"权限的用户 403；两者都有才进入业务校验。
+	mustOK(http.MethodPost, "/api/v1/cmdb/sync/source", `{"name":"h-src","provider":"vmware","config":{"url":"https://vc/sdk","username":"u"},"credential":"p"}`)
+	var srcs struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+	}
+	_ = json.Unmarshal([]byte(mustOK(http.MethodGet, "/api/v1/cmdb/sync/source?page=1&pageSize=10", "")), &srcs)
+	if len(srcs.Items) == 0 {
+		t.Fatal("no sync source")
+	}
+	claimURL := "/api/v1/cmdb/sync/source/" + srcs.Items[0].ID + "/conflict:claim"
+	claimBody := `{"modelCode":"host","externalId":"e1","ciId":"` + r1.ID + `"}`
+	user := createUser(t, ts, admin, "claim_user")
+	ub := testBearer(t, svc.signer, user.Id)
+	role := createRole(t, ts, admin, "同步管理", "claim_user")
+	grant := func(ops ...string) {
+		t.Helper()
+		apis := make([]string, 0, len(ops))
+		for _, op := range ops {
+			apis = append(apis, `"`+opCode(op)+`"`)
+		}
+		mustOK(http.MethodPut, "/api/v1/system/role/"+role.Id+"/permission", `{"menus":["cmdb.sync"],"apis":[`+strings.Join(apis, ",")+`]}`)
+	}
+	grant("/cmdb.v1.CmdbSyncService/ClaimConflict")
+	mustOK(http.MethodPut, "/api/v1/system/user/"+user.Id+"/role", `{"role_ids":["`+role.Id+`"]}`)
+	if code, body := doRequestWithToken(t, http.MethodPost, ts.URL+claimURL, ub, claimBody); code != http.StatusForbidden {
+		t.Fatalf("claim without edit-resource permission: %d %s", code, body)
+	}
+	grant("/cmdb.v1.CmdbSyncService/ClaimConflict", "/cmdb.v1.CmdbCIService/UpdateCI")
+	if code, body := doRequestWithToken(t, http.MethodPost, ts.URL+claimURL, ub, claimBody); code != http.StatusNotFound {
+		t.Fatalf("claim with both permissions must reach the business check (no such conflict): %d %s", code, body)
+	}
+
+	// ---- 解除同步托管：人工资源不适用。
+	if code, body := do(http.MethodPost, "/api/v1/cmdb/ci/"+r1.ID+":unclaim", `{}`); code != http.StatusBadRequest || !strings.Contains(body, "sync") {
+		t.Fatalf("unclaim a manual resource: %d %s", code, body)
+	}
+}
+
+// 保存的视图：服务端存储、按用户隔离、同名覆盖、数量与大小上限、数据范围。
+func TestCmdb_CIViews(t *testing.T) {
+	t.Parallel()
+	ts, svc := newTestHTTPServerWithServices(t)
+	admin := testBearer(t, svc.signer, e2eActorID)
+	cmdbSetup(t, ts, admin)
+	call := func(bearer, method, url, body string) (int, string) {
+		return doRequestWithToken(t, method, ts.URL+url, bearer, body)
+	}
+	mustOK := func(method, url, body string) string {
+		t.Helper()
+		code, resp := call(admin, method, url, body)
+		if code != http.StatusOK {
+			t.Fatalf("%s %s: status = %d body = %s", method, url, code, resp)
+		}
+		return resp
+	}
+	mustOK(http.MethodPut, "/api/v1/cmdb/ci-view", `{"modelCode":"host","name":" 生产机器 ","filters":{"env":"prod","attr_ip":"10.0.0.1"}}`)
+	mustOK(http.MethodPut, "/api/v1/cmdb/ci-view", `{"modelCode":"host","name":"生产机器","filters":{"env":"prod"}}`) // 同名覆盖
+	mustOK(http.MethodPut, "/api/v1/cmdb/ci-view", `{"modelCode":"host","name":"a-first","filters":{"keyword":"x"}}`)
+	list := strings.ReplaceAll(mustOK(http.MethodGet, "/api/v1/cmdb/ci-view?modelCode=host", ""), " ", "")
+	if strings.Count(list, `"name"`) != 2 || !strings.Contains(list, `{"name":"生产机器","filters":{"env":"prod"}}`) || strings.Index(list, "a-first") > strings.Index(list, "生产机器") {
+		t.Fatalf("views = %s", list)
+	}
+	// 按模型隔离。
+	if other := mustOK(http.MethodGet, "/api/v1/cmdb/ci-view?modelCode=part", ""); strings.Contains(other, "a-first") {
+		t.Fatalf("views must be per model: %s", other)
+	}
+	// 校验：模型不存在、缺 filters、名称为空白、过大。
+	for name, body := range map[string]string{
+		"blank name": `{"modelCode":"host","name":"   ","filters":{"a":1}}`,
+		"no filters": `{"modelCode":"host","name":"x"}`,
+		"too large":  `{"modelCode":"host","name":"x","filters":{"k":"` + strings.Repeat("v", 5000) + `"}}`,
+	} {
+		if code, resp := call(admin, http.MethodPut, "/api/v1/cmdb/ci-view", body); code != http.StatusBadRequest {
+			t.Fatalf("%s: status = %d body = %s", name, code, resp)
+		}
+	}
+	if code, _ := call(admin, http.MethodPut, "/api/v1/cmdb/ci-view", `{"modelCode":"nope","name":"x","filters":{"a":1}}`); code != http.StatusNotFound {
+		t.Fatalf("unknown model: status = %d", code)
+	}
+	// 上限：每模型 20 个；覆盖已有的不受限。
+	for i := 0; i < 18; i++ {
+		mustOK(http.MethodPut, "/api/v1/cmdb/ci-view", `{"modelCode":"host","name":"v`+string(rune('a'+i))+`","filters":{"a":1}}`)
+	}
+	if code, resp := call(admin, http.MethodPut, "/api/v1/cmdb/ci-view", `{"modelCode":"host","name":"one-too-many","filters":{"a":1}}`); code != http.StatusBadRequest || !strings.Contains(resp, "20") {
+		t.Fatalf("limit: status = %d body = %s", code, resp)
+	}
+	mustOK(http.MethodPut, "/api/v1/cmdb/ci-view", `{"modelCode":"host","name":"a-first","filters":{"keyword":"y"}}`)
+	// 删除（幂等）。
+	mustOK(http.MethodPost, "/api/v1/cmdb/ci-view:delete", `{"modelCode":"host","name":"a-first"}`)
+	mustOK(http.MethodPost, "/api/v1/cmdb/ci-view:delete", `{"modelCode":"host","name":"a-first"}`)
+	if l := mustOK(http.MethodGet, "/api/v1/cmdb/ci-view?modelCode=host", ""); strings.Contains(l, "a-first") {
+		t.Fatalf("deleted view still listed: %s", l)
+	}
+
+	// 按用户隔离：另一个用户看不到、删不掉别人的视图；范围外的模型不能保存。
+	user := createUser(t, ts, admin, "view_user")
+	ub := testBearer(t, svc.signer, user.Id)
+	role := createRole(t, ts, admin, "视图用户", "view_user")
+	apis := make([]string, 0, 3)
+	for _, op := range []string{"ListCIViews", "SaveCIView", "DeleteCIView"} {
+		apis = append(apis, `"`+opCode("/cmdb.v1.CmdbInsightService/"+op)+`"`)
+	}
+	mustOK(http.MethodPut, "/api/v1/system/role/"+role.Id+"/permission", `{"menus":["cmdb.ci"],"apis":[`+strings.Join(apis, ",")+`]}`)
+	mustOK(http.MethodPut, "/api/v1/system/user/"+user.Id+"/role", `{"role_ids":["`+role.Id+`"]}`)
+	mustOK(http.MethodPut, "/api/v1/cmdb/scope/role/"+role.Id, `{"modelCodes":["part"]}`)
+	if code, resp := call(ub, http.MethodGet, "/api/v1/cmdb/ci-view?modelCode=host", ""); code != http.StatusOK || strings.Contains(resp, "生产机器") {
+		t.Fatalf("views must be per user: %d %s", code, resp)
+	}
+	if code, _ := call(ub, http.MethodPost, "/api/v1/cmdb/ci-view:delete", `{"modelCode":"host","name":"生产机器"}`); code != http.StatusOK {
+		t.Fatalf("delete own (missing) view: %d", code)
+	}
+	if l := mustOK(http.MethodGet, "/api/v1/cmdb/ci-view?modelCode=host", ""); !strings.Contains(l, "生产机器") {
+		t.Fatalf("another user's delete must not remove my view: %s", l)
+	}
+	if code, _ := call(ub, http.MethodPut, "/api/v1/cmdb/ci-view", `{"modelCode":"host","name":"x","filters":{"a":1}}`); code != http.StatusForbidden {
+		t.Fatalf("save a view on an out-of-scope model: %d", code)
+	}
+	if code, _ := call(ub, http.MethodPut, "/api/v1/cmdb/ci-view", `{"modelCode":"part","name":"mine","filters":{"a":1}}`); code != http.StatusOK {
+		t.Fatalf("save a view in scope: %d", code)
 	}
 }

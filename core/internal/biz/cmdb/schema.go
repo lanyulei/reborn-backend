@@ -51,6 +51,11 @@ func ValidateAttrs(fields []*Field, attrs map[string]any, partial bool) (map[str
 		if err != nil {
 			return nil, err
 		}
+		// 必填字段写入空串视为未填（与数据质量看板、唯一规则的"空"同口径）。只约束本次
+		// 写入的键：存量值不重校验。
+		if s, ok := v.(string); ok && s == "" && f.Required {
+			return nil, detail(ErrCIInvalid, "field %q is required", key)
+		}
 		out[key] = v
 	}
 	if !partial {

@@ -970,6 +970,346 @@ func (x *GetOverviewResponse) GetDays() int32 {
 	return 0
 }
 
+// CIView 保存的资源列表视图。
+type CIView struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// name 视图名称（同一用户同一模型内唯一）。
+	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// filters 筛选条件（前端筛选表单的值，后端只存取不解释）。
+	Filters       *structpb.Struct `protobuf:"bytes,2,opt,name=filters,proto3" json:"filters,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CIView) Reset() {
+	*x = CIView{}
+	mi := &file_cmdb_v1_insight_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CIView) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CIView) ProtoMessage() {}
+
+func (x *CIView) ProtoReflect() protoreflect.Message {
+	mi := &file_cmdb_v1_insight_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CIView.ProtoReflect.Descriptor instead.
+func (*CIView) Descriptor() ([]byte, []int) {
+	return file_cmdb_v1_insight_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *CIView) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *CIView) GetFilters() *structpb.Struct {
+	if x != nil {
+		return x.Filters
+	}
+	return nil
+}
+
+// ListCIViewsRequest 查询保存的视图请求。
+type ListCIViewsRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// model_code 模型编码。
+	ModelCode     string `protobuf:"bytes,1,opt,name=model_code,json=modelCode,proto3" json:"model_code,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListCIViewsRequest) Reset() {
+	*x = ListCIViewsRequest{}
+	mi := &file_cmdb_v1_insight_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListCIViewsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListCIViewsRequest) ProtoMessage() {}
+
+func (x *ListCIViewsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cmdb_v1_insight_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListCIViewsRequest.ProtoReflect.Descriptor instead.
+func (*ListCIViewsRequest) Descriptor() ([]byte, []int) {
+	return file_cmdb_v1_insight_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *ListCIViewsRequest) GetModelCode() string {
+	if x != nil {
+		return x.ModelCode
+	}
+	return ""
+}
+
+// ListCIViewsResponse 查询保存的视图响应。
+type ListCIViewsResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// items 按名称排序。
+	Items         []*CIView `protobuf:"bytes,1,rep,name=items,proto3" json:"items,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListCIViewsResponse) Reset() {
+	*x = ListCIViewsResponse{}
+	mi := &file_cmdb_v1_insight_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListCIViewsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListCIViewsResponse) ProtoMessage() {}
+
+func (x *ListCIViewsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_cmdb_v1_insight_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListCIViewsResponse.ProtoReflect.Descriptor instead.
+func (*ListCIViewsResponse) Descriptor() ([]byte, []int) {
+	return file_cmdb_v1_insight_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *ListCIViewsResponse) GetItems() []*CIView {
+	if x != nil {
+		return x.Items
+	}
+	return nil
+}
+
+// SaveCIViewRequest 保存视图请求。
+type SaveCIViewRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// model_code 模型编码。
+	ModelCode string `protobuf:"bytes,1,opt,name=model_code,json=modelCode,proto3" json:"model_code,omitempty"`
+	// name 视图名称，1-32 位。
+	Name string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	// filters 筛选条件，序列化后不超过 4KB。
+	Filters       *structpb.Struct `protobuf:"bytes,3,opt,name=filters,proto3" json:"filters,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SaveCIViewRequest) Reset() {
+	*x = SaveCIViewRequest{}
+	mi := &file_cmdb_v1_insight_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SaveCIViewRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SaveCIViewRequest) ProtoMessage() {}
+
+func (x *SaveCIViewRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cmdb_v1_insight_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SaveCIViewRequest.ProtoReflect.Descriptor instead.
+func (*SaveCIViewRequest) Descriptor() ([]byte, []int) {
+	return file_cmdb_v1_insight_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *SaveCIViewRequest) GetModelCode() string {
+	if x != nil {
+		return x.ModelCode
+	}
+	return ""
+}
+
+func (x *SaveCIViewRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *SaveCIViewRequest) GetFilters() *structpb.Struct {
+	if x != nil {
+		return x.Filters
+	}
+	return nil
+}
+
+// SaveCIViewResponse 保存视图响应。
+type SaveCIViewResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SaveCIViewResponse) Reset() {
+	*x = SaveCIViewResponse{}
+	mi := &file_cmdb_v1_insight_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SaveCIViewResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SaveCIViewResponse) ProtoMessage() {}
+
+func (x *SaveCIViewResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_cmdb_v1_insight_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SaveCIViewResponse.ProtoReflect.Descriptor instead.
+func (*SaveCIViewResponse) Descriptor() ([]byte, []int) {
+	return file_cmdb_v1_insight_proto_rawDescGZIP(), []int{21}
+}
+
+// DeleteCIViewRequest 删除视图请求。
+type DeleteCIViewRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// model_code 模型编码。
+	ModelCode string `protobuf:"bytes,1,opt,name=model_code,json=modelCode,proto3" json:"model_code,omitempty"`
+	// name 视图名称。
+	Name          string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteCIViewRequest) Reset() {
+	*x = DeleteCIViewRequest{}
+	mi := &file_cmdb_v1_insight_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteCIViewRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteCIViewRequest) ProtoMessage() {}
+
+func (x *DeleteCIViewRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cmdb_v1_insight_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteCIViewRequest.ProtoReflect.Descriptor instead.
+func (*DeleteCIViewRequest) Descriptor() ([]byte, []int) {
+	return file_cmdb_v1_insight_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *DeleteCIViewRequest) GetModelCode() string {
+	if x != nil {
+		return x.ModelCode
+	}
+	return ""
+}
+
+func (x *DeleteCIViewRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+// DeleteCIViewResponse 删除视图响应。
+type DeleteCIViewResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteCIViewResponse) Reset() {
+	*x = DeleteCIViewResponse{}
+	mi := &file_cmdb_v1_insight_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteCIViewResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteCIViewResponse) ProtoMessage() {}
+
+func (x *DeleteCIViewResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_cmdb_v1_insight_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteCIViewResponse.ProtoReflect.Descriptor instead.
+func (*DeleteCIViewResponse) Descriptor() ([]byte, []int) {
+	return file_cmdb_v1_insight_proto_rawDescGZIP(), []int{23}
+}
+
 // GetQualityRequest 查询数据质量请求。
 type GetQualityRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -979,7 +1319,7 @@ type GetQualityRequest struct {
 
 func (x *GetQualityRequest) Reset() {
 	*x = GetQualityRequest{}
-	mi := &file_cmdb_v1_insight_proto_msgTypes[17]
+	mi := &file_cmdb_v1_insight_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -991,7 +1331,7 @@ func (x *GetQualityRequest) String() string {
 func (*GetQualityRequest) ProtoMessage() {}
 
 func (x *GetQualityRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cmdb_v1_insight_proto_msgTypes[17]
+	mi := &file_cmdb_v1_insight_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1004,7 +1344,7 @@ func (x *GetQualityRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetQualityRequest.ProtoReflect.Descriptor instead.
 func (*GetQualityRequest) Descriptor() ([]byte, []int) {
-	return file_cmdb_v1_insight_proto_rawDescGZIP(), []int{17}
+	return file_cmdb_v1_insight_proto_rawDescGZIP(), []int{24}
 }
 
 // QualityRow 一个模型的数据质量计数。
@@ -1032,7 +1372,7 @@ type QualityRow struct {
 
 func (x *QualityRow) Reset() {
 	*x = QualityRow{}
-	mi := &file_cmdb_v1_insight_proto_msgTypes[18]
+	mi := &file_cmdb_v1_insight_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1044,7 +1384,7 @@ func (x *QualityRow) String() string {
 func (*QualityRow) ProtoMessage() {}
 
 func (x *QualityRow) ProtoReflect() protoreflect.Message {
-	mi := &file_cmdb_v1_insight_proto_msgTypes[18]
+	mi := &file_cmdb_v1_insight_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1057,7 +1397,7 @@ func (x *QualityRow) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QualityRow.ProtoReflect.Descriptor instead.
 func (*QualityRow) Descriptor() ([]byte, []int) {
-	return file_cmdb_v1_insight_proto_rawDescGZIP(), []int{18}
+	return file_cmdb_v1_insight_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *QualityRow) GetModelCode() string {
@@ -1129,7 +1469,7 @@ type GetQualityResponse struct {
 
 func (x *GetQualityResponse) Reset() {
 	*x = GetQualityResponse{}
-	mi := &file_cmdb_v1_insight_proto_msgTypes[19]
+	mi := &file_cmdb_v1_insight_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1141,7 +1481,7 @@ func (x *GetQualityResponse) String() string {
 func (*GetQualityResponse) ProtoMessage() {}
 
 func (x *GetQualityResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cmdb_v1_insight_proto_msgTypes[19]
+	mi := &file_cmdb_v1_insight_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1154,7 +1494,7 @@ func (x *GetQualityResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetQualityResponse.ProtoReflect.Descriptor instead.
 func (*GetQualityResponse) Descriptor() ([]byte, []int) {
-	return file_cmdb_v1_insight_proto_rawDescGZIP(), []int{19}
+	return file_cmdb_v1_insight_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *GetQualityResponse) GetItems() []*QualityRow {
@@ -1200,7 +1540,7 @@ type CmdbSchemaAudit struct {
 
 func (x *CmdbSchemaAudit) Reset() {
 	*x = CmdbSchemaAudit{}
-	mi := &file_cmdb_v1_insight_proto_msgTypes[20]
+	mi := &file_cmdb_v1_insight_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1212,7 +1552,7 @@ func (x *CmdbSchemaAudit) String() string {
 func (*CmdbSchemaAudit) ProtoMessage() {}
 
 func (x *CmdbSchemaAudit) ProtoReflect() protoreflect.Message {
-	mi := &file_cmdb_v1_insight_proto_msgTypes[20]
+	mi := &file_cmdb_v1_insight_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1225,7 +1565,7 @@ func (x *CmdbSchemaAudit) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CmdbSchemaAudit.ProtoReflect.Descriptor instead.
 func (*CmdbSchemaAudit) Descriptor() ([]byte, []int) {
-	return file_cmdb_v1_insight_proto_rawDescGZIP(), []int{20}
+	return file_cmdb_v1_insight_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *CmdbSchemaAudit) GetId() string {
@@ -1324,7 +1664,7 @@ type ListSchemaAuditRequest struct {
 
 func (x *ListSchemaAuditRequest) Reset() {
 	*x = ListSchemaAuditRequest{}
-	mi := &file_cmdb_v1_insight_proto_msgTypes[21]
+	mi := &file_cmdb_v1_insight_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1336,7 +1676,7 @@ func (x *ListSchemaAuditRequest) String() string {
 func (*ListSchemaAuditRequest) ProtoMessage() {}
 
 func (x *ListSchemaAuditRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cmdb_v1_insight_proto_msgTypes[21]
+	mi := &file_cmdb_v1_insight_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1349,7 +1689,7 @@ func (x *ListSchemaAuditRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListSchemaAuditRequest.ProtoReflect.Descriptor instead.
 func (*ListSchemaAuditRequest) Descriptor() ([]byte, []int) {
-	return file_cmdb_v1_insight_proto_rawDescGZIP(), []int{21}
+	return file_cmdb_v1_insight_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *ListSchemaAuditRequest) GetPage() int64 {
@@ -1428,7 +1768,7 @@ type ListSchemaAuditResponse struct {
 
 func (x *ListSchemaAuditResponse) Reset() {
 	*x = ListSchemaAuditResponse{}
-	mi := &file_cmdb_v1_insight_proto_msgTypes[22]
+	mi := &file_cmdb_v1_insight_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1440,7 +1780,7 @@ func (x *ListSchemaAuditResponse) String() string {
 func (*ListSchemaAuditResponse) ProtoMessage() {}
 
 func (x *ListSchemaAuditResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cmdb_v1_insight_proto_msgTypes[22]
+	mi := &file_cmdb_v1_insight_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1453,7 +1793,7 @@ func (x *ListSchemaAuditResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListSchemaAuditResponse.ProtoReflect.Descriptor instead.
 func (*ListSchemaAuditResponse) Descriptor() ([]byte, []int) {
-	return file_cmdb_v1_insight_proto_rawDescGZIP(), []int{22}
+	return file_cmdb_v1_insight_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *ListSchemaAuditResponse) GetItems() []*CmdbSchemaAudit {
@@ -1535,7 +1875,26 @@ const file_cmdb_v1_insight_proto_rawDesc = "" +
 	"\tby_source\x18\b \x03(\v2\x16.cmdb.v1.OverviewCountR\bbySource\x121\n" +
 	"\x05trend\x18\t \x03(\v2\x1b.cmdb.v1.OverviewTrendPointR\x05trend\x12\x12\n" +
 	"\x04days\x18\n" +
-	" \x01(\x05R\x04days\"\x13\n" +
+	" \x01(\x05R\x04days\"O\n" +
+	"\x06CIView\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x121\n" +
+	"\afilters\x18\x02 \x01(\v2\x17.google.protobuf.StructR\afilters\">\n" +
+	"\x12ListCIViewsRequest\x12(\n" +
+	"\n" +
+	"model_code\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@R\tmodelCode\"<\n" +
+	"\x13ListCIViewsResponse\x12%\n" +
+	"\x05items\x18\x01 \x03(\v2\x0f.cmdb.v1.CIViewR\x05items\"\x97\x01\n" +
+	"\x11SaveCIViewRequest\x12(\n" +
+	"\n" +
+	"model_code\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@R\tmodelCode\x12\x1d\n" +
+	"\x04name\x18\x02 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18 R\x04name\x129\n" +
+	"\afilters\x18\x03 \x01(\v2\x17.google.protobuf.StructB\x06\xbaH\x03\xc8\x01\x01R\afilters\"\x14\n" +
+	"\x12SaveCIViewResponse\"^\n" +
+	"\x13DeleteCIViewRequest\x12(\n" +
+	"\n" +
+	"model_code\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@R\tmodelCode\x12\x1d\n" +
+	"\x04name\x18\x02 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18 R\x04name\"\x16\n" +
+	"\x14DeleteCIViewResponse\"\x13\n" +
 	"\x11GetQualityRequest\"\xf0\x01\n" +
 	"\n" +
 	"QualityRow\x12\x1d\n" +
@@ -1592,15 +1951,18 @@ const file_cmdb_v1_insight_proto_rawDesc = "" +
 	"\x03_to\"_\n" +
 	"\x17ListSchemaAuditResponse\x12.\n" +
 	"\x05items\x18\x01 \x03(\v2\x18.cmdb.v1.CmdbSchemaAuditR\x05items\x12\x14\n" +
-	"\x05total\x18\x02 \x01(\x03R\x05total2\x90\n" +
-	"\n" +
+	"\x05total\x18\x02 \x01(\x03R\x05total2\x8f\r\n" +
 	"\x12CmdbInsightService\x12\x8c\x01\n" +
 	"\x0fListModelGroups\x12\x1f.cmdb.v1.ListModelGroupsRequest\x1a .cmdb.v1.ListModelGroupsResponse\"6\xc2\xf3\x18\x12查询模型分组\x82\xd3\xe4\x93\x02\x1a\x12\x18/api/v1/cmdb/model-group\x12\x92\x01\n" +
 	"\x10CreateModelGroup\x12 .cmdb.v1.CreateModelGroupRequest\x1a!.cmdb.v1.CreateModelGroupResponse\"9\xc2\xf3\x18\x12创建模型分组\x82\xd3\xe4\x93\x02\x1d:\x01*\"\x18/api/v1/cmdb/model-group\x12\x99\x01\n" +
 	"\x10UpdateModelGroup\x12 .cmdb.v1.UpdateModelGroupRequest\x1a!.cmdb.v1.UpdateModelGroupResponse\"@\xc2\xf3\x18\x12更新模型分组\x82\xd3\xe4\x93\x02$:\x01*\x1a\x1f/api/v1/cmdb/model-group/{code}\x12\x96\x01\n" +
 	"\x10DeleteModelGroup\x12 .cmdb.v1.DeleteModelGroupRequest\x1a!.cmdb.v1.DeleteModelGroupResponse\"=\xc2\xf3\x18\x12删除模型分组\x82\xd3\xe4\x93\x02!*\x1f/api/v1/cmdb/model-group/{code}\x12\x86\x01\n" +
 	"\rListFavorites\x12\x1d.cmdb.v1.ListFavoritesRequest\x1a\x1e.cmdb.v1.ListFavoritesResponse\"6\xc2\xf3\x18\x15查询收藏的模型\x82\xd3\xe4\x93\x02\x17\x12\x15/api/v1/cmdb/favorite\x12\x87\x01\n" +
-	"\vSetFavorite\x12\x1b.cmdb.v1.SetFavoriteRequest\x1a\x1c.cmdb.v1.SetFavoriteResponse\"=\xc2\xf3\x18\f收藏模型\x82\xd3\xe4\x93\x02':\x01*\x1a\"/api/v1/cmdb/favorite/{model_code}\x12}\n" +
+	"\vSetFavorite\x12\x1b.cmdb.v1.SetFavoriteRequest\x1a\x1c.cmdb.v1.SetFavoriteResponse\"=\xc2\xf3\x18\f收藏模型\x82\xd3\xe4\x93\x02':\x01*\x1a\"/api/v1/cmdb/favorite/{model_code}\x12\x7f\n" +
+	"\vListCIViews\x12\x1b.cmdb.v1.ListCIViewsRequest\x1a\x1c.cmdb.v1.ListCIViewsResponse\"5\xc2\xf3\x18\x15查询保存的视图\x82\xd3\xe4\x93\x02\x16\x12\x14/api/v1/cmdb/ci-view\x12v\n" +
+	"\n" +
+	"SaveCIView\x12\x1a.cmdb.v1.SaveCIViewRequest\x1a\x1b.cmdb.v1.SaveCIViewResponse\"/\xc2\xf3\x18\f保存视图\x82\xd3\xe4\x93\x02\x19:\x01*\x1a\x14/api/v1/cmdb/ci-view\x12\x83\x01\n" +
+	"\fDeleteCIView\x12\x1c.cmdb.v1.DeleteCIViewRequest\x1a\x1d.cmdb.v1.DeleteCIViewResponse\"6\xc2\xf3\x18\f删除视图\x82\xd3\xe4\x93\x02 :\x01*\"\x1b/api/v1/cmdb/ci-view:delete\x12}\n" +
 	"\vGetOverview\x12\x1b.cmdb.v1.GetOverviewRequest\x1a\x1c.cmdb.v1.GetOverviewResponse\"3\xc2\xf3\x18\x12查询运营概览\x82\xd3\xe4\x93\x02\x17\x12\x15/api/v1/cmdb/overview\x12y\n" +
 	"\n" +
 	"GetQuality\x12\x1a.cmdb.v1.GetQualityRequest\x1a\x1b.cmdb.v1.GetQualityResponse\"2\xc2\xf3\x18\x12查询数据质量\x82\xd3\xe4\x93\x02\x16\x12\x14/api/v1/cmdb/quality\x12\x93\x01\n" +
@@ -1618,7 +1980,7 @@ func file_cmdb_v1_insight_proto_rawDescGZIP() []byte {
 	return file_cmdb_v1_insight_proto_rawDescData
 }
 
-var file_cmdb_v1_insight_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
+var file_cmdb_v1_insight_proto_msgTypes = make([]protoimpl.MessageInfo, 30)
 var file_cmdb_v1_insight_proto_goTypes = []any{
 	(*CmdbModelGroup)(nil),           // 0: cmdb.v1.CmdbModelGroup
 	(*ListModelGroupsRequest)(nil),   // 1: cmdb.v1.ListModelGroupsRequest
@@ -1637,14 +1999,21 @@ var file_cmdb_v1_insight_proto_goTypes = []any{
 	(*OverviewTrendPoint)(nil),       // 14: cmdb.v1.OverviewTrendPoint
 	(*GetOverviewRequest)(nil),       // 15: cmdb.v1.GetOverviewRequest
 	(*GetOverviewResponse)(nil),      // 16: cmdb.v1.GetOverviewResponse
-	(*GetQualityRequest)(nil),        // 17: cmdb.v1.GetQualityRequest
-	(*QualityRow)(nil),               // 18: cmdb.v1.QualityRow
-	(*GetQualityResponse)(nil),       // 19: cmdb.v1.GetQualityResponse
-	(*CmdbSchemaAudit)(nil),          // 20: cmdb.v1.CmdbSchemaAudit
-	(*ListSchemaAuditRequest)(nil),   // 21: cmdb.v1.ListSchemaAuditRequest
-	(*ListSchemaAuditResponse)(nil),  // 22: cmdb.v1.ListSchemaAuditResponse
-	(*structpb.Struct)(nil),          // 23: google.protobuf.Struct
-	(*timestamppb.Timestamp)(nil),    // 24: google.protobuf.Timestamp
+	(*CIView)(nil),                   // 17: cmdb.v1.CIView
+	(*ListCIViewsRequest)(nil),       // 18: cmdb.v1.ListCIViewsRequest
+	(*ListCIViewsResponse)(nil),      // 19: cmdb.v1.ListCIViewsResponse
+	(*SaveCIViewRequest)(nil),        // 20: cmdb.v1.SaveCIViewRequest
+	(*SaveCIViewResponse)(nil),       // 21: cmdb.v1.SaveCIViewResponse
+	(*DeleteCIViewRequest)(nil),      // 22: cmdb.v1.DeleteCIViewRequest
+	(*DeleteCIViewResponse)(nil),     // 23: cmdb.v1.DeleteCIViewResponse
+	(*GetQualityRequest)(nil),        // 24: cmdb.v1.GetQualityRequest
+	(*QualityRow)(nil),               // 25: cmdb.v1.QualityRow
+	(*GetQualityResponse)(nil),       // 26: cmdb.v1.GetQualityResponse
+	(*CmdbSchemaAudit)(nil),          // 27: cmdb.v1.CmdbSchemaAudit
+	(*ListSchemaAuditRequest)(nil),   // 28: cmdb.v1.ListSchemaAuditRequest
+	(*ListSchemaAuditResponse)(nil),  // 29: cmdb.v1.ListSchemaAuditResponse
+	(*structpb.Struct)(nil),          // 30: google.protobuf.Struct
+	(*timestamppb.Timestamp)(nil),    // 31: google.protobuf.Timestamp
 }
 var file_cmdb_v1_insight_proto_depIdxs = []int32{
 	0,  // 0: cmdb.v1.ListModelGroupsResponse.items:type_name -> cmdb.v1.CmdbModelGroup
@@ -1655,35 +2024,44 @@ var file_cmdb_v1_insight_proto_depIdxs = []int32{
 	13, // 5: cmdb.v1.GetOverviewResponse.by_env:type_name -> cmdb.v1.OverviewCount
 	13, // 6: cmdb.v1.GetOverviewResponse.by_source:type_name -> cmdb.v1.OverviewCount
 	14, // 7: cmdb.v1.GetOverviewResponse.trend:type_name -> cmdb.v1.OverviewTrendPoint
-	18, // 8: cmdb.v1.GetQualityResponse.items:type_name -> cmdb.v1.QualityRow
-	23, // 9: cmdb.v1.CmdbSchemaAudit.diff:type_name -> google.protobuf.Struct
-	24, // 10: cmdb.v1.CmdbSchemaAudit.create_time:type_name -> google.protobuf.Timestamp
-	24, // 11: cmdb.v1.ListSchemaAuditRequest.from:type_name -> google.protobuf.Timestamp
-	24, // 12: cmdb.v1.ListSchemaAuditRequest.to:type_name -> google.protobuf.Timestamp
-	20, // 13: cmdb.v1.ListSchemaAuditResponse.items:type_name -> cmdb.v1.CmdbSchemaAudit
-	1,  // 14: cmdb.v1.CmdbInsightService.ListModelGroups:input_type -> cmdb.v1.ListModelGroupsRequest
-	3,  // 15: cmdb.v1.CmdbInsightService.CreateModelGroup:input_type -> cmdb.v1.CreateModelGroupRequest
-	5,  // 16: cmdb.v1.CmdbInsightService.UpdateModelGroup:input_type -> cmdb.v1.UpdateModelGroupRequest
-	7,  // 17: cmdb.v1.CmdbInsightService.DeleteModelGroup:input_type -> cmdb.v1.DeleteModelGroupRequest
-	9,  // 18: cmdb.v1.CmdbInsightService.ListFavorites:input_type -> cmdb.v1.ListFavoritesRequest
-	11, // 19: cmdb.v1.CmdbInsightService.SetFavorite:input_type -> cmdb.v1.SetFavoriteRequest
-	15, // 20: cmdb.v1.CmdbInsightService.GetOverview:input_type -> cmdb.v1.GetOverviewRequest
-	17, // 21: cmdb.v1.CmdbInsightService.GetQuality:input_type -> cmdb.v1.GetQualityRequest
-	21, // 22: cmdb.v1.CmdbInsightService.ListSchemaAudit:input_type -> cmdb.v1.ListSchemaAuditRequest
-	2,  // 23: cmdb.v1.CmdbInsightService.ListModelGroups:output_type -> cmdb.v1.ListModelGroupsResponse
-	4,  // 24: cmdb.v1.CmdbInsightService.CreateModelGroup:output_type -> cmdb.v1.CreateModelGroupResponse
-	6,  // 25: cmdb.v1.CmdbInsightService.UpdateModelGroup:output_type -> cmdb.v1.UpdateModelGroupResponse
-	8,  // 26: cmdb.v1.CmdbInsightService.DeleteModelGroup:output_type -> cmdb.v1.DeleteModelGroupResponse
-	10, // 27: cmdb.v1.CmdbInsightService.ListFavorites:output_type -> cmdb.v1.ListFavoritesResponse
-	12, // 28: cmdb.v1.CmdbInsightService.SetFavorite:output_type -> cmdb.v1.SetFavoriteResponse
-	16, // 29: cmdb.v1.CmdbInsightService.GetOverview:output_type -> cmdb.v1.GetOverviewResponse
-	19, // 30: cmdb.v1.CmdbInsightService.GetQuality:output_type -> cmdb.v1.GetQualityResponse
-	22, // 31: cmdb.v1.CmdbInsightService.ListSchemaAudit:output_type -> cmdb.v1.ListSchemaAuditResponse
-	23, // [23:32] is the sub-list for method output_type
-	14, // [14:23] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	30, // 8: cmdb.v1.CIView.filters:type_name -> google.protobuf.Struct
+	17, // 9: cmdb.v1.ListCIViewsResponse.items:type_name -> cmdb.v1.CIView
+	30, // 10: cmdb.v1.SaveCIViewRequest.filters:type_name -> google.protobuf.Struct
+	25, // 11: cmdb.v1.GetQualityResponse.items:type_name -> cmdb.v1.QualityRow
+	30, // 12: cmdb.v1.CmdbSchemaAudit.diff:type_name -> google.protobuf.Struct
+	31, // 13: cmdb.v1.CmdbSchemaAudit.create_time:type_name -> google.protobuf.Timestamp
+	31, // 14: cmdb.v1.ListSchemaAuditRequest.from:type_name -> google.protobuf.Timestamp
+	31, // 15: cmdb.v1.ListSchemaAuditRequest.to:type_name -> google.protobuf.Timestamp
+	27, // 16: cmdb.v1.ListSchemaAuditResponse.items:type_name -> cmdb.v1.CmdbSchemaAudit
+	1,  // 17: cmdb.v1.CmdbInsightService.ListModelGroups:input_type -> cmdb.v1.ListModelGroupsRequest
+	3,  // 18: cmdb.v1.CmdbInsightService.CreateModelGroup:input_type -> cmdb.v1.CreateModelGroupRequest
+	5,  // 19: cmdb.v1.CmdbInsightService.UpdateModelGroup:input_type -> cmdb.v1.UpdateModelGroupRequest
+	7,  // 20: cmdb.v1.CmdbInsightService.DeleteModelGroup:input_type -> cmdb.v1.DeleteModelGroupRequest
+	9,  // 21: cmdb.v1.CmdbInsightService.ListFavorites:input_type -> cmdb.v1.ListFavoritesRequest
+	11, // 22: cmdb.v1.CmdbInsightService.SetFavorite:input_type -> cmdb.v1.SetFavoriteRequest
+	18, // 23: cmdb.v1.CmdbInsightService.ListCIViews:input_type -> cmdb.v1.ListCIViewsRequest
+	20, // 24: cmdb.v1.CmdbInsightService.SaveCIView:input_type -> cmdb.v1.SaveCIViewRequest
+	22, // 25: cmdb.v1.CmdbInsightService.DeleteCIView:input_type -> cmdb.v1.DeleteCIViewRequest
+	15, // 26: cmdb.v1.CmdbInsightService.GetOverview:input_type -> cmdb.v1.GetOverviewRequest
+	24, // 27: cmdb.v1.CmdbInsightService.GetQuality:input_type -> cmdb.v1.GetQualityRequest
+	28, // 28: cmdb.v1.CmdbInsightService.ListSchemaAudit:input_type -> cmdb.v1.ListSchemaAuditRequest
+	2,  // 29: cmdb.v1.CmdbInsightService.ListModelGroups:output_type -> cmdb.v1.ListModelGroupsResponse
+	4,  // 30: cmdb.v1.CmdbInsightService.CreateModelGroup:output_type -> cmdb.v1.CreateModelGroupResponse
+	6,  // 31: cmdb.v1.CmdbInsightService.UpdateModelGroup:output_type -> cmdb.v1.UpdateModelGroupResponse
+	8,  // 32: cmdb.v1.CmdbInsightService.DeleteModelGroup:output_type -> cmdb.v1.DeleteModelGroupResponse
+	10, // 33: cmdb.v1.CmdbInsightService.ListFavorites:output_type -> cmdb.v1.ListFavoritesResponse
+	12, // 34: cmdb.v1.CmdbInsightService.SetFavorite:output_type -> cmdb.v1.SetFavoriteResponse
+	19, // 35: cmdb.v1.CmdbInsightService.ListCIViews:output_type -> cmdb.v1.ListCIViewsResponse
+	21, // 36: cmdb.v1.CmdbInsightService.SaveCIView:output_type -> cmdb.v1.SaveCIViewResponse
+	23, // 37: cmdb.v1.CmdbInsightService.DeleteCIView:output_type -> cmdb.v1.DeleteCIViewResponse
+	16, // 38: cmdb.v1.CmdbInsightService.GetOverview:output_type -> cmdb.v1.GetOverviewResponse
+	26, // 39: cmdb.v1.CmdbInsightService.GetQuality:output_type -> cmdb.v1.GetQualityResponse
+	29, // 40: cmdb.v1.CmdbInsightService.ListSchemaAudit:output_type -> cmdb.v1.ListSchemaAuditResponse
+	29, // [29:41] is the sub-list for method output_type
+	17, // [17:29] is the sub-list for method input_type
+	17, // [17:17] is the sub-list for extension type_name
+	17, // [17:17] is the sub-list for extension extendee
+	0,  // [0:17] is the sub-list for field type_name
 }
 
 func init() { file_cmdb_v1_insight_proto_init() }
@@ -1694,14 +2072,14 @@ func file_cmdb_v1_insight_proto_init() {
 	file_cmdb_v1_insight_proto_msgTypes[3].OneofWrappers = []any{}
 	file_cmdb_v1_insight_proto_msgTypes[5].OneofWrappers = []any{}
 	file_cmdb_v1_insight_proto_msgTypes[15].OneofWrappers = []any{}
-	file_cmdb_v1_insight_proto_msgTypes[21].OneofWrappers = []any{}
+	file_cmdb_v1_insight_proto_msgTypes[28].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cmdb_v1_insight_proto_rawDesc), len(file_cmdb_v1_insight_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   23,
+			NumMessages:   30,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

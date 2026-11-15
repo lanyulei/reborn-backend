@@ -9,6 +9,7 @@ import (
 	assistantv1 "github.com/lanyulei/reborn/backend/core/api/assistant/v1"
 	cmdbv1 "github.com/lanyulei/reborn/backend/core/api/cmdb/v1"
 	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
+	oncallv1 "github.com/lanyulei/reborn/backend/core/api/oncall/v1"
 	v1 "github.com/lanyulei/reborn/backend/core/api/system/v1"
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
 
@@ -47,6 +48,9 @@ var operationFiles = []protoreflect.FileDescriptor{
 	cmdbv1.File_cmdb_v1_relation_proto,
 	cmdbv1.File_cmdb_v1_sync_proto,
 	cmdbv1.File_cmdb_v1_insight_proto,
+	oncallv1.File_oncall_v1_group_proto,
+	oncallv1.File_oncall_v1_schedule_proto,
+	oncallv1.File_oncall_v1_share_proto,
 }
 
 // authzExemptOperations 是免授权检查的操作集合（proto full method），为鉴权
@@ -67,6 +71,8 @@ var authzExemptOperations = map[string]struct{}{
 	// 头像：上传为已认证用户的自助接口（只改本人）；读取为静态资源语义，随 authExempt 同步免 JWT。
 	v1.OperationAuthServiceUploadMyAvatar: {},
 	v1.OperationAuthServiceGetUserAvatar:  {},
+	// 公共值班日历（令牌即凭据，匿名可读）：随 authExempt 同步免 JWT。
+	oncallv1.OperationOncallShareServiceGetPublicCalendar: {},
 }
 
 // IsAuthzExempt 报告操作是否免授权检查；供 server 层 authz 中间件使用，

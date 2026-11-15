@@ -6,6 +6,8 @@ import (
 	"slices"
 	"time"
 
+	"github.com/lanyulei/reborn/backend/kit/cmdbcontract"
+
 	"github.com/lanyulei/reborn/backend/kit/paging"
 )
 
@@ -90,14 +92,25 @@ func (uc *CIUsecase) Import(ctx context.Context, actor Actor, scope Scope, model
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), importTimeout)
 	defer cancel()
 	out := &ImportResult{DryRun: dryRun, Results: make([]ImportRowResult, 0, len(rows))}
+	// 两遍处理：先写入全部资源，再建立关系——同一批内互相引用的资源（A 关联 B，A 排在 B 之前）
+	// 不受行序影响。pending 为本批将写入的资源名：试运行时资源并未真正创建，引用它们视为可解析。
+	results := make([]ImportRowResult, len(rows))
+	rowErr := make([]error, len(rows))
+	pending := make(map[string]struct{}, len(rows))
 	for i, row := range rows {
 		res := ImportRowResult{Row: int32(i + 1), Name: row.Name}
-		action, ciID, err := uc.importRow(ctx, actor, scope, m, fields, row, dryRun)
-		res.Action, res.CIID = action, ciID
+		res.Action, res.CIID, rowErr[i] = uc.importRow(ctx, actor, scope, m, fields, row, dryRun)
+		if rowErr[i] == nil {
+			pending[row.Name] = struct{}{}
+		}
+		results[i] = res
+	}
+	for i, row := range rows {
+		res, ciID, err := results[i], results[i].CIID, rowErr[i]
 		if err != nil {
 			res.Action, res.Message = ImportActionError, err.Error()
 		} else if len(row.Relations) > 0 {
-			linked, err := uc.importRelations(ctx, actor, scope, m, ciID, row.Relations, dryRun)
+			linked, err := uc.importRelations(ctx, actor, scope, m, ciID, row.Relations, dryRun, pending)
 			if linked > 0 {
 				res.Message = fmt.Sprintf("relations linked: %d", linked)
 				if res.Action == ImportActionSkip {
@@ -219,7 +232,7 @@ func (uc *CIUsecase) previewUpdate(ctx context.Context, actor Actor, cur *CI, fi
 	}
 	if upd.Attrs != nil {
 		upd.Attrs = dropMaskedValues(fields, cloneAttrs(upd.Attrs))
-		if actor.source() == SourceManual {
+		if actor.source() == SourceManual && cmdbcontract.IsSyncSource(cur.Source) {
 			if err := rejectSyncOwned(fields, cur.Attrs, upd.Attrs); err != nil {
 				return false, err
 			}
@@ -293,7 +306,7 @@ func (uc *CIUsecase) Export(ctx context.Context, filter CIFilter) ([]*CI, []*Fie
 // importRelations 解析并建立导入行声明的关系：目标按 (类型, 名称) 查找；已存在跳过；
 // dryRun 只解析目标与校验类型，不写入。返回新建关系数。
 // 范围外的对端按不存在处理（不泄露其存在）。
-func (uc *CIUsecase) importRelations(ctx context.Context, actor Actor, scope Scope, m *Model, ciID string, rels []ImportRelation, dryRun bool) (int32, error) {
+func (uc *CIUsecase) importRelations(ctx context.Context, actor Actor, scope Scope, m *Model, ciID string, rels []ImportRelation, dryRun bool, pending map[string]struct{}) (int32, error) {
 	var linked int32
 	for _, rel := range rels {
 		t, err := uc.relTypes.Get(ctx, rel.Type)
@@ -322,6 +335,11 @@ func (uc *CIUsecase) importRelations(ctx context.Context, actor Actor, scope Sco
 			err = ErrCINotFound
 		}
 		if err != nil {
+			// 试运行：对端是本批将创建的同类型资源（尚未落库）——正式导入时它已存在。
+			if _, ok := pending[rel.TargetName]; ok && dryRun && err == ErrCINotFound && targetModel == m.Code {
+				linked++
+				continue
+			}
 			if err == ErrCINotFound {
 				return linked, detail(ErrCINotFound, "relation %s: %s %q not found", t.Code, targetModel, rel.TargetName)
 			}
@@ -338,4 +356,45 @@ func (uc *CIUsecase) importRelations(ctx context.Context, actor Actor, scope Sco
 		linked += n
 	}
 	return linked, nil
+}
+
+// ExportRelations 被导出资源的关联，转成与导入行同构的声明（ciID → 关联列表）。
+// 对端不在调用者数据范围内的关联不导出；关系类型该端为通配时带上对端类型（导入时需要）。
+func (uc *CIUsecase) ExportRelations(ctx context.Context, scope Scope, items []*CI) (map[string][]ImportRelation, error) {
+	out := make(map[string][]ImportRelation, len(items))
+	if len(items) == 0 {
+		return out, nil
+	}
+	types, err := uc.relTypes.List(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	byCode := make(map[string]*RelationType, len(types))
+	for _, t := range types {
+		byCode[t.Code] = t
+	}
+	ids := make([]string, 0, len(items))
+	for _, ci := range items {
+		ids = append(ids, ci.ID)
+	}
+	// 分块查询：单条语句的 ID 数组不超过 1000。
+	for start := 0; start < len(ids); start += 1000 {
+		rels, err := uc.relations.ListForExport(ctx, ids[start:min(start+1000, len(ids))])
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range rels {
+			t, ok := byCode[r.TypeCode]
+			if !ok || !scope.Allows(r.PeerModel, r.PeerEnv) {
+				continue
+			}
+			decl := ImportRelation{Type: r.TypeCode, Direction: r.Direction, TargetName: r.PeerName}
+			// 对端所在的一端为通配时，导入需要显式的对端类型。
+			if end := t.DstModel; (r.Direction == DirectionOutgoing && end == ModelAny) || (r.Direction == DirectionIncoming && t.SrcModel == ModelAny) {
+				decl.TargetModel = r.PeerModel
+			}
+			out[r.CIID] = append(out[r.CIID], decl)
+		}
+	}
+	return out, nil
 }

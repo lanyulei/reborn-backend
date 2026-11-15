@@ -4,6 +4,7 @@ import (
 	"context"
 
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/cmdb"
+	bizsystem "github.com/lanyulei/reborn/backend/core/internal/biz/system"
 	systemservice "github.com/lanyulei/reborn/backend/core/internal/service/system"
 )
 
@@ -23,6 +24,23 @@ func (g scopeGuard) resolve(ctx context.Context) (biz.Scope, error) {
 		return biz.Scope{}, err
 	}
 	return g.scopes.Resolve(ctx, userID)
+}
+
+// requireOperation 当前用户须同时持有另一个接口操作的权限（如认领同步冲突会改写资源，
+// 须有"编辑资源"权限）；没有则 403。
+func (g scopeGuard) requireOperation(ctx context.Context, operation string) error {
+	userID, err := systemservice.UserIDFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	ok, err := g.scopes.Allowed(ctx, userID, bizsystem.OperationCode(operation))
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return biz.ErrOperationForbidden
+	}
+	return nil
 }
 
 // require 目标类型与环境须在范围内。

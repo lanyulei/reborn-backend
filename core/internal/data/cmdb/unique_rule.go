@@ -42,6 +42,17 @@ func lockUniqueRuleChange(ctx context.Context, tx pgx.Tx, modelCode string) erro
 	return lockWithTimeout(ctx, tx, modelCode, uniqueRuleDefLockSQL, uniqueRuleLockSQL)
 }
 
+// mapDeadlock 死锁（40P01）映射为可重试的业务错误。先取类型级排他锁、再取行锁的事务（认领 /
+// 解除同步托管）与"先持行锁、触发器再取共享锁"的并发资源更新可能互相等待，由 PostgreSQL 的
+// 死锁检测中止其一；取锁顺序须与对账保持一致，不能调换，故在此兜底。
+func mapDeadlock(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.DeadlockDetected {
+		return biz.ErrUniqueRuleBusy
+	}
+	return err
+}
+
 func lockWithTimeout(ctx context.Context, tx pgx.Tx, modelCode string, stmts ...string) error {
 	// SET LOCAL 不接受绑定参数；取值来自常量，无注入面。
 	if _, err := tx.Exec(ctx, fmt.Sprintf("SET LOCAL lock_timeout = %d", uniqueRuleLockTimeout.Milliseconds())); err != nil {

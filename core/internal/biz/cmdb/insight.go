@@ -2,7 +2,13 @@ package biz
 
 import (
 	"context"
+	"encoding/json"
+	"slices"
+	"strings"
+	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 
 	"github.com/lanyulei/reborn/backend/kit/paging"
 )
@@ -51,6 +57,26 @@ type FavoriteRepo interface {
 	List(ctx context.Context, userID string) ([]string, error)
 	// Set 收藏 / 取消收藏（幂等）。
 	Set(ctx context.Context, userID, modelCode string, favorite bool) error
+}
+
+// CIView 保存的资源列表视图（按用户 + 模型；Filters 为前端筛选表单的值，后端只存取不解释）。
+type CIView struct {
+	Name    string
+	Filters map[string]any
+}
+
+// 保存的视图的上限：每用户每模型的个数、单个视图筛选条件序列化后的字节数。
+const (
+	MaxCIViewsPerModel = 20
+	MaxCIViewBytes     = 4096
+)
+
+// CIViewRepo 保存的视图仓储接口。
+type CIViewRepo interface {
+	List(ctx context.Context, userID, modelCode string) ([]*CIView, error)
+	// Save 同名覆盖；新增时超过 limit 个返回 ErrCIViewLimit（计数与写入同事务）。
+	Save(ctx context.Context, userID, modelCode string, view *CIView, limit int) error
+	Delete(ctx context.Context, userID, modelCode, name string) error
 }
 
 // OverviewFilter 运营概览条件：ModelCodes / Envs 为 nil 表示该维度不限（数据范围守卫叠加）。
@@ -115,11 +141,18 @@ type InsightUsecase struct {
 	overview  OverviewRepo
 	audits    SchemaAuditRepo
 	models    ModelRepo
+	ciViews   CIViewRepo
+
+	// 数据质量统计的短缓存（见 Quality）。
+	qualityMu sync.Mutex
+	quality   map[string]qualityCacheEntry
+	// qualityFlight 合并同一范围的并发计算。
+	qualityFlight singleflight.Group
 }
 
 // NewInsightUsecase new an InsightUsecase.
-func NewInsightUsecase(groups GroupRepo, favorites FavoriteRepo, overview OverviewRepo, audits SchemaAuditRepo, models ModelRepo) *InsightUsecase {
-	return &InsightUsecase{groups: groups, favorites: favorites, overview: overview, audits: audits, models: models}
+func NewInsightUsecase(groups GroupRepo, favorites FavoriteRepo, overview OverviewRepo, audits SchemaAuditRepo, models ModelRepo, views CIViewRepo) *InsightUsecase {
+	return &InsightUsecase{groups: groups, favorites: favorites, overview: overview, audits: audits, models: models, ciViews: views}
 }
 
 // ListGroups 全部模型分组。
@@ -221,12 +254,112 @@ func (uc *InsightUsecase) Overview(ctx context.Context, filter OverviewFilter, d
 }
 
 // Quality 数据质量：按模型统计各类问题的资源数。
+//
+// 性能：统计要扫一遍全部在册资源（实测 50 万资源约 1.5–2s，随资源数线性增长），因此：
+//   - 结果按数据范围缓存 qualityCacheTTL（进程内只读 TTL 缓存；看板允许分钟级延迟）；
+//   - 计算脱离请求取消并自带上限：即使首次请求因服务端时限（5s）先返回超时，计算仍会完成并
+//     写入缓存，随后的请求直接命中。
 func (uc *InsightUsecase) Quality(ctx context.Context, filter OverviewFilter) ([]*QualityRow, error) {
-	return uc.overview.Quality(ctx, filter, time.Now().AddDate(0, 0, -QualityOutdatedDays))
+	key := qualityCacheKey(filter)
+	uc.qualityMu.Lock()
+	if e, ok := uc.quality[key]; ok && time.Since(e.at) < qualityCacheTTL {
+		uc.qualityMu.Unlock()
+		return cloneQualityRows(e.rows), nil
+	}
+	uc.qualityMu.Unlock()
+	// 同一范围的并发未命中合并为一次计算（多人同时打开看板、缓存到期的瞬间都只扫一遍）。
+	v, err, _ := uc.qualityFlight.Do(key, func() (any, error) {
+		qctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), qualityQueryTimeout)
+		defer cancel()
+		rows, err := uc.overview.Quality(qctx, filter, time.Now().AddDate(0, 0, -QualityOutdatedDays))
+		if err != nil {
+			return nil, err
+		}
+		uc.qualityMu.Lock()
+		if uc.quality == nil || len(uc.quality) >= qualityCacheMaxKeys {
+			uc.quality = make(map[string]qualityCacheEntry, 8) // 范围组合过多时整体重建，避免无界增长
+		}
+		uc.quality[key] = qualityCacheEntry{at: time.Now(), rows: rows}
+		uc.qualityMu.Unlock()
+		return rows, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return cloneQualityRows(v.([]*QualityRow)), nil
+}
+
+const (
+	qualityCacheTTL     = 60 * time.Second
+	qualityQueryTimeout = 60 * time.Second
+	qualityCacheMaxKeys = 256
+)
+
+type qualityCacheEntry struct {
+	at   time.Time
+	rows []*QualityRow
+}
+
+// qualityCacheKey 数据范围的规范化表示（nil 与空集合含义不同：不限 / 什么都看不到）。
+func qualityCacheKey(f OverviewFilter) string {
+	// JSON 编码：null（不限）与 []（什么都看不到）天然区分，取值里的任何字符都不会造成歧义。
+	norm := func(set []string) []string {
+		if set == nil {
+			return nil
+		}
+		// 空集合须保持为非 nil（slices.Sorted 对空输入返回 nil，会与"不限"混同）。
+		return append([]string{}, slices.Sorted(slices.Values(set))...)
+	}
+	raw, _ := json.Marshal([2][]string{norm(f.ModelCodes), norm(f.Envs)})
+	return string(raw)
+}
+
+// cloneQualityRows 返回副本（调用方会排序 / 改写切片）。
+func cloneQualityRows(rows []*QualityRow) []*QualityRow {
+	out := make([]*QualityRow, 0, len(rows))
+	for _, r := range rows {
+		cp := *r
+		out = append(out, &cp)
+	}
+	return out
 }
 
 // ListSchemaAudit 分页查询模型变更审计（时间倒序）。
 func (uc *InsightUsecase) ListSchemaAudit(ctx context.Context, filter SchemaAuditFilter, page, pageSize int64) ([]*SchemaAudit, int64, error) {
 	page, pageSize = paging.Normalize(page, pageSize)
 	return uc.audits.List(ctx, filter, page, pageSize)
+}
+
+// ListCIViews 用户在某模型下保存的视图。
+func (uc *InsightUsecase) ListCIViews(ctx context.Context, userID, modelCode string) ([]*CIView, error) {
+	return uc.ciViews.List(ctx, userID, modelCode)
+}
+
+// SaveCIView 保存视图（同名覆盖）：模型须存在；名称去首尾空白；筛选条件有大小上限。
+func (uc *InsightUsecase) SaveCIView(ctx context.Context, userID, modelCode string, view *CIView) error {
+	if _, err := uc.models.Get(ctx, modelCode); err != nil {
+		return err
+	}
+	view.Name = strings.TrimSpace(view.Name)
+	if view.Name == "" {
+		return detail(ErrViewInvalid, "view name is required")
+	}
+	raw, err := json.Marshal(view.Filters)
+	if err != nil {
+		return detail(ErrViewInvalid, "filters are not serialisable")
+	}
+	if len(raw) > MaxCIViewBytes {
+		return detail(ErrViewInvalid, "filters are too large (max %d bytes)", MaxCIViewBytes)
+	}
+	return uc.ciViews.Save(ctx, userID, modelCode, view, MaxCIViewsPerModel)
+}
+
+// DeleteCIView 删除视图（幂等）。
+func (uc *InsightUsecase) DeleteCIView(ctx context.Context, userID, modelCode, name string) error {
+	return uc.ciViews.Delete(ctx, userID, modelCode, strings.TrimSpace(name))
+}
+
+// CIViewLimitError 视图个数超过上限。
+func CIViewLimitError(limit int) error {
+	return detail(ErrViewInvalid, "at most %d saved views per model", limit)
 }

@@ -38,6 +38,14 @@ var excludedOperations = map[string]struct{}{
 	"/cmdb.v1.CmdbSyncService/RotateWebhook": {},
 }
 
+// readOnlyOperations 用 POST 承载但不写任何数据的 RPC（预览 / 预检）：按读操作处理，
+// 不需要用户确认。只列确认过无副作用的接口；新接口默认仍按 HTTP 方法判定。
+var readOnlyOperations = map[string]struct{}{
+	"/oncall.v1.OncallScheduleService/PreviewSchedule": {},
+	"/notify.v1.NotifyTemplateService/RenderTemplate":  {},
+	"/cmdb.v1.CmdbModelService/CheckUniqueRule":        {},
+}
+
 // NewToolCatalog 从可授权 RPC 枚举生成模型工具目录（启动期一次性反射；运行
 // 期 biz 只读纯数据）。HTTP body 绑定仅支持 "" 与 "*"（项目内全部如此），
 // 出现其它绑定形式在装配阶段报错，防止回环执行器静默错传参数。
@@ -80,12 +88,13 @@ func buildToolSpec(m systemservice.AuthorizableMethod) (biz.ToolSpec, error) {
 		desc = method
 	}
 	desc += fmt.Sprintf("（%s %s）", m.HTTPMethod, m.Path)
-	write := isWriteMethod(method)
+	write := isWriteOperation(m.Name, m.HTTPMethod)
 	if write {
 		desc += "；写操作，执行前需用户确认"
 	}
 	return biz.ToolSpec{
 		Name:         name,
+		Module:       svc[:strings.IndexByte(svc+".", '.')],
 		Operation:    m.Name,
 		Code:         m.Code,
 		Title:        m.Title,
@@ -99,10 +108,16 @@ func buildToolSpec(m systemservice.AuthorizableMethod) (biz.ToolSpec, error) {
 	}, nil
 }
 
-// isWriteMethod 方法名不以 Get/List 开头即视为写操作（含 SendTestEvent /
-// RotateProducerToken / SetRolePermissions 等有副作用的 POST）。
-func isWriteMethod(method string) bool {
-	return !strings.HasPrefix(method, "Get") && !strings.HasPrefix(method, "List")
+// isWriteOperation 写操作判定：HTTP GET 一律是读（本项目的 GET 接口都不改数据，如全局
+// 搜索、拓扑查询）；其余方法视为写（含 SendTestEvent / RotateProducerToken /
+// SetRolePermissions 等有副作用的 POST、PUT），除非列入 readOnlyOperations。
+// 写操作执行前须用户确认，所以拿不准的一律算写。
+func isWriteOperation(operation, httpMethod string) bool {
+	if httpMethod == "GET" {
+		return false
+	}
+	_, readOnly := readOnlyOperations[operation]
+	return !readOnly
 }
 
 // pathFieldJSONNames 把路径模板占位（proto 字段名）映射为 protojson 字段名，

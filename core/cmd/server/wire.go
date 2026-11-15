@@ -15,10 +15,13 @@ import (
 	dataassistant "github.com/lanyulei/reborn/backend/core/internal/data/assistant"
 	datacmdb "github.com/lanyulei/reborn/backend/core/internal/data/cmdb"
 	datanotify "github.com/lanyulei/reborn/backend/core/internal/data/notify"
+	dataoncall "github.com/lanyulei/reborn/backend/core/internal/data/oncall"
 	datasystem "github.com/lanyulei/reborn/backend/core/internal/data/system"
 	"github.com/lanyulei/reborn/backend/core/internal/server"
 	"github.com/lanyulei/reborn/backend/core/internal/service"
+	serviceoncall "github.com/lanyulei/reborn/backend/core/internal/service/oncall"
 	servicesystem "github.com/lanyulei/reborn/backend/core/internal/service/system"
+	"github.com/lanyulei/reborn/backend/core/internal/worker"
 
 	"github.com/go-kratos/kratos/v3"
 	"github.com/google/wire"
@@ -29,7 +32,8 @@ import (
 // 各域 data ProviderSet 在此显式列出；biz/service 顶层已聚合。
 // service 层消费的 biz 窄接口（AdminResolver ← UserUsecase）在组合根绑定，避免 biz 反向依赖 service。
 func wireApp(*conf.Server, *conf.Data, *conf.Security, *conf.Notify, *conf.Assistant, *slog.Logger) (*kratos.App, func(), error) {
-	panic(wire.Build(server.ProviderSet, data.ProviderSet, datasystem.ProviderSet, datanotify.ProviderSet, dataassistant.ProviderSet, datacmdb.ProviderSet, biz.ProviderSet, service.ProviderSet,
+	panic(wire.Build(server.ProviderSet, data.ProviderSet, datasystem.ProviderSet, datanotify.ProviderSet, dataassistant.ProviderSet, datacmdb.ProviderSet, dataoncall.ProviderSet, biz.ProviderSet, service.ProviderSet, worker.ProviderSet,
 		wire.Bind(new(servicesystem.AdminResolver), new(*bizsystem.UserUsecase)),
+		wire.Bind(new(serviceoncall.AdminResolver), new(*bizsystem.UserUsecase)),
 		newApp))
 }

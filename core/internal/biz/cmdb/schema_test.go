@@ -147,3 +147,17 @@ func TestDropEmptyLabels(t *testing.T) {
 		t.Fatalf("dropEmptyLabels = %v", got)
 	}
 }
+
+// 必填字段写入空串视为未填；只约束本次写入的键（partial 时未提供的必填键不查）。
+func TestValidateAttrs_RequiredEmptyString(t *testing.T) {
+	t.Parallel()
+	fields := []*Field{{Code: "site", Type: FieldTypeString, Required: true}, {Code: "note", Type: FieldTypeString}}
+	for _, partial := range []bool{false, true} {
+		if _, err := ValidateAttrs(fields, map[string]any{"site": ""}, partial); !errors.Is(err, ErrCIInvalid) {
+			t.Fatalf("partial=%v: empty required string must be rejected, got %v", partial, err)
+		}
+	}
+	if out, err := ValidateAttrs(fields, map[string]any{"note": ""}, true); err != nil || out["note"] != "" {
+		t.Fatalf("empty optional string must pass: %v %v", out, err)
+	}
+}

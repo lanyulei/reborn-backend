@@ -1,0 +1,548 @@
+syntax = "proto3";
+
+package oncall.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "buf/validate/validate.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/oncall/v1;v1";
+
+// OncallScheduleService 值班表与班次：值班表配置、排班预览、班次查询、替班与
+// 当前值班人。值班表为全天连续值班，按轮转名单顺序接力；保存配置即重排全部
+// 尚未开始的自动班次（进行中、已过去的班次与替班班次不受影响）。
+service OncallScheduleService {
+  // ListSchedules 查询值班表（可按分组过滤），不分页。
+  rpc ListSchedules(ListSchedulesRequest) returns (ListSchedulesResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/oncall/schedule"
+    };
+    option (system.v1.title) = "查询值班表";
+  }
+  // CreateSchedule 新建值班表并生成班次。
+  rpc CreateSchedule(CreateScheduleRequest) returns (CreateScheduleResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/oncall/schedule"
+      body: "*"
+    };
+    option (system.v1.title) = "新建值班表";
+  }
+  // GetSchedule 查询值班表详情。
+  rpc GetSchedule(GetScheduleRequest) returns (GetScheduleResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/oncall/schedule/{id}"
+    };
+    option (system.v1.title) = "查询值班表详情";
+  }
+  // UpdateSchedule 修改值班表配置并重排尚未开始的自动班次。
+  rpc UpdateSchedule(UpdateScheduleRequest) returns (UpdateScheduleResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/oncall/schedule/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "编辑值班表";
+  }
+  // UpdateScheduleStatus 启用/停用值班表；停用即结束进行中的班次并清除未开始的班次。
+  rpc UpdateScheduleStatus(UpdateScheduleStatusRequest) returns (UpdateScheduleStatusResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/oncall/schedule/{id}/status"
+      body: "*"
+    };
+    option (system.v1.title) = "启停值班表";
+  }
+  // DeleteSchedule 删除值班表（班次一并清除，公共地址随之失效）。
+  rpc DeleteSchedule(DeleteScheduleRequest) returns (DeleteScheduleResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/oncall/schedule/{id}"
+    };
+    option (system.v1.title) = "删除值班表";
+  }
+  // PreviewSchedule 用草稿配置预览排班与异常，不写库。
+  rpc PreviewSchedule(PreviewScheduleRequest) returns (PreviewScheduleResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/oncall/schedule:preview"
+      body: "*"
+    };
+    option (system.v1.title) = "预览排班";
+  }
+  // ListShifts 按时间范围查询班次，并返回范围内的排班异常；范围上限 100 天。
+  rpc ListShifts(ListShiftsRequest) returns (ListShiftsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/oncall/shift"
+    };
+    option (system.v1.title) = "查询班次";
+  }
+  // CreateOverride 替班：把某段时间的值班人换成另一名分组成员。
+  rpc CreateOverride(CreateOverrideRequest) returns (CreateOverrideResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/oncall/shift/override"
+      body: "*"
+    };
+    option (system.v1.title) = "替班";
+  }
+  // RevokeOverride 撤销替班：恢复为自动排班结果（已结束的替班不可撤销）。
+  rpc RevokeOverride(RevokeOverrideRequest) returns (RevokeOverrideResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/oncall/shift/override/{id}"
+    };
+    option (system.v1.title) = "撤销替班";
+  }
+  // SendScheduleNotification 手动发送值班通知：自动通知没有发出时由分组管理员补发。
+  // 上班提醒发给所选班次的主、备值班人；每日播报按路由投递。与自动通知互不影响。
+  rpc SendScheduleNotification(SendScheduleNotificationRequest) returns (SendScheduleNotificationResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/oncall/schedule/{id}/notification"
+      body: "*"
+    };
+    option (system.v1.title) = "手动发送值班通知";
+  }
+  // ListScheduleNotificationResults 查询手动发送的值班通知的投递结果。
+  rpc ListScheduleNotificationResults(ListScheduleNotificationResultsRequest) returns (ListScheduleNotificationResultsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/oncall/schedule/{id}/notification"
+    };
+    option (system.v1.title) = "查询值班通知投递结果";
+  }
+  // GetCurrentDuty 查询此刻的值班人与下一次交接时间。
+  rpc GetCurrentDuty(GetCurrentDutyRequest) returns (GetCurrentDutyResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/oncall/current"
+    };
+    option (system.v1.title) = "查询当前值班人";
+  }
+  // GetNotificationStatus 值班通知是否配通：按事件类型看通知规则里有没有可用的渠道。
+  // 只读检查，用于在值班表页面提示「通知发不出去」并引导去配置。
+  rpc GetNotificationStatus(GetNotificationStatusRequest) returns (GetNotificationStatusResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/oncall/notification-status"
+    };
+    option (system.v1.title) = "查询值班通知配置状态";
+  }
+}
+
+// ScheduleConfig 值班表配置（新建、编辑、预览共用）。
+message ScheduleConfig {
+  // name 名称，1-64 字符；同一分组内唯一。
+  string name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // description 说明。
+  string description = 2 [(buf.validate.field).string.max_len = 255];
+  // timezone IANA 时区名（如 Asia/Shanghai）；轮转规则按该时区的本地时间计算。
+  string timezone = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // rotation_unit 轮转周期单位：1=天 2=周。
+  int32 rotation_unit = 4 [(buf.validate.field).int32 = { in: [1, 2] }];
+  // rotation_interval 轮转周期间隔：按天 1-30，按周 1-4。
+  int32 rotation_interval = 5 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 30
+  }];
+  // anchor_time 轮转起点，即首次交接时间（取整到分钟）；此后每隔一个周期在同一本地时刻交接。
+  google.protobuf.Timestamp anchor_time = 6 [(buf.validate.field).required = true];
+  // member_ids 轮转名单（有序），须为分组成员，最多 50 人。
+  repeated string member_ids = 7 [(buf.validate.field).repeated = {
+    max_items: 50
+    unique: true
+    items: {
+      string: { uuid: true }
+    }
+  }];
+  // start_user_id 起始人：轮转起点开始值班的成员；缺省为名单第一位。
+  optional string start_user_id = 8 [(buf.validate.field).string.uuid = true];
+  // backup_enabled 是否设备值班（主值班在名单中的下一位）。
+  bool backup_enabled = 9;
+  // horizon_days 提前排班天数，7-180。
+  int32 horizon_days = 10 [(buf.validate.field).int32 = {
+    gte: 7
+    lte: 180
+  }];
+  // remind_minutes 上班提醒提前量（分钟），最多两个；0 表示交接时刻通知。
+  repeated int32 remind_minutes = 11 [(buf.validate.field).repeated = {
+    max_items: 2
+    unique: true
+    items: {
+      int32: {
+        gte: 0
+        lte: 10080
+      }
+    }
+  }];
+  // digest_time 每日播报时刻（HH:MM，按值班表时区）；不传则不播报。
+  optional string digest_time = 12 [(buf.validate.field).string.pattern = "^([01][0-9]|2[0-3]):[0-5][0-9]$"];
+}
+
+// ScheduleMember 轮转名单成员。
+message ScheduleMember {
+  // user_id 用户唯一标识。
+  string user_id = 1;
+  // username 登录名。
+  string username = 2;
+  // nickname 昵称。
+  string nickname = 3;
+  // available 用户是否可用。
+  bool available = 4;
+}
+
+// Schedule 值班表。
+message Schedule {
+  // id 值班表唯一标识。
+  string id = 1;
+  // group_id 所属分组。
+  string group_id = 2;
+  // group_name 所属分组名称。
+  string group_name = 3;
+  // config 配置。
+  ScheduleConfig config = 4;
+  // members 轮转名单（与 config.member_ids 同序，带显示名）。
+  repeated ScheduleMember members = 5;
+  // status 状态：1=启用 2=停用。
+  int32 status = 6;
+  // generated_until 班次已生成到的时间。
+  google.protobuf.Timestamp generated_until = 7;
+  // can_manage 当前用户能否管理本值班表。
+  bool can_manage = 8;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 9;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 10;
+}
+
+// ListSchedulesRequest 查询值班表请求。
+message ListSchedulesRequest {
+  // group_id 所属分组，可选。
+  optional string group_id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// ListSchedulesResponse 查询值班表响应。
+message ListSchedulesResponse {
+  // items 值班表（按分组、名称排序）。
+  repeated Schedule items = 1;
+}
+
+// CreateScheduleRequest 新建值班表请求。
+message CreateScheduleRequest {
+  // group_id 所属分组。
+  string group_id = 1 [(buf.validate.field).string.uuid = true];
+  // config 配置。
+  ScheduleConfig config = 2 [(buf.validate.field).required = true];
+}
+
+// CreateScheduleResponse 新建值班表响应。
+message CreateScheduleResponse {
+  // schedule 新建的值班表。
+  Schedule schedule = 1;
+}
+
+// GetScheduleRequest 查询值班表详情请求。
+message GetScheduleRequest {
+  // id 值班表唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetScheduleResponse 查询值班表详情响应。
+message GetScheduleResponse {
+  // schedule 值班表。
+  Schedule schedule = 1;
+}
+
+// UpdateScheduleRequest 编辑值班表请求。
+message UpdateScheduleRequest {
+  // id 值班表唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // config 配置（整体替换）。
+  ScheduleConfig config = 2 [(buf.validate.field).required = true];
+}
+
+// UpdateScheduleResponse 编辑值班表响应。
+message UpdateScheduleResponse {
+  // schedule 更新后的值班表。
+  Schedule schedule = 1;
+}
+
+// UpdateScheduleStatusRequest 启停值班表请求。
+message UpdateScheduleStatusRequest {
+  // id 值班表唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // status 状态：1=启用 2=停用。
+  int32 status = 2 [(buf.validate.field).int32 = { in: [1, 2] }];
+}
+
+// UpdateScheduleStatusResponse 启停值班表响应。
+message UpdateScheduleStatusResponse {}
+
+// DeleteScheduleRequest 删除值班表请求。
+message DeleteScheduleRequest {
+  // id 值班表唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteScheduleResponse 删除值班表响应。
+message DeleteScheduleResponse {}
+
+// Shift 班次。
+message Shift {
+  // id 班次唯一标识；预览结果为空。
+  string id = 1;
+  // schedule_id 所属值班表；预览新建值班表时为空。
+  string schedule_id = 2;
+  // schedule_name 值班表名称。
+  string schedule_name = 3;
+  // group_id 所属分组。
+  string group_id = 4;
+  // role 角色：1=主值班 2=备值班。
+  int32 role = 5;
+  // user_id 值班人。
+  string user_id = 6;
+  // user_name 值班人显示名。
+  string user_name = 7;
+  // user_available 值班人是否可用。
+  bool user_available = 8;
+  // start_time 开始时间（含）。
+  google.protobuf.Timestamp start_time = 9;
+  // end_time 结束时间（不含）。
+  google.protobuf.Timestamp end_time = 10;
+  // source 来源：1=自动排班 2=替班。
+  int32 source = 11;
+  // origin_user_id 替班时的原值班人，可空。
+  string origin_user_id = 12;
+  // origin_user_name 原值班人显示名。
+  string origin_user_name = 13;
+  // remark 替班原因。
+  string remark = 14;
+}
+
+// ShiftIssue 排班异常。
+message ShiftIssue {
+  // type 异常类型：1=无人值班 2=值班人不可用 3=主备同人 4=跨表撞班 5=连续值班过长。
+  int32 type = 1;
+  // schedule_id 所属值班表；预览新建值班表时为空。
+  string schedule_id = 2;
+  // schedule_name 值班表名称。
+  string schedule_name = 3;
+  // group_id 所属分组。
+  string group_id = 4;
+  // user_id 相关值班人，无人值班时为空。
+  string user_id = 5;
+  // user_name 相关值班人显示名。
+  string user_name = 6;
+  // start_time 异常时间段开始。
+  google.protobuf.Timestamp start_time = 7;
+  // end_time 异常时间段结束。
+  google.protobuf.Timestamp end_time = 8;
+  // other_schedule_name 跨表撞班时的另一张值班表名称（多张时为其中一张）。
+  string other_schedule_name = 9;
+  // other_schedule_count 跨表撞班时对方值班表的数量。
+  int32 other_schedule_count = 10;
+}
+
+// PreviewScheduleRequest 预览排班请求。
+message PreviewScheduleRequest {
+  // group_id 所属分组。
+  string group_id = 1 [(buf.validate.field).string.uuid = true];
+  // schedule_id 编辑已有值班表时传入（跨表撞班检测排除自身），可选。
+  optional string schedule_id = 2 [(buf.validate.field).string.uuid = true];
+  // config 草稿配置。
+  ScheduleConfig config = 3 [(buf.validate.field).required = true];
+  // days 预览天数，7-90；缺省 30。
+  int32 days = 4 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 90
+  }];
+}
+
+// PreviewScheduleResponse 预览排班响应。
+message PreviewScheduleResponse {
+  // items 按草稿配置计算的班次（不含已有的替班）。
+  repeated Shift items = 1;
+  // issues 预览范围内的排班异常。
+  repeated ShiftIssue issues = 2;
+}
+
+// ListShiftsRequest 查询班次请求。
+message ListShiftsRequest {
+  // start_time 范围开始（含）。
+  google.protobuf.Timestamp start_time = 1 [(buf.validate.field).required = true];
+  // end_time 范围结束（不含）；与开始相距不超过 100 天。
+  google.protobuf.Timestamp end_time = 2 [(buf.validate.field).required = true];
+  // group_id 所属分组，可选。
+  optional string group_id = 3 [(buf.validate.field).string.uuid = true];
+  // schedule_id 所属值班表，可选。
+  optional string schedule_id = 4 [(buf.validate.field).string.uuid = true];
+  // user_id 值班人，可选。
+  optional string user_id = 5 [(buf.validate.field).string.uuid = true];
+  // mine 仅返回我的班次，可选（优先于 user_id）。
+  optional bool mine = 6;
+}
+
+// ListShiftsResponse 查询班次响应。
+message ListShiftsResponse {
+  // items 与范围相交的班次，按开始时间排序。
+  repeated Shift items = 1;
+  // issues 范围内尚未过去的排班异常（按相同的分组/值班表条件过滤）；按开始时间最多返回 300 条。
+  repeated ShiftIssue issues = 2;
+}
+
+// CreateOverrideRequest 替班请求。
+message CreateOverrideRequest {
+  // schedule_id 值班表唯一标识。
+  string schedule_id = 1 [(buf.validate.field).string.uuid = true];
+  // role 角色：1=主值班 2=备值班。
+  int32 role = 2 [(buf.validate.field).int32 = { in: [1, 2] }];
+  // user_id 替班人，须为分组内可用的成员。
+  string user_id = 3 [(buf.validate.field).string.uuid = true];
+  // start_time 替班开始：须落在值班表每天的交接时刻上（以天为最小单位）；早于当前时间按当前时间处理。
+  google.protobuf.Timestamp start_time = 4 [(buf.validate.field).required = true];
+  // end_time 替班结束：须落在值班表每天的交接时刻上，晚于开始且不超过已排班范围。
+  google.protobuf.Timestamp end_time = 5 [(buf.validate.field).required = true];
+  // remark 替班原因。
+  string remark = 6 [(buf.validate.field).string.max_len = 255];
+}
+
+// CreateOverrideResponse 替班响应。
+message CreateOverrideResponse {
+  // items 生成的替班班次（跨越多个原班次时按原班次边界拆分）。
+  repeated Shift items = 1;
+}
+
+// RevokeOverrideRequest 撤销替班请求。
+message RevokeOverrideRequest {
+  // id 替班班次唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// RevokeOverrideResponse 撤销替班响应。
+message RevokeOverrideResponse {}
+
+// CurrentDuty 某张值班表此刻的值班情况。
+message CurrentDuty {
+  // schedule_id 值班表唯一标识。
+  string schedule_id = 1;
+  // schedule_name 值班表名称。
+  string schedule_name = 2;
+  // group_id 所属分组。
+  string group_id = 3;
+  // group_name 所属分组名称。
+  string group_name = 4;
+  // primary 主值班班次，无人值班时为空。
+  Shift primary = 5;
+  // backup 备值班班次，未设或无人时为空。
+  Shift backup = 6;
+  // next_handover_time 下一次交接时间（主值班班次结束时间），无人值班时为空。
+  google.protobuf.Timestamp next_handover_time = 7;
+}
+
+// GetCurrentDutyRequest 查询当前值班人请求；两个条件都不传时返回全部启用的值班表。
+message GetCurrentDutyRequest {
+  // group_id 所属分组，可选。
+  optional string group_id = 1 [(buf.validate.field).string.uuid = true];
+  // schedule_id 值班表，可选。
+  optional string schedule_id = 2 [(buf.validate.field).string.uuid = true];
+}
+
+// GetCurrentDutyResponse 查询当前值班人响应。
+message GetCurrentDutyResponse {
+  // items 各值班表的当前值班情况。
+  repeated CurrentDuty items = 1;
+}
+
+// SendScheduleNotificationRequest 手动发送值班通知请求。
+message SendScheduleNotificationRequest {
+  // id 值班表唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // kind 通知类型：1=上班提醒 2=每日播报。
+  int32 kind = 2 [(buf.validate.field).int32 = { in: [1, 2] }];
+  // target 上班提醒针对的班次：1=当前班次 2=下一个班次；每日播报忽略。
+  int32 target = 3 [(buf.validate.field).int32 = { in: [0, 1, 2] }];
+}
+
+// NotificationRecipient 通知的收件人（上班提醒：班次的值班人）。
+message NotificationRecipient {
+  // role 角色：1=主值班 2=备值班。
+  int32 role = 1;
+  // user_id 用户唯一标识。
+  string user_id = 2;
+  // user_name 用户显示名。
+  string user_name = 3;
+  // start_time 班次开始。
+  google.protobuf.Timestamp start_time = 4;
+  // end_time 班次结束。
+  google.protobuf.Timestamp end_time = 5;
+}
+
+// SendScheduleNotificationResponse 手动发送值班通知响应。
+message SendScheduleNotificationResponse {
+  // event_ids 生成的通知事件，用于查询投递结果。
+  repeated string event_ids = 1;
+  // recipients 上班提醒的收件人；每日播报为空（收件人由路由决定）。
+  repeated NotificationRecipient recipients = 2;
+}
+
+// ListScheduleNotificationResultsRequest 查询投递结果请求。
+message ListScheduleNotificationResultsRequest {
+  // id 值班表唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // event_ids 发送时返回的事件 ID；只能查询属于该值班表的值班事件。
+  repeated string event_ids = 2 [(buf.validate.field).repeated = {
+    min_items: 1
+    max_items: 10
+    items: { string: { uuid: true } }
+  }];
+}
+
+// NotificationDelivery 一次投递（某个渠道 → 某个收件地址）。
+message NotificationDelivery {
+  // channel_name 渠道名称。
+  string channel_name = 1;
+  // channel_type 渠道类型（email / feishu / dingtalk / wecom / webhook）。
+  string channel_type = 2;
+  // recipient 收件地址（邮箱；群机器人为空）。
+  string recipient = 3;
+  // status 投递状态：1=待发送 2=发送中 3=已发送 4=失败重试中 5=已放弃。
+  int32 status = 4;
+  // error 最近一次失败原因。
+  string error = 5;
+}
+
+// NotificationResult 一个通知事件的投递结果。
+message NotificationResult {
+  // event_id 事件唯一标识。
+  string event_id = 1;
+  // event_type 事件类型。
+  string event_type = 2;
+  // status 路由状态：1=已接收待路由 2=已路由 3=被静默规则抑制 4=没有匹配的路由或渠道。
+  int32 status = 3;
+  // deliveries 各渠道的投递情况。
+  repeated NotificationDelivery deliveries = 4;
+}
+
+// ListScheduleNotificationResultsResponse 查询投递结果响应。
+message ListScheduleNotificationResultsResponse {
+  // items 各事件的投递结果（事件尚未落库或不属于该值班表时不返回）。
+  repeated NotificationResult items = 1;
+}
+
+// GetNotificationStatusRequest 查询值班通知配置状态请求。
+message GetNotificationStatusRequest {}
+
+// NotificationStatus 一类值班通知的配置状态。
+message NotificationStatus {
+  // kind 通知类别：1=个人通知（上班提醒 / 替班变更 / 排班异常）2=每日播报。
+  int32 kind = 1;
+  // event_type 用来判定的事件类型。
+  string event_type = 2;
+  // route_name 命中的通知规则名称；没有命中的规则为空。
+  string route_name = 3;
+  // channel_count 该规则上已启用的渠道数；0 表示通知发不出去。
+  int32 channel_count = 4;
+}
+
+// GetNotificationStatusResponse 查询值班通知配置状态响应。
+message GetNotificationStatusResponse {
+  // items 各类通知的配置状态。
+  repeated NotificationStatus items = 1;
+}

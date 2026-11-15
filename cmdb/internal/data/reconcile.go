@@ -22,6 +22,9 @@ type reconcileRepo struct {
 // NewReconcileRepo new a reconcileRepo.
 func NewReconcileRepo(data *Data) *reconcileRepo { return &reconcileRepo{data: data} }
 
+// 历史的 create_time 用 clock_timestamp()（语句执行时刻）而非 now()（事务开始时刻）：同一次对账里
+// 先后写入同一资源的多条历史（如先重新激活、再被级联退役）时间严格递增，按时间倒序回放才正确。
+
 // 历史 request_id 以运行 ID 标记（core 的 X-Request-Id 位置），便于按运行追溯。
 
 // 唯一约束（migrations 0049）：规则存 cmdb_model_unique_rule，资源的键存 cmdb_ci_unique，由
@@ -125,7 +128,7 @@ WITH ` + cteRules + `, s AS (
                 || CASE WHEN df.old_name <> df.new_name THEN jsonb_build_object('name', df.new_name) ELSE '{}'::jsonb END
                 || CASE WHEN df.old_status <> df.new_status THEN jsonb_build_object('status', df.new_status) ELSE '{}'::jsonb END
                 || CASE WHEN df.after_attrs IS NOT NULL THEN jsonb_build_object('attrs', df.after_attrs) ELSE '{}'::jsonb END),
-        '', $3, $5, now()
+        '', $3, $5, clock_timestamp()
     FROM diffs df
 )
 SELECT count(*) FROM upd`
@@ -165,7 +168,7 @@ WITH ` + cteRules + `, cand AS (
     INSERT INTO cmdb_ci_history (id, ci_id, action, diff, operator, source, request_id, create_time)
     SELECT gen_random_uuid(), ins.id, $8,
         jsonb_build_object('before', '{}'::jsonb, 'after', jsonb_build_object('name', ins.name, 'status', $7, 'env', ins.env, 'externalId', ins.external_id, 'attrs', ins.attrs)),
-        '', $3, $5, now()
+        '', $3, $5, clock_timestamp()
     FROM ins
 )
 SELECT count(*) FROM ins`
@@ -208,7 +211,7 @@ LEFT JOIN LATERAL (
 ORDER BY p.external_id`
 
 // conflictStoreLimit 单类型单次对账留存的冲突上限。
-const conflictStoreLimit = 2000
+const conflictStoreLimit = cmdbcontract.ConflictStoreLimit
 
 // stmtSyncConflicts 整体刷新某来源某类型的冲突清单（与对账同事务）：本次仍冲突的行写入 / 更新
 // （首次出现时间保留），不在本次清单里的移除（已解决或不再被采集到）。
@@ -225,6 +228,15 @@ SELECT $1, $2, cur.external_id, left(cur.name, 128), left(cur.reason, 512) FROM 
 ON CONFLICT (source, model_code, external_id)
 DO UPDATE SET name = EXCLUDED.name, reason = EXCLUDED.reason, last_seen = now()`
 
+// stmtSyncConflictStat 记录某来源某类型最近一次对账的冲突总数；为 0 时移除该行。
+const stmtSyncConflictStat = `
+WITH gone AS (
+    DELETE FROM cmdb_sync_conflict_stat WHERE source = $1 AND model_code = $2 AND $3::int = 0
+)
+INSERT INTO cmdb_sync_conflict_stat (source, model_code, total, update_time)
+SELECT $1, $2, $3::int, now() WHERE $3::int > 0
+ON CONFLICT (source, model_code) DO UPDATE SET total = EXCLUDED.total, update_time = now()`
+
 // stmtDisappear 本源本类型中本次未出现的资源：首次标记消失时间（已标记的保留原时间）。
 const stmtDisappear = `
 UPDATE cmdb_ci c SET missing_since = now()
@@ -240,7 +252,7 @@ WITH r AS (
     UPDATE cmdb_ci c SET status = $4, version = c.version + 1, update_time = now(), update_user = NULL FROM r WHERE c.id = r.id RETURNING c.id
 ), hist AS (
     INSERT INTO cmdb_ci_history (id, ci_id, action, diff, operator, source, request_id, create_time)
-    SELECT gen_random_uuid(), r.id, $6, jsonb_build_object('before', jsonb_build_object('status', r.status), 'after', jsonb_build_object('status', $4::text)), '', $2, $5, now()
+    SELECT gen_random_uuid(), r.id, $6, jsonb_build_object('before', jsonb_build_object('status', r.status), 'after', jsonb_build_object('status', $4::text)), '', $2, $5, clock_timestamp()
     FROM r
 )
 SELECT id FROM upd`
@@ -258,7 +270,7 @@ WITH dep AS (
     UPDATE cmdb_ci c SET status = $2, version = c.version + 1, update_time = now(), update_user = NULL FROM dep WHERE c.id = dep.id RETURNING c.id
 ), hist AS (
     INSERT INTO cmdb_ci_history (id, ci_id, action, diff, operator, source, request_id, create_time)
-    SELECT gen_random_uuid(), dep.id, $5, jsonb_build_object('before', jsonb_build_object('status', dep.status), 'after', jsonb_build_object('status', $2::text)), '', $3, $6, now()
+    SELECT gen_random_uuid(), dep.id, $5, jsonb_build_object('before', jsonb_build_object('status', dep.status), 'after', jsonb_build_object('status', $2::text)), '', $3, $6, clock_timestamp()
     FROM dep
 )
 SELECT id FROM upd`
@@ -348,6 +360,10 @@ func (r *reconcileRepo) ReconcileModel(ctx context.Context, p biz.ReconcileParam
 		if _, err := tx.Exec(ctx, stmtSyncConflicts, p.Source, p.ModelCode, dbx.TextArray(cEIDs), dbx.TextArray(cNames), dbx.TextArray(cReasons)); err != nil {
 			return fmt.Errorf("store conflicts: %w", err)
 		}
+		// 真实的冲突总数（不受留存上限截断）：控制面据此判断清单是否完整，不随认领等操作漂移。
+		if _, err := tx.Exec(ctx, stmtSyncConflictStat, p.Source, p.ModelCode, failed); err != nil {
+			return fmt.Errorf("store conflict stat: %w", err)
+		}
 		counts.Updated, counts.Created, counts.Failed = clampInt32(updated), clampInt32(created), failed
 		// touched 含被更新与被跳过（冲突）的行；无变化 = 命中 - 更新 - 跳过。
 		counts.Unchanged = max(clampInt32(touched.RowsAffected())-counts.Updated-skipped, 0)
@@ -409,6 +425,14 @@ WITH decl AS (
     WHERE me.id <> peer.id
 )`
 
+// stmtRelationsAdopt 采集源声明的关系若已作为人工关联存在（人工先建的，或资源解除同步时由同步关联
+// 转成的、之后又被重新认领），改回由本采集源维护：之后源端不再声明时才能随同步移除（如虚拟机迁移主机），
+// 否则这条旧关联会一直留着，并在有基数约束的类型上挡住新的关系。两端都是本采集源的资源才会命中。
+const stmtRelationsAdopt = stmtRelationsCTE + `
+UPDATE cmdb_relation r SET source = $2
+FROM (SELECT DISTINCT type_code, src_id, dst_id FROM resolved) x
+WHERE r.type_code = x.type_code AND r.src_id = x.src_id AND r.dst_id = x.dst_id AND r.source = $4`
+
 // stmtRelationsDelete 本次声明过某类型某方向关系的资源：其同源同类型该侧的其它关系删除（如虚拟机迁移主机）。
 const stmtRelationsDelete = stmtRelationsCTE + `
 , keys AS (SELECT DISTINCT type_code, direction, me_id FROM resolved)
@@ -420,7 +444,7 @@ const stmtRelationsDelete = stmtRelationsCTE + `
     RETURNING r.type_code, r.src_id, r.dst_id
 )
 INSERT INTO cmdb_ci_history (id, ci_id, action, diff, operator, source, request_id, create_time)
-SELECT gen_random_uuid(), h.ci_id, $4, h.diff, '', $2, $1, now()
+SELECT gen_random_uuid(), h.ci_id, $4, h.diff, '', $2, $1, clock_timestamp()
 FROM del d
 CROSS JOIN LATERAL (
     SELECT d.src_id AS ci_id, jsonb_build_object('relationType', d.type_code, 'direction', $3::text,
@@ -466,7 +490,7 @@ const stmtRelationsInsert = stmtRelationsCTE + `
     RETURNING type_code, src_id, dst_id
 )
 INSERT INTO cmdb_ci_history (id, ci_id, action, diff, operator, source, request_id, create_time)
-SELECT gen_random_uuid(), h.ci_id, $4, h.diff, '', $2, $1, now()
+SELECT gen_random_uuid(), h.ci_id, $4, h.diff, '', $2, $1, clock_timestamp()
 FROM ins i
 CROSS JOIN LATERAL (
     SELECT i.src_id AS ci_id, jsonb_build_object('relationType', i.type_code, 'direction', $3::text,
@@ -481,6 +505,9 @@ CROSS JOIN LATERAL (
 // ReconcileRelations implements biz.ReconcileRepo（一事务：先删多余，再补缺失）。
 func (r *reconcileRepo) ReconcileRelations(ctx context.Context, runID, source string) error {
 	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, stmtRelationsAdopt, runID, source, cmdbcontract.DirectionOutgoing, cmdbcontract.SourceManual); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx, stmtRelationsDelete, runID, source, cmdbcontract.DirectionOutgoing, cmdbcontract.ActionUnlink, cmdbcontract.DirectionIncoming); err != nil {
 			return fmt.Errorf("delete stale relations: %w", err)
 		}

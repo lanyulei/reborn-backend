@@ -7,12 +7,14 @@ import (
 	assistantv1 "github.com/lanyulei/reborn/backend/core/api/assistant/v1"
 	cmdbv1 "github.com/lanyulei/reborn/backend/core/api/cmdb/v1"
 	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
+	oncallv1 "github.com/lanyulei/reborn/backend/core/api/oncall/v1"
 	v1 "github.com/lanyulei/reborn/backend/core/api/system/v1"
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
 	"github.com/lanyulei/reborn/backend/core/internal/conf"
 	assistantservice "github.com/lanyulei/reborn/backend/core/internal/service/assistant"
 	cmdbservice "github.com/lanyulei/reborn/backend/core/internal/service/cmdb"
 	notifyservice "github.com/lanyulei/reborn/backend/core/internal/service/notify"
+	oncallservice "github.com/lanyulei/reborn/backend/core/internal/service/oncall"
 	service "github.com/lanyulei/reborn/backend/core/internal/service/system"
 	"github.com/lanyulei/reborn/backend/kit/httpx"
 
@@ -46,6 +48,7 @@ func NewHTTPServer(c *conf.Server, logger *slog.Logger, user *service.UserServic
 	assistant *assistantservice.AssistantService, assistantChat *assistantservice.AssistantChatService,
 	cmdbModel *cmdbservice.CmdbModelService, cmdbCI *cmdbservice.CmdbCIService, cmdbRelation *cmdbservice.CmdbRelationService,
 	cmdbScope *cmdbservice.CmdbScopeService, cmdbSync *cmdbservice.CmdbSyncService, cmdbInsight *cmdbservice.CmdbInsightService,
+	oncallGroup *oncallservice.OncallGroupService, oncallSchedule *oncallservice.OncallScheduleService, oncallShare *oncallservice.OncallShareService,
 	signer *biz.TokenSigner, authzUC *biz.AuthzUsecase,
 ) *http.Server {
 	opts := []http.ServerOption{
@@ -103,5 +106,8 @@ func NewHTTPServer(c *conf.Server, logger *slog.Logger, user *service.UserServic
 	cmdbv1.RegisterCmdbScopeServiceHTTPServer(srv, cmdbScope)
 	cmdbv1.RegisterCmdbSyncServiceHTTPServer(srv, cmdbSync)
 	cmdbv1.RegisterCmdbInsightServiceHTTPServer(srv, cmdbInsight)
+	oncallv1.RegisterOncallGroupServiceHTTPServer(srv, oncallGroup)
+	oncallv1.RegisterOncallScheduleServiceHTTPServer(srv, oncallSchedule)
+	oncallv1.RegisterOncallShareServiceHTTPServer(srv, oncallShare)
 	return srv
 }

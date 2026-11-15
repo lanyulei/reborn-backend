@@ -16,11 +16,15 @@ import (
 
 // CmdbSyncService 实现 CmdbSyncServiceServer。
 type CmdbSyncService struct {
-	uc *biz.SyncUsecase
+	uc    *biz.SyncUsecase
+	cis   *biz.CIUsecase
+	guard scopeGuard
 }
 
 // NewCmdbSyncService new a CmdbSyncService.
-func NewCmdbSyncService(uc *biz.SyncUsecase) *CmdbSyncService { return &CmdbSyncService{uc: uc} }
+func NewCmdbSyncService(uc *biz.SyncUsecase, cis *biz.CIUsecase, scopes *biz.ScopeUsecase) *CmdbSyncService {
+	return &CmdbSyncService{uc: uc, cis: cis, guard: newScopeGuard(scopes)}
+}
 
 func optionalTime(t *time.Time) *timestamppb.Timestamp {
 	if t == nil {
@@ -209,7 +213,11 @@ func (s *CmdbSyncService) ListConflicts(ctx context.Context, req *v1.ListConflic
 	if err != nil {
 		return nil, err
 	}
-	resp := &v1.ListConflictsResponse{Items: make([]*v1.SyncConflict, 0, len(items)), Total: total}
+	capped, err := s.uc.ConflictsCapped(ctx, req.GetId())
+	if err != nil {
+		return nil, err
+	}
+	resp := &v1.ListConflictsResponse{Items: make([]*v1.SyncConflict, 0, len(items)), Total: total, Capped: capped}
 	for _, c := range items {
 		resp.Items = append(resp.Items, &v1.SyncConflict{
 			ModelCode: c.ModelCode, ModelName: c.ModelName, ExternalId: c.ExternalID, Name: c.Name, Reason: c.Reason,
@@ -217,4 +225,23 @@ func (s *CmdbSyncService) ListConflicts(ctx context.Context, req *v1.ListConflic
 		})
 	}
 	return resp, nil
+}
+
+// ClaimConflict implements proto CmdbSyncService/ClaimConflict：目标资源须在调用者数据范围内。
+func (s *CmdbSyncService) ClaimConflict(ctx context.Context, req *v1.ClaimConflictRequest) (*v1.ClaimConflictResponse, error) {
+	actor, err := actorFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// 认领会改写资源（来源、之后的名称与字段）：除采集源权限外，还须有"编辑资源"权限。
+	if err := s.guard.requireOperation(ctx, v1.OperationCmdbCIServiceUpdateCI); err != nil {
+		return nil, err
+	}
+	if _, err := s.guard.requireCI(ctx, s.cis.GetByID, req.GetCiId()); err != nil {
+		return nil, err
+	}
+	if err := s.uc.ClaimConflict(ctx, actor, req.GetId(), req.GetModelCode(), req.GetExternalId(), req.GetCiId()); err != nil {
+		return nil, err
+	}
+	return &v1.ClaimConflictResponse{}, nil
 }

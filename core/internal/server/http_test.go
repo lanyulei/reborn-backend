@@ -65,6 +65,7 @@ func newTestHTTPServerWithServices(t *testing.T) (*httptest.Server, testServices
 		svc.cmdbScope,
 		svc.cmdbSync,
 		svc.cmdbInsight,
+		nil, nil, nil, // 值班域服务：需要 PostgreSQL，由 data 集成测试覆盖
 		svc.signer,
 		svc.authz,
 	)

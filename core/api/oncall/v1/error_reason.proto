@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+package oncall.v1;
+
+import "errors/errors.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/oncall/v1;v1";
+
+// ErrorReason 是值班域的业务错误码枚举，由 protoc-gen-go-errors 生成带 code 的
+// 错误构造器。枚举值沿用 Kratos 错误码惯例（域前缀），豁免 ENUM_VALUE_PREFIX。
+enum ErrorReason {
+  option (errors.default_code) = 500;
+  // ONCALL_UNSPECIFIED 未指定的值班错误。
+  ONCALL_UNSPECIFIED = 0;
+  // ONCALL_GROUP_NOT_FOUND 值班分组不存在，映射 HTTP 404。
+  ONCALL_GROUP_NOT_FOUND = 1 [(errors.code) = 404];
+  // ONCALL_GROUP_NAME_EXISTS 分组名称已被占用，映射 HTTP 409。
+  ONCALL_GROUP_NAME_EXISTS = 2 [(errors.code) = 409];
+  // ONCALL_GROUP_IN_USE 分组下仍有值班表，不可删除，映射 HTTP 409。
+  ONCALL_GROUP_IN_USE = 3 [(errors.code) = 409];
+  // ONCALL_FORBIDDEN 需要分组管理员身份，映射 HTTP 403。
+  ONCALL_FORBIDDEN = 4 [(errors.code) = 403];
+  // ONCALL_MEMBER_INVALID 成员不合法（用户不存在/不可用、超出人数上限等），映射 HTTP 400。
+  ONCALL_MEMBER_INVALID = 5 [(errors.code) = 400];
+  // ONCALL_MEMBER_NOT_FOUND 成员不在分组内，映射 HTTP 404。
+  ONCALL_MEMBER_NOT_FOUND = 6 [(errors.code) = 404];
+  // ONCALL_MEMBER_IN_USE 成员仍在值班表轮转名单内，不可移出，映射 HTTP 409。
+  ONCALL_MEMBER_IN_USE = 7 [(errors.code) = 409];
+  // ONCALL_LAST_ADMIN 分组至少保留一名管理员，映射 HTTP 409。
+  ONCALL_LAST_ADMIN = 8 [(errors.code) = 409];
+  // ONCALL_SCHEDULE_NOT_FOUND 值班表不存在，映射 HTTP 404。
+  ONCALL_SCHEDULE_NOT_FOUND = 9 [(errors.code) = 404];
+  // ONCALL_SCHEDULE_NAME_EXISTS 同一分组内值班表名称已被占用，映射 HTTP 409。
+  ONCALL_SCHEDULE_NAME_EXISTS = 10 [(errors.code) = 409];
+  // ONCALL_SCHEDULE_INVALID 值班表配置不合法（时区、轮转名单、提醒等），映射 HTTP 400。
+  ONCALL_SCHEDULE_INVALID = 11 [(errors.code) = 400];
+  // ONCALL_SHIFT_NOT_FOUND 班次不存在，映射 HTTP 404。
+  ONCALL_SHIFT_NOT_FOUND = 12 [(errors.code) = 404];
+  // ONCALL_OVERRIDE_INVALID 替班请求不合法（时间段、替班人、无实际变化等），映射 HTTP 400。
+  ONCALL_OVERRIDE_INVALID = 13 [(errors.code) = 400];
+  // ONCALL_SHIFT_CONFLICT 班次被并发修改，请刷新后重试，映射 HTTP 409。
+  ONCALL_SHIFT_CONFLICT = 14 [(errors.code) = 409];
+  // ONCALL_SHARE_LINK_NOT_FOUND 公共地址不存在、已过期或已作废，映射 HTTP 404。
+  ONCALL_SHARE_LINK_NOT_FOUND = 15 [(errors.code) = 404];
+  // ONCALL_SHARE_LINK_INVALID 公共地址参数不合法，映射 HTTP 400。
+  ONCALL_SHARE_LINK_INVALID = 16 [(errors.code) = 400];
+  // ONCALL_TIME_RANGE_INVALID 查询时间范围不合法或超过上限，映射 HTTP 400。
+  ONCALL_TIME_RANGE_INVALID = 17 [(errors.code) = 400];
+  // ONCALL_GROUP_INVALID 分组参数不合法（如名称为空白），映射 HTTP 400。
+  ONCALL_GROUP_INVALID = 18 [(errors.code) = 400];
+  // ONCALL_SECRET_UNAVAILABLE 加密主密钥未配置，无法保存或查看公共地址，映射 HTTP 503。
+  ONCALL_SECRET_UNAVAILABLE = 19 [(errors.code) = 503];
+}

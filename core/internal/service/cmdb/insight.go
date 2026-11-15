@@ -217,3 +217,55 @@ func toProtoCounts(items []biz.OverviewCount) []*v1.OverviewCount {
 	}
 	return out
 }
+
+// ListCIViews implements proto CmdbInsightService/ListCIViews（只返回当前用户自己的视图）。
+func (s *CmdbInsightService) ListCIViews(ctx context.Context, req *v1.ListCIViewsRequest) (*v1.ListCIViewsResponse, error) {
+	userID, err := systemservice.UserIDFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	views, err := s.uc.ListCIViews(ctx, userID, req.GetModelCode())
+	if err != nil {
+		return nil, err
+	}
+	resp := &v1.ListCIViewsResponse{Items: make([]*v1.CIView, 0, len(views))}
+	for _, v := range views {
+		filters, err := jsonStruct(v.Filters)
+		if err != nil {
+			return nil, err
+		}
+		resp.Items = append(resp.Items, &v1.CIView{Name: v.Name, Filters: filters})
+	}
+	return resp, nil
+}
+
+// SaveCIView implements proto CmdbInsightService/SaveCIView：模型须在数据范围内。
+func (s *CmdbInsightService) SaveCIView(ctx context.Context, req *v1.SaveCIViewRequest) (*v1.SaveCIViewResponse, error) {
+	userID, err := systemservice.UserIDFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scope, err := s.guard.resolve(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !scope.AllowsModel(req.GetModelCode()) {
+		return nil, biz.ErrScopeForbidden
+	}
+	if err := s.uc.SaveCIView(ctx, userID, req.GetModelCode(), &biz.CIView{Name: req.GetName(), Filters: req.GetFilters().AsMap()}); err != nil {
+		return nil, err
+	}
+	return &v1.SaveCIViewResponse{}, nil
+}
+
+// DeleteCIView implements proto CmdbInsightService/DeleteCIView。
+func (s *CmdbInsightService) DeleteCIView(ctx context.Context, req *v1.DeleteCIViewRequest) (*v1.DeleteCIViewResponse, error) {
+	userID, err := systemservice.UserIDFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.uc.DeleteCIView(ctx, userID, req.GetModelCode(), req.GetName()); err != nil {
+		return nil, err
+	}
+	return &v1.DeleteCIViewResponse{}, nil
+}

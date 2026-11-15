@@ -150,6 +150,10 @@ func ProviderModels(provider string) []string {
 	}
 }
 
+// ConflictStoreLimit 单类型单次对账留存到冲突清单（cmdb_sync_conflict）的条数上限：数据面按它
+// 截断写入，控制面据此提示"清单不完整"。
+const ConflictStoreLimit = 2000
+
 // SourceOf 采集源的来源字面量（cmdb_ci.source = sync:<源 ID>）。
 func SourceOf(sourceID string) string { return "sync:" + sourceID }
 

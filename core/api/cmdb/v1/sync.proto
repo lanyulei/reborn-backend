@@ -72,6 +72,15 @@ service CmdbSyncService {
     };
     option (system.v1.title) = "查询同步冲突";
   }
+  // ClaimConflict 认领：把一条同步冲突绑定到已有的人工资源（该资源改由本采集源同步维护），
+  // 用于"同一台设备既被人工录入、又被同步发现"的情况；之后的同步直接更新这条资源。
+  rpc ClaimConflict(ClaimConflictRequest) returns (ClaimConflictResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/cmdb/sync/source/{id}/conflict:claim"
+      body: "*"
+    };
+    option (system.v1.title) = "认领同步冲突";
+  }
   // RotateWebhook 生成/轮换回调令牌：明文只在本响应返回一次，库中只存哈希。
   rpc RotateWebhook(RotateWebhookRequest) returns (RotateWebhookResponse) {
     option (google.api.http) = {
@@ -357,7 +366,30 @@ message ListConflictsResponse {
   repeated SyncConflict items = 1;
   // total 总数。
   int64 total = 2;
+  // capped 清单不完整：某个类型的冲突数达到留存上限，其余未列出（应先排查唯一规则 / 采集配置）。
+  bool capped = 3;
 }
+
+// ClaimConflictRequest 认领同步冲突请求。
+message ClaimConflictRequest {
+  // id 采集源标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // model_code 冲突行的资源类型。
+  string model_code = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // external_id 冲突行的外部标识。
+  string external_id = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+  // ci_id 要绑定的已有资源（须为同类型的人工资源）。
+  string ci_id = 4 [(buf.validate.field).string.uuid = true];
+}
+
+// ClaimConflictResponse 认领同步冲突响应。
+message ClaimConflictResponse {}
 
 // RotateWebhookRequest 轮换回调令牌请求。
 message RotateWebhookRequest {

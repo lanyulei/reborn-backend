@@ -18,18 +18,23 @@ var _ = new(context.Context)
 const _ = http.SupportPackageIsVersion3
 
 const OperationCmdbInsightServiceCreateModelGroup = "/cmdb.v1.CmdbInsightService/CreateModelGroup"
+const OperationCmdbInsightServiceDeleteCIView = "/cmdb.v1.CmdbInsightService/DeleteCIView"
 const OperationCmdbInsightServiceDeleteModelGroup = "/cmdb.v1.CmdbInsightService/DeleteModelGroup"
 const OperationCmdbInsightServiceGetOverview = "/cmdb.v1.CmdbInsightService/GetOverview"
 const OperationCmdbInsightServiceGetQuality = "/cmdb.v1.CmdbInsightService/GetQuality"
+const OperationCmdbInsightServiceListCIViews = "/cmdb.v1.CmdbInsightService/ListCIViews"
 const OperationCmdbInsightServiceListFavorites = "/cmdb.v1.CmdbInsightService/ListFavorites"
 const OperationCmdbInsightServiceListModelGroups = "/cmdb.v1.CmdbInsightService/ListModelGroups"
 const OperationCmdbInsightServiceListSchemaAudit = "/cmdb.v1.CmdbInsightService/ListSchemaAudit"
+const OperationCmdbInsightServiceSaveCIView = "/cmdb.v1.CmdbInsightService/SaveCIView"
 const OperationCmdbInsightServiceSetFavorite = "/cmdb.v1.CmdbInsightService/SetFavorite"
 const OperationCmdbInsightServiceUpdateModelGroup = "/cmdb.v1.CmdbInsightService/UpdateModelGroup"
 
 type CmdbInsightServiceHTTPServer interface {
 	// CreateModelGroup CreateModelGroup 创建模型分组。
 	CreateModelGroup(context.Context, *CreateModelGroupRequest) (*CreateModelGroupResponse, error)
+	// DeleteCIView DeleteCIView 删除视图（幂等）。
+	DeleteCIView(context.Context, *DeleteCIViewRequest) (*DeleteCIViewResponse, error)
 	// DeleteModelGroup DeleteModelGroup 删除模型分组（内置分组或分组下仍有模型时 409）。
 	DeleteModelGroup(context.Context, *DeleteModelGroupRequest) (*DeleteModelGroupResponse, error)
 	// GetOverview GetOverview 运营概览：模型 / 资源 / 关系总数，按模型、状态、环境、来源的资源分布，
@@ -38,12 +43,16 @@ type CmdbInsightServiceHTTPServer interface {
 	// GetQuality GetQuality 数据质量：按模型统计在册（未删除、未退役）资源中缺必填项 / 无负责人 /
 	// 无任何关联 / 同步陈旧 / 长期未更新的数量；受当前用户数据范围约束。
 	GetQuality(context.Context, *GetQualityRequest) (*GetQualityResponse, error)
+	// ListCIViews ListCIViews 当前用户在某模型下保存的资源列表视图（命名的筛选条件）。
+	ListCIViews(context.Context, *ListCIViewsRequest) (*ListCIViewsResponse, error)
 	// ListFavorites ListFavorites 查询当前用户收藏的模型编码。
 	ListFavorites(context.Context, *ListFavoritesRequest) (*ListFavoritesResponse, error)
 	// ListModelGroups ListModelGroups 查询全部模型分组（按 sort、编码升序，含各分组的模型数）。
 	ListModelGroups(context.Context, *ListModelGroupsRequest) (*ListModelGroupsResponse, error)
 	// ListSchemaAudit ListSchemaAudit 模型变更审计：分组 / 模型 / 字段 / 关系类型的增删改记录（倒序）。
 	ListSchemaAudit(context.Context, *ListSchemaAuditRequest) (*ListSchemaAuditResponse, error)
+	// SaveCIView SaveCIView 保存视图（同名覆盖）；每个模型至多 20 个。
+	SaveCIView(context.Context, *SaveCIViewRequest) (*SaveCIViewResponse, error)
 	// SetFavorite SetFavorite 收藏或取消收藏模型（幂等）。
 	SetFavorite(context.Context, *SetFavoriteRequest) (*SetFavoriteResponse, error)
 	// UpdateModelGroup UpdateModelGroup 更新模型分组的名称与顺序（编码不可改）。
@@ -58,6 +67,9 @@ func RegisterCmdbInsightServiceHTTPServer(s *http.Server, srv CmdbInsightService
 	r.Handle("DELETE", "/api/v1/cmdb/model-group/{code}", _CmdbInsightService_DeleteModelGroup0_HTTP_Handler(srv))
 	r.Handle("GET", "/api/v1/cmdb/favorite", _CmdbInsightService_ListFavorites0_HTTP_Handler(srv))
 	r.Handle("PUT", "/api/v1/cmdb/favorite/{model_code}", _CmdbInsightService_SetFavorite0_HTTP_Handler(srv))
+	r.Handle("GET", "/api/v1/cmdb/ci-view", _CmdbInsightService_ListCIViews0_HTTP_Handler(srv))
+	r.Handle("PUT", "/api/v1/cmdb/ci-view", _CmdbInsightService_SaveCIView0_HTTP_Handler(srv))
+	r.Handle("POST", "/api/v1/cmdb/ci-view:delete", _CmdbInsightService_DeleteCIView0_HTTP_Handler(srv))
 	r.Handle("GET", "/api/v1/cmdb/overview", _CmdbInsightService_GetOverview0_HTTP_Handler(srv))
 	r.Handle("GET", "/api/v1/cmdb/quality", _CmdbInsightService_GetQuality0_HTTP_Handler(srv))
 	r.Handle("GET", "/api/v1/cmdb/schema-audit", _CmdbInsightService_ListSchemaAudit0_HTTP_Handler(srv))
@@ -186,6 +198,63 @@ func _CmdbInsightService_SetFavorite0_HTTP_Handler(srv CmdbInsightServiceHTTPSer
 	}
 }
 
+func _CmdbInsightService_ListCIViews0_HTTP_Handler(srv CmdbInsightServiceHTTPServer) func(ctx http.Context) error {
+	return func(ctx http.Context) error {
+		var in ListCIViewsRequest
+		if err := ctx.BindQuery(&in); err != nil {
+			return err
+		}
+		http.SetOperation(ctx, OperationCmdbInsightServiceListCIViews)
+		h := ctx.Middleware(func(ctx context.Context, req interface{}) (interface{}, error) {
+			return srv.ListCIViews(ctx, req.(*ListCIViewsRequest))
+		})
+		out, err := h(ctx, &in)
+		if err != nil {
+			return err
+		}
+		reply := out.(*ListCIViewsResponse)
+		return ctx.Result(200, reply)
+	}
+}
+
+func _CmdbInsightService_SaveCIView0_HTTP_Handler(srv CmdbInsightServiceHTTPServer) func(ctx http.Context) error {
+	return func(ctx http.Context) error {
+		var in SaveCIViewRequest
+		if err := ctx.Bind(&in); err != nil {
+			return err
+		}
+		http.SetOperation(ctx, OperationCmdbInsightServiceSaveCIView)
+		h := ctx.Middleware(func(ctx context.Context, req interface{}) (interface{}, error) {
+			return srv.SaveCIView(ctx, req.(*SaveCIViewRequest))
+		})
+		out, err := h(ctx, &in)
+		if err != nil {
+			return err
+		}
+		reply := out.(*SaveCIViewResponse)
+		return ctx.Result(200, reply)
+	}
+}
+
+func _CmdbInsightService_DeleteCIView0_HTTP_Handler(srv CmdbInsightServiceHTTPServer) func(ctx http.Context) error {
+	return func(ctx http.Context) error {
+		var in DeleteCIViewRequest
+		if err := ctx.Bind(&in); err != nil {
+			return err
+		}
+		http.SetOperation(ctx, OperationCmdbInsightServiceDeleteCIView)
+		h := ctx.Middleware(func(ctx context.Context, req interface{}) (interface{}, error) {
+			return srv.DeleteCIView(ctx, req.(*DeleteCIViewRequest))
+		})
+		out, err := h(ctx, &in)
+		if err != nil {
+			return err
+		}
+		reply := out.(*DeleteCIViewResponse)
+		return ctx.Result(200, reply)
+	}
+}
+
 func _CmdbInsightService_GetOverview0_HTTP_Handler(srv CmdbInsightServiceHTTPServer) func(ctx http.Context) error {
 	return func(ctx http.Context) error {
 		var in GetOverviewRequest
@@ -246,6 +315,8 @@ func _CmdbInsightService_ListSchemaAudit0_HTTP_Handler(srv CmdbInsightServiceHTT
 type CmdbInsightServiceHTTPClient interface {
 	// CreateModelGroup CreateModelGroup 创建模型分组。
 	CreateModelGroup(ctx context.Context, req *CreateModelGroupRequest, opts ...http.CallOption) (rsp *CreateModelGroupResponse, err error)
+	// DeleteCIView DeleteCIView 删除视图（幂等）。
+	DeleteCIView(ctx context.Context, req *DeleteCIViewRequest, opts ...http.CallOption) (rsp *DeleteCIViewResponse, err error)
 	// DeleteModelGroup DeleteModelGroup 删除模型分组（内置分组或分组下仍有模型时 409）。
 	DeleteModelGroup(ctx context.Context, req *DeleteModelGroupRequest, opts ...http.CallOption) (rsp *DeleteModelGroupResponse, err error)
 	// GetOverview GetOverview 运营概览：模型 / 资源 / 关系总数，按模型、状态、环境、来源的资源分布，
@@ -254,12 +325,16 @@ type CmdbInsightServiceHTTPClient interface {
 	// GetQuality GetQuality 数据质量：按模型统计在册（未删除、未退役）资源中缺必填项 / 无负责人 /
 	// 无任何关联 / 同步陈旧 / 长期未更新的数量；受当前用户数据范围约束。
 	GetQuality(ctx context.Context, req *GetQualityRequest, opts ...http.CallOption) (rsp *GetQualityResponse, err error)
+	// ListCIViews ListCIViews 当前用户在某模型下保存的资源列表视图（命名的筛选条件）。
+	ListCIViews(ctx context.Context, req *ListCIViewsRequest, opts ...http.CallOption) (rsp *ListCIViewsResponse, err error)
 	// ListFavorites ListFavorites 查询当前用户收藏的模型编码。
 	ListFavorites(ctx context.Context, req *ListFavoritesRequest, opts ...http.CallOption) (rsp *ListFavoritesResponse, err error)
 	// ListModelGroups ListModelGroups 查询全部模型分组（按 sort、编码升序，含各分组的模型数）。
 	ListModelGroups(ctx context.Context, req *ListModelGroupsRequest, opts ...http.CallOption) (rsp *ListModelGroupsResponse, err error)
 	// ListSchemaAudit ListSchemaAudit 模型变更审计：分组 / 模型 / 字段 / 关系类型的增删改记录（倒序）。
 	ListSchemaAudit(ctx context.Context, req *ListSchemaAuditRequest, opts ...http.CallOption) (rsp *ListSchemaAuditResponse, err error)
+	// SaveCIView SaveCIView 保存视图（同名覆盖）；每个模型至多 20 个。
+	SaveCIView(ctx context.Context, req *SaveCIViewRequest, opts ...http.CallOption) (rsp *SaveCIViewResponse, err error)
 	// SetFavorite SetFavorite 收藏或取消收藏模型（幂等）。
 	SetFavorite(ctx context.Context, req *SetFavoriteRequest, opts ...http.CallOption) (rsp *SetFavoriteResponse, err error)
 	// UpdateModelGroup UpdateModelGroup 更新模型分组的名称与顺序（编码不可改）。
@@ -283,6 +358,24 @@ func (c *CmdbInsightServiceHTTPClientImpl) CreateModelGroup(ctx context.Context,
 		http.Accept("application/protojson"),
 		http.ContentType("application/protojson"),
 		http.Operation(OperationCmdbInsightServiceCreateModelGroup),
+		http.PathTemplate(pattern),
+	}, opts...)
+	err := c.cc.Invoke(ctx, "POST", path, in, &out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// DeleteCIView DeleteCIView 删除视图（幂等）。
+func (c *CmdbInsightServiceHTTPClientImpl) DeleteCIView(ctx context.Context, in *DeleteCIViewRequest, opts ...http.CallOption) (*DeleteCIViewResponse, error) {
+	var out DeleteCIViewResponse
+	pattern := "/api/v1/cmdb/ci-view:delete"
+	path := http.BuildPath(pattern, in)
+	opts = append([]http.CallOption{
+		http.Accept("application/protojson"),
+		http.ContentType("application/protojson"),
+		http.Operation(OperationCmdbInsightServiceDeleteCIView),
 		http.PathTemplate(pattern),
 	}, opts...)
 	err := c.cc.Invoke(ctx, "POST", path, in, &out, opts...)
@@ -345,6 +438,23 @@ func (c *CmdbInsightServiceHTTPClientImpl) GetQuality(ctx context.Context, in *G
 	return &out, nil
 }
 
+// ListCIViews ListCIViews 当前用户在某模型下保存的资源列表视图（命名的筛选条件）。
+func (c *CmdbInsightServiceHTTPClientImpl) ListCIViews(ctx context.Context, in *ListCIViewsRequest, opts ...http.CallOption) (*ListCIViewsResponse, error) {
+	var out ListCIViewsResponse
+	pattern := "/api/v1/cmdb/ci-view"
+	path := http.BuildPath(pattern, in, http.WithQueryParams())
+	opts = append([]http.CallOption{
+		http.Accept("application/protojson"),
+		http.Operation(OperationCmdbInsightServiceListCIViews),
+		http.PathTemplate(pattern),
+	}, opts...)
+	err := c.cc.Invoke(ctx, "GET", path, nil, &out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // ListFavorites ListFavorites 查询当前用户收藏的模型编码。
 func (c *CmdbInsightServiceHTTPClientImpl) ListFavorites(ctx context.Context, in *ListFavoritesRequest, opts ...http.CallOption) (*ListFavoritesResponse, error) {
 	var out ListFavoritesResponse
@@ -390,6 +500,24 @@ func (c *CmdbInsightServiceHTTPClientImpl) ListSchemaAudit(ctx context.Context, 
 		http.PathTemplate(pattern),
 	}, opts...)
 	err := c.cc.Invoke(ctx, "GET", path, nil, &out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// SaveCIView SaveCIView 保存视图（同名覆盖）；每个模型至多 20 个。
+func (c *CmdbInsightServiceHTTPClientImpl) SaveCIView(ctx context.Context, in *SaveCIViewRequest, opts ...http.CallOption) (*SaveCIViewResponse, error) {
+	var out SaveCIViewResponse
+	pattern := "/api/v1/cmdb/ci-view"
+	path := http.BuildPath(pattern, in)
+	opts = append([]http.CallOption{
+		http.Accept("application/protojson"),
+		http.ContentType("application/protojson"),
+		http.Operation(OperationCmdbInsightServiceSaveCIView),
+		http.PathTemplate(pattern),
+	}, opts...)
+	err := c.cc.Invoke(ctx, "PUT", path, in, &out, opts...)
 	if err != nil {
 		return nil, err
 	}

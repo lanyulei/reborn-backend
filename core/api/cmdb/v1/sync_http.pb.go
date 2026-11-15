@@ -17,6 +17,7 @@ var _ = new(context.Context)
 
 const _ = http.SupportPackageIsVersion3
 
+const OperationCmdbSyncServiceClaimConflict = "/cmdb.v1.CmdbSyncService/ClaimConflict"
 const OperationCmdbSyncServiceCreateSource = "/cmdb.v1.CmdbSyncService/CreateSource"
 const OperationCmdbSyncServiceDeleteSource = "/cmdb.v1.CmdbSyncService/DeleteSource"
 const OperationCmdbSyncServiceDisableWebhook = "/cmdb.v1.CmdbSyncService/DisableWebhook"
@@ -29,6 +30,9 @@ const OperationCmdbSyncServiceTriggerSync = "/cmdb.v1.CmdbSyncService/TriggerSyn
 const OperationCmdbSyncServiceUpdateSource = "/cmdb.v1.CmdbSyncService/UpdateSource"
 
 type CmdbSyncServiceHTTPServer interface {
+	// ClaimConflict ClaimConflict 认领：把一条同步冲突绑定到已有的人工资源（该资源改由本采集源同步维护），
+	// 用于"同一台设备既被人工录入、又被同步发现"的情况；之后的同步直接更新这条资源。
+	ClaimConflict(context.Context, *ClaimConflictRequest) (*ClaimConflictResponse, error)
 	// CreateSource CreateSource 创建采集源；凭据 AES-256-GCM 加密落库，任何响应不返回。
 	CreateSource(context.Context, *CreateSourceRequest) (*CreateSourceResponse, error)
 	// DeleteSource DeleteSource 删除采集源（软删；已同步的资源保留，来源标记不变）。
@@ -61,6 +65,7 @@ func RegisterCmdbSyncServiceHTTPServer(s *http.Server, srv CmdbSyncServiceHTTPSe
 	r.Handle("POST", "/api/v1/cmdb/sync/source/{id}:trigger", _CmdbSyncService_TriggerSync0_HTTP_Handler(srv))
 	r.Handle("GET", "/api/v1/cmdb/sync/source/{id}/run", _CmdbSyncService_ListRuns0_HTTP_Handler(srv))
 	r.Handle("GET", "/api/v1/cmdb/sync/source/{id}/conflict", _CmdbSyncService_ListConflicts0_HTTP_Handler(srv))
+	r.Handle("POST", "/api/v1/cmdb/sync/source/{id}/conflict:claim", _CmdbSyncService_ClaimConflict0_HTTP_Handler(srv))
 	r.Handle("POST", "/api/v1/cmdb/sync/source/{id}/webhook", _CmdbSyncService_RotateWebhook0_HTTP_Handler(srv))
 	r.Handle("DELETE", "/api/v1/cmdb/sync/source/{id}/webhook", _CmdbSyncService_DisableWebhook0_HTTP_Handler(srv))
 }
@@ -235,6 +240,28 @@ func _CmdbSyncService_ListConflicts0_HTTP_Handler(srv CmdbSyncServiceHTTPServer)
 	}
 }
 
+func _CmdbSyncService_ClaimConflict0_HTTP_Handler(srv CmdbSyncServiceHTTPServer) func(ctx http.Context) error {
+	return func(ctx http.Context) error {
+		var in ClaimConflictRequest
+		if err := ctx.Bind(&in); err != nil {
+			return err
+		}
+		if err := ctx.BindVars(&in); err != nil {
+			return err
+		}
+		http.SetOperation(ctx, OperationCmdbSyncServiceClaimConflict)
+		h := ctx.Middleware(func(ctx context.Context, req interface{}) (interface{}, error) {
+			return srv.ClaimConflict(ctx, req.(*ClaimConflictRequest))
+		})
+		out, err := h(ctx, &in)
+		if err != nil {
+			return err
+		}
+		reply := out.(*ClaimConflictResponse)
+		return ctx.Result(200, reply)
+	}
+}
+
 func _CmdbSyncService_RotateWebhook0_HTTP_Handler(srv CmdbSyncServiceHTTPServer) func(ctx http.Context) error {
 	return func(ctx http.Context) error {
 		var in RotateWebhookRequest
@@ -280,6 +307,9 @@ func _CmdbSyncService_DisableWebhook0_HTTP_Handler(srv CmdbSyncServiceHTTPServer
 }
 
 type CmdbSyncServiceHTTPClient interface {
+	// ClaimConflict ClaimConflict 认领：把一条同步冲突绑定到已有的人工资源（该资源改由本采集源同步维护），
+	// 用于"同一台设备既被人工录入、又被同步发现"的情况；之后的同步直接更新这条资源。
+	ClaimConflict(ctx context.Context, req *ClaimConflictRequest, opts ...http.CallOption) (rsp *ClaimConflictResponse, err error)
 	// CreateSource CreateSource 创建采集源；凭据 AES-256-GCM 加密落库，任何响应不返回。
 	CreateSource(ctx context.Context, req *CreateSourceRequest, opts ...http.CallOption) (rsp *CreateSourceResponse, err error)
 	// DeleteSource DeleteSource 删除采集源（软删；已同步的资源保留，来源标记不变）。
@@ -308,6 +338,25 @@ type CmdbSyncServiceHTTPClientImpl struct {
 
 func NewCmdbSyncServiceHTTPClient(client *http.Client) CmdbSyncServiceHTTPClient {
 	return &CmdbSyncServiceHTTPClientImpl{client}
+}
+
+// ClaimConflict ClaimConflict 认领：把一条同步冲突绑定到已有的人工资源（该资源改由本采集源同步维护），
+// 用于"同一台设备既被人工录入、又被同步发现"的情况；之后的同步直接更新这条资源。
+func (c *CmdbSyncServiceHTTPClientImpl) ClaimConflict(ctx context.Context, in *ClaimConflictRequest, opts ...http.CallOption) (*ClaimConflictResponse, error) {
+	var out ClaimConflictResponse
+	pattern := "/api/v1/cmdb/sync/source/{id}/conflict:claim"
+	path := http.BuildPath(pattern, in)
+	opts = append([]http.CallOption{
+		http.Accept("application/protojson"),
+		http.ContentType("application/protojson"),
+		http.Operation(OperationCmdbSyncServiceClaimConflict),
+		http.PathTemplate(pattern),
+	}, opts...)
+	err := c.cc.Invoke(ctx, "POST", path, in, &out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // CreateSource CreateSource 创建采集源；凭据 AES-256-GCM 加密落库，任何响应不返回。

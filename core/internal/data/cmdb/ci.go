@@ -386,6 +386,53 @@ func (r *ciRepo) SoftDelete(ctx context.Context, id string, at time.Time, h *biz
 	})
 }
 
+// Unclaim implements biz.CIRepo。
+func (r *ciRepo) Unclaim(ctx context.Context, ci *biz.CI, actor biz.Actor, at time.Time, historyID string) error {
+	return mapDeadlock(r.unclaim(ctx, ci, actor, at, historyID))
+}
+
+func (r *ciRepo) unclaim(ctx context.Context, ci *biz.CI, actor biz.Actor, at time.Time, historyID string) error {
+	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+		// 与对账互斥：对账事务持有同一把锁的共享模式，解除期间不会被同步改写或退役。
+		if err := lockWithTimeout(ctx, tx, ci.ModelCode, uniqueRuleLockSQL); err != nil {
+			return err
+		}
+		var oldSource, oldExternal string
+		err := tx.QueryRow(ctx, "SELECT source, external_id FROM cmdb_ci WHERE id = $1 AND delete_time IS NULL FOR UPDATE", ci.ID).
+			Scan(&oldSource, &oldExternal)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return biz.ErrCINotFound
+		}
+		if err != nil {
+			return fmt.Errorf("load cmdb ci: %w", err)
+		}
+		if !strings.HasPrefix(oldSource, "sync:") {
+			return biz.ErrNotSyncManaged
+		}
+		if _, err := tx.Exec(ctx,
+			`UPDATE cmdb_ci SET source = $2, external_id = '', missing_since = NULL, stale = false,
+			   version = version + 1, update_user = $3, update_time = $4 WHERE id = $1`,
+			ci.ID, biz.SourceManual, dbx.NilIfEmpty(actor.UserID), at); err != nil {
+			return fmt.Errorf("unclaim cmdb ci: %w", err)
+		}
+		// 该资源上由同步建立的关联一并转为人工关联：同步只增删"来源为本采集源"的关联，
+		// 转为人工后不再被之后的同步移除（资源已不在同步的视野里，这些关联无从再被声明）。
+		if _, err := tx.Exec(ctx,
+			`UPDATE cmdb_relation SET source = $2 WHERE (src_id = $1 OR dst_id = $1) AND source LIKE 'sync:%'`,
+			ci.ID, biz.SourceManual); err != nil {
+			return fmt.Errorf("detach cmdb relations: %w", err)
+		}
+		return insertHistories(ctx, tx, []*biz.History{{
+			ID: historyID, CIID: ci.ID, Action: biz.ActionUpdate, Operator: actor.UserID, Source: biz.SourceManual,
+			RequestID: actor.RequestID, CreateTime: at,
+			Diff: map[string]any{
+				"before": map[string]any{"source": oldSource, "externalId": oldExternal},
+				"after":  map[string]any{"source": biz.SourceManual, "externalId": ""},
+			},
+		}})
+	})
+}
+
 // GetDeleted implements biz.CIRepo.
 func (r *ciRepo) GetDeleted(ctx context.Context, id string) (*biz.CI, error) {
 	row := r.data.Pool.QueryRow(ctx, "SELECT "+ciSelectColumns+ciFrom+"WHERE c.id = $1 AND c.delete_time IS NOT NULL", id)

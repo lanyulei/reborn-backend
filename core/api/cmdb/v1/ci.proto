@@ -105,6 +105,22 @@ service CmdbCIService {
     };
     option (system.v1.title) = "查询资源变更历史";
   }
+  // UnclaimCI 解除同步托管：把由采集源维护的资源改回人工维护（来源置为 manual、清空外部标识），
+  // 之后同步不再更新或退役它。认领错了、或想自行接管某条同步资源时使用。
+  rpc UnclaimCI(UnclaimCIRequest) returns (UnclaimCIResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/cmdb/ci/{id}:unclaim"
+      body: "*"
+    };
+    option (system.v1.title) = "解除同步托管";
+  }
+  // GetCIAt 时间点回溯：按变更历史倒推资源在指定时刻的状态（基本信息与属性；不含关联）。
+  rpc GetCIAt(GetCIAtRequest) returns (GetCIAtResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/cmdb/ci/{id}/at"
+    };
+    option (system.v1.title) = "查询资源历史状态";
+  }
   // ImportCIs 批量导入（按名称 upsert）：dry_run=true 只校验并给出每行将执行的动作，
   // 不落库；正式导入逐行独立提交，失败行不影响其它行。
   rpc ImportCIs(ImportCIsRequest) returns (ImportCIsResponse) {
@@ -268,6 +284,12 @@ message ExportCIsRequest {
   optional string format = 20 [(buf.validate.field).string = {
     in: ["csv", "json"]
   }];
+  // issue 数据质量问题筛选（与列表一致），可选。
+  optional string issue = 12 [(buf.validate.field).string = {
+    in: ["missing_required", "no_owner", "orphan", "stale", "outdated"]
+  }];
+  // with_relations 同时导出关联（CSV 为 rel:<关系类型>:<方向>[:<对端类型>] 列，与导入格式一致，可原样导回）。
+  optional bool with_relations = 21;
 }
 
 // CmdbCI 资源实体。
@@ -564,6 +586,34 @@ message DeleteCIRequest {
 
 // DeleteCIResponse 删除资源响应。
 message DeleteCIResponse {}
+
+// UnclaimCIRequest 解除同步托管请求。
+message UnclaimCIRequest {
+  // id 资源标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// UnclaimCIResponse 解除同步托管响应。
+message UnclaimCIResponse {
+  // ci 解除后的资源。
+  CmdbCI ci = 1;
+}
+
+// GetCIAtRequest 时间点回溯请求。
+message GetCIAtRequest {
+  // id 资源标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // time 回溯到的时刻。
+  google.protobuf.Timestamp time = 2 [(buf.validate.field).required = true];
+}
+
+// GetCIAtResponse 时间点回溯响应。
+message GetCIAtResponse {
+  // ci 该时刻的资源状态（version / update_time 等审计字段无意义，不填）。
+  CmdbCI ci = 1;
+  // deleted 该时刻资源处于已删除状态（之后被恢复）。
+  bool deleted = 2;
+}
 
 // RestoreCIRequest 恢复资源请求。
 message RestoreCIRequest {

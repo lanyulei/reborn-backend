@@ -61,6 +61,8 @@ type ScopeRepo interface {
 type RoleSource interface {
 	// EnabledRoleIDs 超管返回 (true, nil)；非可用用户返回 (false, 空)。
 	EnabledRoleIDs(ctx context.Context, userID string) (isAdmin bool, roleIDs []string, err error)
+	// Allowed 用户是否持有某接口操作的权限（operationCode 为操作的稳定标识）。
+	Allowed(ctx context.Context, userID, operationCode string) (bool, error)
 }
 
 // RoleDirectory 跨域窄接口：全部未删除角色的 ID/名称/编码（system 域 RoleUsecase 实现）。
@@ -162,4 +164,9 @@ func (uc *ScopeUsecase) SetRoleScope(ctx context.Context, actor Actor, roleID st
 		return nil, err
 	}
 	return rs, nil
+}
+
+// Allowed 用户是否持有某接口操作的权限（一个接口的行为需要以另一个接口的权限为前提时用）。
+func (uc *ScopeUsecase) Allowed(ctx context.Context, userID, operationCode string) (bool, error) {
+	return uc.roles.Allowed(ctx, userID, operationCode)
 }

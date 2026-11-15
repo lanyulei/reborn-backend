@@ -1,7 +1,10 @@
 package biz
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -102,4 +105,141 @@ func filterTools(catalog ToolCatalog, isAdmin bool, allowed []string) []ToolSpec
 		}
 	}
 	return out
+}
+
+// 工具按模块加载：可用工具很多时，每次模型请求都带全量工具目录既慢又贵，还会让模型
+// 更容易选错工具。此时只下发一个「加载模块」的元工具和已加载模块的工具；模型按需
+// 加载。可用工具不多（普通用户通常如此）时不启用，行为与全量下发完全一致。
+const (
+	// LoadToolsName 元工具名：加载功能模块的工具。
+	LoadToolsName = "load_tools"
+	// moduleRoutingMinTools 可用工具数超过它才按模块加载。
+	moduleRoutingMinTools = 40
+)
+
+// loadToolsSchema 元工具入参。必须对所有用户相同：模型客户端按工具名缓存入参结构，
+// 所以各用户可加载的模块只写在说明里，不写进 enum；加载了无权的模块按未知模块处理。
+var loadToolsSchema = json.RawMessage(`{"type":"object","properties":{"modules":{"type":"array","description":"要加载的模块名","items":{"type":"string"}}},"required":["modules"],"additionalProperties":false}`)
+
+// moduleLabels 模块的中文说明（给模型判断该加载哪个模块）；未登记的模块只显示模块名。
+var moduleLabels = map[string]string{
+	"cmdb":   "资源管理（CMDB）：模型、属性、配置项、资源关联与拓扑、唯一规则、采集同步、统计",
+	"notify": "通知管理：渠道、通知规则（路由）、模板、静默、订阅、生产者、事件与投递追踪、死信",
+	"oncall": "值班管理：值班分组与成员、值班表、班次与值班日历、替班、当前值班人、公共日历地址、值班通知",
+	"system": "系统管理：用户、角色与权限、登录日志、系统配置、个人资料",
+}
+
+// initModules 判断本轮是否按模块加载，并从历史恢复已加载的模块（模型加载过的、
+// 或调用过其工具的）——同一会话的后续轮次不必重新加载。
+func (r *run) initModules() {
+	if len(r.tools) <= moduleRoutingMinTools {
+		return
+	}
+	var modules []string
+	for _, spec := range r.tools {
+		if !slices.Contains(modules, spec.Module) {
+			modules = append(modules, spec.Module)
+		}
+	}
+	if len(modules) < 2 {
+		return
+	}
+	slices.Sort(modules)
+	r.routed, r.modules, r.active = true, modules, make(map[string]bool, len(modules))
+	for _, m := range r.messages {
+		if m.Role != RoleAssistant {
+			continue
+		}
+		for _, ref := range m.ToolCalls {
+			if ref.Name == LoadToolsName {
+				for _, name := range requestedModules(ref.Arguments) {
+					if slices.Contains(modules, name) {
+						r.active[name] = true
+					}
+				}
+			} else if spec := r.findTool(ref.Name); spec != nil {
+				r.active[spec.Module] = true
+			}
+		}
+	}
+}
+
+// offeredTools 本次模型请求下发的工具：不按模块加载时为全部可用工具；否则为元工具
+// 加已加载模块的工具。
+func (r *run) offeredTools() []ToolSpec {
+	if !r.routed {
+		return r.tools
+	}
+	out := make([]ToolSpec, 0, len(r.tools)+1)
+	out = append(out, r.loadToolsSpec())
+	for _, spec := range r.tools {
+		if r.active[spec.Module] {
+			out = append(out, spec)
+		}
+	}
+	return out
+}
+
+// loadToolsSpec 元工具定义：列出本用户可加载的模块及各自的工具数。
+func (r *run) loadToolsSpec() ToolSpec {
+	counts := make(map[string]int, len(r.modules))
+	for _, spec := range r.tools {
+		counts[spec.Module]++
+	}
+	var desc strings.Builder
+	desc.WriteString("加载功能模块的工具，加载后才能调用该模块的具体工具。可用模块：")
+	for i, name := range r.modules {
+		if i > 0 {
+			desc.WriteString("；")
+		}
+		label := moduleLabels[name]
+		if label == "" {
+			label = name
+		}
+		fmt.Fprintf(&desc, "%s = %s（%d 个工具）", name, label, counts[name])
+		if r.active[name] {
+			desc.WriteString("[已加载]")
+		}
+	}
+	desc.WriteString("。一次可以加载多个模块。")
+	return ToolSpec{Name: LoadToolsName, Description: desc.String(), InputSchema: loadToolsSchema}
+}
+
+// loadModules 执行元工具：把请求的模块标记为已加载并回灌结果。它不调用任何接口、
+// 不涉及业务数据，所以不建审计记录、不向客户端推送步骤事件；只在对话历史里留下
+// 调用与结果（协议要求每个 tool_call 都有对应的 tool 消息）。
+func (r *run) loadModules(ctx context.Context, ref ToolCallRef) error {
+	var loaded, unknown []string
+	for _, name := range requestedModules(ref.Arguments) {
+		if slices.Contains(r.modules, name) {
+			r.active[name] = true
+			loaded = append(loaded, name)
+		} else {
+			unknown = append(unknown, name)
+		}
+	}
+	result := map[string]any{"available_modules": r.modules}
+	switch {
+	case len(loaded) > 0:
+		result["loaded"] = loaded
+		result["message"] = "模块工具已加载，现在可以直接调用"
+	default:
+		result["error"] = "没有加载任何模块：请从 available_modules 里选择"
+	}
+	if len(unknown) > 0 {
+		result["unknown"] = unknown
+	}
+	content, _ := json.Marshal(result)
+	return r.append(ctx, &Message{Role: RoleTool, Content: string(content), ToolCallID: ref.ID})
+}
+
+// requestedModules 解析元工具参数里的模块名（非法 JSON 视为没有）。
+func requestedModules(arguments string) []string {
+	var args struct {
+		Modules []string `json:"modules"`
+	}
+	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+		return nil
+	}
+	return args.Modules
 }

@@ -122,7 +122,9 @@ func (s *sseWriter) writeHeaders() {
 	s.headers = true
 	h := s.w.Header()
 	h.Set("Content-Type", "text/event-stream; charset=utf-8")
-	h.Set("Cache-Control", "no-cache")
+	// no-transform：禁止中间层（开发服务器、网关的 gzip 等）改写响应体——压缩会把整条流
+	// 攒到结束才一次性下发，前端就不再是逐字输出。
+	h.Set("Cache-Control", "no-cache, no-transform")
 	h.Set("Connection", "keep-alive")
 	h.Set("X-Accel-Buffering", "no")
 	s.w.WriteHeader(http.StatusOK)

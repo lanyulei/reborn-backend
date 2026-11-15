@@ -162,3 +162,144 @@ func TestIntegration_RecycleRestore(t *testing.T) {
 		t.Fatalf("LIKE wildcard must be escaped: %+v", cands)
 	}
 }
+
+// 认领同步冲突：把冲突行绑定到已有的人工资源（来源与外部标识改写、版本 +1、写历史、冲突行移除）。
+func TestIntegration_ClaimConflict(t *testing.T) {
+	fx := newUniqueFixture(t, "claim_host", "ip")
+	ctx := context.Background()
+	runs := NewSyncRunRepo(fx.d)
+	const sourceID = "00000000-0000-7000-8000-00000000c1a1"
+	source := "sync:" + sourceID
+	if _, err := fx.d.Pool.Exec(ctx, "DELETE FROM cmdb_sync_conflict WHERE source = $1", source); err != nil {
+		t.Fatal(err)
+	}
+	conflict := func(ext string) {
+		t.Helper()
+		if _, err := fx.d.Pool.Exec(ctx,
+			`INSERT INTO cmdb_sync_conflict (source, model_code, external_id, name, reason) VALUES ($1, $2, $3, 'discovered', 'name already used by another resource')`,
+			source, fx.model, ext); err != nil {
+			t.Fatal(err)
+		}
+	}
+	claim := func(ext, ciID string) error {
+		return runs.ClaimConflict(ctx, &biz.ConflictClaim{
+			SourceID: sourceID, ModelCode: fx.model, ExternalID: ext, CIID: ciID,
+			Actor: biz.Actor{UserID: mustID(t)}, At: time.Now(), HistoryID: mustID(t),
+		})
+	}
+	manual := fx.mustCreate("srv-1", map[string]any{"ip": "3.3.3.3"})
+	conflict("ext-1")
+
+	// 冲突行不存在 / 资源不存在 / 类型不符。
+	if err := claim("ext-none", manual.ID); !errors.Is(err, biz.ErrConflictNotFound) {
+		t.Fatalf("claim a missing conflict: %v", err)
+	}
+	if err := claim("ext-1", mustID(t)); !errors.Is(err, biz.ErrCINotFound) {
+		t.Fatalf("claim onto a missing resource: %v", err)
+	}
+
+	if err := claim("ext-1", manual.ID); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	got, err := fx.cis.Get(ctx, manual.ID)
+	if err != nil || got.Source != source || got.ExternalID != "ext-1" || got.Version != manual.Version+1 {
+		t.Fatalf("claimed resource = %+v err=%v", got, err)
+	}
+	var left, hist int
+	_ = fx.d.Pool.QueryRow(ctx, "SELECT count(*) FROM cmdb_sync_conflict WHERE source = $1", source).Scan(&left)
+	_ = fx.d.Pool.QueryRow(ctx, "SELECT count(*) FROM cmdb_ci_history WHERE ci_id = $1 AND action = 'update' AND diff -> 'after' ->> 'externalId' = 'ext-1'", manual.ID).Scan(&hist)
+	if left != 0 || hist != 1 {
+		t.Fatalf("after claim: conflicts=%d history=%d", left, hist)
+	}
+	// 唯一键不受影响（属性未变）。
+	fx.assertKeysConsistent()
+
+	// 已由同步维护的资源不能再被认领；外部标识已有在册资源时拒绝。
+	conflict("ext-2")
+	if err := claim("ext-2", manual.ID); !errors.Is(err, biz.ErrClaimNotManual) {
+		t.Fatalf("claim a sync-owned resource: %v", err)
+	}
+	other := fx.mustCreate("srv-2", map[string]any{"ip": "3.3.3.4"})
+	conflict("ext-1")
+	if err := claim("ext-1", other.ID); !errors.Is(err, biz.ErrCIDuplicate) {
+		t.Fatalf("claim an external id that is already bound: %v", err)
+	}
+	if o, _ := fx.cis.Get(ctx, other.ID); o.Source != "manual" || o.Version != other.Version {
+		t.Fatalf("failed claim must not change the resource: %+v", o)
+	}
+
+	// 解除同步托管：改回人工维护（外部标识清空、版本 +1、写历史）；人工资源不适用；之后可再次认领。
+	// 该资源上由同步建立的关联一并转为人工关联（之后的同步不再移除它们）；别的资源的同步关联不动。
+	if _, err := fx.d.Pool.Exec(ctx,
+		`INSERT INTO cmdb_relation_type (code, name, forward_name, backward_name, src_model, dst_model, cardinality) VALUES ('claim_rel', 'r', 'f', 'b', $1, $1, 'many_to_many') ON CONFLICT DO NOTHING`, fx.model); err != nil {
+		t.Fatal(err)
+	}
+	peerA, peerB := fx.mustCreate("peer-a", map[string]any{"ip": "3.3.4.1"}), fx.mustCreate("peer-b", map[string]any{"ip": "3.3.4.2"})
+	if _, err := fx.d.Pool.Exec(ctx,
+		`INSERT INTO cmdb_relation (id, type_code, src_id, dst_id, source) VALUES ($1, 'claim_rel', $2, $3, $6), ($4, 'claim_rel', $3, $5, $6), ($7, 'claim_rel', $3, $2, 'manual')`,
+		mustID(t), manual.ID, peerA.ID, mustID(t), peerB.ID, source, mustID(t)); err != nil {
+		t.Fatal(err)
+	}
+	claimed, _ := fx.cis.Get(ctx, manual.ID)
+	if err := fx.cis.Unclaim(ctx, claimed, biz.Actor{UserID: mustID(t)}, time.Now(), mustID(t)); err != nil {
+		t.Fatalf("unclaim: %v", err)
+	}
+	back, _ := fx.cis.Get(ctx, manual.ID)
+	if back.Source != "manual" || back.ExternalID != "" || back.Version != claimed.Version+1 {
+		t.Fatalf("unclaimed resource = %+v", back)
+	}
+	var mine, others int
+	_ = fx.d.Pool.QueryRow(ctx, "SELECT count(*) FROM cmdb_relation WHERE (src_id = $1 OR dst_id = $1) AND source LIKE 'sync:%'", manual.ID).Scan(&mine)
+	_ = fx.d.Pool.QueryRow(ctx, "SELECT count(*) FROM cmdb_relation WHERE src_id = $1 AND dst_id = $2 AND source = $3", peerA.ID, peerB.ID, source).Scan(&others)
+	if mine != 0 || others != 1 {
+		t.Fatalf("unclaim must detach only this resource's sync relations: mine=%d others=%d", mine, others)
+	}
+	if err := fx.cis.Unclaim(ctx, back, biz.Actor{}, time.Now(), mustID(t)); !errors.Is(err, biz.ErrNotSyncManaged) {
+		t.Fatalf("unclaim a manual resource: %v", err)
+	}
+	if err := claim("ext-2", manual.ID); err != nil {
+		t.Fatalf("re-claim after unclaim: %v", err)
+	}
+	fx.assertKeysConsistent()
+
+	// 冲突清单达到留存上限时如实报告"不完整"。
+	if capped, _ := runs.ConflictsCapped(ctx, sourceID); capped {
+		t.Fatal("a short conflict list must not be reported as capped")
+	}
+	// 以数据面记录的真实总数为准：刚好等于上限不算不完整；超过才算，且不随清单里的行被认领 / 清理而变化。
+	stat := func(total int) {
+		t.Helper()
+		if _, err := fx.d.Pool.Exec(ctx,
+			`INSERT INTO cmdb_sync_conflict_stat (source, model_code, total) VALUES ($1, $2, $3)
+			 ON CONFLICT (source, model_code) DO UPDATE SET total = EXCLUDED.total`, source, fx.model, total); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stat(2000)
+	if capped, _ := runs.ConflictsCapped(ctx, sourceID); capped {
+		t.Fatal("exactly the limit is a complete list")
+	}
+	stat(2001)
+	if _, err := fx.d.Pool.Exec(ctx, "DELETE FROM cmdb_sync_conflict WHERE source = $1", source); err != nil {
+		t.Fatal(err)
+	}
+	if capped, err := runs.ConflictsCapped(ctx, sourceID); err != nil || !capped {
+		t.Fatalf("capped must not depend on the rows left in the list: %v err=%v", capped, err)
+	}
+	if _, err := fx.d.Pool.Exec(ctx, "DELETE FROM cmdb_sync_conflict_stat WHERE source = $1", source); err != nil {
+		t.Fatal(err)
+	}
+	conflict("ext-1")
+	conflict("ext-2")
+
+	// 采集到的名称被另一条资源占用：认领别的资源解决不了冲突，拒绝且不改动。
+	fx.mustCreate("discovered", map[string]any{"ip": "3.3.3.9"})
+	bystander := fx.mustCreate("srv-x", map[string]any{"ip": "3.3.3.8"})
+	conflict("ext-9")
+	if err := claim("ext-9", bystander.ID); !errors.Is(err, biz.ErrClaimWrongTarget) {
+		t.Fatalf("claim a resource that is not the one holding the name: %v", err)
+	}
+	if b, _ := fx.cis.Get(ctx, bystander.ID); b.Source != "manual" {
+		t.Fatalf("rejected claim must not change the resource: %+v", b)
+	}
+}

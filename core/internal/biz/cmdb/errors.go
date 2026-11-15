@@ -48,6 +48,11 @@ var (
 	ErrUniqueRuleExists       = errors.Conflict(v1.ErrorReason_CMDB_UNIQUE_RULE_EXISTS.String(), "a unique rule with the same name or fields already exists")
 	ErrUniqueRuleConflict     = errors.Conflict(v1.ErrorReason_CMDB_UNIQUE_RULE_CONFLICT.String(), "existing resources violate the unique rule")
 	ErrUniqueRuleBusy         = errors.Conflict(v1.ErrorReason_CMDB_UNIQUE_RULE_BUSY.String(), "resources of this model are being written; retry shortly")
+	ErrConflictNotFound       = errors.NotFound(v1.ErrorReason_CMDB_SOURCE_NOT_FOUND.String(), "sync conflict not found (already resolved?)")
+	ErrOperationForbidden     = errors.Forbidden(v1.ErrorReason_CMDB_SCOPE_FORBIDDEN.String(), "this action also requires permission to edit resources")
+	ErrNotSyncManaged         = errors.BadRequest(v1.ErrorReason_CMDB_CI_INVALID.String(), "resource is not maintained by a sync source")
+	ErrClaimWrongTarget       = errors.Conflict(v1.ErrorReason_CMDB_CI_DUPLICATE.String(), "the discovered name is held by a different resource; claim that resource instead")
+	ErrClaimNotManual         = errors.BadRequest(v1.ErrorReason_CMDB_CI_INVALID.String(), "only manually created resources can be claimed")
 	ErrFieldInUse             = errors.Conflict(v1.ErrorReason_CMDB_FIELD_IN_USE.String(), "field is referenced by a unique rule")
 	// ErrRoleNotFound 复用 system 域错误码口径（角色不存在）。
 	ErrRoleNotFound = errors.NotFound("ROLE_NOT_FOUND", "role not found")

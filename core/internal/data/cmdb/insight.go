@@ -429,3 +429,73 @@ func (r *overviewRepo) counts(ctx context.Context, sql string, args []any) ([]bi
 	}
 	return items, rows.Err()
 }
+
+var _ biz.CIViewRepo = (*ciViewRepo)(nil)
+
+type ciViewRepo struct {
+	data *basedata.Data
+}
+
+// NewCIViewRepo new a ciViewRepo.
+func NewCIViewRepo(data *basedata.Data) *ciViewRepo { return &ciViewRepo{data: data} }
+
+// List implements biz.CIViewRepo.
+func (r *ciViewRepo) List(ctx context.Context, userID, modelCode string) ([]*biz.CIView, error) {
+	rows, err := r.data.Pool.Query(ctx,
+		"SELECT name, filters FROM cmdb_ci_view WHERE user_id = $1 AND model_code = $2 ORDER BY name", userID, modelCode)
+	if err != nil {
+		return nil, fmt.Errorf("list cmdb ci views: %w", err)
+	}
+	defer rows.Close()
+	items := make([]*biz.CIView, 0, 8)
+	for rows.Next() {
+		var v biz.CIView
+		var raw []byte
+		if err := rows.Scan(&v.Name, &raw); err != nil {
+			return nil, fmt.Errorf("scan cmdb ci view: %w", err)
+		}
+		if err := json.Unmarshal(raw, &v.Filters); err != nil {
+			return nil, fmt.Errorf("decode cmdb ci view %q: %w", v.Name, err)
+		}
+		items = append(items, &v)
+	}
+	return items, rows.Err()
+}
+
+// Save implements biz.CIViewRepo：计数与写入同事务；按用户 + 模型串行（advisory lock），并发保存不会突破上限。
+func (r *ciViewRepo) Save(ctx context.Context, userID, modelCode string, view *biz.CIView, limit int) error {
+	raw, err := json.Marshal(view.Filters)
+	if err != nil {
+		return fmt.Errorf("marshal cmdb ci view: %w", err)
+	}
+	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended('cmdb_ci_view:' || $1 || ':' || $2, 0))", userID, modelCode); err != nil {
+			return fmt.Errorf("lock cmdb ci views: %w", err)
+		}
+		var count int
+		var exists bool
+		if err := tx.QueryRow(ctx,
+			"SELECT count(*), COALESCE(bool_or(name = $3), false) FROM cmdb_ci_view WHERE user_id = $1 AND model_code = $2",
+			userID, modelCode, view.Name).Scan(&count, &exists); err != nil {
+			return fmt.Errorf("count cmdb ci views: %w", err)
+		}
+		if !exists && count >= limit {
+			return biz.CIViewLimitError(limit)
+		}
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO cmdb_ci_view (user_id, model_code, name, filters) VALUES ($1, $2, $3, $4)
+			 ON CONFLICT (user_id, model_code, name) DO UPDATE SET filters = EXCLUDED.filters, update_time = now()`,
+			userID, modelCode, view.Name, raw); err != nil {
+			return fmt.Errorf("save cmdb ci view: %w", err)
+		}
+		return nil
+	})
+}
+
+// Delete implements biz.CIViewRepo.
+func (r *ciViewRepo) Delete(ctx context.Context, userID, modelCode, name string) error {
+	if _, err := r.data.Pool.Exec(ctx, "DELETE FROM cmdb_ci_view WHERE user_id = $1 AND model_code = $2 AND name = $3", userID, modelCode, name); err != nil {
+		return fmt.Errorf("delete cmdb ci view: %w", err)
+	}
+	return nil
+}

@@ -1,0 +1,194 @@
+syntax = "proto3";
+
+package oncall.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "buf/validate/validate.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/oncall/v1;v1";
+
+// OncallShareService 公共值班日历地址：免登录的只读日历。
+// 令牌为 32 字节随机数（base64url）。库内存两份：SHA-256（匿名访问按它查找）与
+// AES-256-GCM 密文（供有管理权的人再次查看地址），明文不落库。
+// 分组、值班表范围由分组管理员管理；个人范围只能由本人管理。
+service OncallShareService {
+  // ListShareLinks 查询某个范围下的公共地址（不含令牌）。
+  rpc ListShareLinks(ListShareLinksRequest) returns (ListShareLinksResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/oncall/share-link"
+    };
+    option (system.v1.title) = "查询公共值班地址";
+  }
+  // CreateShareLink 新建公共地址，返回访问令牌。
+  rpc CreateShareLink(CreateShareLinkRequest) returns (CreateShareLinkResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/oncall/share-link"
+      body: "*"
+    };
+    option (system.v1.title) = "新建公共值班地址";
+  }
+  // GetShareLinkToken 再次查看访问令牌（须有该地址的管理权）。
+  rpc GetShareLinkToken(GetShareLinkTokenRequest) returns (GetShareLinkTokenResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/oncall/share-link/{id}/token"
+    };
+    option (system.v1.title) = "查看公共值班地址";
+  }
+  // ResetShareLink 重置令牌：旧地址立即失效，返回新令牌。
+  rpc ResetShareLink(ResetShareLinkRequest) returns (ResetShareLinkResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/oncall/share-link/{id}/reset"
+      body: "*"
+    };
+    option (system.v1.title) = "重置公共值班地址";
+  }
+  // DeleteShareLink 作废公共地址。
+  rpc DeleteShareLink(DeleteShareLinkRequest) returns (DeleteShareLinkResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/oncall/share-link/{id}"
+    };
+    option (system.v1.title) = "作废公共值班地址";
+  }
+  // GetPublicCalendar 免登录读取日历数据；无效、过期、作废统一 404。
+  rpc GetPublicCalendar(GetPublicCalendarRequest) returns (GetPublicCalendarResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/oncall/public/{token}"
+    };
+  }
+}
+
+// ShareLink 公共地址（不含令牌）。
+message ShareLink {
+  // id 地址唯一标识。
+  string id = 1;
+  // scope_type 范围类型：1=分组 2=值班表 3=个人。
+  int32 scope_type = 2;
+  // scope_id 范围对象（分组/值班表/用户 ID）。
+  string scope_id = 3;
+  // name 备注名。
+  string name = 4;
+  // show_phone 是否显示值班人手机号。
+  bool show_phone = 5;
+  // expire_time 过期时间；为空表示长期有效。
+  google.protobuf.Timestamp expire_time = 6;
+  // last_access_time 最近访问时间（至多每小时更新一次）。
+  google.protobuf.Timestamp last_access_time = 7;
+  // creator_name 创建人显示名。
+  string creator_name = 8;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 9;
+}
+
+// ListShareLinksRequest 查询公共地址请求。
+message ListShareLinksRequest {
+  // scope_type 范围类型：1=分组 2=值班表 3=个人。
+  int32 scope_type = 1 [(buf.validate.field).int32 = { in: [1, 2, 3] }];
+  // scope_id 范围对象；个人范围忽略此值，恒为当前用户。
+  optional string scope_id = 2 [(buf.validate.field).string.uuid = true];
+}
+
+// ListShareLinksResponse 查询公共地址响应。
+message ListShareLinksResponse {
+  // items 公共地址。
+  repeated ShareLink items = 1;
+}
+
+// CreateShareLinkRequest 新建公共地址请求。
+message CreateShareLinkRequest {
+  // scope_type 范围类型：1=分组 2=值班表 3=个人。
+  int32 scope_type = 1 [(buf.validate.field).int32 = { in: [1, 2, 3] }];
+  // scope_id 范围对象；个人范围忽略此值，恒为当前用户。
+  optional string scope_id = 2 [(buf.validate.field).string.uuid = true];
+  // name 备注名，1-64 字符。
+  string name = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // show_phone 是否显示值班人手机号。
+  bool show_phone = 4;
+  // expire_time 过期时间，可选；须晚于当前时间。
+  optional google.protobuf.Timestamp expire_time = 5;
+}
+
+// CreateShareLinkResponse 新建公共地址响应。
+message CreateShareLinkResponse {
+  // link 新建的公共地址。
+  ShareLink link = 1;
+  // token 访问令牌明文；之后可经 GetShareLinkToken 再次查看。
+  string token = 2;
+}
+
+// GetShareLinkTokenRequest 查看访问令牌请求。
+message GetShareLinkTokenRequest {
+  // id 地址唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetShareLinkTokenResponse 查看访问令牌响应。
+message GetShareLinkTokenResponse {
+  // token 访问令牌明文。
+  string token = 1;
+}
+
+// ResetShareLinkRequest 重置令牌请求。
+message ResetShareLinkRequest {
+  // id 地址唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// ResetShareLinkResponse 重置令牌响应。
+message ResetShareLinkResponse {
+  // token 新的访问令牌明文。
+  string token = 1;
+}
+
+// DeleteShareLinkRequest 作废公共地址请求。
+message DeleteShareLinkRequest {
+  // id 地址唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteShareLinkResponse 作废公共地址响应。
+message DeleteShareLinkResponse {}
+
+// PublicShift 公共日历中的班次（最小披露）。
+message PublicShift {
+  // schedule_name 值班表名称。
+  string schedule_name = 1;
+  // role 角色：1=主值班 2=备值班。
+  int32 role = 2;
+  // user_name 值班人显示名。
+  string user_name = 3;
+  // phone 值班人手机号；地址未开启显示手机号时为空。
+  string phone = 4;
+  // start_time 开始时间（含）。
+  google.protobuf.Timestamp start_time = 5;
+  // end_time 结束时间（不含）。
+  google.protobuf.Timestamp end_time = 6;
+  // source 来源：1=自动排班 2=替班。
+  int32 source = 7;
+}
+
+// GetPublicCalendarRequest 读取公共日历请求。
+message GetPublicCalendarRequest {
+  // token 访问令牌。
+  string token = 1 [(buf.validate.field).string.pattern = "^[A-Za-z0-9_-]{43}$"];
+  // start_time 范围开始（含）。
+  google.protobuf.Timestamp start_time = 2 [(buf.validate.field).required = true];
+  // end_time 范围结束（不含）；与开始相距不超过 62 天。
+  google.protobuf.Timestamp end_time = 3 [(buf.validate.field).required = true];
+}
+
+// GetPublicCalendarResponse 读取公共日历响应。
+message GetPublicCalendarResponse {
+  // title 日历标题（分组名、"分组名 / 值班表名"或"某人的值班"）。
+  string title = 1;
+  // scope_type 范围类型：1=分组 2=值班表 3=个人。
+  int32 scope_type = 2;
+  // items 与范围相交的班次，按开始时间排序。
+  repeated PublicShift items = 3;
+  // description 分组说明（仅分组范围的地址返回）。
+  string description = 4;
+}

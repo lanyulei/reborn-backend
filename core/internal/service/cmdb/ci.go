@@ -74,7 +74,7 @@ func (s *CmdbCIService) ExportCIs(ctx context.Context, req *v1.ExportCIsRequest)
 	// 与 ListCIs 同一组筛选条件：导出的就是当前列表看到的那批资源
 	filter := biz.CIFilter{
 		ModelCode: req.GetModelCode(), Keyword: req.GetKeyword(), Status: req.GetStatus(), Env: req.GetEnv(),
-		Tag: req.GetTag(), Attrs: req.GetAttrs().AsMap(), Owner: req.GetOwner(),
+		Tag: req.GetTag(), Attrs: req.GetAttrs().AsMap(), Owner: req.GetOwner(), Issue: req.GetIssue(),
 		RelType: req.GetRelType(), RelDirection: req.GetRelDirection(), RelTargetID: req.GetRelTargetId(), RelNone: req.GetRelNone(),
 	}
 	if filter.RelType != "" && filter.RelDirection == "" {
@@ -105,7 +105,17 @@ func (s *CmdbCIService) ExportCIs(ctx context.Context, req *v1.ExportCIsRequest)
 			active = append(active, f)
 		}
 	}
-	data, contentType, err := codec(items, active)
+	var rels map[string][]biz.ImportRelation
+	if req.GetWithRelations() {
+		scope, err := s.guard.resolve(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if rels, err = s.uc.ExportRelations(ctx, scope, items); err != nil {
+			return nil, err
+		}
+	}
+	data, contentType, err := codec(items, active, rels)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +123,8 @@ func (s *CmdbCIService) ExportCIs(ctx context.Context, req *v1.ExportCIsRequest)
 }
 
 // exportCodec 导出编码器：资源 + 字段 → 字节流与 Content-Type。
-type exportCodec func(items []*biz.CI, fields []*biz.Field) ([]byte, string, error)
+// rels 为 nil 表示不导出关联；否则为 ciID → 关联声明。
+type exportCodec func(items []*biz.CI, fields []*biz.Field, rels map[string][]biz.ImportRelation) ([]byte, string, error)
 
 // exportCodecs 导出格式注册表：新增格式只需追加一项。
 var exportCodecs = map[string]exportCodec{
@@ -121,7 +132,92 @@ var exportCodecs = map[string]exportCodec{
 	"json": exportJSON,
 }
 
-func exportCSV(items []*biz.CI, fields []*biz.Field) ([]byte, string, error) {
+// csvSafe 防 CSV 公式注入：文本单元格以 = + - @ 或制表 / 回车开头时，电子表格软件会当作公式
+// 执行；前置一个单引号使其按文本显示。只用于文本值（数值列不处理，负数照常）。
+// 本身以单引号开头的值同样前置一个：导入端"首个单引号后跟这些字符之一就去掉它"才是严格的逆运算，
+// 名称恰好是 '=x 这类写法的也能原样导回。
+func csvSafe(s string) string {
+	if s == "" {
+		return s
+	}
+	switch s[0] {
+	case '=', '+', '-', '@', '\t', '\r', '\'':
+		return "'" + s
+	}
+	return s
+}
+
+// relationKey 关联列的键：<关系类型>:<方向>[:<对端类型>]。
+func relationKey(r biz.ImportRelation) string {
+	key := r.Type + ":" + r.Direction
+	if r.TargetModel != "" {
+		key += ":" + r.TargetModel
+	}
+	return key
+}
+
+// relationCol 一个关联列。两种列头（与导入解析一致，见前端 ImportModal.parseRelationHeader）：
+//   - rel:<键>   多值列：单元格为分号分隔的对端名称；
+//   - rel1:<键>  单值列：单元格整体就是一个对端名称，不拆分。同键可重复出现多列。
+//
+// 某个键下只要有对端名称含分号（; / ；），该键整体改用单值列——不做任何转义，名称原样进出，
+// 手写的 rel: 列里的反斜杠、引号等也都是字面量，没有需要记忆的转义规则。
+type relationCol struct {
+	key    string
+	single bool
+	index  int // 单值列：该行第 index 个对端
+}
+
+func (c relationCol) header() string {
+	if c.single {
+		return "rel1:" + c.key
+	}
+	return "rel:" + c.key
+}
+
+// relationCols 本次导出的关联列（按键字典序）。
+func relationCols(rels map[string][]biz.ImportRelation) []relationCol {
+	type stat struct {
+		single bool
+		max    int
+	}
+	stats := map[string]*stat{}
+	for _, list := range rels {
+		perRow := map[string]int{}
+		for _, r := range list {
+			key := relationKey(r)
+			st := stats[key]
+			if st == nil {
+				st = &stat{}
+				stats[key] = st
+			}
+			if strings.ContainsAny(r.TargetName, ";；") {
+				st.single = true
+			}
+			perRow[key]++
+			st.max = max(st.max, perRow[key])
+		}
+	}
+	keys := make([]string, 0, len(stats))
+	for key := range stats {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	cols := make([]relationCol, 0, len(keys))
+	for _, key := range keys {
+		if !stats[key].single {
+			cols = append(cols, relationCol{key: key})
+			continue
+		}
+		for i := range stats[key].max {
+			cols = append(cols, relationCol{key: key, single: true, index: i})
+		}
+	}
+	return cols
+}
+
+func exportCSV(items []*biz.CI, fields []*biz.Field, rels map[string][]biz.ImportRelation) ([]byte, string, error) {
+	relCols := relationCols(rels)
 	var buf bytes.Buffer
 	buf.WriteString("\uFEFF")
 	w := csv.NewWriter(&buf)
@@ -129,16 +225,36 @@ func exportCSV(items []*biz.CI, fields []*biz.Field) ([]byte, string, error) {
 	for _, f := range fields {
 		header = append(header, f.Code)
 	}
+	for _, c := range relCols {
+		header = append(header, c.header())
+	}
 	if err := w.Write(header); err != nil {
 		return nil, "", err
 	}
 	for _, ci := range items {
 		record := []string{
-			ci.Name, ci.Status, ci.Env, ci.Owner, strings.Join(ci.Tags, ";"), ci.ExternalID, ci.ID,
+			csvSafe(ci.Name), ci.Status, csvSafe(ci.Env), csvSafe(ci.Owner), csvSafe(strings.Join(ci.Tags, ";")), csvSafe(ci.ExternalID), ci.ID,
 			fmt.Sprint(ci.Version), ci.UpdateTime.UTC().Format("2006-01-02T15:04:05Z07:00"),
 		}
 		for _, f := range fields {
 			record = append(record, exportCell(ci.Attrs[f.Code]))
+		}
+		if len(relCols) > 0 {
+			byKey := make(map[string][]string, 4)
+			for _, r := range rels[ci.ID] {
+				byKey[relationKey(r)] = append(byKey[relationKey(r)], r.TargetName)
+			}
+			for _, c := range relCols {
+				names := byKey[c.key]
+				switch {
+				case !c.single:
+					record = append(record, csvSafe(strings.Join(names, ";")))
+				case c.index < len(names):
+					record = append(record, csvSafe(names[c.index]))
+				default:
+					record = append(record, "")
+				}
+			}
 		}
 		if err := w.Write(record); err != nil {
 			return nil, "", err
@@ -152,7 +268,13 @@ func exportCSV(items []*biz.CI, fields []*biz.Field) ([]byte, string, error) {
 }
 
 // exportJSON 与导入行同构的 JSON 数组（attrs 只含已定义字段）。
-func exportJSON(items []*biz.CI, fields []*biz.Field) ([]byte, string, error) {
+func exportJSON(items []*biz.CI, fields []*biz.Field, rels map[string][]biz.ImportRelation) ([]byte, string, error) {
+	type relation struct {
+		RelationType string `json:"relationType"`
+		Direction    string `json:"direction"`
+		TargetModel  string `json:"targetModel,omitempty"`
+		TargetName   string `json:"targetName"`
+	}
 	type row struct {
 		Name       string         `json:"name"`
 		Status     string         `json:"status"`
@@ -164,6 +286,7 @@ func exportJSON(items []*biz.CI, fields []*biz.Field) ([]byte, string, error) {
 		Version    int64          `json:"version"`
 		UpdateTime string         `json:"updateTime"`
 		Attrs      map[string]any `json:"attrs"`
+		Relations  []relation     `json:"relations,omitempty"`
 	}
 	out := make([]row, 0, len(items))
 	for _, ci := range items {
@@ -177,10 +300,14 @@ func exportJSON(items []*biz.CI, fields []*biz.Field) ([]byte, string, error) {
 		if tags == nil {
 			tags = []string{}
 		}
-		out = append(out, row{
+		r := row{
 			Name: ci.Name, Status: ci.Status, Env: ci.Env, Owner: ci.Owner, Tags: tags, ExternalID: ci.ExternalID, ID: ci.ID,
 			Version: ci.Version, UpdateTime: ci.UpdateTime.UTC().Format("2006-01-02T15:04:05Z07:00"), Attrs: attrs,
-		})
+		}
+		for _, rel := range rels[ci.ID] {
+			r.Relations = append(r.Relations, relation{RelationType: rel.Type, Direction: rel.Direction, TargetModel: rel.TargetModel, TargetName: rel.TargetName})
+		}
+		out = append(out, r)
 	}
 	data, err := json.Marshal(out)
 	if err != nil {
@@ -195,7 +322,7 @@ func exportCell(v any) string {
 	case nil:
 		return ""
 	case string:
-		return t
+		return csvSafe(t)
 	case float64:
 		return strconv.FormatFloat(t, 'f', -1, 64) // 不走科学计数法（1e+06）
 	case float32:
@@ -406,6 +533,47 @@ func (s *CmdbCIService) DeleteCI(ctx context.Context, req *v1.DeleteCIRequest) (
 		return nil, err
 	}
 	return &v1.DeleteCIResponse{}, nil
+}
+
+// UnclaimCI implements proto CmdbCIService/UnclaimCI。
+func (s *CmdbCIService) UnclaimCI(ctx context.Context, req *v1.UnclaimCIRequest) (*v1.UnclaimCIResponse, error) {
+	actor, err := actorFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.guard.requireCI(ctx, s.uc.GetByID, req.GetId()); err != nil {
+		return nil, err
+	}
+	ci, err := s.uc.Unclaim(ctx, actor, req.GetId())
+	if err != nil {
+		return nil, err
+	}
+	p, err := toProtoCI(ci)
+	if err != nil {
+		return nil, err
+	}
+	return &v1.UnclaimCIResponse{Ci: p}, nil
+}
+
+// GetCIAt implements proto CmdbCIService/GetCIAt。
+func (s *CmdbCIService) GetCIAt(ctx context.Context, req *v1.GetCIAtRequest) (*v1.GetCIAtResponse, error) {
+	if _, err := s.guard.requireCI(ctx, s.uc.GetByID, req.GetId()); err != nil {
+		return nil, err
+	}
+	ci, deleted, err := s.uc.StateAt(ctx, req.GetId(), req.GetTime().AsTime())
+	if err != nil {
+		return nil, err
+	}
+	// 历史时刻的环境也须在范围内（资源可能曾属于调用者不可见的环境）。
+	if err := s.guard.require(ctx, ci.ModelCode, ci.Env); err != nil {
+		return nil, err
+	}
+	p, err := toProtoCI(ci)
+	if err != nil {
+		return nil, err
+	}
+	p.Version, p.UpdateTime = 0, nil
+	return &v1.GetCIAtResponse{Ci: p, Deleted: deleted}, nil
 }
 
 // RestoreCI implements proto CmdbCIService/RestoreCI。

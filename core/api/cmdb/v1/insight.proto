@@ -58,6 +58,29 @@ service CmdbInsightService {
     };
     option (system.v1.title) = "收藏模型";
   }
+  // ListCIViews 当前用户在某模型下保存的资源列表视图（命名的筛选条件）。
+  rpc ListCIViews(ListCIViewsRequest) returns (ListCIViewsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/cmdb/ci-view"
+    };
+    option (system.v1.title) = "查询保存的视图";
+  }
+  // SaveCIView 保存视图（同名覆盖）；每个模型至多 20 个。
+  rpc SaveCIView(SaveCIViewRequest) returns (SaveCIViewResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/cmdb/ci-view"
+      body: "*"
+    };
+    option (system.v1.title) = "保存视图";
+  }
+  // DeleteCIView 删除视图（幂等）。
+  rpc DeleteCIView(DeleteCIViewRequest) returns (DeleteCIViewResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/cmdb/ci-view:delete"
+      body: "*"
+    };
+    option (system.v1.title) = "删除视图";
+  }
   // GetOverview 运营概览：模型 / 资源 / 关系总数，按模型、状态、环境、来源的资源分布，
   // 以及近 N 天的变更趋势；受当前用户数据范围约束。
   rpc GetOverview(GetOverviewRequest) returns (GetOverviewResponse) {
@@ -242,6 +265,65 @@ message GetOverviewResponse {
   // days 实际回看天数。
   int32 days = 10;
 }
+
+// CIView 保存的资源列表视图。
+message CIView {
+  // name 视图名称（同一用户同一模型内唯一）。
+  string name = 1;
+  // filters 筛选条件（前端筛选表单的值，后端只存取不解释）。
+  google.protobuf.Struct filters = 2;
+}
+
+// ListCIViewsRequest 查询保存的视图请求。
+message ListCIViewsRequest {
+  // model_code 模型编码。
+  string model_code = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+}
+
+// ListCIViewsResponse 查询保存的视图响应。
+message ListCIViewsResponse {
+  // items 按名称排序。
+  repeated CIView items = 1;
+}
+
+// SaveCIViewRequest 保存视图请求。
+message SaveCIViewRequest {
+  // model_code 模型编码。
+  string model_code = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // name 视图名称，1-32 位。
+  string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 32
+  }];
+  // filters 筛选条件，序列化后不超过 4KB。
+  google.protobuf.Struct filters = 3 [(buf.validate.field).required = true];
+}
+
+// SaveCIViewResponse 保存视图响应。
+message SaveCIViewResponse {}
+
+// DeleteCIViewRequest 删除视图请求。
+message DeleteCIViewRequest {
+  // model_code 模型编码。
+  string model_code = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // name 视图名称。
+  string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 32
+  }];
+}
+
+// DeleteCIViewResponse 删除视图响应。
+message DeleteCIViewResponse {}
 
 // GetQualityRequest 查询数据质量请求。
 message GetQualityRequest {}

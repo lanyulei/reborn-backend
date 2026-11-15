@@ -170,6 +170,11 @@ message NeighborsRequest {
     gte: 1
     lte: 500
   }];
+  // flow 展开方向（影响分析）：缺省两个方向；downstream 只沿关系方向向下（本资源影响谁）；
+  // upstream 只逆关系方向向上（本资源依赖谁）。
+  optional string flow = 4 [(buf.validate.field).string = {
+    in: ["downstream", "upstream"]
+  }];
 }
 
 // TopologyNode 拓扑节点。

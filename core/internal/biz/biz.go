@@ -13,6 +13,7 @@ import (
 	bizassistant "github.com/lanyulei/reborn/backend/core/internal/biz/assistant"
 	bizcmdb "github.com/lanyulei/reborn/backend/core/internal/biz/cmdb"
 	biznotify "github.com/lanyulei/reborn/backend/core/internal/biz/notify"
+	bizoncall "github.com/lanyulei/reborn/backend/core/internal/biz/oncall"
 	bizsystem "github.com/lanyulei/reborn/backend/core/internal/biz/system"
 )
 
@@ -23,6 +24,7 @@ var ProviderSet = wire.NewSet(
 	biznotify.ProviderSet,
 	bizassistant.ProviderSet,
 	bizcmdb.ProviderSet,
+	bizoncall.ProviderSet,
 	// 智能助手工具按用户授权过滤：有效操作集由 system 域 AuthzUsecase 解析；
 	// 操作者展示信息由 system 域 UserUsecase 提供（单向依赖 assistant → system）。
 	wire.Bind(new(bizassistant.PermissionSource), new(*bizsystem.AuthzUsecase)),

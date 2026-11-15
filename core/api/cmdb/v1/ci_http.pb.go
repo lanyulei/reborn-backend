@@ -25,6 +25,7 @@ const OperationCmdbCIServiceCreateCI = "/cmdb.v1.CmdbCIService/CreateCI"
 const OperationCmdbCIServiceDeleteCI = "/cmdb.v1.CmdbCIService/DeleteCI"
 const OperationCmdbCIServiceExportCIs = "/cmdb.v1.CmdbCIService/ExportCIs"
 const OperationCmdbCIServiceGetCI = "/cmdb.v1.CmdbCIService/GetCI"
+const OperationCmdbCIServiceGetCIAt = "/cmdb.v1.CmdbCIService/GetCIAt"
 const OperationCmdbCIServiceImportCIs = "/cmdb.v1.CmdbCIService/ImportCIs"
 const OperationCmdbCIServiceListCIHistory = "/cmdb.v1.CmdbCIService/ListCIHistory"
 const OperationCmdbCIServiceListCIs = "/cmdb.v1.CmdbCIService/ListCIs"
@@ -33,6 +34,7 @@ const OperationCmdbCIServiceListOwnerCandidates = "/cmdb.v1.CmdbCIService/ListOw
 const OperationCmdbCIServiceRestoreCI = "/cmdb.v1.CmdbCIService/RestoreCI"
 const OperationCmdbCIServiceSearchCIs = "/cmdb.v1.CmdbCIService/SearchCIs"
 const OperationCmdbCIServiceTransitionCI = "/cmdb.v1.CmdbCIService/TransitionCI"
+const OperationCmdbCIServiceUnclaimCI = "/cmdb.v1.CmdbCIService/UnclaimCI"
 const OperationCmdbCIServiceUpdateCI = "/cmdb.v1.CmdbCIService/UpdateCI"
 
 type CmdbCIServiceHTTPServer interface {
@@ -50,6 +52,8 @@ type CmdbCIServiceHTTPServer interface {
 	ExportCIs(context.Context, *ExportCIsRequest) (*httpbody.HttpBody, error)
 	// GetCI GetCI 查询资源详情（含各关系类型的关联统计）。
 	GetCI(context.Context, *GetCIRequest) (*GetCIResponse, error)
+	// GetCIAt GetCIAt 时间点回溯：按变更历史倒推资源在指定时刻的状态（基本信息与属性；不含关联）。
+	GetCIAt(context.Context, *GetCIAtRequest) (*GetCIAtResponse, error)
 	// ImportCIs ImportCIs 批量导入（按名称 upsert）：dry_run=true 只校验并给出每行将执行的动作，
 	// 不落库；正式导入逐行独立提交，失败行不影响其它行。
 	ImportCIs(context.Context, *ImportCIsRequest) (*ImportCIsResponse, error)
@@ -67,6 +71,9 @@ type CmdbCIServiceHTTPServer interface {
 	SearchCIs(context.Context, *SearchCIsRequest) (*SearchCIsResponse, error)
 	// TransitionCI TransitionCI 资源状态流转（planning → active → maintenance ⇄ active → retired）。
 	TransitionCI(context.Context, *TransitionCIRequest) (*TransitionCIResponse, error)
+	// UnclaimCI UnclaimCI 解除同步托管：把由采集源维护的资源改回人工维护（来源置为 manual、清空外部标识），
+	// 之后同步不再更新或退役它。认领错了、或想自行接管某条同步资源时使用。
+	UnclaimCI(context.Context, *UnclaimCIRequest) (*UnclaimCIResponse, error)
 	// UpdateCI UpdateCI 更新资源（携带 version 乐观锁；attrs 按键合并，显式 null 清空）。
 	UpdateCI(context.Context, *UpdateCIRequest) (*UpdateCIResponse, error)
 }
@@ -85,6 +92,8 @@ func RegisterCmdbCIServiceHTTPServer(s *http.Server, srv CmdbCIServiceHTTPServer
 	r.Handle("POST", "/api/v1/cmdb/ci:batchDelete", _CmdbCIService_BatchDeleteCIs0_HTTP_Handler(srv))
 	r.Handle("GET", "/api/v1/cmdb/owner-candidate", _CmdbCIService_ListOwnerCandidates0_HTTP_Handler(srv))
 	r.Handle("GET", "/api/v1/cmdb/ci/{id}/history", _CmdbCIService_ListCIHistory0_HTTP_Handler(srv))
+	r.Handle("POST", "/api/v1/cmdb/ci/{id}:unclaim", _CmdbCIService_UnclaimCI0_HTTP_Handler(srv))
+	r.Handle("GET", "/api/v1/cmdb/ci/{id}/at", _CmdbCIService_GetCIAt0_HTTP_Handler(srv))
 	r.Handle("POST", "/api/v1/cmdb/ci:import", _CmdbCIService_ImportCIs0_HTTP_Handler(srv))
 	r.Handle("GET", "/api/v1/cmdb/ci:export", _CmdbCIService_ExportCIs0_HTTP_Handler(srv))
 	r.Handle("GET", "/api/v1/cmdb/ci:search", _CmdbCIService_SearchCIs0_HTTP_Handler(srv))
@@ -337,6 +346,50 @@ func _CmdbCIService_ListCIHistory0_HTTP_Handler(srv CmdbCIServiceHTTPServer) fun
 	}
 }
 
+func _CmdbCIService_UnclaimCI0_HTTP_Handler(srv CmdbCIServiceHTTPServer) func(ctx http.Context) error {
+	return func(ctx http.Context) error {
+		var in UnclaimCIRequest
+		if err := ctx.Bind(&in); err != nil {
+			return err
+		}
+		if err := ctx.BindVars(&in); err != nil {
+			return err
+		}
+		http.SetOperation(ctx, OperationCmdbCIServiceUnclaimCI)
+		h := ctx.Middleware(func(ctx context.Context, req interface{}) (interface{}, error) {
+			return srv.UnclaimCI(ctx, req.(*UnclaimCIRequest))
+		})
+		out, err := h(ctx, &in)
+		if err != nil {
+			return err
+		}
+		reply := out.(*UnclaimCIResponse)
+		return ctx.Result(200, reply)
+	}
+}
+
+func _CmdbCIService_GetCIAt0_HTTP_Handler(srv CmdbCIServiceHTTPServer) func(ctx http.Context) error {
+	return func(ctx http.Context) error {
+		var in GetCIAtRequest
+		if err := ctx.BindQuery(&in); err != nil {
+			return err
+		}
+		if err := ctx.BindVars(&in); err != nil {
+			return err
+		}
+		http.SetOperation(ctx, OperationCmdbCIServiceGetCIAt)
+		h := ctx.Middleware(func(ctx context.Context, req interface{}) (interface{}, error) {
+			return srv.GetCIAt(ctx, req.(*GetCIAtRequest))
+		})
+		out, err := h(ctx, &in)
+		if err != nil {
+			return err
+		}
+		reply := out.(*GetCIAtResponse)
+		return ctx.Result(200, reply)
+	}
+}
+
 func _CmdbCIService_ImportCIs0_HTTP_Handler(srv CmdbCIServiceHTTPServer) func(ctx http.Context) error {
 	return func(ctx http.Context) error {
 		var in ImportCIsRequest
@@ -428,6 +481,8 @@ type CmdbCIServiceHTTPClient interface {
 	ExportCIs(ctx context.Context, req *ExportCIsRequest, opts ...http.CallOption) (rsp *httpbody.HttpBody, err error)
 	// GetCI GetCI 查询资源详情（含各关系类型的关联统计）。
 	GetCI(ctx context.Context, req *GetCIRequest, opts ...http.CallOption) (rsp *GetCIResponse, err error)
+	// GetCIAt GetCIAt 时间点回溯：按变更历史倒推资源在指定时刻的状态（基本信息与属性；不含关联）。
+	GetCIAt(ctx context.Context, req *GetCIAtRequest, opts ...http.CallOption) (rsp *GetCIAtResponse, err error)
 	// ImportCIs ImportCIs 批量导入（按名称 upsert）：dry_run=true 只校验并给出每行将执行的动作，
 	// 不落库；正式导入逐行独立提交，失败行不影响其它行。
 	ImportCIs(ctx context.Context, req *ImportCIsRequest, opts ...http.CallOption) (rsp *ImportCIsResponse, err error)
@@ -445,6 +500,9 @@ type CmdbCIServiceHTTPClient interface {
 	SearchCIs(ctx context.Context, req *SearchCIsRequest, opts ...http.CallOption) (rsp *SearchCIsResponse, err error)
 	// TransitionCI TransitionCI 资源状态流转（planning → active → maintenance ⇄ active → retired）。
 	TransitionCI(ctx context.Context, req *TransitionCIRequest, opts ...http.CallOption) (rsp *TransitionCIResponse, err error)
+	// UnclaimCI UnclaimCI 解除同步托管：把由采集源维护的资源改回人工维护（来源置为 manual、清空外部标识），
+	// 之后同步不再更新或退役它。认领错了、或想自行接管某条同步资源时使用。
+	UnclaimCI(ctx context.Context, req *UnclaimCIRequest, opts ...http.CallOption) (rsp *UnclaimCIResponse, err error)
 	// UpdateCI UpdateCI 更新资源（携带 version 乐观锁；attrs 按键合并，显式 null 清空）。
 	UpdateCI(ctx context.Context, req *UpdateCIRequest, opts ...http.CallOption) (rsp *UpdateCIResponse, err error)
 }
@@ -571,6 +629,23 @@ func (c *CmdbCIServiceHTTPClientImpl) GetCI(ctx context.Context, in *GetCIReques
 	opts = append([]http.CallOption{
 		http.Accept("application/protojson"),
 		http.Operation(OperationCmdbCIServiceGetCI),
+		http.PathTemplate(pattern),
+	}, opts...)
+	err := c.cc.Invoke(ctx, "GET", path, nil, &out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GetCIAt GetCIAt 时间点回溯：按变更历史倒推资源在指定时刻的状态（基本信息与属性；不含关联）。
+func (c *CmdbCIServiceHTTPClientImpl) GetCIAt(ctx context.Context, in *GetCIAtRequest, opts ...http.CallOption) (*GetCIAtResponse, error) {
+	var out GetCIAtResponse
+	pattern := "/api/v1/cmdb/ci/{id}/at"
+	path := http.BuildPath(pattern, in, http.WithQueryParams())
+	opts = append([]http.CallOption{
+		http.Accept("application/protojson"),
+		http.Operation(OperationCmdbCIServiceGetCIAt),
 		http.PathTemplate(pattern),
 	}, opts...)
 	err := c.cc.Invoke(ctx, "GET", path, nil, &out, opts...)
@@ -711,6 +786,25 @@ func (c *CmdbCIServiceHTTPClientImpl) TransitionCI(ctx context.Context, in *Tran
 		http.Accept("application/protojson"),
 		http.ContentType("application/protojson"),
 		http.Operation(OperationCmdbCIServiceTransitionCI),
+		http.PathTemplate(pattern),
+	}, opts...)
+	err := c.cc.Invoke(ctx, "POST", path, in, &out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// UnclaimCI UnclaimCI 解除同步托管：把由采集源维护的资源改回人工维护（来源置为 manual、清空外部标识），
+// 之后同步不再更新或退役它。认领错了、或想自行接管某条同步资源时使用。
+func (c *CmdbCIServiceHTTPClientImpl) UnclaimCI(ctx context.Context, in *UnclaimCIRequest, opts ...http.CallOption) (*UnclaimCIResponse, error) {
+	var out UnclaimCIResponse
+	pattern := "/api/v1/cmdb/ci/{id}:unclaim"
+	path := http.BuildPath(pattern, in)
+	opts = append([]http.CallOption{
+		http.Accept("application/protojson"),
+		http.ContentType("application/protojson"),
+		http.Operation(OperationCmdbCIServiceUnclaimCI),
 		http.PathTemplate(pattern),
 	}, opts...)
 	err := c.cc.Invoke(ctx, "POST", path, in, &out, opts...)

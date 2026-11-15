@@ -43,6 +43,8 @@ type CmdbStore struct {
 	schemaAudits []*biz.SchemaAudit
 	// 唯一规则（ID -> 规则）；资源的重复判定按规则即时计算，口径同 migrations 0049 的键函数。
 	uniqueRules map[string]*biz.UniqueRule
+	// 保存的视图（userID/modelCode -> 视图）。
+	ciViews map[string][]*biz.CIView
 }
 
 type cmdbModelEntry struct {
@@ -784,6 +786,22 @@ func (v cmdbCIView) SoftDelete(_ context.Context, id string, _ time.Time, h *biz
 	return nil
 }
 
+func (v cmdbCIView) Unclaim(_ context.Context, ci *biz.CI, _ biz.Actor, at time.Time, _ string) error {
+	v.s.mu.Lock()
+	defer v.s.mu.Unlock()
+	e, ok := v.s.cis[ci.ID]
+	if !ok || e.deleted {
+		return biz.ErrCINotFound
+	}
+	if !strings.HasPrefix(e.ci.Source, "sync:") {
+		return biz.ErrNotSyncManaged
+	}
+	e.ci.Source, e.ci.ExternalID, e.ci.Stale = biz.SourceManual, "", false
+	e.ci.Version++
+	e.ci.UpdateTime = at
+	return nil
+}
+
 func (v cmdbCIView) GetDeleted(_ context.Context, id string) (*biz.CI, error) {
 	v.s.mu.RLock()
 	defer v.s.mu.RUnlock()
@@ -1383,7 +1401,7 @@ func (v cmdbCIView) Search(_ context.Context, filter biz.SearchFilter) ([]*biz.S
 }
 
 // Neighbors implements biz.RelationRepo（BFS，语义对齐 data 层）。
-func (v cmdbRelationView) Neighbors(_ context.Context, ciID string, depth, maxNodes int32) ([]*biz.TopologyNode, []*biz.TopologyEdge, bool, error) {
+func (v cmdbRelationView) Neighbors(_ context.Context, ciID, flow string, depth, maxNodes int32) ([]*biz.TopologyNode, []*biz.TopologyEdge, bool, error) {
 	v.s.mu.RLock()
 	defer v.s.mu.RUnlock()
 	node := func(id string, d int32) *biz.TopologyNode {
@@ -1418,9 +1436,9 @@ func (v cmdbRelationView) Neighbors(_ context.Context, ciID string, depth, maxNo
 			r := v.s.relations[id]
 			var other string
 			switch {
-			case slices.Contains(frontier, r.SrcID):
+			case flow != biz.FlowUpstream && slices.Contains(frontier, r.SrcID):
 				other = r.DstID
-			case slices.Contains(frontier, r.DstID):
+			case flow != biz.FlowDownstream && slices.Contains(frontier, r.DstID):
 				other = r.SrcID
 			default:
 				continue
@@ -1534,4 +1552,96 @@ func (s *CmdbStore) CIAttr(id, code string) any {
 // ListConflicts implements biz.SyncRunRepo（内存桩不产生冲突：由数据面写入）。
 func (v cmdbSyncRunView) ListConflicts(context.Context, string, int64, int64) ([]*biz.SyncConflict, int64, error) {
 	return nil, 0, nil
+}
+
+// ListForExport implements biz.RelationRepo。
+func (v cmdbRelationView) ListForExport(_ context.Context, ciIDs []string) ([]*biz.ExportRelation, error) {
+	v.s.mu.RLock()
+	defer v.s.mu.RUnlock()
+	out := make([]*biz.ExportRelation, 0, 8)
+	add := func(ciID, peerID, typeCode, direction string) {
+		p, ok := v.s.cis[peerID]
+		if !ok || p.deleted || !slices.Contains(ciIDs, ciID) {
+			return
+		}
+		out = append(out, &biz.ExportRelation{CIID: ciID, TypeCode: typeCode, Direction: direction, PeerModel: p.ci.ModelCode, PeerName: p.ci.Name, PeerEnv: p.ci.Env})
+	}
+	for _, r := range v.s.relations {
+		add(r.SrcID, r.DstID, r.TypeCode, biz.DirectionOutgoing)
+		add(r.DstID, r.SrcID, r.TypeCode, biz.DirectionIncoming)
+	}
+	slices.SortFunc(out, func(a, b *biz.ExportRelation) int {
+		return strings.Compare(a.CIID+a.TypeCode+a.Direction+a.PeerName, b.CIID+b.TypeCode+b.Direction+b.PeerName)
+	})
+	return out, nil
+}
+
+// ClaimConflict implements biz.SyncRunRepo（内存桩无冲突数据）。
+func (v cmdbSyncRunView) ClaimConflict(context.Context, *biz.ConflictClaim) error {
+	return biz.ErrConflictNotFound
+}
+
+// ListAfter implements biz.HistoryRepo。
+func (v cmdbHistoryView) ListAfter(_ context.Context, ciID string, after time.Time, limit int) ([]*biz.History, error) {
+	v.s.mu.RLock()
+	defer v.s.mu.RUnlock()
+	items := make([]*biz.History, 0, 8)
+	for i := len(v.s.histories) - 1; i >= 0 && len(items) < limit; i-- {
+		if h := v.s.histories[i]; h != nil && h.CIID == ciID && h.CreateTime.After(after) {
+			cp := *h
+			items = append(items, &cp)
+		}
+	}
+	return items, nil
+}
+
+// ConflictsCapped implements biz.SyncRunRepo。
+func (v cmdbSyncRunView) ConflictsCapped(context.Context, string) (bool, error) { return false, nil }
+
+// ---- CIViewRepo ----
+
+type cmdbCIViewView struct{ s *CmdbStore }
+
+// CIViews 返回保存的视图仓储视图。
+func (s *CmdbStore) CIViews() biz.CIViewRepo { return cmdbCIViewView{s} }
+
+func (v cmdbCIViewView) List(_ context.Context, userID, modelCode string) ([]*biz.CIView, error) {
+	v.s.mu.RLock()
+	defer v.s.mu.RUnlock()
+	out := make([]*biz.CIView, 0, 4)
+	for _, view := range v.s.ciViews[userID+"/"+modelCode] {
+		cp := *view
+		out = append(out, &cp)
+	}
+	slices.SortFunc(out, func(a, b *biz.CIView) int { return strings.Compare(a.Name, b.Name) })
+	return out, nil
+}
+
+func (v cmdbCIViewView) Save(_ context.Context, userID, modelCode string, view *biz.CIView, limit int) error {
+	v.s.mu.Lock()
+	defer v.s.mu.Unlock()
+	if v.s.ciViews == nil {
+		v.s.ciViews = map[string][]*biz.CIView{}
+	}
+	key := userID + "/" + modelCode
+	for _, cur := range v.s.ciViews[key] {
+		if cur.Name == view.Name {
+			cur.Filters = view.Filters
+			return nil
+		}
+	}
+	if len(v.s.ciViews[key]) >= limit {
+		return biz.CIViewLimitError(limit)
+	}
+	cp := *view
+	v.s.ciViews[key] = append(v.s.ciViews[key], &cp)
+	return nil
+}
+
+func (v cmdbCIViewView) Delete(_ context.Context, userID, modelCode, name string) error {
+	v.s.mu.Lock()
+	defer v.s.mu.Unlock()
+	key := userID + "/" + modelCode
+	v.s.ciViews[key] = slices.DeleteFunc(v.s.ciViews[key], func(c *biz.CIView) bool { return c.Name == name })
+	return nil
 }

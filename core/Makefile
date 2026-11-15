@@ -19,6 +19,7 @@ gen:
 	@buf dep update || echo "warn: buf dep update 失败（buf.build 不可达），改用本地缓存继续"
 	buf generate
 	buf generate --template buf.gen.config.yaml
+	buf build --exclude-imports -o - | go run ./internal/service/assistant/gendoc > internal/service/assistant/fielddoc.json
 	go tool wire gen ./cmd/server
 
 .PHONY: dep

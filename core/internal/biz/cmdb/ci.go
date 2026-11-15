@@ -220,6 +220,9 @@ type CIRepo interface {
 	// Update 以 expectedVersion 条件更新全部可变列并 +1 版本；不匹配返回 ErrCIVersionConflict。
 	Update(ctx context.Context, ci *CI, expectedVersion int64, h *History) error
 	SoftDelete(ctx context.Context, id string, at time.Time, h *History) error
+	// Unclaim 解除同步托管：来源置为 manual、清空外部标识与消失 / 陈旧标记，版本 +1 并写历史
+	// （与对账互斥）。资源不由采集源维护时返回 ErrNotSyncManaged。
+	Unclaim(ctx context.Context, ci *CI, actor Actor, at time.Time, historyID string) error
 	// GetDeleted 取回收站中的资源；不存在或未删除返回 ErrCINotFound。
 	GetDeleted(ctx context.Context, id string) (*CI, error)
 	// Restore 恢复已删除的资源（版本 +1，历史同事务）：名称 / 唯一规则 / 同源外部标识已被
@@ -241,6 +244,8 @@ type CIBatchUpdater interface {
 // HistoryRepo 变更历史只读接口（写入随资源/关系操作同事务）。
 type HistoryRepo interface {
 	ListByCI(ctx context.Context, ciID string, page, pageSize int64) ([]*History, int64, error)
+	// ListAfter 资源在 after 之后的变更（时间倒序），至多 limit 条。
+	ListAfter(ctx context.Context, ciID string, after time.Time, limit int) ([]*History, error)
 	// List 全局审计（join 资源取名称/类型；时间倒序）。
 	List(ctx context.Context, filter HistoryFilter, page, pageSize int64) ([]*History, int64, error)
 }
@@ -566,8 +571,9 @@ func (uc *CIUsecase) Update(ctx context.Context, actor Actor, id string, expecte
 	}
 	if upd.Attrs != nil {
 		upd.Attrs = dropMaskedValues(fields, cloneAttrs(upd.Attrs))
-		// 同步只读字段不接受人工修改（同步来源可写）。
-		if actor.source() == SourceManual {
+		// 同步只读字段不接受人工修改（同步来源可写）。只对由采集源维护的资源生效：人工资源
+		// （含解除同步托管后的资源）没有同步来写这些字段，须允许人工维护。
+		if actor.source() == SourceManual && cmdbcontract.IsSyncSource(cur.Source) {
 			if err := rejectSyncOwned(fields, cur.Attrs, upd.Attrs); err != nil {
 				return nil, err
 			}
@@ -751,6 +757,28 @@ func (uc *CIUsecase) Delete(ctx context.Context, actor Actor, id string) error {
 	return uc.cis.SoftDelete(ctx, id, time.Now(), h)
 }
 
+// Unclaim 解除同步托管：资源改回人工维护，同步不再更新或退役它。
+// 采集源里若仍有这台设备，下次同步会把它当作新资源（重名时进入同步冲突清单）。
+// 它身上由同步建立的关联转为人工关联保留。关联类型上的"级联退役"不区分来源，对它照常生效
+// （与人工资源一致）；之后被重新认领时，源端仍声明的关联由同步收回维护（见数据面 stmtRelationsAdopt）。
+func (uc *CIUsecase) Unclaim(ctx context.Context, actor Actor, id string) (*CI, error) {
+	ci, err := uc.cis.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if !cmdbcontract.IsSyncSource(ci.Source) {
+		return nil, ErrNotSyncManaged
+	}
+	hid, err := idgen.NewID()
+	if err != nil {
+		return nil, err
+	}
+	if err := uc.cis.Unclaim(ctx, ci, actor, time.Now(), hid); err != nil {
+		return nil, err
+	}
+	return uc.getMasked(ctx, id)
+}
+
 // GetDeleted 回收站中的资源（守卫与恢复用，未脱敏）。
 func (uc *CIUsecase) GetDeleted(ctx context.Context, id string) (*CI, error) {
 	return uc.cis.GetDeleted(ctx, id)
@@ -787,6 +815,112 @@ func (uc *CIUsecase) Restore(ctx context.Context, actor Actor, id string) (*CI, 
 // ListOwnerCandidates 可选负责人。
 func (uc *CIUsecase) ListOwnerCandidates(ctx context.Context, keyword string) ([]OwnerCandidate, error) {
 	return uc.owners.ListOwnerCandidates(ctx, strings.TrimSpace(keyword), OwnerCandidateLimit)
+}
+
+// StateAtMaxChanges 时间点回溯最多倒推的变更条数（超过则拒绝：回溯跨度过大）。
+const StateAtMaxChanges = 2000
+
+// StateAtMaxAge 可回溯的最远时间：与变更历史的保留期（数据面维护任务，365 天）一致。
+const StateAtMaxAge = 365 * 24 * time.Hour
+
+// StateAt 时间点回溯：从当前状态出发，按时间倒序撤销 at 之后的每条变更，得到资源在 at 时刻的
+// 基本信息与属性（不含关联）。at 早于创建时间返回 ErrCINotFound；返回的 deleted 表示该时刻
+// 资源处于已删除状态。结果按当前字段定义脱敏。
+func (uc *CIUsecase) StateAt(ctx context.Context, id string, at time.Time) (*CI, bool, error) {
+	cur, err := uc.cis.Get(ctx, id)
+	if err != nil {
+		return nil, false, err
+	}
+	// 早于创建时间：不存在。早于历史保留期：更早的变更记录已清理，倒推结果不可信，拒绝。
+	if at.Before(cur.CreateTime) {
+		return nil, false, detail(ErrCINotFound, "resource did not exist at that time")
+	}
+	if at.Before(time.Now().Add(-StateAtMaxAge)) {
+		return nil, false, detail(ErrCIInvalid, "change history is only kept for %d days; pick a more recent time", int(StateAtMaxAge.Hours()/24))
+	}
+	changes, err := uc.history.ListAfter(ctx, id, at, StateAtMaxChanges+1)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(changes) > StateAtMaxChanges {
+		return nil, false, detail(ErrCIInvalid, "more than %d changes since that time; pick a more recent time", StateAtMaxChanges)
+	}
+	state := *cur
+	state.Attrs, state.Tags = cloneAttrs(cur.Attrs), slices.Clone(cur.Tags)
+	deleted := false
+	for _, h := range changes {
+		before, _ := h.Diff["before"].(map[string]any)
+		switch h.Action {
+		case ActionCreate:
+			return nil, false, detail(ErrCINotFound, "resource did not exist at that time")
+		case ActionRestore:
+			deleted = true // 恢复之前处于已删除状态
+		case ActionDelete:
+			deleted = false // 删除之前在册；before 为删除时的完整快照
+			revertFields(&state, before, true)
+		case ActionUpdate, ActionTransition:
+			revertFields(&state, before, false)
+		}
+	}
+	// 审计字段在历史时刻无定义。
+	state.Version, state.UpdateUser, state.Stale, state.LastSyncedAt = 0, "", false, nil
+	state.UpdateTime, state.OwnerName = at, ""
+	// 来源可能已回退（如认领之前为人工）：采集源名称不再对应。
+	if state.Source != cur.Source {
+		state.SourceName, state.SourceDeleted = "", false
+	}
+	if err := uc.mask(ctx, &state); err != nil {
+		return nil, false, err
+	}
+	return &state, deleted, nil
+}
+
+// revertFields 把一条变更的 before 值写回状态。full = before 为完整快照（属性整体替换），
+// 否则只含变化的键（属性按键回退，nil 表示当时不存在该键）。
+func revertFields(state *CI, before map[string]any, full bool) {
+	if before == nil {
+		return
+	}
+	str := func(key string, dst *string) {
+		if v, ok := before[key].(string); ok {
+			*dst = v
+		}
+	}
+	str("name", &state.Name)
+	str("status", &state.Status)
+	str("env", &state.Env)
+	str("owner", &state.Owner)
+	str("externalId", &state.ExternalID)
+	str("source", &state.Source)
+	if raw, ok := before["tags"]; ok {
+		tags := []string{}
+		switch list := raw.(type) {
+		case []any:
+			for _, v := range list {
+				if s, ok := v.(string); ok {
+					tags = append(tags, s)
+				}
+			}
+		case []string:
+			tags = slices.Clone(list)
+		}
+		state.Tags = tags
+	}
+	attrs, ok := before["attrs"].(map[string]any)
+	if !ok {
+		return
+	}
+	if full {
+		state.Attrs = cloneAttrs(attrs)
+		return
+	}
+	for key, v := range attrs {
+		if v == nil {
+			delete(state.Attrs, key)
+		} else {
+			state.Attrs[key] = v
+		}
+	}
 }
 
 // History 分页查询资源变更历史。

@@ -181,6 +181,17 @@ func (v messageView) Append(_ context.Context, m *biz.Message) error {
 	return nil
 }
 
+func (v messageView) UpdateToolCalls(_ context.Context, m *biz.Message) error {
+	v.s.mu.Lock()
+	defer v.s.mu.Unlock()
+	for _, existing := range v.s.messages[m.ConversationID] {
+		if existing.ID == m.ID {
+			existing.ToolCalls = slices.Clone(m.ToolCalls)
+		}
+	}
+	return nil
+}
+
 func (v messageView) List(ctx context.Context, conversationID string) ([]*biz.Message, error) {
 	return v.ListRecent(ctx, conversationID, 0)
 }

@@ -135,6 +135,16 @@ func TestIntegration_ReconcileUniqueRules(t *testing.T) {
 	if got := conflicts(); len(got) != 4 || !strings.Contains(got["ip-dup"], `unique rule "IP"`) || got["batch-b"] == "" {
 		t.Fatalf("stored conflicts after round1 = %v", got)
 	}
+	// 真实冲突总数随每次对账更新，归零时移除。
+	statTotal := func() int {
+		t.Helper()
+		var n int
+		_ = d.Pool.QueryRow(ctx, "SELECT COALESCE((SELECT total FROM cmdb_sync_conflict_stat WHERE source = $1 AND model_code = 'physical_server'), -1)", source).Scan(&n)
+		return n
+	}
+	if n := statTotal(); n != 4 {
+		t.Fatalf("conflict stat after round1 = %d", n)
+	}
 	var firstSeen time.Time
 	if err := d.Pool.QueryRow(ctx, "SELECT first_seen FROM cmdb_sync_conflict WHERE source = $1 AND external_id = 'slot-dup'", source).Scan(&firstSeen); err != nil {
 		t.Fatal(err)
@@ -213,6 +223,9 @@ func TestIntegration_ReconcileUniqueRules(t *testing.T) {
 	}
 	if got := conflicts(); len(got) != 0 {
 		t.Fatalf("resolved conflicts must be cleared: %v", got)
+	}
+	if n := statTotal(); n != -1 {
+		t.Fatalf("conflict stat must be removed when there are none: %d", n)
 	}
 	_ = firstSeen
 	if s := loadCI(t, d, "physical_server", source, "slot-ok"); s.Attrs["slot"] != "U1" {

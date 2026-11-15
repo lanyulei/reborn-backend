@@ -39,7 +39,7 @@ func newIntegrationData(t *testing.T) *Data {
 	}
 	t.Cleanup(cleanup)
 	ctx := context.Background()
-	if _, err := d.Pool.Exec(ctx, `TRUNCATE TABLE cmdb_sync_conflict, cmdb_sync_staging, cmdb_sync_run, cmdb_sync_task, cmdb_sync_source, cmdb_relation, cmdb_ci_history, cmdb_ci,
+	if _, err := d.Pool.Exec(ctx, `TRUNCATE TABLE cmdb_sync_conflict_stat, cmdb_sync_conflict, cmdb_sync_staging, cmdb_sync_run, cmdb_sync_task, cmdb_sync_source, cmdb_relation, cmdb_ci_history, cmdb_ci,
 		cmdb_ci_unique, cmdb_model_unique_rule, cmdb_model_field, cmdb_relation_type, cmdb_model_view, cmdb_role_scope, cmdb_model CASCADE`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
@@ -247,6 +247,18 @@ func TestIntegration_ReconcileLifecycle(t *testing.T) {
 	}
 	if countHistory(t, d, vm1.ID, "unlink") != 1 || countHistory(t, d, vm1.ID, "link") != 2 {
 		t.Fatal("vm1 must have unlink + 2 link histories")
+	}
+	// 源端声明的关系已作为人工关联存在（如解除同步后又重新认领）：改回由采集源维护，不重复记历史。
+	if _, err := d.Pool.Exec(ctx, "UPDATE cmdb_relation SET source = 'manual' WHERE src_id = $1 AND dst_id = $2", host2.ID, vm1.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := reconcile.ReconcileRelations(ctx, run2, source); err != nil {
+		t.Fatal(err)
+	}
+	var relSource string
+	_ = d.Pool.QueryRow(ctx, "SELECT source FROM cmdb_relation WHERE src_id = $1 AND dst_id = $2", host2.ID, vm1.ID).Scan(&relSource)
+	if relSource != source || countHistory(t, d, vm1.ID, "link") != 2 {
+		t.Fatalf("declared manual relation must be adopted without new history: source=%s", relSource)
 	}
 	_ = staging.Clear(ctx, run2)
 
