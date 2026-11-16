@@ -153,11 +153,13 @@ type Template struct {
 	WorkflowKey  string
 	NumberPrefix string
 	// Icon 图标标识（前端图标集的键）；空 = 缺省图标。
-	Icon       string
-	Status     int32
-	Sort       int32
-	Form       []FormField
-	UpdateTime time.Time
+	Icon string
+	// FormColumns 表单布局：1=单列（一行一个字段） 2=双列（一行两个字段）。
+	FormColumns int32
+	Status      int32
+	Sort        int32
+	Form        []FormField
+	UpdateTime  time.Time
 	// SLA 规则、超时升级通知对象与关联资源的要求；仅详情读路径填充前两项。
 	SLA         []SLARule
 	SLAEscalate []string
@@ -174,13 +176,15 @@ type Ticket struct {
 	Title        string
 	Priority     int32
 	Form         []FormField
-	Data         map[string]any
-	Status       int32
-	Creator      string
-	CreatorDept  string
-	InstanceID   string
-	CreateTime   time.Time
-	EndTime      time.Time
+	// FormColumns 提单时模板的表单布局快照：1=单列 2=双列。
+	FormColumns int32
+	Data        map[string]any
+	Status      int32
+	Creator     string
+	CreatorDept string
+	InstanceID  string
+	CreateTime  time.Time
+	EndTime     time.Time
 	// ResponseDue / ResolveDue SLA 时限（未配置为零值）；ResponseTime 首次响应时间。
 	ResponseDue  time.Time
 	ResolveDue   time.Time

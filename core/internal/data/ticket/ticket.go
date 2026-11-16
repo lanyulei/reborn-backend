@@ -36,13 +36,13 @@ func NewTicketRepo(data *basedata.Data) *ticketRepo {
 
 const ticketColumns = `id, number, template_id, template_name, category_name, title, priority, status,
 	creator, creator_dept, instance_id, create_time, end_time, response_due, resolve_due, response_time,
-	rating, rating_comment, rating_time`
+	rating, rating_comment, rating_time, form_columns`
 
 // scanTicket 扫描工单行；extra 追加在标准列之后（如 form、data）。
 func scanTicket(scan func(dest ...any) error, extra ...any) (*biz.Ticket, error) {
 	var (
 		t                                         biz.Ticket
-		priority, status                          int16
+		priority, status, columns                 int16
 		rating                                    *int16
 		dept, instance                            *string
 		endTime, respDue, resDue, respAt, ratedAt *time.Time
@@ -50,12 +50,12 @@ func scanTicket(scan func(dest ...any) error, extra ...any) (*biz.Ticket, error)
 	dest := append([]any{
 		&t.ID, &t.Number, &t.TemplateID, &t.TemplateName, &t.CategoryName, &t.Title, &priority, &status,
 		&t.Creator, &dept, &instance, &t.CreateTime, &endTime, &respDue, &resDue, &respAt,
-		&rating, &t.RatingComment, &ratedAt,
+		&rating, &t.RatingComment, &ratedAt, &columns,
 	}, extra...)
 	if err := scan(dest...); err != nil {
 		return nil, err
 	}
-	t.Priority, t.Status = int32(priority), int32(status)
+	t.Priority, t.Status, t.FormColumns = int32(priority), int32(status), int32(columns)
 	if dept != nil {
 		t.CreatorDept = *dept
 	}
@@ -127,10 +127,11 @@ func (r *ticketRepo) CreateTx(ctx context.Context, tx txrun.Tx, t *biz.Ticket, r
 	}
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO ticket_order (id, number, template_id, template_name, category_name, title, priority, form, data, status,
-			creator, request_id, create_time, update_time, response_due, resolve_due, sla_escalate)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13, $14, $15, $16)`,
+			creator, request_id, create_time, update_time, response_due, resolve_due, sla_escalate, form_columns)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13, $14, $15, $16, $17)`,
 		t.ID, t.Number, t.TemplateID, t.TemplateName, t.CategoryName, t.Title, t.Priority, form, raw, t.Status,
-		t.Creator, dbx.NilIfEmpty(requestID), t.CreateTime, nullTime(t.ResponseDue), nullTime(t.ResolveDue), escalate); err != nil {
+		t.Creator, dbx.NilIfEmpty(requestID), t.CreateTime, nullTime(t.ResponseDue), nullTime(t.ResolveDue), escalate,
+		max(t.FormColumns, 1)); err != nil {
 		if uniqueViolation(err, "uk_ticket_order_request") {
 			return biz.ErrDuplicateRequest // 同一幂等键被并发提交抢先：用例回读首张工单
 		}

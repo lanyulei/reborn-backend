@@ -18295,6 +18295,11 @@
         "icon": {
           "type": "string",
           "title": "icon 图标标识（前端图标集的键）；空 = 缺省图标。"
+        },
+        "formColumns": {
+          "type": "integer",
+          "format": "int32",
+          "title": "form_columns 表单布局：1=单列（一行一个字段） 2=双列（一行两个字段，多行文本仍独占一行）。"
         }
       },
       "title": "Template 工单模板。"
@@ -18363,6 +18368,11 @@
         "icon": {
           "type": "string",
           "title": "icon 图标标识（前端图标集的键），可空；小写字母、数字、下划线与中划线，≤64 位。"
+        },
+        "formColumns": {
+          "type": "integer",
+          "format": "int32",
+          "title": "form_columns 表单布局：1=单列（一行一个字段） 2=双列（一行两个字段）；不传（0）按单列。"
         }
       },
       "title": "TemplateSpec 工单模板的可编辑内容（创建 / 更新共用，整组替换）。"
@@ -18480,6 +18490,11 @@
           "type": "string",
           "format": "date-time",
           "title": "rating_time 评价时间。"
+        },
+        "formColumns": {
+          "type": "integer",
+          "format": "int32",
+          "title": "form_columns 提单时模板的表单布局快照：1=单列 2=双列。"
         }
       },
       "title": "Ticket 工单。"

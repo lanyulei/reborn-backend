@@ -186,6 +186,13 @@ func validateSLA(t *Template) error {
 // checkTemplate 模板保存前的归一化与校验：名称非空、表单定义合法、绑定的流程存在；
 // 启用的模板还要求流程当前可发起（已发布且启用），否则目录里会出现一张提不了单的模板。
 func (uc *CatalogUsecase) checkTemplate(ctx context.Context, t *Template) error {
+	// 表单布局：未指定按单列；只支持单列 / 双列。
+	if t.FormColumns == 0 {
+		t.FormColumns = 1
+	}
+	if t.FormColumns != 1 && t.FormColumns != 2 {
+		return detail(ErrTemplateInvalid, "form columns must be 1 or 2")
+	}
 	t.Name, t.Description = clean(t.Name), clean(t.Description)
 	if t.Name == "" {
 		return detail(ErrTemplateInvalid, "template name must not be blank")

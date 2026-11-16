@@ -450,7 +450,9 @@ type Template struct {
 	// labels sla_escalate_to 里用户的显示名（ID → 名称）；仅详情接口返回。
 	Labels map[string]string `protobuf:"bytes,14,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// icon 图标标识（前端图标集的键）；空 = 缺省图标。
-	Icon          string `protobuf:"bytes,15,opt,name=icon,proto3" json:"icon,omitempty"`
+	Icon string `protobuf:"bytes,15,opt,name=icon,proto3" json:"icon,omitempty"`
+	// form_columns 表单布局：1=单列（一行一个字段） 2=双列（一行两个字段，多行文本仍独占一行）。
+	FormColumns   int32 `protobuf:"varint,16,opt,name=form_columns,json=formColumns,proto3" json:"form_columns,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -588,6 +590,13 @@ func (x *Template) GetIcon() string {
 		return x.Icon
 	}
 	return ""
+}
+
+func (x *Template) GetFormColumns() int32 {
+	if x != nil {
+		return x.FormColumns
+	}
+	return 0
 }
 
 // ListCatalogRequest 查询服务目录请求。
@@ -1039,7 +1048,9 @@ type TemplateSpec struct {
 	// ci_link 提单时关联 CMDB 资源：0=不关联 1=可选 2=必填。
 	CiLink int32 `protobuf:"varint,11,opt,name=ci_link,json=ciLink,proto3" json:"ci_link,omitempty"`
 	// icon 图标标识（前端图标集的键），可空；小写字母、数字、下划线与中划线，≤64 位。
-	Icon          string `protobuf:"bytes,12,opt,name=icon,proto3" json:"icon,omitempty"`
+	Icon string `protobuf:"bytes,12,opt,name=icon,proto3" json:"icon,omitempty"`
+	// form_columns 表单布局：1=单列（一行一个字段） 2=双列（一行两个字段）；不传（0）按单列。
+	FormColumns   int32 `protobuf:"varint,13,opt,name=form_columns,json=formColumns,proto3" json:"form_columns,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1156,6 +1167,13 @@ func (x *TemplateSpec) GetIcon() string {
 		return x.Icon
 	}
 	return ""
+}
+
+func (x *TemplateSpec) GetFormColumns() int32 {
+	if x != nil {
+		return x.FormColumns
+	}
+	return 0
 }
 
 // CreateTemplateRequest 创建工单模板请求。
@@ -1561,7 +1579,9 @@ type Ticket struct {
 	// rating_comment 评价内容。
 	RatingComment string `protobuf:"bytes,20,opt,name=rating_comment,json=ratingComment,proto3" json:"rating_comment,omitempty"`
 	// rating_time 评价时间。
-	RatingTime    *timestamppb.Timestamp `protobuf:"bytes,21,opt,name=rating_time,json=ratingTime,proto3" json:"rating_time,omitempty"`
+	RatingTime *timestamppb.Timestamp `protobuf:"bytes,21,opt,name=rating_time,json=ratingTime,proto3" json:"rating_time,omitempty"`
+	// form_columns 提单时模板的表单布局快照：1=单列 2=双列。
+	FormColumns   int32 `protobuf:"varint,22,opt,name=form_columns,json=formColumns,proto3" json:"form_columns,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1741,6 +1761,13 @@ func (x *Ticket) GetRatingTime() *timestamppb.Timestamp {
 		return x.RatingTime
 	}
 	return nil
+}
+
+func (x *Ticket) GetFormColumns() int32 {
+	if x != nil {
+		return x.FormColumns
+	}
+	return 0
 }
 
 // TicketResource 工单关联的 CMDB 资源。
@@ -3266,7 +3293,7 @@ const file_ticket_v1_ticket_proto_rawDesc = "" +
 	"\bpriority\x18\x01 \x01(\x05B\r\xbaH\n" +
 	"\x1a\b0\x010\x020\x030\x04R\bpriority\x122\n" +
 	"\bresponse\x18\x02 \x01(\v2\x16.ticket.v1.SlaDurationR\bresponse\x120\n" +
-	"\aresolve\x18\x03 \x01(\v2\x16.ticket.v1.SlaDurationR\aresolve\"\xbb\x04\n" +
+	"\aresolve\x18\x03 \x01(\v2\x16.ticket.v1.SlaDurationR\aresolve\"\xde\x04\n" +
 	"\bTemplate\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1f\n" +
 	"\vcategory_id\x18\x02 \x01(\tR\n" +
@@ -3285,7 +3312,8 @@ const file_ticket_v1_ticket_proto_rawDesc = "" +
 	"\x0fsla_escalate_to\x18\f \x03(\tR\rslaEscalateTo\x12\x17\n" +
 	"\aci_link\x18\r \x01(\x05R\x06ciLink\x127\n" +
 	"\x06labels\x18\x0e \x03(\v2\x1f.ticket.v1.Template.LabelsEntryR\x06labels\x12\x12\n" +
-	"\x04icon\x18\x0f \x01(\tR\x04icon\x1a9\n" +
+	"\x04icon\x18\x0f \x01(\tR\x04icon\x12!\n" +
+	"\fform_columns\x18\x10 \x01(\x05R\vformColumns\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x14\n" +
@@ -3309,7 +3337,7 @@ const file_ticket_v1_ticket_proto_rawDesc = "" +
 	"\x16UpdateCategoryResponse\"1\n" +
 	"\x15DeleteCategoryRequest\x12\x18\n" +
 	"\x02id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\"\x18\n" +
-	"\x16DeleteCategoryResponse\"\xb8\x04\n" +
+	"\x16DeleteCategoryResponse\"\xe8\x04\n" +
 	"\fTemplateSpec\x12)\n" +
 	"\vcategory_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\n" +
 	"categoryId\x12\x1d\n" +
@@ -3326,7 +3354,8 @@ const file_ticket_v1_ticket_proto_rawDesc = "" +
 	" \x03(\tB\x11\xbaH\x0e\x92\x01\v\x10\n" +
 	"\x18\x01\"\x05r\x03\xb0\x01\x01R\rslaEscalateTo\x12$\n" +
 	"\aci_link\x18\v \x01(\x05B\v\xbaH\b\x1a\x060\x000\x010\x02R\x06ciLink\x12-\n" +
-	"\x04icon\x18\f \x01(\tB\x19\xbaH\x16r\x142\x12^[a-z0-9_-]{0,64}$R\x04icon\"L\n" +
+	"\x04icon\x18\f \x01(\tB\x19\xbaH\x16r\x142\x12^[a-z0-9_-]{0,64}$R\x04icon\x12.\n" +
+	"\fform_columns\x18\r \x01(\x05B\v\xbaH\b\x1a\x060\x000\x010\x02R\vformColumns\"L\n" +
 	"\x15CreateTemplateRequest\x123\n" +
 	"\x04spec\x18\x01 \x01(\v2\x17.ticket.v1.TemplateSpecB\x06\xbaH\x03\xc8\x01\x01R\x04spec\"I\n" +
 	"\x16CreateTemplateResponse\x12/\n" +
@@ -3341,7 +3370,7 @@ const file_ticket_v1_ticket_proto_rawDesc = "" +
 	"\x12GetTemplateRequest\x12\x18\n" +
 	"\x02id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\"F\n" +
 	"\x13GetTemplateResponse\x12/\n" +
-	"\btemplate\x18\x01 \x01(\v2\x13.ticket.v1.TemplateR\btemplate\"\xc7\x06\n" +
+	"\btemplate\x18\x01 \x01(\v2\x13.ticket.v1.TemplateR\btemplate\"\xea\x06\n" +
 	"\x06Ticket\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
 	"\x06number\x18\x02 \x01(\tR\x06number\x12\x1f\n" +
@@ -3369,7 +3398,8 @@ const file_ticket_v1_ticket_proto_rawDesc = "" +
 	"\x06rating\x18\x13 \x01(\x05R\x06rating\x12%\n" +
 	"\x0erating_comment\x18\x14 \x01(\tR\rratingComment\x12;\n" +
 	"\vrating_time\x18\x15 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"ratingTime\"S\n" +
+	"ratingTime\x12!\n" +
+	"\fform_columns\x18\x16 \x01(\x05R\vformColumns\"S\n" +
 	"\x0eTicketResource\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1d\n" +

@@ -60,7 +60,7 @@ func (r *catalogRepo) ListCategories(ctx context.Context) ([]*biz.Category, erro
 
 // ListTemplates implements biz.CatalogReader（不含表单）。
 func (r *catalogRepo) ListTemplates(ctx context.Context, enabledOnly bool) ([]*biz.Template, error) {
-	sql := `SELECT id, category_id, name, description, workflow_key, number_prefix, status, sort, update_time, ci_link, icon
+	sql := `SELECT id, category_id, name, description, workflow_key, number_prefix, status, sort, update_time, ci_link, icon, form_columns
 		FROM ticket_template WHERE delete_time IS NULL`
 	if enabledOnly {
 		sql += " AND status = 1"
@@ -71,11 +71,11 @@ func (r *catalogRepo) ListTemplates(ctx context.Context, enabledOnly bool) ([]*b
 	}
 	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (*biz.Template, error) {
 		var (
-			t              biz.Template
-			status, ciLink int16
+			t                       biz.Template
+			status, ciLink, columns int16
 		)
-		err := row.Scan(&t.ID, &t.CategoryID, &t.Name, &t.Description, &t.WorkflowKey, &t.NumberPrefix, &status, &t.Sort, &t.UpdateTime, &ciLink, &t.Icon)
-		t.Status, t.CILink = int32(status), int32(ciLink)
+		err := row.Scan(&t.ID, &t.CategoryID, &t.Name, &t.Description, &t.WorkflowKey, &t.NumberPrefix, &status, &t.Sort, &t.UpdateTime, &ciLink, &t.Icon, &columns)
+		t.Status, t.CILink, t.FormColumns = int32(status), int32(ciLink), int32(columns)
 		return &t, err
 	})
 	if err != nil {
@@ -87,24 +87,24 @@ func (r *catalogRepo) ListTemplates(ctx context.Context, enabledOnly bool) ([]*b
 // GetTemplate implements biz.CatalogReader：提单事务内调用时复用事务连接。
 func (r *catalogRepo) GetTemplate(ctx context.Context, id string) (*biz.Template, error) {
 	var (
-		t                   biz.Template
-		status, ciLink      int16
-		form, sla, escalate []byte
+		t                       biz.Template
+		status, ciLink, columns int16
+		form, sla, escalate     []byte
 	)
 	err := basedata.QueryerFrom(ctx, r.data.Pool).QueryRow(ctx,
 		`SELECT t.id, t.category_id, c.name, t.name, t.description, t.workflow_key, t.number_prefix, t.status, t.sort, t.form, t.update_time,
-			t.sla, t.sla_escalate, t.ci_link, t.icon
+			t.sla, t.sla_escalate, t.ci_link, t.icon, t.form_columns
 		 FROM ticket_template t JOIN ticket_category c ON c.id = t.category_id
 		 WHERE t.id = $1 AND t.delete_time IS NULL`, id).
 		Scan(&t.ID, &t.CategoryID, &t.CategoryName, &t.Name, &t.Description, &t.WorkflowKey, &t.NumberPrefix, &status, &t.Sort, &form, &t.UpdateTime,
-			&sla, &escalate, &ciLink, &t.Icon)
+			&sla, &escalate, &ciLink, &t.Icon, &columns)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, biz.ErrTemplateNotFound
 		}
 		return nil, fmt.Errorf("get ticket template: %w", err)
 	}
-	t.Status, t.CILink = int32(status), int32(ciLink)
+	t.Status, t.CILink, t.FormColumns = int32(status), int32(ciLink), int32(columns)
 	if err := json.Unmarshal(form, &t.Form); err != nil {
 		return nil, fmt.Errorf("decode ticket template form: %w", err)
 	}
@@ -227,11 +227,11 @@ func (r *catalogRepo) CreateTemplate(ctx context.Context, t *biz.Template, limit
 		}
 		tag, err := tx.Exec(ctx,
 			`INSERT INTO ticket_template (id, category_id, name, description, workflow_key, number_prefix, form, status, sort, update_time,
-				create_user, update_user, sla, sla_escalate, ci_link, icon)
-			 SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11, $13, $14, $15, $16
+				create_user, update_user, sla, sla_escalate, ci_link, icon, form_columns)
+			 SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11, $13, $14, $15, $16, $17
 			 WHERE (SELECT count(*) FROM ticket_template WHERE delete_time IS NULL) < $12`,
 			t.ID, t.CategoryID, t.Name, t.Description, t.WorkflowKey, t.NumberPrefix, form, t.Status, t.Sort, t.UpdateTime,
-			basedata.OperatorArg(ctx), limit, sla, escalate, t.CILink, t.Icon)
+			basedata.OperatorArg(ctx), limit, sla, escalate, t.CILink, t.Icon, t.FormColumns)
 		if err != nil {
 			if uniqueViolation(err, "uk_ticket_template_name") {
 				return biz.ErrTemplateNameExists
@@ -257,10 +257,10 @@ func (r *catalogRepo) UpdateTemplate(ctx context.Context, t *biz.Template) error
 		}
 		tag, err := tx.Exec(ctx,
 			`UPDATE ticket_template SET category_id = $2, name = $3, description = $4, workflow_key = $5, number_prefix = $6,
-				form = $7, status = $8, sort = $9, update_time = now(), update_user = $10, sla = $11, sla_escalate = $12, ci_link = $13, icon = $14
+				form = $7, status = $8, sort = $9, update_time = now(), update_user = $10, sla = $11, sla_escalate = $12, ci_link = $13, icon = $14, form_columns = $15
 			 WHERE id = $1 AND delete_time IS NULL`,
 			t.ID, t.CategoryID, t.Name, t.Description, t.WorkflowKey, t.NumberPrefix, form, t.Status, t.Sort, basedata.OperatorArg(ctx),
-			sla, escalate, t.CILink, t.Icon)
+			sla, escalate, t.CILink, t.Icon, t.FormColumns)
 		if err != nil {
 			if uniqueViolation(err, "uk_ticket_template_name") {
 				return biz.ErrTemplateNameExists

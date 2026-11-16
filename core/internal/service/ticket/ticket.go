@@ -74,7 +74,7 @@ func toProtoTemplate(t *biz.Template, detail bool, labels map[string]string) *v1
 	out := &v1.Template{
 		Id: t.ID, CategoryId: t.CategoryID, Name: t.Name, Description: t.Description, WorkflowKey: t.WorkflowKey,
 		NumberPrefix: t.NumberPrefix, Status: t.Status, Sort: t.Sort, UpdateTime: ts(t.UpdateTime), CiLink: t.CILink,
-		Icon: t.Icon,
+		Icon: t.Icon, FormColumns: t.FormColumns,
 	}
 	if detail {
 		out.Form, out.SlaEscalateTo, out.Labels = toProtoForm(t.Form), t.SLAEscalate, labels
@@ -91,6 +91,8 @@ func specToTemplate(id string, spec *v1.TemplateSpec) *biz.Template {
 		WorkflowKey: spec.GetWorkflowKey(), NumberPrefix: spec.GetNumberPrefix(), Status: spec.GetStatus(),
 		Sort: spec.GetSort(), Form: fromProtoForm(spec.GetForm()), CILink: spec.GetCiLink(),
 		Icon: spec.GetIcon(),
+		// 不传（0）按单列。
+		FormColumns: max(spec.GetFormColumns(), 1),
 	}
 	for _, id := range spec.GetSlaEscalateTo() {
 		t.SLAEscalate = append(t.SLAEscalate, strings.ToLower(id))
@@ -223,6 +225,7 @@ func toProtoTicket(t *biz.Ticket, names map[string]string) *v1.Ticket {
 		InstanceId: t.InstanceID, CreateTime: ts(t.CreateTime), EndTime: ts(t.EndTime),
 		ResponseDue: ts(t.ResponseDue), ResolveDue: ts(t.ResolveDue), ResponseTime: ts(t.ResponseTime),
 		Rating: t.Rating, RatingComment: t.RatingComment, RatingTime: ts(t.RatingTime),
+		FormColumns: t.FormColumns,
 	}
 }
 

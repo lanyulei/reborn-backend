@@ -802,6 +802,29 @@ func TestIntegration_FormPermissionsByTemplate(t *testing.T) {
 	if _, err := e.rt.Approve(ctx, taskOf(a.InstanceID), uLead, ""); !errors.Is(err, biz.ErrFormInvalid) {
 		t.Fatalf("Approve(strict, required field empty) error = %v, want ErrFormInvalid", err)
 	}
+	// 表单布局：没指定的模板按单列；工单保存的是提单时的布局，模板之后改成双列不影响已有工单。
+	if strict.FormColumns != 1 || a.FormColumns != 1 {
+		t.Fatalf("form columns = template %d ticket %d, want 1 / 1", strict.FormColumns, a.FormColumns)
+	}
+	strict.FormColumns = 2
+	if err := e.catalog.UpdateTemplate(ctx, strict); err != nil {
+		t.Fatal(err)
+	}
+	if again, _, err := e.catalog.GetTemplate(ctx, strict.ID, uSuper); err != nil || again.FormColumns != 2 {
+		t.Fatalf("GetTemplate() after update = %+v, err %v", again, err)
+	}
+	if old, err := e.uc.Get(ctx, a.ID, uInit); err != nil || old.Ticket.FormColumns != 1 {
+		t.Fatalf("existing ticket form columns = %d, err %v, want 1", old.Ticket.FormColumns, err)
+	}
+	if fresh := submit(strict); fresh.FormColumns != 2 {
+		t.Fatalf("new ticket form columns = %d, want 2", fresh.FormColumns)
+	} else if got, err := e.uc.Get(ctx, fresh.ID, uInit); err != nil || got.Ticket.FormColumns != 2 {
+		t.Fatalf("Get(new ticket) form columns = %d, err %v, want 2", got.Ticket.FormColumns, err)
+	}
+	strict.FormColumns = 3
+	if err := e.catalog.UpdateTemplate(ctx, strict); !errors.Is(err, biz.ErrTemplateInvalid) {
+		t.Fatalf("UpdateTemplate(3 columns) error = %v, want ErrTemplateInvalid", err)
+	}
 	// 普通模板：同一个节点、同一个字段码，沿用通用配置——看得到也改得了 secret，env 不必填。
 	db, err := e.uc.Get(ctx, b.ID, uLead)
 	if err != nil || len(db.Ticket.Form) != 2 || db.Permissions["secret"] != "editable" || db.Permissions["env"] != "" {

@@ -267,6 +267,8 @@ message Template {
   map<string, string> labels = 14;
   // icon 图标标识（前端图标集的键）；空 = 缺省图标。
   string icon = 15;
+  // form_columns 表单布局：1=单列（一行一个字段） 2=双列（一行两个字段，多行文本仍独占一行）。
+  int32 form_columns = 16;
 }
 
 // ListCatalogRequest 查询服务目录请求。
@@ -375,6 +377,8 @@ message TemplateSpec {
   string icon = 12 [(buf.validate.field).string = {
     pattern: "^[a-z0-9_-]{0,64}$"
   }];
+  // form_columns 表单布局：1=单列（一行一个字段） 2=双列（一行两个字段）；不传（0）按单列。
+  int32 form_columns = 13 [(buf.validate.field).int32 = { in: [0, 1, 2] }];
 }
 
 // CreateTemplateRequest 创建工单模板请求。
@@ -465,6 +469,8 @@ message Ticket {
   string rating_comment = 20;
   // rating_time 评价时间。
   google.protobuf.Timestamp rating_time = 21;
+  // form_columns 提单时模板的表单布局快照：1=单列 2=双列。
+  int32 form_columns = 22;
 }
 
 // TicketResource 工单关联的 CMDB 资源。

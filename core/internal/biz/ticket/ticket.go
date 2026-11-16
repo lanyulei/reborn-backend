@@ -299,7 +299,7 @@ func (uc *Usecase) create(ctx context.Context, p CreateParams) (*Ticket, error) 
 			ID:         id,
 			Number:     fmt.Sprintf("%s-%s-%04d", tpl.NumberPrefix, day, seq),
 			TemplateID: tpl.ID, TemplateName: tpl.Name, CategoryName: tpl.CategoryName,
-			Title: p.Title, Priority: p.Priority, Form: tpl.Form, Data: data,
+			Title: p.Title, Priority: p.Priority, Form: tpl.Form, FormColumns: tpl.FormColumns, Data: data,
 			Status: StatusProcessing, Creator: p.Creator, CreateTime: sla.CreateTime,
 			ResponseDue: sla.ResponseDue, ResolveDue: sla.ResolveDue, SLAEscalate: sla.SLAEscalate,
 		}
