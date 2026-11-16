@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package file.v1;
+
+import "errors/errors.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/file/v1;v1";
+
+// ErrorReason 是文件域的业务错误码枚举，由 protoc-gen-go-errors 生成带 code 的错误构造器。
+// 枚举值沿用 Kratos 错误码惯例（域前缀而非枚举名前缀），故豁免 ENUM_VALUE_PREFIX。
+enum ErrorReason {
+  option (errors.default_code) = 500;
+  // FILE_UNSPECIFIED 未指定的文件错误。
+  FILE_UNSPECIFIED = 0;
+  // FILE_NOT_FOUND 文件不存在（或已删除、或不属于当前用户的临时文件），映射 HTTP 404。
+  FILE_NOT_FOUND = 1 [(errors.code) = 404];
+  // FILE_TYPE_NOT_ALLOWED 文件类型不在允许范围内（按文件内容判定），映射 HTTP 400。
+  FILE_TYPE_NOT_ALLOWED = 2 [(errors.code) = 400];
+  // FILE_FORBIDDEN 无权访问该文件所属的业务对象，映射 HTTP 403。
+  FILE_FORBIDDEN = 3 [(errors.code) = 403];
+  // FILE_NAME_INVALID 文件名不合法（空、含路径分隔符或控制字符），映射 HTTP 400。
+  FILE_NAME_INVALID = 4 [(errors.code) = 400];
+  // FILE_QUOTA_EXCEEDED 尚未使用的临时文件过多（先提交或等待其过期），映射 HTTP 429。
+  FILE_QUOTA_EXCEEDED = 5 [(errors.code) = 429];
+}

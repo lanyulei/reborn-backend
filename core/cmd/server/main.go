@@ -6,8 +6,10 @@ import (
 	"flag"
 	"log/slog"
 	"os"
+	"slices"
 
 	"github.com/lanyulei/reborn/backend/core/internal/conf"
+	"github.com/lanyulei/reborn/backend/core/internal/server"
 	"github.com/lanyulei/reborn/backend/core/internal/worker"
 	"github.com/lanyulei/reborn/backend/kit/httpx"
 
@@ -38,15 +40,22 @@ func init() {
 	flag.StringVar(&flagconf, "conf", "../../configs", "config path, eg: -conf config.yaml")
 }
 
-// newApp 组装 kratos.App；只做装配（HTTP 服务器 + 值班后台循环）。
-func newApp(logger *slog.Logger, hs *http.Server, oncall *worker.OncallLoops) *kratos.App {
+// newApp 组装 kratos.App；只做装配（HTTP 服务器 + 值班 / 文件清理 / 流程作业 / 工单 SLA 后台循环）。
+// 后台循环只在 worker 角色下启动；HTTP 服务器恒有（非 api 角色时只剩探活与指标端点）。
+func newApp(logger *slog.Logger, roles server.Roles, hs *http.Server, oncall *worker.OncallLoops, files *worker.FileLoops,
+	workflows *worker.WorkflowLoops, tickets *worker.TicketLoops,
+) *kratos.App {
+	servers := []transport.Server{hs}
+	if roles.Has(server.RoleWorker) {
+		servers = slices.Concat(servers, oncall.Servers(), files.Servers(), workflows.Servers(), tickets.Servers())
+	}
 	return kratos.New(
 		kratos.ID(id),
 		kratos.Name(Name),
 		kratos.Version(Version),
 		kratos.Metadata(map[string]string{}),
 		kratos.Logger(logger),
-		kratos.Server(append([]transport.Server{hs}, oncall.Servers()...)...),
+		kratos.Server(servers...),
 	)
 }
 

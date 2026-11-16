@@ -46,9 +46,9 @@ func newIntegrationData(t *testing.T) *basedata.Data {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	// 单条语句同时截断七张表（存在外键依赖，逐表 TRUNCATE 会被拒绝；
+	// 单条语句同时截断全部系统域表（存在外键依赖，逐表 TRUNCATE 会被拒绝；
 	// system_login_log 无外键但同截断保证测试隔离）。
-	if _, err := d.Pool.Exec(ctx, "TRUNCATE TABLE system_permission, system_grant, system_refresh_token, system_user_role, system_role, \"system_user\", system_login_log"); err != nil {
+	if _, err := d.Pool.Exec(ctx, "TRUNCATE TABLE system_permission, system_grant, system_refresh_token, system_user_role, system_role, system_dept_leader, system_user_dept, system_dept, \"system_user\", system_login_log"); err != nil {
 		t.Fatalf("truncate tables: %v", err)
 	}
 	return d

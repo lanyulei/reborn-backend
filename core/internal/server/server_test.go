@@ -14,6 +14,7 @@ import (
 	"github.com/lanyulei/reborn/backend/core/internal/conf"
 	assistantservice "github.com/lanyulei/reborn/backend/core/internal/service/assistant"
 	cmdbservice "github.com/lanyulei/reborn/backend/core/internal/service/cmdb"
+	fileservice "github.com/lanyulei/reborn/backend/core/internal/service/file"
 	notifyservice "github.com/lanyulei/reborn/backend/core/internal/service/notify"
 	service "github.com/lanyulei/reborn/backend/core/internal/service/system"
 	"github.com/lanyulei/reborn/backend/core/internal/testfake"
@@ -26,6 +27,8 @@ import (
 type testServices struct {
 	user          *service.UserService
 	role          *service.RoleService
+	dept          *service.DeptService
+	file          *fileservice.FileService
 	auth          *service.AuthService
 	syscfg        *service.SystemConfigService
 	loginLog      *service.LoginLogService
@@ -91,6 +94,11 @@ func newTestServices(t *testing.T) testServices {
 		t.Fatalf("biz.NewAuthUsecase() error = %v", err)
 	}
 	userUC := biz.NewUserUsecase(store, store, store, store, hasher, store)
+	deptUC := biz.NewDeptUsecase(store, store, store, store, store)
+	fileUC, _, _, err := testfake.NewFileUsecase(nil)
+	if err != nil {
+		t.Fatalf("testfake.NewFileUsecase() error = %v", err)
+	}
 	authzUC := biz.NewAuthzUsecase(store, store, store, authorizer)
 	channelUC := biznotify.NewChannelUsecase(store, store, store).WithTestEventCooldown(0)
 	// 智能助手：脚本模型桩 + 真实 HTTP 回环（地址在 httptest 启动后注入），
@@ -131,7 +139,9 @@ func newTestServices(t *testing.T) testServices {
 		chatModel:     chatModel,
 		loopback:      loopback,
 		assistantData: assistantData,
-		user:          service.NewUserService(userUC),
+		user:          service.NewUserService(userUC, deptUC),
+		dept:          service.NewDeptService(deptUC),
+		file:          fileservice.NewFileService(fileUC),
 		role:          service.NewRoleService(biz.NewRoleUsecase(store, store, authorizer), biz.NewPermissionUsecase(store, store, authorizer, biznotify.NewNotificationUsecase(store, nil), testfake.NewTxManager()), userUC),
 		auth:          service.NewAuthService(authUC, authzUC, biz.NewAvatarUsecase(store, store, testfake.NewAvatarStore())),
 		syscfg:        service.NewSystemConfigService(biz.NewSystemConfigUsecase(store)),
@@ -173,6 +183,7 @@ func TestNewHTTPServerWithOptions(t *testing.T) {
 		testLogger(),
 		svc.user,
 		svc.role,
+		svc.dept,
 		svc.auth,
 		svc.syscfg,
 		svc.loginLog,
@@ -195,8 +206,12 @@ func TestNewHTTPServerWithOptions(t *testing.T) {
 		svc.cmdbSync,
 		svc.cmdbInsight,
 		nil, nil, nil, // 值班域服务：需要 PostgreSQL，由 data 集成测试覆盖
+		svc.file,
+		nil, nil, nil, nil, nil, // 流程引擎域服务：执行状态存取需要 PostgreSQL，由 data 集成测试覆盖
+		nil, nil, // 工单域服务：依赖流程引擎，同样由 data 集成测试覆盖
 		svc.signer,
 		svc.authz,
+		AllRoles(), nil, nil, // 全部角色；探活不接数据库、不带指标
 	)
 	if srv == nil {
 		t.Fatal("NewHTTPServer() = nil")

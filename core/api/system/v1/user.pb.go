@@ -48,7 +48,9 @@ type User struct {
 	// update_time 更新时间。
 	UpdateTime *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=update_time,json=updateTime,proto3" json:"update_time,omitempty"`
 	// avatar 头像地址；空 = 未设置（前端回退首字母/图标）。
-	Avatar        string `protobuf:"bytes,11,opt,name=avatar,proto3" json:"avatar,omitempty"`
+	Avatar string `protobuf:"bytes,11,opt,name=avatar,proto3" json:"avatar,omitempty"`
+	// depts 所属部门（主部门在前）；仅用户详情与用户列表填充。
+	Depts         []*UserDept `protobuf:"bytes,12,rep,name=depts,proto3" json:"depts,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -160,6 +162,68 @@ func (x *User) GetAvatar() string {
 	return ""
 }
 
+func (x *User) GetDepts() []*UserDept {
+	if x != nil {
+		return x.Depts
+	}
+	return nil
+}
+
+// UserDeptAssignment 用户所属部门整组替换载荷（空列表 = 不属于任何部门）。
+type UserDeptAssignment struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// dept_ids 所属部门 ID 全集，去重、最多 20 个。
+	DeptIds []string `protobuf:"bytes,1,rep,name=dept_ids,json=deptIds,proto3" json:"dept_ids,omitempty"`
+	// primary_dept_id 主部门 ID，须在 dept_ids 内；不传时取 dept_ids 的第一个。
+	PrimaryDeptId *string `protobuf:"bytes,2,opt,name=primary_dept_id,json=primaryDeptId,proto3,oneof" json:"primary_dept_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UserDeptAssignment) Reset() {
+	*x = UserDeptAssignment{}
+	mi := &file_system_v1_user_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UserDeptAssignment) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UserDeptAssignment) ProtoMessage() {}
+
+func (x *UserDeptAssignment) ProtoReflect() protoreflect.Message {
+	mi := &file_system_v1_user_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UserDeptAssignment.ProtoReflect.Descriptor instead.
+func (*UserDeptAssignment) Descriptor() ([]byte, []int) {
+	return file_system_v1_user_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *UserDeptAssignment) GetDeptIds() []string {
+	if x != nil {
+		return x.DeptIds
+	}
+	return nil
+}
+
+func (x *UserDeptAssignment) GetPrimaryDeptId() string {
+	if x != nil && x.PrimaryDeptId != nil {
+		return *x.PrimaryDeptId
+	}
+	return ""
+}
+
 // CreateUserRequest 创建用户请求。
 type CreateUserRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -179,14 +243,16 @@ type CreateUserRequest struct {
 	// is_admin 是否超级管理员。
 	IsAdmin bool `protobuf:"varint,7,opt,name=is_admin,json=isAdmin,proto3" json:"is_admin,omitempty"`
 	// status 初始状态，可选；未指定默认可用（1）。取值：1=可用 2=停用 3=暂停 4=离职。
-	Status        *int32 `protobuf:"varint,8,opt,name=status,proto3,oneof" json:"status,omitempty"`
+	Status *int32 `protobuf:"varint,8,opt,name=status,proto3,oneof" json:"status,omitempty"`
+	// depts 所属部门，可选；与建号同事务写入。
+	Depts         *UserDeptAssignment `protobuf:"bytes,9,opt,name=depts,proto3" json:"depts,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CreateUserRequest) Reset() {
 	*x = CreateUserRequest{}
-	mi := &file_system_v1_user_proto_msgTypes[1]
+	mi := &file_system_v1_user_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -198,7 +264,7 @@ func (x *CreateUserRequest) String() string {
 func (*CreateUserRequest) ProtoMessage() {}
 
 func (x *CreateUserRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_system_v1_user_proto_msgTypes[1]
+	mi := &file_system_v1_user_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -211,7 +277,7 @@ func (x *CreateUserRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateUserRequest.ProtoReflect.Descriptor instead.
 func (*CreateUserRequest) Descriptor() ([]byte, []int) {
-	return file_system_v1_user_proto_rawDescGZIP(), []int{1}
+	return file_system_v1_user_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *CreateUserRequest) GetUsername() string {
@@ -270,6 +336,13 @@ func (x *CreateUserRequest) GetStatus() int32 {
 	return 0
 }
 
+func (x *CreateUserRequest) GetDepts() *UserDeptAssignment {
+	if x != nil {
+		return x.Depts
+	}
+	return nil
+}
+
 // CreateUserResponse 创建用户响应。
 type CreateUserResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -281,7 +354,7 @@ type CreateUserResponse struct {
 
 func (x *CreateUserResponse) Reset() {
 	*x = CreateUserResponse{}
-	mi := &file_system_v1_user_proto_msgTypes[2]
+	mi := &file_system_v1_user_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -293,7 +366,7 @@ func (x *CreateUserResponse) String() string {
 func (*CreateUserResponse) ProtoMessage() {}
 
 func (x *CreateUserResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_system_v1_user_proto_msgTypes[2]
+	mi := &file_system_v1_user_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -306,7 +379,7 @@ func (x *CreateUserResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateUserResponse.ProtoReflect.Descriptor instead.
 func (*CreateUserResponse) Descriptor() ([]byte, []int) {
-	return file_system_v1_user_proto_rawDescGZIP(), []int{2}
+	return file_system_v1_user_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *CreateUserResponse) GetUser() *User {
@@ -330,14 +403,16 @@ type UpdateUserRequest struct {
 	// gender 新性别。
 	Gender *string `protobuf:"bytes,5,opt,name=gender,proto3,oneof" json:"gender,omitempty"`
 	// is_admin 是否超级管理员。
-	IsAdmin       *bool `protobuf:"varint,6,opt,name=is_admin,json=isAdmin,proto3,oneof" json:"is_admin,omitempty"`
+	IsAdmin *bool `protobuf:"varint,6,opt,name=is_admin,json=isAdmin,proto3,oneof" json:"is_admin,omitempty"`
+	// depts 所属部门整组替换；不传 = 不改，传空列表 = 移出全部部门。
+	Depts         *UserDeptAssignment `protobuf:"bytes,7,opt,name=depts,proto3" json:"depts,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *UpdateUserRequest) Reset() {
 	*x = UpdateUserRequest{}
-	mi := &file_system_v1_user_proto_msgTypes[3]
+	mi := &file_system_v1_user_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -349,7 +424,7 @@ func (x *UpdateUserRequest) String() string {
 func (*UpdateUserRequest) ProtoMessage() {}
 
 func (x *UpdateUserRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_system_v1_user_proto_msgTypes[3]
+	mi := &file_system_v1_user_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -362,7 +437,7 @@ func (x *UpdateUserRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateUserRequest.ProtoReflect.Descriptor instead.
 func (*UpdateUserRequest) Descriptor() ([]byte, []int) {
-	return file_system_v1_user_proto_rawDescGZIP(), []int{3}
+	return file_system_v1_user_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *UpdateUserRequest) GetId() string {
@@ -407,6 +482,13 @@ func (x *UpdateUserRequest) GetIsAdmin() bool {
 	return false
 }
 
+func (x *UpdateUserRequest) GetDepts() *UserDeptAssignment {
+	if x != nil {
+		return x.Depts
+	}
+	return nil
+}
+
 // UpdateUserResponse 更新用户响应。
 type UpdateUserResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -416,7 +498,7 @@ type UpdateUserResponse struct {
 
 func (x *UpdateUserResponse) Reset() {
 	*x = UpdateUserResponse{}
-	mi := &file_system_v1_user_proto_msgTypes[4]
+	mi := &file_system_v1_user_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -428,7 +510,7 @@ func (x *UpdateUserResponse) String() string {
 func (*UpdateUserResponse) ProtoMessage() {}
 
 func (x *UpdateUserResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_system_v1_user_proto_msgTypes[4]
+	mi := &file_system_v1_user_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -441,7 +523,7 @@ func (x *UpdateUserResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateUserResponse.ProtoReflect.Descriptor instead.
 func (*UpdateUserResponse) Descriptor() ([]byte, []int) {
-	return file_system_v1_user_proto_rawDescGZIP(), []int{4}
+	return file_system_v1_user_proto_rawDescGZIP(), []int{5}
 }
 
 // UpdateUserStatusRequest 变更用户状态请求。
@@ -457,7 +539,7 @@ type UpdateUserStatusRequest struct {
 
 func (x *UpdateUserStatusRequest) Reset() {
 	*x = UpdateUserStatusRequest{}
-	mi := &file_system_v1_user_proto_msgTypes[5]
+	mi := &file_system_v1_user_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -469,7 +551,7 @@ func (x *UpdateUserStatusRequest) String() string {
 func (*UpdateUserStatusRequest) ProtoMessage() {}
 
 func (x *UpdateUserStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_system_v1_user_proto_msgTypes[5]
+	mi := &file_system_v1_user_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -482,7 +564,7 @@ func (x *UpdateUserStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateUserStatusRequest.ProtoReflect.Descriptor instead.
 func (*UpdateUserStatusRequest) Descriptor() ([]byte, []int) {
-	return file_system_v1_user_proto_rawDescGZIP(), []int{5}
+	return file_system_v1_user_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *UpdateUserStatusRequest) GetId() string {
@@ -508,7 +590,7 @@ type UpdateUserStatusResponse struct {
 
 func (x *UpdateUserStatusResponse) Reset() {
 	*x = UpdateUserStatusResponse{}
-	mi := &file_system_v1_user_proto_msgTypes[6]
+	mi := &file_system_v1_user_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -520,7 +602,7 @@ func (x *UpdateUserStatusResponse) String() string {
 func (*UpdateUserStatusResponse) ProtoMessage() {}
 
 func (x *UpdateUserStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_system_v1_user_proto_msgTypes[6]
+	mi := &file_system_v1_user_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -533,7 +615,7 @@ func (x *UpdateUserStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateUserStatusResponse.ProtoReflect.Descriptor instead.
 func (*UpdateUserStatusResponse) Descriptor() ([]byte, []int) {
-	return file_system_v1_user_proto_rawDescGZIP(), []int{6}
+	return file_system_v1_user_proto_rawDescGZIP(), []int{7}
 }
 
 // ResetUserPasswordRequest 重置用户密码请求。
@@ -550,7 +632,7 @@ type ResetUserPasswordRequest struct {
 
 func (x *ResetUserPasswordRequest) Reset() {
 	*x = ResetUserPasswordRequest{}
-	mi := &file_system_v1_user_proto_msgTypes[7]
+	mi := &file_system_v1_user_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -562,7 +644,7 @@ func (x *ResetUserPasswordRequest) String() string {
 func (*ResetUserPasswordRequest) ProtoMessage() {}
 
 func (x *ResetUserPasswordRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_system_v1_user_proto_msgTypes[7]
+	mi := &file_system_v1_user_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -575,7 +657,7 @@ func (x *ResetUserPasswordRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResetUserPasswordRequest.ProtoReflect.Descriptor instead.
 func (*ResetUserPasswordRequest) Descriptor() ([]byte, []int) {
-	return file_system_v1_user_proto_rawDescGZIP(), []int{7}
+	return file_system_v1_user_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ResetUserPasswordRequest) GetId() string {
@@ -601,7 +683,7 @@ type ResetUserPasswordResponse struct {
 
 func (x *ResetUserPasswordResponse) Reset() {
 	*x = ResetUserPasswordResponse{}
-	mi := &file_system_v1_user_proto_msgTypes[8]
+	mi := &file_system_v1_user_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -613,7 +695,7 @@ func (x *ResetUserPasswordResponse) String() string {
 func (*ResetUserPasswordResponse) ProtoMessage() {}
 
 func (x *ResetUserPasswordResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_system_v1_user_proto_msgTypes[8]
+	mi := &file_system_v1_user_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -626,7 +708,7 @@ func (x *ResetUserPasswordResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResetUserPasswordResponse.ProtoReflect.Descriptor instead.
 func (*ResetUserPasswordResponse) Descriptor() ([]byte, []int) {
-	return file_system_v1_user_proto_rawDescGZIP(), []int{8}
+	return file_system_v1_user_proto_rawDescGZIP(), []int{9}
 }
 
 // DeleteUserRequest 删除用户请求。
@@ -640,7 +722,7 @@ type DeleteUserRequest struct {
 
 func (x *DeleteUserRequest) Reset() {
 	*x = DeleteUserRequest{}
-	mi := &file_system_v1_user_proto_msgTypes[9]
+	mi := &file_system_v1_user_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -652,7 +734,7 @@ func (x *DeleteUserRequest) String() string {
 func (*DeleteUserRequest) ProtoMessage() {}
 
 func (x *DeleteUserRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_system_v1_user_proto_msgTypes[9]
+	mi := &file_system_v1_user_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -665,7 +747,7 @@ func (x *DeleteUserRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteUserRequest.ProtoReflect.Descriptor instead.
 func (*DeleteUserRequest) Descriptor() ([]byte, []int) {
-	return file_system_v1_user_proto_rawDescGZIP(), []int{9}
+	return file_system_v1_user_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *DeleteUserRequest) GetId() string {
@@ -684,7 +766,7 @@ type DeleteUserResponse struct {
 
 func (x *DeleteUserResponse) Reset() {
 	*x = DeleteUserResponse{}
-	mi := &file_system_v1_user_proto_msgTypes[10]
+	mi := &file_system_v1_user_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -696,7 +778,7 @@ func (x *DeleteUserResponse) String() string {
 func (*DeleteUserResponse) ProtoMessage() {}
 
 func (x *DeleteUserResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_system_v1_user_proto_msgTypes[10]
+	mi := &file_system_v1_user_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -709,7 +791,7 @@ func (x *DeleteUserResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteUserResponse.ProtoReflect.Descriptor instead.
 func (*DeleteUserResponse) Descriptor() ([]byte, []int) {
-	return file_system_v1_user_proto_rawDescGZIP(), []int{10}
+	return file_system_v1_user_proto_rawDescGZIP(), []int{11}
 }
 
 // GetUserRequest 查询用户请求。
@@ -723,7 +805,7 @@ type GetUserRequest struct {
 
 func (x *GetUserRequest) Reset() {
 	*x = GetUserRequest{}
-	mi := &file_system_v1_user_proto_msgTypes[11]
+	mi := &file_system_v1_user_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -735,7 +817,7 @@ func (x *GetUserRequest) String() string {
 func (*GetUserRequest) ProtoMessage() {}
 
 func (x *GetUserRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_system_v1_user_proto_msgTypes[11]
+	mi := &file_system_v1_user_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -748,7 +830,7 @@ func (x *GetUserRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetUserRequest.ProtoReflect.Descriptor instead.
 func (*GetUserRequest) Descriptor() ([]byte, []int) {
-	return file_system_v1_user_proto_rawDescGZIP(), []int{11}
+	return file_system_v1_user_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *GetUserRequest) GetId() string {
@@ -769,7 +851,7 @@ type GetUserResponse struct {
 
 func (x *GetUserResponse) Reset() {
 	*x = GetUserResponse{}
-	mi := &file_system_v1_user_proto_msgTypes[12]
+	mi := &file_system_v1_user_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -781,7 +863,7 @@ func (x *GetUserResponse) String() string {
 func (*GetUserResponse) ProtoMessage() {}
 
 func (x *GetUserResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_system_v1_user_proto_msgTypes[12]
+	mi := &file_system_v1_user_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -794,7 +876,7 @@ func (x *GetUserResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetUserResponse.ProtoReflect.Descriptor instead.
 func (*GetUserResponse) Descriptor() ([]byte, []int) {
-	return file_system_v1_user_proto_rawDescGZIP(), []int{12}
+	return file_system_v1_user_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *GetUserResponse) GetUser() *User {
@@ -814,14 +896,18 @@ type ListUsersRequest struct {
 	// keyword 关键字，可选；模糊匹配用户名/昵称/邮箱/手机号。
 	Keyword *string `protobuf:"bytes,3,opt,name=keyword,proto3,oneof" json:"keyword,omitempty"`
 	// status 状态过滤，可选：1=可用 2=停用 3=暂停 4=离职。
-	Status        *int32 `protobuf:"varint,4,opt,name=status,proto3,oneof" json:"status,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Status *int32 `protobuf:"varint,4,opt,name=status,proto3,oneof" json:"status,omitempty"`
+	// dept_id 部门过滤，可选：只返回属于该部门的用户。
+	DeptId *string `protobuf:"bytes,5,opt,name=dept_id,json=deptId,proto3,oneof" json:"dept_id,omitempty"`
+	// include_sub_depts 与 dept_id 同用：是否包含其全部下级部门的用户。
+	IncludeSubDepts bool `protobuf:"varint,6,opt,name=include_sub_depts,json=includeSubDepts,proto3" json:"include_sub_depts,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ListUsersRequest) Reset() {
 	*x = ListUsersRequest{}
-	mi := &file_system_v1_user_proto_msgTypes[13]
+	mi := &file_system_v1_user_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -833,7 +919,7 @@ func (x *ListUsersRequest) String() string {
 func (*ListUsersRequest) ProtoMessage() {}
 
 func (x *ListUsersRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_system_v1_user_proto_msgTypes[13]
+	mi := &file_system_v1_user_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -846,7 +932,7 @@ func (x *ListUsersRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListUsersRequest.ProtoReflect.Descriptor instead.
 func (*ListUsersRequest) Descriptor() ([]byte, []int) {
-	return file_system_v1_user_proto_rawDescGZIP(), []int{13}
+	return file_system_v1_user_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ListUsersRequest) GetPage() int64 {
@@ -877,6 +963,20 @@ func (x *ListUsersRequest) GetStatus() int32 {
 	return 0
 }
 
+func (x *ListUsersRequest) GetDeptId() string {
+	if x != nil && x.DeptId != nil {
+		return *x.DeptId
+	}
+	return ""
+}
+
+func (x *ListUsersRequest) GetIncludeSubDepts() bool {
+	if x != nil {
+		return x.IncludeSubDepts
+	}
+	return false
+}
+
 // ListUsersResponse 分页查询用户响应。
 type ListUsersResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -890,7 +990,7 @@ type ListUsersResponse struct {
 
 func (x *ListUsersResponse) Reset() {
 	*x = ListUsersResponse{}
-	mi := &file_system_v1_user_proto_msgTypes[14]
+	mi := &file_system_v1_user_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -902,7 +1002,7 @@ func (x *ListUsersResponse) String() string {
 func (*ListUsersResponse) ProtoMessage() {}
 
 func (x *ListUsersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_system_v1_user_proto_msgTypes[14]
+	mi := &file_system_v1_user_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -915,7 +1015,7 @@ func (x *ListUsersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListUsersResponse.ProtoReflect.Descriptor instead.
 func (*ListUsersResponse) Descriptor() ([]byte, []int) {
-	return file_system_v1_user_proto_rawDescGZIP(), []int{14}
+	return file_system_v1_user_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ListUsersResponse) GetItems() []*User {
@@ -945,7 +1045,7 @@ type BindUserRolesRequest struct {
 
 func (x *BindUserRolesRequest) Reset() {
 	*x = BindUserRolesRequest{}
-	mi := &file_system_v1_user_proto_msgTypes[15]
+	mi := &file_system_v1_user_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -957,7 +1057,7 @@ func (x *BindUserRolesRequest) String() string {
 func (*BindUserRolesRequest) ProtoMessage() {}
 
 func (x *BindUserRolesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_system_v1_user_proto_msgTypes[15]
+	mi := &file_system_v1_user_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -970,7 +1070,7 @@ func (x *BindUserRolesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BindUserRolesRequest.ProtoReflect.Descriptor instead.
 func (*BindUserRolesRequest) Descriptor() ([]byte, []int) {
-	return file_system_v1_user_proto_rawDescGZIP(), []int{15}
+	return file_system_v1_user_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *BindUserRolesRequest) GetId() string {
@@ -996,7 +1096,7 @@ type BindUserRolesResponse struct {
 
 func (x *BindUserRolesResponse) Reset() {
 	*x = BindUserRolesResponse{}
-	mi := &file_system_v1_user_proto_msgTypes[16]
+	mi := &file_system_v1_user_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1008,7 +1108,7 @@ func (x *BindUserRolesResponse) String() string {
 func (*BindUserRolesResponse) ProtoMessage() {}
 
 func (x *BindUserRolesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_system_v1_user_proto_msgTypes[16]
+	mi := &file_system_v1_user_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1021,7 +1121,7 @@ func (x *BindUserRolesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BindUserRolesResponse.ProtoReflect.Descriptor instead.
 func (*BindUserRolesResponse) Descriptor() ([]byte, []int) {
-	return file_system_v1_user_proto_rawDescGZIP(), []int{16}
+	return file_system_v1_user_proto_rawDescGZIP(), []int{17}
 }
 
 // ListUserRolesRequest 查询用户角色请求。
@@ -1035,7 +1135,7 @@ type ListUserRolesRequest struct {
 
 func (x *ListUserRolesRequest) Reset() {
 	*x = ListUserRolesRequest{}
-	mi := &file_system_v1_user_proto_msgTypes[17]
+	mi := &file_system_v1_user_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1047,7 +1147,7 @@ func (x *ListUserRolesRequest) String() string {
 func (*ListUserRolesRequest) ProtoMessage() {}
 
 func (x *ListUserRolesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_system_v1_user_proto_msgTypes[17]
+	mi := &file_system_v1_user_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1060,7 +1160,7 @@ func (x *ListUserRolesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListUserRolesRequest.ProtoReflect.Descriptor instead.
 func (*ListUserRolesRequest) Descriptor() ([]byte, []int) {
-	return file_system_v1_user_proto_rawDescGZIP(), []int{17}
+	return file_system_v1_user_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ListUserRolesRequest) GetId() string {
@@ -1081,7 +1181,7 @@ type ListUserRolesResponse struct {
 
 func (x *ListUserRolesResponse) Reset() {
 	*x = ListUserRolesResponse{}
-	mi := &file_system_v1_user_proto_msgTypes[18]
+	mi := &file_system_v1_user_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1093,7 +1193,7 @@ func (x *ListUserRolesResponse) String() string {
 func (*ListUserRolesResponse) ProtoMessage() {}
 
 func (x *ListUserRolesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_system_v1_user_proto_msgTypes[18]
+	mi := &file_system_v1_user_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1106,7 +1206,7 @@ func (x *ListUserRolesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListUserRolesResponse.ProtoReflect.Descriptor instead.
 func (*ListUserRolesResponse) Descriptor() ([]byte, []int) {
-	return file_system_v1_user_proto_rawDescGZIP(), []int{18}
+	return file_system_v1_user_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ListUserRolesResponse) GetItems() []*Role {
@@ -1120,7 +1220,7 @@ var File_system_v1_user_proto protoreflect.FileDescriptor
 
 const file_system_v1_user_proto_rawDesc = "" +
 	"\n" +
-	"\x14system/v1/user.proto\x12\tsystem.v1\x1a\x1cgoogle/api/annotations.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1bbuf/validate/validate.proto\x1a\x1bsystem/v1/annotations.proto\x1a\x14system/v1/role.proto\"\xd7\x02\n" +
+	"\x14system/v1/user.proto\x12\tsystem.v1\x1a\x1cgoogle/api/annotations.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1bbuf/validate/validate.proto\x1a\x1bsystem/v1/annotations.proto\x1a\x14system/v1/dept.proto\x1a\x14system/v1/role.proto\"\x82\x03\n" +
 	"\x04User\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1a\n" +
 	"\busername\x18\x02 \x01(\tR\busername\x12\x1a\n" +
@@ -1135,7 +1235,13 @@ const file_system_v1_user_proto_rawDesc = "" +
 	"\vupdate_time\x18\n" +
 	" \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"updateTime\x12\x16\n" +
-	"\x06avatar\x18\v \x01(\tR\x06avatar\"\x91\x03\n" +
+	"\x06avatar\x18\v \x01(\tR\x06avatar\x12)\n" +
+	"\x05depts\x18\f \x03(\v2\x13.system.v1.UserDeptR\x05depts\"\xa1\x02\n" +
+	"\x12UserDeptAssignment\x12,\n" +
+	"\bdept_ids\x18\x01 \x03(\tB\x11\xbaH\x0e\x92\x01\v\x10\x14\x18\x01\"\x05r\x03\xb0\x01\x01R\adeptIds\x125\n" +
+	"\x0fprimary_dept_id\x18\x02 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01H\x00R\rprimaryDeptId\x88\x01\x01:\x91\x01\xbaH\x8d\x01\x1a\x8a\x01\n" +
+	"\x1auser.depts.primary_in_list\x12'primary_dept_id must be one of dept_ids\x1aC!has(this.primary_dept_id) || this.primary_dept_id in this.dept_idsB\x12\n" +
+	"\x10_primary_dept_id\"\xc6\x03\n" +
 	"\x11CreateUserRequest\x128\n" +
 	"\busername\x18\x01 \x01(\tB\x1c\xbaH\x19r\x172\x15^[a-zA-Z0-9_-]{3,64}$R\busername\x12&\n" +
 	"\bpassword\x18\x02 \x01(\tB\n" +
@@ -1147,12 +1253,13 @@ const file_system_v1_user_proto_rawDesc = "" +
 	"\x06gender\x18\x06 \x01(\tB\x1c\xbaH\x19r\x17R\x04maleR\x06femaleR\aunknownR\x06gender\x12\x19\n" +
 	"\bis_admin\x18\a \x01(\bR\aisAdmin\x12*\n" +
 	"\x06status\x18\b \x01(\x05B\r\xbaH\n" +
-	"\x1a\b0\x010\x020\x030\x04H\x02R\x06status\x88\x01\x01B\b\n" +
+	"\x1a\b0\x010\x020\x030\x04H\x02R\x06status\x88\x01\x01\x123\n" +
+	"\x05depts\x18\t \x01(\v2\x1d.system.v1.UserDeptAssignmentR\x05deptsB\b\n" +
 	"\x06_emailB\b\n" +
 	"\x06_phoneB\t\n" +
 	"\a_status\"9\n" +
 	"\x12CreateUserResponse\x12#\n" +
-	"\x04user\x18\x01 \x01(\v2\x0f.system.v1.UserR\x04user\"\xde\x04\n" +
+	"\x04user\x18\x01 \x01(\v2\x0f.system.v1.UserR\x04user\"\xa6\x05\n" +
 	"\x11UpdateUserRequest\x12\x18\n" +
 	"\x02id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\x12*\n" +
 	"\bnickname\x18\x02 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@H\x00R\bnickname\x88\x01\x01\x12\x85\x01\n" +
@@ -1160,8 +1267,9 @@ const file_system_v1_user_proto_rawDesc = "" +
 	"\x11user.update.email\x12,value must be a valid email address or empty\x1a\x1cthis == '' || this.isEmail()r\x03\x18\xff\x01H\x01R\x05email\x88\x01\x01\x123\n" +
 	"\x05phone\x18\x04 \x01(\tB\x18\xbaH\x15r\x132\x11^$|^[0-9+]{5,20}$H\x02R\x05phone\x88\x01\x01\x129\n" +
 	"\x06gender\x18\x05 \x01(\tB\x1c\xbaH\x19r\x17R\x04maleR\x06femaleR\aunknownH\x03R\x06gender\x88\x01\x01\x12\x1e\n" +
-	"\bis_admin\x18\x06 \x01(\bH\x04R\aisAdmin\x88\x01\x01:\xb1\x01\xbaH\xad\x01\x1a\xaa\x01\n" +
-	"\x15user.update.non_empty\x12-at least one updatable field must be provided\x1abhas(this.nickname) || has(this.email) || has(this.phone) || has(this.gender) || has(this.is_admin)B\v\n" +
+	"\bis_admin\x18\x06 \x01(\bH\x04R\aisAdmin\x88\x01\x01\x123\n" +
+	"\x05depts\x18\a \x01(\v2\x1d.system.v1.UserDeptAssignmentR\x05depts:\xc4\x01\xbaH\xc0\x01\x1a\xbd\x01\n" +
+	"\x15user.update.non_empty\x12-at least one updatable field must be provided\x1auhas(this.nickname) || has(this.email) || has(this.phone) || has(this.gender) || has(this.is_admin) || has(this.depts)B\v\n" +
 	"\t_nicknameB\b\n" +
 	"\x06_emailB\b\n" +
 	"\x06_phoneB\t\n" +
@@ -1184,16 +1292,20 @@ const file_system_v1_user_proto_rawDesc = "" +
 	"\x0eGetUserRequest\x12\x18\n" +
 	"\x02id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\"6\n" +
 	"\x0fGetUserResponse\x12#\n" +
-	"\x04user\x18\x01 \x01(\v2\x0f.system.v1.UserR\x04user\"\xc2\x01\n" +
+	"\x04user\x18\x01 \x01(\v2\x0f.system.v1.UserR\x04user\"\xa2\x02\n" +
 	"\x10ListUsersRequest\x12\x1b\n" +
 	"\x04page\x18\x01 \x01(\x03B\a\xbaH\x04\"\x02(\x01R\x04page\x12&\n" +
 	"\tpage_size\x18\x02 \x01(\x05B\t\xbaH\x06\x1a\x04\x18d(\x01R\bpageSize\x12&\n" +
 	"\akeyword\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x18@H\x00R\akeyword\x88\x01\x01\x12*\n" +
 	"\x06status\x18\x04 \x01(\x05B\r\xbaH\n" +
-	"\x1a\b0\x010\x020\x030\x04H\x01R\x06status\x88\x01\x01B\n" +
+	"\x1a\b0\x010\x020\x030\x04H\x01R\x06status\x88\x01\x01\x12&\n" +
+	"\adept_id\x18\x05 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01H\x02R\x06deptId\x88\x01\x01\x12*\n" +
+	"\x11include_sub_depts\x18\x06 \x01(\bR\x0fincludeSubDeptsB\n" +
 	"\n" +
 	"\b_keywordB\t\n" +
-	"\a_status\"P\n" +
+	"\a_statusB\n" +
+	"\n" +
+	"\b_dept_id\"P\n" +
 	"\x11ListUsersResponse\x12%\n" +
 	"\x05items\x18\x01 \x03(\v2\x0f.system.v1.UserR\x05items\x12\x14\n" +
 	"\x05total\x18\x02 \x01(\x03R\x05total\"^\n" +
@@ -1231,60 +1343,65 @@ func file_system_v1_user_proto_rawDescGZIP() []byte {
 	return file_system_v1_user_proto_rawDescData
 }
 
-var file_system_v1_user_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
+var file_system_v1_user_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
 var file_system_v1_user_proto_goTypes = []any{
 	(*User)(nil),                      // 0: system.v1.User
-	(*CreateUserRequest)(nil),         // 1: system.v1.CreateUserRequest
-	(*CreateUserResponse)(nil),        // 2: system.v1.CreateUserResponse
-	(*UpdateUserRequest)(nil),         // 3: system.v1.UpdateUserRequest
-	(*UpdateUserResponse)(nil),        // 4: system.v1.UpdateUserResponse
-	(*UpdateUserStatusRequest)(nil),   // 5: system.v1.UpdateUserStatusRequest
-	(*UpdateUserStatusResponse)(nil),  // 6: system.v1.UpdateUserStatusResponse
-	(*ResetUserPasswordRequest)(nil),  // 7: system.v1.ResetUserPasswordRequest
-	(*ResetUserPasswordResponse)(nil), // 8: system.v1.ResetUserPasswordResponse
-	(*DeleteUserRequest)(nil),         // 9: system.v1.DeleteUserRequest
-	(*DeleteUserResponse)(nil),        // 10: system.v1.DeleteUserResponse
-	(*GetUserRequest)(nil),            // 11: system.v1.GetUserRequest
-	(*GetUserResponse)(nil),           // 12: system.v1.GetUserResponse
-	(*ListUsersRequest)(nil),          // 13: system.v1.ListUsersRequest
-	(*ListUsersResponse)(nil),         // 14: system.v1.ListUsersResponse
-	(*BindUserRolesRequest)(nil),      // 15: system.v1.BindUserRolesRequest
-	(*BindUserRolesResponse)(nil),     // 16: system.v1.BindUserRolesResponse
-	(*ListUserRolesRequest)(nil),      // 17: system.v1.ListUserRolesRequest
-	(*ListUserRolesResponse)(nil),     // 18: system.v1.ListUserRolesResponse
-	(*timestamppb.Timestamp)(nil),     // 19: google.protobuf.Timestamp
-	(*Role)(nil),                      // 20: system.v1.Role
+	(*UserDeptAssignment)(nil),        // 1: system.v1.UserDeptAssignment
+	(*CreateUserRequest)(nil),         // 2: system.v1.CreateUserRequest
+	(*CreateUserResponse)(nil),        // 3: system.v1.CreateUserResponse
+	(*UpdateUserRequest)(nil),         // 4: system.v1.UpdateUserRequest
+	(*UpdateUserResponse)(nil),        // 5: system.v1.UpdateUserResponse
+	(*UpdateUserStatusRequest)(nil),   // 6: system.v1.UpdateUserStatusRequest
+	(*UpdateUserStatusResponse)(nil),  // 7: system.v1.UpdateUserStatusResponse
+	(*ResetUserPasswordRequest)(nil),  // 8: system.v1.ResetUserPasswordRequest
+	(*ResetUserPasswordResponse)(nil), // 9: system.v1.ResetUserPasswordResponse
+	(*DeleteUserRequest)(nil),         // 10: system.v1.DeleteUserRequest
+	(*DeleteUserResponse)(nil),        // 11: system.v1.DeleteUserResponse
+	(*GetUserRequest)(nil),            // 12: system.v1.GetUserRequest
+	(*GetUserResponse)(nil),           // 13: system.v1.GetUserResponse
+	(*ListUsersRequest)(nil),          // 14: system.v1.ListUsersRequest
+	(*ListUsersResponse)(nil),         // 15: system.v1.ListUsersResponse
+	(*BindUserRolesRequest)(nil),      // 16: system.v1.BindUserRolesRequest
+	(*BindUserRolesResponse)(nil),     // 17: system.v1.BindUserRolesResponse
+	(*ListUserRolesRequest)(nil),      // 18: system.v1.ListUserRolesRequest
+	(*ListUserRolesResponse)(nil),     // 19: system.v1.ListUserRolesResponse
+	(*timestamppb.Timestamp)(nil),     // 20: google.protobuf.Timestamp
+	(*UserDept)(nil),                  // 21: system.v1.UserDept
+	(*Role)(nil),                      // 22: system.v1.Role
 }
 var file_system_v1_user_proto_depIdxs = []int32{
-	19, // 0: system.v1.User.create_time:type_name -> google.protobuf.Timestamp
-	19, // 1: system.v1.User.update_time:type_name -> google.protobuf.Timestamp
-	0,  // 2: system.v1.CreateUserResponse.user:type_name -> system.v1.User
-	0,  // 3: system.v1.GetUserResponse.user:type_name -> system.v1.User
-	0,  // 4: system.v1.ListUsersResponse.items:type_name -> system.v1.User
-	20, // 5: system.v1.ListUserRolesResponse.items:type_name -> system.v1.Role
-	1,  // 6: system.v1.UserService.CreateUser:input_type -> system.v1.CreateUserRequest
-	3,  // 7: system.v1.UserService.UpdateUser:input_type -> system.v1.UpdateUserRequest
-	5,  // 8: system.v1.UserService.UpdateUserStatus:input_type -> system.v1.UpdateUserStatusRequest
-	7,  // 9: system.v1.UserService.ResetUserPassword:input_type -> system.v1.ResetUserPasswordRequest
-	9,  // 10: system.v1.UserService.DeleteUser:input_type -> system.v1.DeleteUserRequest
-	11, // 11: system.v1.UserService.GetUser:input_type -> system.v1.GetUserRequest
-	13, // 12: system.v1.UserService.ListUsers:input_type -> system.v1.ListUsersRequest
-	15, // 13: system.v1.UserService.BindUserRoles:input_type -> system.v1.BindUserRolesRequest
-	17, // 14: system.v1.UserService.ListUserRoles:input_type -> system.v1.ListUserRolesRequest
-	2,  // 15: system.v1.UserService.CreateUser:output_type -> system.v1.CreateUserResponse
-	4,  // 16: system.v1.UserService.UpdateUser:output_type -> system.v1.UpdateUserResponse
-	6,  // 17: system.v1.UserService.UpdateUserStatus:output_type -> system.v1.UpdateUserStatusResponse
-	8,  // 18: system.v1.UserService.ResetUserPassword:output_type -> system.v1.ResetUserPasswordResponse
-	10, // 19: system.v1.UserService.DeleteUser:output_type -> system.v1.DeleteUserResponse
-	12, // 20: system.v1.UserService.GetUser:output_type -> system.v1.GetUserResponse
-	14, // 21: system.v1.UserService.ListUsers:output_type -> system.v1.ListUsersResponse
-	16, // 22: system.v1.UserService.BindUserRoles:output_type -> system.v1.BindUserRolesResponse
-	18, // 23: system.v1.UserService.ListUserRoles:output_type -> system.v1.ListUserRolesResponse
-	15, // [15:24] is the sub-list for method output_type
-	6,  // [6:15] is the sub-list for method input_type
-	6,  // [6:6] is the sub-list for extension type_name
-	6,  // [6:6] is the sub-list for extension extendee
-	0,  // [0:6] is the sub-list for field type_name
+	20, // 0: system.v1.User.create_time:type_name -> google.protobuf.Timestamp
+	20, // 1: system.v1.User.update_time:type_name -> google.protobuf.Timestamp
+	21, // 2: system.v1.User.depts:type_name -> system.v1.UserDept
+	1,  // 3: system.v1.CreateUserRequest.depts:type_name -> system.v1.UserDeptAssignment
+	0,  // 4: system.v1.CreateUserResponse.user:type_name -> system.v1.User
+	1,  // 5: system.v1.UpdateUserRequest.depts:type_name -> system.v1.UserDeptAssignment
+	0,  // 6: system.v1.GetUserResponse.user:type_name -> system.v1.User
+	0,  // 7: system.v1.ListUsersResponse.items:type_name -> system.v1.User
+	22, // 8: system.v1.ListUserRolesResponse.items:type_name -> system.v1.Role
+	2,  // 9: system.v1.UserService.CreateUser:input_type -> system.v1.CreateUserRequest
+	4,  // 10: system.v1.UserService.UpdateUser:input_type -> system.v1.UpdateUserRequest
+	6,  // 11: system.v1.UserService.UpdateUserStatus:input_type -> system.v1.UpdateUserStatusRequest
+	8,  // 12: system.v1.UserService.ResetUserPassword:input_type -> system.v1.ResetUserPasswordRequest
+	10, // 13: system.v1.UserService.DeleteUser:input_type -> system.v1.DeleteUserRequest
+	12, // 14: system.v1.UserService.GetUser:input_type -> system.v1.GetUserRequest
+	14, // 15: system.v1.UserService.ListUsers:input_type -> system.v1.ListUsersRequest
+	16, // 16: system.v1.UserService.BindUserRoles:input_type -> system.v1.BindUserRolesRequest
+	18, // 17: system.v1.UserService.ListUserRoles:input_type -> system.v1.ListUserRolesRequest
+	3,  // 18: system.v1.UserService.CreateUser:output_type -> system.v1.CreateUserResponse
+	5,  // 19: system.v1.UserService.UpdateUser:output_type -> system.v1.UpdateUserResponse
+	7,  // 20: system.v1.UserService.UpdateUserStatus:output_type -> system.v1.UpdateUserStatusResponse
+	9,  // 21: system.v1.UserService.ResetUserPassword:output_type -> system.v1.ResetUserPasswordResponse
+	11, // 22: system.v1.UserService.DeleteUser:output_type -> system.v1.DeleteUserResponse
+	13, // 23: system.v1.UserService.GetUser:output_type -> system.v1.GetUserResponse
+	15, // 24: system.v1.UserService.ListUsers:output_type -> system.v1.ListUsersResponse
+	17, // 25: system.v1.UserService.BindUserRoles:output_type -> system.v1.BindUserRolesResponse
+	19, // 26: system.v1.UserService.ListUserRoles:output_type -> system.v1.ListUserRolesResponse
+	18, // [18:27] is the sub-list for method output_type
+	9,  // [9:18] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_system_v1_user_proto_init() }
@@ -1293,17 +1410,19 @@ func file_system_v1_user_proto_init() {
 		return
 	}
 	file_system_v1_annotations_proto_init()
+	file_system_v1_dept_proto_init()
 	file_system_v1_role_proto_init()
 	file_system_v1_user_proto_msgTypes[1].OneofWrappers = []any{}
-	file_system_v1_user_proto_msgTypes[3].OneofWrappers = []any{}
-	file_system_v1_user_proto_msgTypes[13].OneofWrappers = []any{}
+	file_system_v1_user_proto_msgTypes[2].OneofWrappers = []any{}
+	file_system_v1_user_proto_msgTypes[4].OneofWrappers = []any{}
+	file_system_v1_user_proto_msgTypes[14].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_system_v1_user_proto_rawDesc), len(file_system_v1_user_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   19,
+			NumMessages:   20,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

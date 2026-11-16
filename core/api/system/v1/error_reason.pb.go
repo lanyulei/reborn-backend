@@ -71,6 +71,24 @@ const (
 	ErrorReason_ROLE_BUILTIN_PROTECTED ErrorReason = 18
 	// AVATAR_NOT_FOUND 用户未设置头像（未配置语义，非错误状态），映射 HTTP 404。
 	ErrorReason_AVATAR_NOT_FOUND ErrorReason = 19
+	// DEPT_UNSPECIFIED 未指定的部门错误。
+	ErrorReason_DEPT_UNSPECIFIED ErrorReason = 20
+	// DEPT_NOT_FOUND 部门不存在，映射 HTTP 404。
+	ErrorReason_DEPT_NOT_FOUND ErrorReason = 21
+	// DEPT_NAME_EXISTS 同一上级部门下名称已被占用，映射 HTTP 409。
+	ErrorReason_DEPT_NAME_EXISTS ErrorReason = 22
+	// DEPT_CODE_EXISTS 部门编码已被占用，映射 HTTP 409。
+	ErrorReason_DEPT_CODE_EXISTS ErrorReason = 23
+	// DEPT_HAS_CHILDREN 部门下仍有下级部门，不可删除，映射 HTTP 409。
+	ErrorReason_DEPT_HAS_CHILDREN ErrorReason = 24
+	// DEPT_HAS_MEMBERS 部门下仍有成员，不可删除，映射 HTTP 409。
+	ErrorReason_DEPT_HAS_MEMBERS ErrorReason = 25
+	// DEPT_MOVE_INVALID 不能把部门移到自身或自身的下级部门之下，映射 HTTP 400。
+	ErrorReason_DEPT_MOVE_INVALID ErrorReason = 26
+	// DEPT_DEPTH_EXCEEDED 部门层级超过上限，映射 HTTP 400。
+	ErrorReason_DEPT_DEPTH_EXCEEDED ErrorReason = 27
+	// DEPT_LIMIT_EXCEEDED 部门总数或单个用户所属部门数超过上限，映射 HTTP 400。
+	ErrorReason_DEPT_LIMIT_EXCEEDED ErrorReason = 28
 )
 
 // Enum value maps for ErrorReason.
@@ -96,6 +114,15 @@ var (
 		17: "USER_SELF_OPERATION",
 		18: "ROLE_BUILTIN_PROTECTED",
 		19: "AVATAR_NOT_FOUND",
+		20: "DEPT_UNSPECIFIED",
+		21: "DEPT_NOT_FOUND",
+		22: "DEPT_NAME_EXISTS",
+		23: "DEPT_CODE_EXISTS",
+		24: "DEPT_HAS_CHILDREN",
+		25: "DEPT_HAS_MEMBERS",
+		26: "DEPT_MOVE_INVALID",
+		27: "DEPT_DEPTH_EXCEEDED",
+		28: "DEPT_LIMIT_EXCEEDED",
 	}
 	ErrorReason_value = map[string]int32{
 		"USER_UNSPECIFIED":       0,
@@ -118,6 +145,15 @@ var (
 		"USER_SELF_OPERATION":    17,
 		"ROLE_BUILTIN_PROTECTED": 18,
 		"AVATAR_NOT_FOUND":       19,
+		"DEPT_UNSPECIFIED":       20,
+		"DEPT_NOT_FOUND":         21,
+		"DEPT_NAME_EXISTS":       22,
+		"DEPT_CODE_EXISTS":       23,
+		"DEPT_HAS_CHILDREN":      24,
+		"DEPT_HAS_MEMBERS":       25,
+		"DEPT_MOVE_INVALID":      26,
+		"DEPT_DEPTH_EXCEEDED":    27,
+		"DEPT_LIMIT_EXCEEDED":    28,
 	}
 )
 
@@ -152,7 +188,7 @@ var File_system_v1_error_reason_proto protoreflect.FileDescriptor
 
 const file_system_v1_error_reason_proto_rawDesc = "" +
 	"\n" +
-	"\x1csystem/v1/error_reason.proto\x12\tsystem.v1\x1a\x13errors/errors.proto*\xad\x04\n" +
+	"\x1csystem/v1/error_reason.proto\x12\tsystem.v1\x1a\x13errors/errors.proto*\xa9\x06\n" +
 	"\vErrorReason\x12\x14\n" +
 	"\x10USER_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x0eUSER_NOT_FOUND\x10\x01\x1a\x04\xa8E\x94\x03\x12\x15\n" +
@@ -174,7 +210,16 @@ const file_system_v1_error_reason_proto_rawDesc = "" +
 	"\x0eLOGO_NOT_FOUND\x10\x10\x1a\x04\xa8E\x94\x03\x12\x1d\n" +
 	"\x13USER_SELF_OPERATION\x10\x11\x1a\x04\xa8E\x90\x03\x12 \n" +
 	"\x16ROLE_BUILTIN_PROTECTED\x10\x12\x1a\x04\xa8E\x90\x03\x12\x1a\n" +
-	"\x10AVATAR_NOT_FOUND\x10\x13\x1a\x04\xa8E\x94\x03\x1a\x04\xa0E\xf4\x03B:Z8github.com/lanyulei/reborn/backend/core/api/system/v1;v1b\x06proto3"
+	"\x10AVATAR_NOT_FOUND\x10\x13\x1a\x04\xa8E\x94\x03\x12\x14\n" +
+	"\x10DEPT_UNSPECIFIED\x10\x14\x12\x18\n" +
+	"\x0eDEPT_NOT_FOUND\x10\x15\x1a\x04\xa8E\x94\x03\x12\x1a\n" +
+	"\x10DEPT_NAME_EXISTS\x10\x16\x1a\x04\xa8E\x99\x03\x12\x1a\n" +
+	"\x10DEPT_CODE_EXISTS\x10\x17\x1a\x04\xa8E\x99\x03\x12\x1b\n" +
+	"\x11DEPT_HAS_CHILDREN\x10\x18\x1a\x04\xa8E\x99\x03\x12\x1a\n" +
+	"\x10DEPT_HAS_MEMBERS\x10\x19\x1a\x04\xa8E\x99\x03\x12\x1b\n" +
+	"\x11DEPT_MOVE_INVALID\x10\x1a\x1a\x04\xa8E\x90\x03\x12\x1d\n" +
+	"\x13DEPT_DEPTH_EXCEEDED\x10\x1b\x1a\x04\xa8E\x90\x03\x12\x1d\n" +
+	"\x13DEPT_LIMIT_EXCEEDED\x10\x1c\x1a\x04\xa8E\x90\x03\x1a\x04\xa0E\xf4\x03B:Z8github.com/lanyulei/reborn/backend/core/api/system/v1;v1b\x06proto3"
 
 var (
 	file_system_v1_error_reason_proto_rawDescOnce sync.Once

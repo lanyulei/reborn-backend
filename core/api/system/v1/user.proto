@@ -6,6 +6,7 @@ import "google/api/annotations.proto";
 import "google/protobuf/timestamp.proto";
 import "buf/validate/validate.proto";
 import "system/v1/annotations.proto";
+import "system/v1/dept.proto";
 import "system/v1/role.proto";
 
 option go_package = "github.com/lanyulei/reborn/backend/core/api/system/v1;v1";
@@ -106,6 +107,26 @@ message User {
   google.protobuf.Timestamp update_time = 10;
   // avatar 头像地址；空 = 未设置（前端回退首字母/图标）。
   string avatar = 11;
+  // depts 所属部门（主部门在前）；仅用户详情与用户列表填充。
+  repeated UserDept depts = 12;
+}
+
+// UserDeptAssignment 用户所属部门整组替换载荷（空列表 = 不属于任何部门）。
+message UserDeptAssignment {
+  option (buf.validate.message).cel = {
+    id: "user.depts.primary_in_list"
+    message: "primary_dept_id must be one of dept_ids"
+    expression: "!has(this.primary_dept_id) || this.primary_dept_id in this.dept_ids"
+  };
+
+  // dept_ids 所属部门 ID 全集，去重、最多 20 个。
+  repeated string dept_ids = 1 [(buf.validate.field).repeated = {
+    unique: true
+    max_items: 20
+    items: { string: { uuid: true } }
+  }];
+  // primary_dept_id 主部门 ID，须在 dept_ids 内；不传时取 dept_ids 的第一个。
+  optional string primary_dept_id = 2 [(buf.validate.field).string.uuid = true];
 }
 
 // CreateUserRequest 创建用户请求。
@@ -142,6 +163,8 @@ message CreateUserRequest {
   bool is_admin = 7;
   // status 初始状态，可选；未指定默认可用（1）。取值：1=可用 2=停用 3=暂停 4=离职。
   optional int32 status = 8 [(buf.validate.field).int32 = { in: [1, 2, 3, 4] }];
+  // depts 所属部门，可选；与建号同事务写入。
+  UserDeptAssignment depts = 9;
 }
 
 // CreateUserResponse 创建用户响应。
@@ -155,7 +178,7 @@ message UpdateUserRequest {
   option (buf.validate.message).cel = {
     id: "user.update.non_empty"
     message: "at least one updatable field must be provided"
-    expression: "has(this.nickname) || has(this.email) || has(this.phone) || has(this.gender) || has(this.is_admin)"
+    expression: "has(this.nickname) || has(this.email) || has(this.phone) || has(this.gender) || has(this.is_admin) || has(this.depts)"
   };
 
   // id 用户唯一标识，取自路径参数。
@@ -184,6 +207,8 @@ message UpdateUserRequest {
   }];
   // is_admin 是否超级管理员。
   optional bool is_admin = 6;
+  // depts 所属部门整组替换；不传 = 不改，传空列表 = 移出全部部门。
+  UserDeptAssignment depts = 7;
 }
 
 // UpdateUserResponse 更新用户响应。
@@ -249,6 +274,10 @@ message ListUsersRequest {
   optional string keyword = 3 [(buf.validate.field).string.max_len = 64];
   // status 状态过滤，可选：1=可用 2=停用 3=暂停 4=离职。
   optional int32 status = 4 [(buf.validate.field).int32 = { in: [1, 2, 3, 4] }];
+  // dept_id 部门过滤，可选：只返回属于该部门的用户。
+  optional string dept_id = 5 [(buf.validate.field).string.uuid = true];
+  // include_sub_depts 与 dept_id 同用：是否包含其全部下级部门的用户。
+  bool include_sub_depts = 6;
 }
 
 // ListUsersResponse 分页查询用户响应。

@@ -64,6 +64,9 @@
 | `system_role` | 角色：id/name/code(不可改)/status |
 | `system_user_role` | 绑定关系：id/user_id/role_id + create_time/create_user（物理删除） |
 | `system_login_log` | 登录日志（append-only 审计）：id/user_id(可空，无外键)/username/result（1=成功 2=用户不存在 3=密码错误 4=账号禁用 5=签发令牌失败）/ip/user_agent/create_time |
+| `system_dept` | 部门（组织架构树，软删）：id/parent_id/path（物化路径，层级 ≤10）/name（同一上级下唯一）/code（可空，唯一）/sort/status（1=启用 0=停用）/description；总数 ≤2000 |
+| `system_dept_leader` | 部门负责人（一个部门可多人，按 sort 排序，物理删除）：id/dept_id/user_id/sort；负责人不要求是本部门成员 |
+| `system_user_dept` | 用户所属部门（一个用户可属多个部门，至多一个主部门，物理删除）：id/user_id/dept_id/is_primary；单用户 ≤20 个部门 |
 
 - 业务表软删除（`delete_time` 置位），唯一约束（username/email/phone/code）只约束未删除行；
 - 关联表仅保留 create_time/create_user，解绑即物理删除；
@@ -158,6 +161,148 @@ go test ./...               -race -shuffle=on
   守卫（service 层，身份取 claims）：授予/撤销 is_admin、停用/删除/重置超管账号须由超管操作（否则 403
   PERMISSION_DENIED）；不能停用/删除自己、不能改自己的 is_admin（400 USER_SELF_OPERATION）；
   重置密码/停用/撤销超管后吊销该用户全部刷新令牌，停用账号的 access token 立即失去授权。
+
+部门（组织架构；迁移 0056。树结构写——新建/移动/删除——经同一把事务级 advisory lock 跨实例串行）：
+  POST   /api/v1/system/dept                     创建部门（可带 parent_id / code / sort / leader_ids；同一上级下名称唯一，层级 ≤10）
+  PUT    /api/v1/system/dept/{id}                更新（可选字段；leaders 出现即整组替换负责人，空列表 = 清空；返回更新后的实体）
+  POST   /api/v1/system/dept/{id}/move           调整上级（连同整棵子树；不传 parent_id = 移为根；移到自身/下级之下 400 DEPT_MOVE_INVALID）
+  DELETE /api/v1/system/dept/{id}                删除（软删；仍有下级/成员返回 409 DEPT_HAS_CHILDREN / DEPT_HAS_MEMBERS）
+  GET    /api/v1/system/dept/{id}                详情（含负责人与直属成员数）
+  GET    /api/v1/system/dept                     全部部门（平铺不分页，上级在前；前端按 parent_id 组树）
+  POST   /api/v1/system/dept/{id}/member         添加成员（已在部门内的跳过；用户尚无主部门时该部门成为主部门）
+  GET    /api/v1/system/dept/{id}/member         分页查询成员（最小披露：不含邮箱/手机号；include_sub_depts 含下级；keyword 只匹配登录名/昵称）
+  GET    /api/v1/system/dept-user-candidate      可选用户（可用用户的 ID 与显示名，≤50；供选负责人/加成员，不需要用户管理权限）
+  DELETE /api/v1/system/dept/{id}/member/{user_id}  移出成员（幂等；移出主部门时最早加入的其余部门顶替）
+  用户侧：创建/更新用户可带 depts{dept_ids, primary_dept_id}（与资料写同事务整组替换；不传 = 不改）；
+  用户详情/列表返回 depts（主部门在前）；列表支持 dept_id + include_sub_depts 过滤。删除用户同事务清除其部门归属与负责人身份。
+
+通用附件（file 域；迁移 0057。元数据表 file_object，内容经存储驱动存取：local（本地磁盘 <upload.dir>/files，缺省）
+  或 s3（S3 兼容对象存储：AWS S3 / MinIO / 阿里云 OSS 的 S3 兼容端点；手写 SigV4，无第三方 SDK）。
+  `internal/pkg/storage.ObjectStore` 为驱动接口，新增驱动只需在 data/file.NewStores 登记。
+  切换：upload.driver 置为 s3 并填 upload.s3（endpoint / region / bucket / path_style / prefix），凭据经
+  KRATOS_DATA_UPLOAD_S3_ACCESS_KEY / KRATOS_DATA_UPLOAD_S3_SECRET_KEY 注入；配置不全装配阶段快速失败。桶须事先建好。
+  每个文件记录自己的驱动，切换只影响新上传的文件，旧文件仍按原驱动读取（不迁移存量，两边的存储都要保留）：
+  POST   /api/v1/file                            上传（JSON：filename + Base64 data，≤5MiB；类型按内容嗅探并校验白名单，不含 HTML/SVG；
+                                               单用户未绑定的临时文件 ≤100 个，超出 429 FILE_QUOTA_EXCEEDED）
+  GET    /api/v1/file/{id}                       文件元数据
+  GET    /api/v1/file/{id}/content               下载（恒以附件方式返回：attachment + nosniff + CSP sandbox，不进共享缓存）
+  三个接口免接口授权但须登录；访问控制按归属判定：未绑定的临时文件仅上传者本人可读，已绑定文件由所属业务域登记的
+  AccessChecker 判定（biz.NewFileAccessCheckers，未登记的业务类型一律拒绝）。业务域在自己的写事务里调
+  bizfile.Usecase.Bind/Release 绑定/释放附件。后台循环 file-purge 每 10 分钟清理超过 24h 未绑定的临时文件与
+  软删超过 24h 的文件（SKIP LOCKED 领取，多实例安全；本地驱动多实例须共享卷）。
+
+流程引擎（workflow 域；迁移 0058。通用引擎，不认识任何上层业务：实例只记 business_type + business_id + 变量）：
+  流程定义（草稿可反复保存，发布生成不可变版本；实例绑定发起时的版本）：
+  POST   /api/v1/workflow/definition                       创建（key 创建后不可改；草稿为开始/结束骨架）
+  PUT    /api/v1/workflow/definition/{id}                  更新名称/分类/说明/启停
+  PUT    /api/v1/workflow/definition/{id}/draft            保存草稿流程图（可未完成；revision 乐观锁；响应带校验问题清单）
+  POST   /api/v1/workflow/definition/{id}/publish          发布（草稿须通过校验；revision 须与所见一致）
+  DELETE /api/v1/workflow/definition/{id}                  删除（软删；有进行中的实例返回 409）
+  GET    /api/v1/workflow/definition[/{id}]                列表 / 详情（含草稿与校验问题）
+  GET    /api/v1/workflow/definition/{id}/version[/{n}]    版本列表 / 某版本的流程图
+  流程实例与任务：
+  POST   /api/v1/workflow/instance                         发起独立流程（发起部门缺省取主部门，发起时固化；可带 request_id 幂等键，重复提交返回首次发起的实例）
+  GET    /api/v1/workflow/instance/{id}                    实例详情（流程图 + 任务 + 流转历史；参与者可看，持 ListInstances 权限者可看全部）
+  GET    /api/v1/workflow/my-instance | /instance          我发起的 / 全部（管理视图）
+  POST   /api/v1/workflow/instance/{id}/cancel|terminate   发起人撤回 / 管理员终止（原因必填）
+  GET    /api/v1/workflow/task/todo|done|cc                我的待办 / 已办 / 抄送
+  POST   /api/v1/workflow/task/{id}/approve|reject|return|transfer|reassign   同意 / 拒绝 / 退回 / 转办 / 管理员改派
+  GET    /api/v1/workflow/task/{id}/return-target          可退回到的节点
+  GET    /api/v1/workflow/user-candidate                   可选用户（最小披露）
+  流程图 DSL（internal/biz/workflow/graph.go）：节点 start / end / userTask / cc / exclusiveGateway / parallelGateway；
+  处理人规则 user / role / initiator / deptLeader(level) / deptLeaderOf / formUser（排除发起人本人）/ formDeptLeader，多人模式 any（或签）/
+  all（会签）/ sequential（依次）；分支条件为 CEL（变量 form / initiator / initiatorDept，有成本上限，求值出错视为不命中走默认分支）。
+  一致性：每条写命令 = 一个事务（实例行 FOR UPDATE → 状态机推进 → 回写 → 通知事件直插 → 业务监听器），失败整体回滚；
+  同一实例的命令因行锁串行，重复提交返回 409 WORKFLOW_TASK_NOT_PENDING。上限：单实例 500 个任务、单次推进 200 步。
+  同一业务对象同一时刻至多一个进行中的流程，结束后可再次发起。回写只写变化的执行位置 / 任务；事务内的只读查询
+  （定义、组织目录）经 txrun.NewContext 复用事务连接，一条命令只占一条数据库连接。
+  发布校验要求并行网关成严格的块结构（分叉 / 汇聚一一配对、分支互不相交、连线不得穿越并行分支边界），
+  否则执行位置会等不齐或提前合并。
+  接入方式（进程内）：业务域在自己的写事务里调 RuntimeUsecase.StartTx 发起；在 biz.NewWorkflowListeners 登记监听器，
+  实例结束时同事务回调。通知事件类型 workflow.task.assigned / workflow.task.cc / workflow.instance.finished
+  实例结束时同事务回调；在 biz.NewWorkflowViewers 登记查看权限，让业务侧的管理视图也能看流程进度。
+  通知事件类型 workflow.task.assigned / workflow.task.cc / workflow.instance.finished
+  （biz = default，显式收件人；投递需在通知管理里为这些事件类型配置路由与模板）。
+
+进程角色（可选的分开部署；缺省单进程承担全部角色，行为与以往一致）：
+  同一份程序按角色启动：api = 对外提供业务接口；worker = 运行后台循环（值班延展 / 提醒 / 汇总 / 巡检、
+  附件清理、流程作业与清理、工单 SLA 巡检）。配置 server.roles，或环境变量 SERVER_ROLES=api / worker / api,worker
+  （与 cmdb、notify 服务同名同语义）；角色名写错则启动失败。两种角色连同一个数据库、用同一个版本，
+  后台循环处理每件事仍是一个本地事务（领取均为 SKIP LOCKED，多实例不重复），数据一致性与单进程部署相同。
+  注意：
+  - 至少要有一个进程承担 worker 角色，否则定时节点、任务超时、自动任务、SLA 通知、值班提醒都不会发生且不报错；
+  - 只承担 worker 角色的进程不注册任何业务接口，只保留 /healthz 与 /metrics；
+  - 数据库连接总数 = 各进程数 × data.database.max_conns，须小于 PostgreSQL 的 max_connections；
+  - 发布时两种角色一起升级（共用表结构）；停机宽限期应大于 15 秒（自动任务单次调用的上限）。
+  探活与指标（任何角色都有；只应对集群内的探针 / 采集器开放，不要经网关暴露到公网）：
+  GET /healthz   数据库连通返回 200 ok，否则 503
+  GET /metrics   Prometheus 指标：core_loop_runs_total{loop,result} / core_loop_items_total{loop}（各后台循环的
+                 迭代次数与处理条数）、core_workflow_jobs_overdue（到期超过一分钟仍待执行的流程作业数）、
+                 core_workflow_jobs_overdue_seconds（其中最早一条拖了多久）、core_workflow_jobs_dead（死信数）
+  建议告警：core_workflow_jobs_overdue > 0 持续 5 分钟（worker 没起来或处理不过来）；
+  core_loop_runs_total{result="error"} 持续增长；core_workflow_jobs_dead > 0（有作业等人工处理）。
+
+流程引擎增强（迁移 0060 / 0062）：
+  节点：inclusiveGateway（包容网关：走全部条件成立的分支，都不成立走默认分支；须与汇聚成对）、timer（定时 / 等待：
+  延时、等到表单里的某个时刻、等外部信号）、serviceTask（自动任务：调用已登记的 Webhook 端点）、subProcess（子流程）；
+  userTask 可配 timeout（处理时限：仅提醒 / 自动同意 / 自动拒绝 / 转交流程管理员，可提前提醒）与
+  formPermissions（字段码 → hidden / readonly / editable / required，由上层业务域解释）。
+  超时「自动同意」与人工同意走同一道业务校验：业务域不放行（如工单本环节必填的字段还空着）时不自动同意，改为提醒。
+  作业队列 workflow_job：定时到期、任务超时、自动任务、父子流程衔接都排成作业，由后台执行器领取
+  （SKIP LOCKED + 租约，多实例安全；每条作业只锁自己所属的实例；作业天然幂等）。两个循环分开领取：
+  workflow-job 逐条执行引擎内部作业，workflow-service 并发（上限 4）执行自动任务——外部端点再慢也不会
+  挡住定时与超时。自动任务在事务外调用端点，
+  投递语义为至少一次（请求头 X-Workflow-Job-Id 供接收端去重；配置了密钥时带 X-Workflow-Signature =
+  sha256=HMAC-SHA256(secret, 时间戳.请求体)），失败退避重试，耗尽进死信并通知流程管理员，管理员可重试或跳过。
+  端点只能是 https、不跟随跳转，连接前对解析出的真实地址做内网校验；地址与密钥在 workflow_webhook 里维护
+  （密钥 AES-256-GCM 加密，与通知渠道共用主密钥），流程图里只引用端点 ID。
+  子流程：在父流程的事务里发起，继承发起人 / 发起部门 / 变量；父子之间只经作业衔接（子流程结束唤醒父流程、
+  父流程结束终止子流程），任何事务都只锁一个实例。嵌套深度上限 5，发布时拒绝互相调用成环。
+  子流程自己不挂业务对象，但带着根流程的引用（root_id / root_business_type / root_business_id）：子流程里
+  的待办按业务类型能查到、其处理人算作业务对象的参与者，字段权限与同意前校验照常生效；业务域的
+  「实例结束」监听只对顶层流程触发。父子实例各有一份变量（发起时拷贝，之后互不同步）。
+  协作：加签（前 / 后）、委派（对方只给意见，决定权回到自己）、代理设置（一段时间内新到的待办交给代理人，
+  只转一层）、交接（把某人名下全部未了结的待办换给另一人）。
+  工作日历（全局一份）：时区、每周工作日、每日工作时段、节假日与调休；按工作时间计的时限据此推算。
+  POST   /api/v1/workflow/task/{id}/add-sign|delegate              加签 / 委派
+  POST   /api/v1/workflow/instance/{id}/signal                     投递外部信号（可带数据并入流程变量）
+  POST   /api/v1/workflow/instance/{id}/job/{job_id}/retry|skip    重试死信作业 / 跳过定时或自动任务节点
+  POST   /api/v1/workflow/handover                                 交接待办（一次至多 100 个实例，more=true 时再调）
+  POST   /api/v1/workflow/definition/{id}/simulate                 模拟运行（内存里走一遍，不落库、不通知、不外调）
+  GET|PUT /api/v1/workflow/calendar                                工作日历
+  GET|POST|DELETE /api/v1/workflow/delegation[/{id}]               我的代理设置
+  GET|POST|PUT|DELETE /api/v1/workflow/webhook[/{id}]              Webhook 端点
+  GET|POST|PUT|DELETE /api/v1/workflow/client[/{id}]、POST …/{id}/token   接入凭据（令牌明文只在创建 / 重置时返回一次）
+  开放接口（供其他系统接入；不走用户登录，请求头 Authorization: Bearer <接入令牌>；库内只存令牌的 SHA-256）：
+  POST   /api/v1/open/workflow/instance                    发起（只能发起凭据允许的流程；以凭据的代表用户为发起人；建议带 request_id）
+  GET    /api/v1/open/workflow/instance/{id}               查询（只能查自己发起的）
+  POST   /api/v1/open/workflow/instance/{id}/signal|cancel 投递信号 / 撤回
+  新增通知事件类型 workflow.task.remind（超时提醒）/ workflow.service.failed（作业进入死信）。
+
+工单（ticket 域；迁移 0059 / 0061。流转完全交给流程引擎，本域只管服务目录、表单数据、评论与由流程同步来的状态）：
+  GET    /api/v1/ticket/catalog                            可提单的服务目录：只含启用的模板
+  GET    /api/v1/ticket/managed-catalog                    完整的服务目录（含已停用的模板；管理页用，持此权限者才能读已停用模板的详情）
+  POST|PUT|DELETE /api/v1/ticket/category[/{id}]           分类维护（分类下仍有模板时删除返回 409）
+  POST|PUT|DELETE|GET /api/v1/ticket/template[/{id}]       模板维护 / 详情（表单字段 + 绑定的流程标识 + 编号前缀）
+  POST   /api/v1/ticket/order                              提单（可带附件 file_ids、发起部门、request_id 幂等键）
+  GET    /api/v1/ticket/order/{id}                         详情（表单快照 + 数据 + 附件 + 人员 / 部门显示名）
+  GET    /api/v1/ticket/my-order | /api/v1/ticket/order    我提交的 / 全部（管理视图）
+  GET|POST /api/v1/ticket/order/{id}/comment               评论（只追加，单张工单至多 500 条；单人每分钟至多 30 条，超出返回 429）
+  待办 / 已办、同意 / 拒绝 / 退回 / 转办 / 撤回直接用流程引擎的任务接口（列表带 business_type=ticket，business_id 即工单 ID）。
+  表单字段类型 string / text / int / float / bool / enum / datetime / user / dept，校验复用 internal/pkg/formschema；
+  流程变量 = 表单数据 + priority（条件表达式写 form.<字段码> / form.priority）。
+  一致性：提单在一个事务内完成「校验表单 → 取编号 → 落工单 → 绑定附件 → 发起流程」，任一步失败整体回滚；
+  工单状态由流程引擎在实例结束的同一事务里回写。编号 <前缀>-<yyyymmdd>-<4 位序号>，按前缀 + 日期行锁自增，回滚不留空号。
+  工单保存提单时的表单定义快照，模板之后的修改不影响已有工单。
+  可见性：提单人、流程参与者（处理人 / 抄送人）、持「全部工单」权限者；附件与流程进度的可见性跟随工单。
+  SLA：模板按优先级配置响应 / 解决时限（可按工作时间计，用流程引擎的工作日历），提单时算出并固化；
+  处理人第一次有实质动作即「已响应」（由流程引擎同事务回写）。后台每分钟巡检，超时的工单各通知一次
+  当前处理人与模板配置的升级对象（事件类型 ticket.sla.breached；多实例不重复通知）。
+  字段权限：流程节点的 formPermissions 决定处理人在该环节能改哪些字段（PUT /api/v1/ticket/order/{id}/form，
+  改动同事务同步到流程变量）、哪些必须填了才能同意、哪些不给看（只是处理人 / 抄送人时不返回；提单人与管理视图看全部）。
+  关联资源：模板可要求提单时关联 CMDB 资源（可选 / 必填）；只能关联提单人有权查看的资源，名称存快照。
+  满意度：工单结束后提单人评价一次（POST /api/v1/ticket/order/{id}/rating）。
+  统计：GET /api/v1/ticket/stats?days=30（数量与分布、每日趋势、平均处理时长、SLA 达成率、满意度）。
 
 角色：
   POST   /api/v1/system/role                     创建角色（可带 biz_scope：可管理的通知 biz 列表，空=不限）

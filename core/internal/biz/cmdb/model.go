@@ -5,6 +5,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/lanyulei/reborn/backend/core/internal/pkg/formschema"
 	"github.com/lanyulei/reborn/backend/kit/cmdbcontract"
 
 	"github.com/lanyulei/reborn/backend/kit/idgen"
@@ -17,17 +18,18 @@ const (
 	ModelStatusDisabled int32 = 2
 )
 
-// 字段数据类型。
+// 字段数据类型（字面量即 DDL / proto 契约；取值校验实现见 internal/pkg/formschema，
+// 常量在此引用同一组定义，两处不会漂移）。
 const (
-	FieldTypeString   = "string"
-	FieldTypeInt      = "int"
-	FieldTypeFloat    = "float"
-	FieldTypeBool     = "bool"
-	FieldTypeEnum     = "enum"
-	FieldTypeDatetime = "datetime"
-	FieldTypeJSON     = "json"
-	FieldTypeIP       = "ip"
-	FieldTypeRef      = "ref"
+	FieldTypeString   = formschema.TypeString
+	FieldTypeInt      = formschema.TypeInt
+	FieldTypeFloat    = formschema.TypeFloat
+	FieldTypeBool     = formschema.TypeBool
+	FieldTypeEnum     = formschema.TypeEnum
+	FieldTypeDatetime = formschema.TypeDatetime
+	FieldTypeJSON     = formschema.TypeJSON
+	FieldTypeIP       = formschema.TypeIP
+	FieldTypeRef      = formschema.TypeRef
 )
 
 // 字段归属。

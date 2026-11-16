@@ -296,3 +296,129 @@ func IsAvatarNotFound(err error) bool {
 func ErrorAvatarNotFound(format string, args ...interface{}) *errors.Error {
 	return errors.New(404, ErrorReason_AVATAR_NOT_FOUND.String(), fmt.Sprintf(format, args...))
 }
+
+// DEPT_UNSPECIFIED 未指定的部门错误。
+func IsDeptUnspecified(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := errors.FromError(err)
+	return e.Reason == ErrorReason_DEPT_UNSPECIFIED.String() && e.Code == 500
+}
+
+// DEPT_UNSPECIFIED 未指定的部门错误。
+func ErrorDeptUnspecified(format string, args ...interface{}) *errors.Error {
+	return errors.New(500, ErrorReason_DEPT_UNSPECIFIED.String(), fmt.Sprintf(format, args...))
+}
+
+// DEPT_NOT_FOUND 部门不存在，映射 HTTP 404。
+func IsDeptNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := errors.FromError(err)
+	return e.Reason == ErrorReason_DEPT_NOT_FOUND.String() && e.Code == 404
+}
+
+// DEPT_NOT_FOUND 部门不存在，映射 HTTP 404。
+func ErrorDeptNotFound(format string, args ...interface{}) *errors.Error {
+	return errors.New(404, ErrorReason_DEPT_NOT_FOUND.String(), fmt.Sprintf(format, args...))
+}
+
+// DEPT_NAME_EXISTS 同一上级部门下名称已被占用，映射 HTTP 409。
+func IsDeptNameExists(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := errors.FromError(err)
+	return e.Reason == ErrorReason_DEPT_NAME_EXISTS.String() && e.Code == 409
+}
+
+// DEPT_NAME_EXISTS 同一上级部门下名称已被占用，映射 HTTP 409。
+func ErrorDeptNameExists(format string, args ...interface{}) *errors.Error {
+	return errors.New(409, ErrorReason_DEPT_NAME_EXISTS.String(), fmt.Sprintf(format, args...))
+}
+
+// DEPT_CODE_EXISTS 部门编码已被占用，映射 HTTP 409。
+func IsDeptCodeExists(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := errors.FromError(err)
+	return e.Reason == ErrorReason_DEPT_CODE_EXISTS.String() && e.Code == 409
+}
+
+// DEPT_CODE_EXISTS 部门编码已被占用，映射 HTTP 409。
+func ErrorDeptCodeExists(format string, args ...interface{}) *errors.Error {
+	return errors.New(409, ErrorReason_DEPT_CODE_EXISTS.String(), fmt.Sprintf(format, args...))
+}
+
+// DEPT_HAS_CHILDREN 部门下仍有下级部门，不可删除，映射 HTTP 409。
+func IsDeptHasChildren(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := errors.FromError(err)
+	return e.Reason == ErrorReason_DEPT_HAS_CHILDREN.String() && e.Code == 409
+}
+
+// DEPT_HAS_CHILDREN 部门下仍有下级部门，不可删除，映射 HTTP 409。
+func ErrorDeptHasChildren(format string, args ...interface{}) *errors.Error {
+	return errors.New(409, ErrorReason_DEPT_HAS_CHILDREN.String(), fmt.Sprintf(format, args...))
+}
+
+// DEPT_HAS_MEMBERS 部门下仍有成员，不可删除，映射 HTTP 409。
+func IsDeptHasMembers(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := errors.FromError(err)
+	return e.Reason == ErrorReason_DEPT_HAS_MEMBERS.String() && e.Code == 409
+}
+
+// DEPT_HAS_MEMBERS 部门下仍有成员，不可删除，映射 HTTP 409。
+func ErrorDeptHasMembers(format string, args ...interface{}) *errors.Error {
+	return errors.New(409, ErrorReason_DEPT_HAS_MEMBERS.String(), fmt.Sprintf(format, args...))
+}
+
+// DEPT_MOVE_INVALID 不能把部门移到自身或自身的下级部门之下，映射 HTTP 400。
+func IsDeptMoveInvalid(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := errors.FromError(err)
+	return e.Reason == ErrorReason_DEPT_MOVE_INVALID.String() && e.Code == 400
+}
+
+// DEPT_MOVE_INVALID 不能把部门移到自身或自身的下级部门之下，映射 HTTP 400。
+func ErrorDeptMoveInvalid(format string, args ...interface{}) *errors.Error {
+	return errors.New(400, ErrorReason_DEPT_MOVE_INVALID.String(), fmt.Sprintf(format, args...))
+}
+
+// DEPT_DEPTH_EXCEEDED 部门层级超过上限，映射 HTTP 400。
+func IsDeptDepthExceeded(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := errors.FromError(err)
+	return e.Reason == ErrorReason_DEPT_DEPTH_EXCEEDED.String() && e.Code == 400
+}
+
+// DEPT_DEPTH_EXCEEDED 部门层级超过上限，映射 HTTP 400。
+func ErrorDeptDepthExceeded(format string, args ...interface{}) *errors.Error {
+	return errors.New(400, ErrorReason_DEPT_DEPTH_EXCEEDED.String(), fmt.Sprintf(format, args...))
+}
+
+// DEPT_LIMIT_EXCEEDED 部门总数或单个用户所属部门数超过上限，映射 HTTP 400。
+func IsDeptLimitExceeded(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := errors.FromError(err)
+	return e.Reason == ErrorReason_DEPT_LIMIT_EXCEEDED.String() && e.Code == 400
+}
+
+// DEPT_LIMIT_EXCEEDED 部门总数或单个用户所属部门数超过上限，映射 HTTP 400。
+func ErrorDeptLimitExceeded(format string, args ...interface{}) *errors.Error {
+	return errors.New(400, ErrorReason_DEPT_LIMIT_EXCEEDED.String(), fmt.Sprintf(format, args...))
+}

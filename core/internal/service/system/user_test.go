@@ -21,7 +21,7 @@ func newUserService(t *testing.T) (*UserService, *testfake.Store) {
 		t.Fatalf("testfake.NewHasher() error = %v", err)
 	}
 	uc := biz.NewUserUsecase(store, store, store, store, hasher, store)
-	return NewUserService(uc), store
+	return NewUserService(uc, biz.NewDeptUsecase(store, store, store, store, store)), store
 }
 
 func TestUserService_CreateUser(t *testing.T) {

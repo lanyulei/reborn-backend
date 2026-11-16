@@ -59,15 +59,24 @@ type User struct {
 	IsAdmin  bool
 	Status   int32
 	// Avatar 头像地址；空 = 未设置。
-	Avatar     string
+	Avatar string
+	// Depts 所属部门：仅创建链路携带（与建号同事务写入）；读路径不回填，
+	// 所属部门经 DeptUsecase.UserDepts 批量查询。
+	Depts      *UserDeptAssignment
 	CreateTime time.Time
 	UpdateTime time.Time
 }
 
-// UserFilter 是用户列表过滤条件；Status 为 nil 表示不过滤。
+// UserFilter 是用户列表过滤条件；Status 为 nil 表示不过滤。DeptID 非空时只
+// 返回属于该部门的用户，IncludeSubDepts 同时包含其全部下级部门的用户。
+// NameOnly 时 Keyword 只匹配登录名/昵称（最小披露的查询面不得经关键字探测
+// 邮箱、手机号是否存在）。
 type UserFilter struct {
-	Keyword string
-	Status  *int32
+	Keyword         string
+	NameOnly        bool
+	Status          *int32
+	DeptID          string
+	IncludeSubDepts bool
 }
 
 // UserUpdate 是用户部分更新；nil 字段不更新。
@@ -81,6 +90,8 @@ type UserUpdate struct {
 	Status       *int32
 	PasswordHash *string
 	Avatar       *string
+	// Depts 非 nil 时整组替换所属部门（与资料更新同事务）。
+	Depts *UserDeptAssignment
 }
 
 // 用户域哨兵错误：跨层业务错误统一携带 Kratos code/reason，
@@ -116,12 +127,15 @@ type UserReader interface {
 type UserWriter interface {
 	// CreateUser 创建用户；username/email/phone 冲突分别返回对应哨兵错误。
 	CreateUser(ctx context.Context, user *User) error
-	// CreateUserWithRoles 创建用户并在同一事务内写入其角色绑定（roleIDs 可空）：
+	// CreateUserWithRoles 创建用户并在同一事务内写入其角色绑定（roleIDs 可空）
+	// 与所属部门（user.Depts 非 nil 时；部门不存在返回 ErrDeptNotFound）：
 	// 任一步失败整体回滚，不留下「已建号但缺默认角色」的半成品。冲突哨兵同 CreateUser。
 	CreateUserWithRoles(ctx context.Context, user *User, roleIDs []string) error
-	// UpdateUser 按 ID 部分更新未删除用户；不存在返回 ErrUserNotFound。
+	// UpdateUser 按 ID 部分更新未删除用户（upd.Depts 非 nil 时同事务整组替换
+	// 所属部门，部门不存在返回 ErrDeptNotFound）；不存在返回 ErrUserNotFound。
 	UpdateUser(ctx context.Context, id string, upd UserUpdate) error
-	// DeleteUser 软删用户并同事务物理删除其全部角色绑定与刷新令牌；不存在返回 ErrUserNotFound。
+	// DeleteUser 软删用户并同事务物理删除其全部角色绑定、刷新令牌、部门归属与
+	// 部门负责人身份；不存在返回 ErrUserNotFound。
 	DeleteUser(ctx context.Context, id string) error
 }
 
@@ -158,6 +172,13 @@ func (uc *UserUsecase) Create(ctx context.Context, user *User) (*User, error) {
 	if err != nil {
 		return nil, fmt.Errorf("hash password: %w", err)
 	}
+	if user.Depts != nil {
+		depts, err := user.Depts.normalized()
+		if err != nil {
+			return nil, err
+		}
+		user.Depts = &depts
+	}
 	now := time.Now().UTC()
 	user.ID = id
 	user.Password = hash
@@ -172,6 +193,7 @@ func (uc *UserUsecase) Create(ctx context.Context, user *User) (*User, error) {
 		return nil, err
 	}
 	user.Password = ""
+	user.Depts = nil
 	return user, nil
 }
 
@@ -180,6 +202,13 @@ func (uc *UserUsecase) Create(ctx context.Context, user *User) (*User, error) {
 // 登录（access token 剩余 ≤access_ttl 的残留窗口由 authz 实时读 is_admin
 // 覆盖）。
 func (uc *UserUsecase) Update(ctx context.Context, id string, upd UserUpdate) error {
+	if upd.Depts != nil {
+		depts, err := upd.Depts.normalized()
+		if err != nil {
+			return err
+		}
+		upd.Depts = &depts
+	}
 	if err := uc.writer.UpdateUser(ctx, id, upd); err != nil {
 		return err
 	}

@@ -47,8 +47,10 @@ var permissionCatalog = []MenuSpec{
 	{
 		Code: "system.user",
 		Name: "用户管理",
+		// 部门列表：用户页的部门筛选与所属部门选择依赖部门树。
 		DefaultOps: []string{
 			"/system.v1.UserService/ListUsers",
+			"/system.v1.DeptService/ListDepts",
 		},
 		Elements: []ElementSpec{
 			{
@@ -125,6 +127,303 @@ var permissionCatalog = []MenuSpec{
 				Name: "删除角色",
 				Ops:  []string{"/system.v1.RoleService/DeleteRole"},
 			},
+		},
+	},
+	{
+		Code: "system.dept",
+		Name: "部门管理",
+		// 成员抽屉与负责人/成员选择走部门域自己的最小披露接口，不附带完整用户列表。
+		DefaultOps: []string{
+			"/system.v1.DeptService/ListDepts",
+			"/system.v1.DeptService/ListDeptMembers",
+			"/system.v1.DeptService/ListUserCandidates",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "system.dept.create",
+				Name: "新建部门",
+				Ops:  []string{"/system.v1.DeptService/CreateDept"},
+			},
+			{
+				Code: "system.dept.edit",
+				Name: "编辑部门",
+				// 编辑表单可同时调整上级部门，移动与更新一并授权
+				Ops: []string{
+					"/system.v1.DeptService/GetDept",
+					"/system.v1.DeptService/UpdateDept",
+					"/system.v1.DeptService/MoveDept",
+				},
+			},
+			{
+				Code: "system.dept.member",
+				Name: "管理部门成员",
+				Ops: []string{
+					"/system.v1.DeptService/AddDeptMembers",
+					"/system.v1.DeptService/RemoveDeptMember",
+				},
+			},
+			{
+				Code: "system.dept.delete",
+				Name: "删除部门",
+				Ops:  []string{"/system.v1.DeptService/DeleteDept"},
+			},
+		},
+	},
+	{
+		Code: "workflow.task",
+		Name: "我的流程",
+		// 个人工作台：待办 / 已办 / 抄送 / 我发起的；看得到待办即可处理，处理动作随页面默认授权。
+		DefaultOps: []string{
+			"/workflow.v1.WorkflowTaskService/ListTodoTasks",
+			"/workflow.v1.WorkflowTaskService/ListDoneTasks",
+			"/workflow.v1.WorkflowTaskService/ListCcTasks",
+			"/workflow.v1.WorkflowInstanceService/ListMyInstances",
+			"/workflow.v1.WorkflowInstanceService/GetInstance",
+			"/workflow.v1.WorkflowInstanceService/CancelInstance",
+			"/workflow.v1.WorkflowTaskService/ApproveTask",
+			"/workflow.v1.WorkflowTaskService/RejectTask",
+			"/workflow.v1.WorkflowTaskService/ReturnTask",
+			"/workflow.v1.WorkflowTaskService/ListReturnTargets",
+			"/workflow.v1.WorkflowTaskService/TransferTask",
+			"/workflow.v1.WorkflowTaskService/AddSignTask",
+			"/workflow.v1.WorkflowTaskService/DelegateTask",
+			"/workflow.v1.WorkflowTaskService/ListUserCandidates",
+			// 个人代理设置（请假期间把新到的待办交给代理人）。
+			"/workflow.v1.WorkflowConfigService/ListMyDelegations",
+			"/workflow.v1.WorkflowConfigService/CreateDelegation",
+			"/workflow.v1.WorkflowConfigService/DeleteDelegation",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "workflow.task.start",
+				Name: "发起流程",
+				Ops: []string{
+					"/workflow.v1.WorkflowInstanceService/StartInstance",
+					"/workflow.v1.WorkflowDefinitionService/ListDefinitions",
+				},
+			},
+		},
+	},
+	{
+		Code: "workflow.definition",
+		Name: "流程设计",
+		DefaultOps: []string{
+			"/workflow.v1.WorkflowDefinitionService/ListDefinitions",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "workflow.definition.create",
+				Name: "新建流程",
+				Ops:  []string{"/workflow.v1.WorkflowDefinitionService/CreateDefinition"},
+			},
+			{
+				Code: "workflow.definition.edit",
+				Name: "编辑流程",
+				// 设计器需要：读写草稿、模拟运行、查看历史版本，以及选人 / 选角色 / 选部门 /
+				// 选 Webhook 端点的候选数据。
+				Ops: []string{
+					"/workflow.v1.WorkflowDefinitionService/GetDefinition",
+					"/workflow.v1.WorkflowDefinitionService/UpdateDefinition",
+					"/workflow.v1.WorkflowDefinitionService/SaveDefinitionDraft",
+					"/workflow.v1.WorkflowDefinitionService/SimulateDefinition",
+					"/workflow.v1.WorkflowDefinitionService/ListDefinitionVersions",
+					"/workflow.v1.WorkflowDefinitionService/GetDefinitionVersion",
+					"/workflow.v1.WorkflowConfigService/ListWebhooks",
+					"/workflow.v1.WorkflowTaskService/ListUserCandidates",
+					"/system.v1.RoleService/ListRoles",
+					"/system.v1.DeptService/ListDepts",
+				},
+			},
+			{
+				Code: "workflow.definition.publish",
+				Name: "发布流程",
+				Ops:  []string{"/workflow.v1.WorkflowDefinitionService/PublishDefinition"},
+			},
+			{
+				Code: "workflow.definition.delete",
+				Name: "删除流程",
+				Ops:  []string{"/workflow.v1.WorkflowDefinitionService/DeleteDefinition"},
+			},
+		},
+	},
+	{
+		Code: "workflow.instance",
+		Name: "流程监控",
+		// 管理视图：可查看全部流程实例（持有 ListInstances 即可看任意实例详情）。
+		DefaultOps: []string{
+			"/workflow.v1.WorkflowInstanceService/ListInstances",
+			"/workflow.v1.WorkflowInstanceService/GetInstance",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "workflow.instance.terminate",
+				Name: "终止流程",
+				Ops:  []string{"/workflow.v1.WorkflowInstanceService/TerminateInstance"},
+			},
+			{
+				Code: "workflow.instance.reassign",
+				Name: "改派任务",
+				Ops: []string{
+					"/workflow.v1.WorkflowTaskService/ReassignTask",
+					"/workflow.v1.WorkflowTaskService/ListUserCandidates",
+				},
+			},
+			{
+				Code: "workflow.instance.wait",
+				Name: "处理等待节点",
+				// 自动任务进入死信后的重试 / 跳过、跳过定时节点、投递外部信号。
+				Ops: []string{
+					"/workflow.v1.WorkflowInstanceService/RetryInstanceJob",
+					"/workflow.v1.WorkflowInstanceService/SkipInstanceJob",
+					"/workflow.v1.WorkflowInstanceService/SignalInstance",
+				},
+			},
+			{
+				Code: "workflow.instance.handover",
+				Name: "交接待办",
+				// 离职 / 调岗：把某人名下全部待办换给另一个人。
+				Ops: []string{
+					"/workflow.v1.WorkflowInstanceService/HandoverTasks",
+					"/workflow.v1.WorkflowTaskService/ListUserCandidates",
+				},
+			},
+		},
+	},
+	{
+		Code: "workflow.config",
+		Name: "流程配置",
+		// 工作日历与自动任务可调用的 Webhook 端点。
+		DefaultOps: []string{
+			"/workflow.v1.WorkflowConfigService/GetCalendar",
+			"/workflow.v1.WorkflowConfigService/ListWebhooks",
+			"/workflow.v1.WorkflowConfigService/ListClients",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "workflow.config.calendar",
+				Name: "编辑工作日历",
+				Ops:  []string{"/workflow.v1.WorkflowConfigService/UpdateCalendar"},
+			},
+			{
+				Code: "workflow.config.webhook",
+				Name: "维护 Webhook 端点",
+				Ops: []string{
+					"/workflow.v1.WorkflowConfigService/CreateWebhook",
+					"/workflow.v1.WorkflowConfigService/UpdateWebhook",
+					"/workflow.v1.WorkflowConfigService/DeleteWebhook",
+				},
+			},
+			{
+				Code: "workflow.config.client",
+				Name: "维护接入凭据",
+				// 外部系统的接入令牌：创建 / 重置时令牌明文只返回一次。表单里要选代表用户与允许的流程。
+				Ops: []string{
+					"/workflow.v1.WorkflowConfigService/CreateClient",
+					"/workflow.v1.WorkflowConfigService/UpdateClient",
+					"/workflow.v1.WorkflowConfigService/RotateClientToken",
+					"/workflow.v1.WorkflowConfigService/DeleteClient",
+					"/workflow.v1.WorkflowTaskService/ListUserCandidates",
+					"/workflow.v1.WorkflowDefinitionService/ListDefinitions",
+				},
+			},
+		},
+	},
+	{
+		Code: "ticket.mine",
+		Name: "我的工单",
+		// 个人视图：提单、我提交的、待我处理的；处理动作走流程引擎的任务接口，随页面默认授权。
+		DefaultOps: []string{
+			"/ticket.v1.TicketService/ListMyTickets",
+			"/ticket.v1.TicketService/GetTicket",
+			"/ticket.v1.TicketService/ListTicketComments",
+			"/ticket.v1.TicketService/AddTicketComment",
+			"/ticket.v1.TicketService/UpdateTicketForm",
+			"/ticket.v1.TicketService/RateTicket",
+			"/workflow.v1.WorkflowTaskService/ListTodoTasks",
+			"/workflow.v1.WorkflowTaskService/ListDoneTasks",
+			// 抄送给我的工单（工单列表的「抄送我的」页签）。
+			"/workflow.v1.WorkflowTaskService/ListCcTasks",
+			"/workflow.v1.WorkflowInstanceService/GetInstance",
+			"/workflow.v1.WorkflowInstanceService/CancelInstance",
+			"/workflow.v1.WorkflowTaskService/ApproveTask",
+			"/workflow.v1.WorkflowTaskService/RejectTask",
+			"/workflow.v1.WorkflowTaskService/ReturnTask",
+			"/workflow.v1.WorkflowTaskService/ListReturnTargets",
+			"/workflow.v1.WorkflowTaskService/TransferTask",
+			"/workflow.v1.WorkflowTaskService/AddSignTask",
+			"/workflow.v1.WorkflowTaskService/DelegateTask",
+			"/workflow.v1.WorkflowTaskService/ListUserCandidates",
+			// 个人代理设置（工单列表里的入口；请假期间把新到的待办交给代理人）。
+			"/workflow.v1.WorkflowConfigService/ListMyDelegations",
+			"/workflow.v1.WorkflowConfigService/CreateDelegation",
+			"/workflow.v1.WorkflowConfigService/DeleteDelegation",
+			// 处理人修改表单里的部门字段时要加载部门树（不只是提单时）。
+			"/system.v1.DeptService/ListDepts",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "ticket.mine.create",
+				Name: "提交工单",
+				// 提单页需要：服务目录、模板表单，以及表单里选部门 / 选人的候选数据。
+				Ops: []string{
+					"/ticket.v1.TicketService/CreateTicket",
+					"/ticket.v1.TicketCatalogService/ListCatalog",
+					"/ticket.v1.TicketCatalogService/GetTemplate",
+					"/system.v1.DeptService/ListDepts",
+				},
+			},
+		},
+	},
+	{
+		Code: "ticket.catalog",
+		Name: "服务目录",
+		// 管理页看完整目录（含已停用的模板）。
+		DefaultOps: []string{
+			"/ticket.v1.TicketCatalogService/ListManagedCatalog",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "ticket.catalog.category",
+				Name: "维护工单分类",
+				Ops: []string{
+					"/ticket.v1.TicketCatalogService/CreateCategory",
+					"/ticket.v1.TicketCatalogService/UpdateCategory",
+					"/ticket.v1.TicketCatalogService/DeleteCategory",
+				},
+			},
+			{
+				Code: "ticket.catalog.template",
+				Name: "维护工单模板",
+				// 模板表单里要选择所绑定的流程，以及 SLA 超时的升级通知对象（选人）。
+				Ops: []string{
+					"/ticket.v1.TicketCatalogService/GetTemplate",
+					"/ticket.v1.TicketCatalogService/CreateTemplate",
+					"/ticket.v1.TicketCatalogService/UpdateTemplate",
+					"/ticket.v1.TicketCatalogService/DeleteTemplate",
+					"/workflow.v1.WorkflowDefinitionService/ListDefinitions",
+					"/workflow.v1.WorkflowTaskService/ListUserCandidates",
+				},
+			},
+		},
+	},
+	{
+		Code: "ticket.all",
+		Name: "全部工单",
+		// 管理视图：持有 ListTickets 即可查看任意工单（详情、评论、附件）。
+		DefaultOps: []string{
+			"/ticket.v1.TicketService/ListTickets",
+			"/ticket.v1.TicketService/GetTicket",
+			"/ticket.v1.TicketService/ListTicketComments",
+			"/ticket.v1.TicketService/AddTicketComment",
+			"/ticket.v1.TicketCatalogService/ListManagedCatalog",
+			"/workflow.v1.WorkflowInstanceService/GetInstance",
+		},
+	},
+	{
+		Code: "ticket.stats",
+		Name: "工单统计",
+		DefaultOps: []string{
+			"/ticket.v1.TicketService/GetTicketStats",
 		},
 	},
 	{

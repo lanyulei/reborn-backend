@@ -7,6 +7,7 @@
 package data
 
 import (
+	"context"
 	"time"
 
 	"github.com/lanyulei/reborn/backend/core/internal/conf"
@@ -31,6 +32,11 @@ const dataPingTimeout = 3 * time.Second
 type Data struct {
 	Pool    *pgxpool.Pool
 	LogoDir string
+}
+
+// Ping 探测数据库连通性（存活探针用）。
+func (d *Data) Ping(ctx context.Context) error {
+	return d.Pool.Ping(ctx)
 }
 
 // NewData 构造数据层资源：解析 DSN、应用连接池参数并 Ping 验证连通性，

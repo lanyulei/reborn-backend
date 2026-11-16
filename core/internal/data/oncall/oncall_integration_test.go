@@ -66,7 +66,8 @@ func newEnv(t *testing.T) *env {
 	ctx := context.Background()
 	if _, err := d.Pool.Exec(ctx, `TRUNCATE TABLE oncall_change_log, oncall_share_link, oncall_shift, oncall_schedule_member,
 		oncall_schedule, oncall_group_member, oncall_group, notify_event, notify_dedup,
-		system_permission, system_grant, system_refresh_token, system_user_role, "system_user"`); err != nil {
+		system_permission, system_grant, system_refresh_token, system_user_role,
+		system_dept_leader, system_user_dept, "system_user"`); err != nil {
 		t.Fatalf("truncate tables: %v", err)
 	}
 	for i, u := range []struct {

@@ -1,0 +1,349 @@
+syntax = "proto3";
+
+package workflow.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "buf/validate/validate.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/workflow/v1;v1";
+
+// WorkflowDefinitionService 流程定义管理：草稿可反复保存，发布生成不可变版本，
+// 实例绑定发起时的版本（改定义不影响在途实例）。
+service WorkflowDefinitionService {
+  // CreateDefinition 创建流程定义（草稿为只含开始 / 结束节点的骨架）。
+  rpc CreateDefinition(CreateDefinitionRequest) returns (CreateDefinitionResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/workflow/definition"
+      body: "*"
+    };
+    option (system.v1.title) = "创建流程定义";
+  }
+  // UpdateDefinition 更新流程的名称 / 分类 / 说明 / 启停（不涉及流程图）。
+  rpc UpdateDefinition(UpdateDefinitionRequest) returns (UpdateDefinitionResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/workflow/definition/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "更新流程定义";
+  }
+  // SaveDefinitionDraft 保存草稿流程图（可以是未完成状态）；revision 做乐观锁，
+  // 响应带回当前的校验问题清单。
+  rpc SaveDefinitionDraft(SaveDefinitionDraftRequest) returns (SaveDefinitionDraftResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/workflow/definition/{id}/draft"
+      body: "*"
+    };
+    option (system.v1.title) = "保存流程草稿";
+  }
+  // PublishDefinition 发布当前草稿为新版本；草稿未通过校验返回 WORKFLOW_DEFINITION_INVALID。
+  rpc PublishDefinition(PublishDefinitionRequest) returns (PublishDefinitionResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/workflow/definition/{id}/publish"
+      body: "*"
+    };
+    option (system.v1.title) = "发布流程定义";
+  }
+  // DeleteDefinition 删除流程定义（软删）；仍有进行中的实例时拒绝。
+  rpc DeleteDefinition(DeleteDefinitionRequest) returns (DeleteDefinitionResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/workflow/definition/{id}"
+    };
+    option (system.v1.title) = "删除流程定义";
+  }
+  // GetDefinition 查询流程定义详情（含草稿流程图与校验问题）。
+  rpc GetDefinition(GetDefinitionRequest) returns (GetDefinitionResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/workflow/definition/{id}"
+    };
+    option (system.v1.title) = "查询流程定义详情";
+  }
+  // ListDefinitions 分页查询流程定义，page_size 上限 100。
+  rpc ListDefinitions(ListDefinitionsRequest) returns (ListDefinitionsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/workflow/definition"
+    };
+    option (system.v1.title) = "查询流程定义列表";
+  }
+  // ListDefinitionVersions 查询流程的全部已发布版本（不含流程图，版本号倒序）。
+  rpc ListDefinitionVersions(ListDefinitionVersionsRequest) returns (ListDefinitionVersionsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/workflow/definition/{id}/version"
+    };
+    option (system.v1.title) = "查询流程版本列表";
+  }
+  // GetDefinitionVersion 查询某个已发布版本的流程图。
+  // SimulateDefinition 模拟运行一份流程图（设计器当前的内容，不必已保存）：不落库、不发通知、
+  // 不调用外部系统，返回将会依次经过的节点与各节点解析出的处理人。
+  rpc SimulateDefinition(SimulateDefinitionRequest) returns (SimulateDefinitionResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/workflow/definition/{id}/simulate"
+      body: "*"
+    };
+    option (system.v1.title) = "模拟运行流程";
+  }
+  rpc GetDefinitionVersion(GetDefinitionVersionRequest) returns (GetDefinitionVersionResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/workflow/definition/{id}/version/{version}"
+    };
+    option (system.v1.title) = "查询流程版本详情";
+  }
+}
+
+// Definition 流程定义（出参，不含流程图）。
+message Definition {
+  // id 流程定义唯一标识（UUIDv7）。
+  string id = 1;
+  // key 流程标识，创建后不可改。
+  string key = 2;
+  // name 流程名称。
+  string name = 3;
+  // category 分类。
+  string category = 4;
+  // description 说明。
+  string description = 5;
+  // status 状态：1=启用 0=停用。
+  int32 status = 6;
+  // revision 草稿修订号（保存草稿时回传做乐观锁）。
+  int32 revision = 7;
+  // published_version 当前发布的版本号；0 = 从未发布。
+  int32 published_version = 8;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 9;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 10;
+}
+
+// GraphIssue 流程图的一条校验问题。
+message GraphIssue {
+  // node_id 出问题的节点 ID；与节点无关时为空。
+  string node_id = 1;
+  // edge_id 出问题的连线 ID；与连线无关时为空。
+  string edge_id = 2;
+  // code 稳定的问题码（前端据此本地化），如 ASSIGNEE_MISSING。
+  string code = 3;
+  // message 英文说明。
+  string message = 4;
+}
+
+// DefinitionVersion 已发布版本（出参，不含流程图）。
+message DefinitionVersion {
+  // id 版本唯一标识。
+  string id = 1;
+  // version 版本号。
+  int32 version = 2;
+  // create_user 发布人用户 ID。
+  string create_user = 3;
+  // create_time 发布时间。
+  google.protobuf.Timestamp create_time = 4;
+}
+
+// CreateDefinitionRequest 创建流程定义请求。
+message CreateDefinitionRequest {
+  // key 流程标识：2-64 位小写字母/数字/下划线/中划线，字母开头，创建后不可改。
+  string key = 1 [(buf.validate.field).string = {
+    pattern: "^[a-z][a-z0-9_-]{1,63}$"
+  }];
+  // name 流程名称，1-64 位。
+  string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // category 分类，≤64 位。
+  string category = 3 [(buf.validate.field).string.max_len = 64];
+  // description 说明，≤255 位。
+  string description = 4 [(buf.validate.field).string.max_len = 255];
+}
+
+// CreateDefinitionResponse 创建流程定义响应。
+message CreateDefinitionResponse {
+  // definition 已创建的流程定义。
+  Definition definition = 1;
+}
+
+// UpdateDefinitionRequest 更新流程定义请求，可选字段传哪个改哪个，至少传一个。
+message UpdateDefinitionRequest {
+  option (buf.validate.message).cel = {
+    id: "definition.update.non_empty"
+    message: "at least one updatable field must be provided"
+    expression: "has(this.name) || has(this.category) || has(this.description) || has(this.status)"
+  };
+
+  // id 流程定义唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // name 新名称。
+  optional string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // category 新分类。
+  optional string category = 3 [(buf.validate.field).string.max_len = 64];
+  // description 新说明。
+  optional string description = 4 [(buf.validate.field).string.max_len = 255];
+  // status 新状态：1=启用 0=停用。
+  optional int32 status = 5 [(buf.validate.field).int32 = { in: [0, 1] }];
+}
+
+// UpdateDefinitionResponse 更新流程定义响应。
+message UpdateDefinitionResponse {
+  // definition 更新后的流程定义。
+  Definition definition = 1;
+}
+
+// SaveDefinitionDraftRequest 保存流程草稿请求。
+message SaveDefinitionDraftRequest {
+  // id 流程定义唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // graph 流程图（nodes / edges / settings）；可以是未完成状态。
+  google.protobuf.Struct graph = 2 [(buf.validate.field).required = true];
+  // revision 读取草稿时拿到的修订号；与库内不一致返回 WORKFLOW_DEFINITION_CONFLICT。
+  int32 revision = 3 [(buf.validate.field).int32.gte = 1];
+}
+
+// SaveDefinitionDraftResponse 保存流程草稿响应。
+message SaveDefinitionDraftResponse {
+  // revision 保存后的修订号。
+  int32 revision = 1;
+  // issues 草稿当前的校验问题；为空表示可发布。
+  repeated GraphIssue issues = 2;
+}
+
+// PublishDefinitionRequest 发布流程定义请求。
+message PublishDefinitionRequest {
+  // id 流程定义唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // revision 所见草稿的修订号；与库内不一致返回 WORKFLOW_DEFINITION_CONFLICT（防止发布了别人刚改的草稿）。
+  int32 revision = 2 [(buf.validate.field).int32.gte = 1];
+}
+
+// PublishDefinitionResponse 发布流程定义响应。
+message PublishDefinitionResponse {
+  // definition 发布后的流程定义（published_version 已递增）。
+  Definition definition = 1;
+}
+
+// DeleteDefinitionRequest 删除流程定义请求。
+message DeleteDefinitionRequest {
+  // id 流程定义唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteDefinitionResponse 删除流程定义响应。
+message DeleteDefinitionResponse {}
+
+// GetDefinitionRequest 查询流程定义请求。
+message GetDefinitionRequest {
+  // id 流程定义唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetDefinitionResponse 查询流程定义响应。
+message GetDefinitionResponse {
+  // definition 流程定义。
+  Definition definition = 1;
+  // draft 草稿流程图。
+  google.protobuf.Struct draft = 2;
+  // issues 草稿当前的校验问题；为空表示可发布。
+  repeated GraphIssue issues = 3;
+}
+
+// ListDefinitionsRequest 分页查询流程定义请求。
+message ListDefinitionsRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // keyword 关键字，可选；模糊匹配名称 / 标识。
+  optional string keyword = 3 [(buf.validate.field).string.max_len = 64];
+  // status 状态过滤，可选：1=启用 0=停用。
+  optional int32 status = 4 [(buf.validate.field).int32 = { in: [0, 1] }];
+  // published 发布状态过滤，可选：true=已发布 false=从未发布。
+  optional bool published = 5;
+}
+
+// ListDefinitionsResponse 分页查询流程定义响应。
+message ListDefinitionsResponse {
+  // items 当前页数据。
+  repeated Definition items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// ListDefinitionVersionsRequest 查询流程版本列表请求。
+message ListDefinitionVersionsRequest {
+  // id 流程定义唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// ListDefinitionVersionsResponse 查询流程版本列表响应。
+message ListDefinitionVersionsResponse {
+  // items 已发布版本，版本号倒序（最多 100 个）。
+  repeated DefinitionVersion items = 1;
+}
+
+// GetDefinitionVersionRequest 查询流程版本详情请求。
+message GetDefinitionVersionRequest {
+  // id 流程定义唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // version 版本号，取自路径参数。
+  int32 version = 2 [(buf.validate.field).int32.gte = 1];
+}
+
+// GetDefinitionVersionResponse 查询流程版本详情响应。
+message GetDefinitionVersionResponse {
+  // version 版本信息。
+  DefinitionVersion version = 1;
+  // graph 该版本的流程图。
+  google.protobuf.Struct graph = 2;
+}
+
+// SimulateDefinitionRequest 模拟运行请求。
+message SimulateDefinitionRequest {
+  // id 流程定义唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // graph 要模拟的流程图（须通过校验）。
+  google.protobuf.Struct graph = 2 [(buf.validate.field).required = true];
+  // variables 表单样例数据。
+  google.protobuf.Struct variables = 3;
+  // initiator 模拟的发起人用户 ID，可选；不传 = 当前用户。
+  optional string initiator = 4 [(buf.validate.field).string.uuid = true];
+  // initiator_dept 模拟的发起部门 ID，可选；不传 = 发起人的主部门。
+  optional string initiator_dept = 5 [(buf.validate.field).string.uuid = true];
+}
+
+// SimulatedUser 模拟运行解析出的一个处理人。
+message SimulatedUser {
+  // id 用户 ID。
+  string id = 1;
+  // name 显示名。
+  string name = 2;
+}
+
+// SimulatedStep 模拟运行经过的一个节点。
+message SimulatedStep {
+  // node_id 节点 ID。
+  string node_id = 1;
+  // node_name 节点名称。
+  string node_name = 2;
+  // type 节点类型。
+  string type = 3;
+  // mode 多人模式（人工任务）。
+  string mode = 4;
+  // assignees 解析出的处理人 / 抄送人。
+  repeated SimulatedUser assignees = 5;
+  // skipped 处理人为空，节点被跳过。
+  bool skipped = 6;
+}
+
+// SimulateDefinitionResponse 模拟运行响应。
+message SimulateDefinitionResponse {
+  // steps 依次经过的节点（人工任务一律按「同意」推进）。
+  repeated SimulatedStep steps = 1;
+  // status 模拟结束时的流程状态：2=走到结束 1=未走完（达到推进上限）。
+  int32 status = 2;
+}

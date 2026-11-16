@@ -4,6 +4,9 @@ server:
     # 8000 被本地前端 dev server 占用，后端固定走 8010（前端代理指到这里）。
     addr: 0.0.0.0:8010
     timeout: 5s
+  # 本进程启用的角色：api（对外提供业务接口）/ worker（运行后台循环）。留空 = 全部（单进程部署）。
+  # 环境变量 SERVER_ROLES（逗号分隔）优先。分开部署时须保证至少有一个进程承担 worker 角色。
+  roles: []
 data:
   database:
     # 本地开发 DSN；生产环境通过环境变量注入（KRATOS_DATA_DATABASE_SOURCE）。
@@ -12,8 +15,29 @@ data:
     min_conns: 2
     max_conn_idle_time: 1800s
   upload:
-    # 本地上传文件（系统 logo）落盘目录；需随部署持久化。
+    # 本地上传文件（系统 logo / 头像 / 附件）落盘目录；需随部署持久化，多实例须为共享卷。
     dir: ./uploads
+    # 新上传附件的存储驱动：local（附件落在 <dir>/files）或 s3（S3 兼容对象存储）。
+    # 每个文件记录自己的驱动：切换后旧文件仍按原驱动读取，所以切到 s3 后本地目录仍须保留，
+    # 从 s3 切回 local 后 s3 配置也须保留。
+    driver: local
+    # S3 兼容对象存储（AWS S3 / MinIO / 阿里云 OSS 的 S3 兼容端点等）；endpoint 留空 = 不启用。
+    # 凭据不落配置文件，由环境变量注入：
+    #   export KRATOS_DATA_UPLOAD_S3_ACCESS_KEY=...
+    #   export KRATOS_DATA_UPLOAD_S3_SECRET_KEY=...
+    s3:
+      # 服务端点：http(s)://host[:port]，不含桶名与路径。
+      endpoint: ""
+      # 签名用的区域；留空取 us-east-1。
+      region: ""
+      # 桶须事先建好。
+      bucket: ""
+      access_key: ${DATA_UPLOAD_S3_ACCESS_KEY}
+      secret_key: ${DATA_UPLOAD_S3_SECRET_KEY}
+      # true = 路径式寻址（MinIO 常用）；false = 虚拟主机式。
+      path_style: false
+      # 对象键前缀，可空。
+      prefix: ""
 security:
   password:
     # Argon2id 参数；构造时校验不得低于 OWASP 下限（memory_kb≥19456, iterations≥2, parallelism≥1）。

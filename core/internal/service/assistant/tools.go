@@ -36,6 +36,11 @@ var excludedOperations = map[string]struct{}{
 	"/cmdb.v1.CmdbSyncService/CreateSource":  {},
 	"/cmdb.v1.CmdbSyncService/UpdateSource":  {},
 	"/cmdb.v1.CmdbSyncService/RotateWebhook": {},
+	// 流程引擎的签名密钥与接入令牌明文不经过模型。
+	"/workflow.v1.WorkflowConfigService/CreateWebhook":     {},
+	"/workflow.v1.WorkflowConfigService/UpdateWebhook":     {},
+	"/workflow.v1.WorkflowConfigService/CreateClient":      {},
+	"/workflow.v1.WorkflowConfigService/RotateClientToken": {},
 }
 
 // readOnlyOperations 用 POST 承载但不写任何数据的 RPC（预览 / 预检）：按读操作处理，
@@ -44,6 +49,8 @@ var readOnlyOperations = map[string]struct{}{
 	"/oncall.v1.OncallScheduleService/PreviewSchedule": {},
 	"/notify.v1.NotifyTemplateService/RenderTemplate":  {},
 	"/cmdb.v1.CmdbModelService/CheckUniqueRule":        {},
+	// 模拟运行只在内存里把流程图走一遍，不落库、不发通知、不调用外部系统。
+	"/workflow.v1.WorkflowDefinitionService/SimulateDefinition": {},
 }
 
 // NewToolCatalog 从可授权 RPC 枚举生成模型工具目录（启动期一次性反射；运行

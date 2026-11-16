@@ -1,0 +1,81 @@
+syntax = "proto3";
+
+package workflow.v1;
+
+import "errors/errors.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/workflow/v1;v1";
+
+// ErrorReason 是流程引擎域的业务错误码枚举，由 protoc-gen-go-errors 生成带 code 的错误构造器。
+// 枚举值沿用 Kratos 错误码惯例（域前缀而非枚举名前缀），故豁免 ENUM_VALUE_PREFIX。
+enum ErrorReason {
+  option (errors.default_code) = 500;
+  // WORKFLOW_UNSPECIFIED 未指定的流程错误。
+  WORKFLOW_UNSPECIFIED = 0;
+  // WORKFLOW_DEFINITION_NOT_FOUND 流程定义（或其版本）不存在，映射 HTTP 404。
+  WORKFLOW_DEFINITION_NOT_FOUND = 1 [(errors.code) = 404];
+  // WORKFLOW_DEFINITION_KEY_EXISTS 流程标识已被占用，映射 HTTP 409。
+  WORKFLOW_DEFINITION_KEY_EXISTS = 2 [(errors.code) = 409];
+  // WORKFLOW_DEFINITION_INVALID 流程定义未通过校验（问题清单见发布接口响应），映射 HTTP 400。
+  WORKFLOW_DEFINITION_INVALID = 3 [(errors.code) = 400];
+  // WORKFLOW_DEFINITION_UNAVAILABLE 流程尚未发布或已停用，不能发起，映射 HTTP 409。
+  WORKFLOW_DEFINITION_UNAVAILABLE = 4 [(errors.code) = 409];
+  // WORKFLOW_DEFINITION_CONFLICT 流程定义已被他人修改（乐观锁冲突），映射 HTTP 409。
+  WORKFLOW_DEFINITION_CONFLICT = 5 [(errors.code) = 409];
+  // WORKFLOW_DEFINITION_IN_USE 流程仍有运行中的实例，不能删除，映射 HTTP 409。
+  WORKFLOW_DEFINITION_IN_USE = 6 [(errors.code) = 409];
+  // WORKFLOW_INSTANCE_NOT_FOUND 流程实例不存在，映射 HTTP 404。
+  WORKFLOW_INSTANCE_NOT_FOUND = 10 [(errors.code) = 404];
+  // WORKFLOW_INSTANCE_NOT_RUNNING 流程实例已结束，不能再操作，映射 HTTP 409。
+  WORKFLOW_INSTANCE_NOT_RUNNING = 11 [(errors.code) = 409];
+  // WORKFLOW_INSTANCE_FORBIDDEN 无权查看或操作该流程实例，映射 HTTP 403。
+  WORKFLOW_INSTANCE_FORBIDDEN = 12 [(errors.code) = 403];
+  // WORKFLOW_INSTANCE_LIMIT 流程实例的任务数或单次推进步数超过上限（疑似回路），映射 HTTP 409。
+  WORKFLOW_INSTANCE_LIMIT = 13 [(errors.code) = 409];
+  // WORKFLOW_BUSINESS_DUPLICATE 同一业务对象已发起过流程，映射 HTTP 409。
+  WORKFLOW_BUSINESS_DUPLICATE = 14 [(errors.code) = 409];
+  // WORKFLOW_VARIABLES_INVALID 流程变量不合法（不是 JSON 对象或超过大小上限），映射 HTTP 400。
+  WORKFLOW_VARIABLES_INVALID = 15 [(errors.code) = 400];
+  // WORKFLOW_TASK_NOT_FOUND 任务不存在，映射 HTTP 404。
+  WORKFLOW_TASK_NOT_FOUND = 20 [(errors.code) = 404];
+  // WORKFLOW_TASK_NOT_PENDING 任务已被处理（或尚未轮到当前处理人），映射 HTTP 409。
+  WORKFLOW_TASK_NOT_PENDING = 21 [(errors.code) = 409];
+  // WORKFLOW_TASK_NOT_ASSIGNEE 当前用户不是该任务的处理人，映射 HTTP 403。
+  WORKFLOW_TASK_NOT_ASSIGNEE = 22 [(errors.code) = 403];
+  // WORKFLOW_TASK_TARGET_INVALID 转办对象或退回节点不合法，映射 HTTP 400。
+  WORKFLOW_TASK_TARGET_INVALID = 23 [(errors.code) = 400];
+  // WORKFLOW_SIGNAL_NOT_AWAITED 实例没有节点在等待该信号，映射 HTTP 409。
+  WORKFLOW_SIGNAL_NOT_AWAITED = 24 [(errors.code) = 409];
+  // WORKFLOW_JOB_NOT_FOUND 作业不存在或已了结，映射 HTTP 404。
+  WORKFLOW_JOB_NOT_FOUND = 25 [(errors.code) = 404];
+  // WORKFLOW_DELEGATION_NOT_FOUND 代理设置不存在，映射 HTTP 404。
+  WORKFLOW_DELEGATION_NOT_FOUND = 30 [(errors.code) = 404];
+  // WORKFLOW_DELEGATION_INVALID 代理设置不合法（代理人不可用、时间段重叠等），映射 HTTP 400。
+  WORKFLOW_DELEGATION_INVALID = 31 [(errors.code) = 400];
+  // WORKFLOW_CALENDAR_INVALID 工作日历配置不合法，映射 HTTP 400。
+  WORKFLOW_CALENDAR_INVALID = 32 [(errors.code) = 400];
+  // WORKFLOW_WEBHOOK_NOT_FOUND Webhook 端点不存在，映射 HTTP 404。
+  WORKFLOW_WEBHOOK_NOT_FOUND = 33 [(errors.code) = 404];
+  // WORKFLOW_WEBHOOK_NAME_EXISTS Webhook 端点名称已被占用，映射 HTTP 409。
+  WORKFLOW_WEBHOOK_NAME_EXISTS = 34 [(errors.code) = 409];
+  // WORKFLOW_WEBHOOK_INVALID Webhook 端点配置不合法（地址须为 https、不得指向内网等），映射 HTTP 400。
+  WORKFLOW_WEBHOOK_INVALID = 35 [(errors.code) = 400];
+  // WORKFLOW_WEBHOOK_IN_USE Webhook 端点仍被已发布的流程引用，映射 HTTP 409。
+  WORKFLOW_WEBHOOK_IN_USE = 36 [(errors.code) = 409];
+  // WORKFLOW_SECRET_UNAVAILABLE 未配置主密钥，无法保存签名密钥，映射 HTTP 409。
+  WORKFLOW_SECRET_UNAVAILABLE = 37 [(errors.code) = 409];
+  // WORKFLOW_SUBPROCESS_UNAVAILABLE 子流程不可发起（未发布 / 已停用 / 嵌套过深），映射 HTTP 409。
+  WORKFLOW_SUBPROCESS_UNAVAILABLE = 38 [(errors.code) = 409];
+  // WORKFLOW_CLIENT_NOT_FOUND 接入凭据不存在，映射 HTTP 404。
+  WORKFLOW_CLIENT_NOT_FOUND = 40 [(errors.code) = 404];
+  // WORKFLOW_CLIENT_NAME_EXISTS 接入凭据名称已被占用，映射 HTTP 409。
+  WORKFLOW_CLIENT_NAME_EXISTS = 41 [(errors.code) = 409];
+  // WORKFLOW_CLIENT_INVALID 接入凭据配置不合法（代表用户不可用、流程不存在等），映射 HTTP 400。
+  WORKFLOW_CLIENT_INVALID = 42 [(errors.code) = 400];
+  // WORKFLOW_CLIENT_UNAUTHORIZED 令牌缺失、无效或凭据已停用，映射 HTTP 401。
+  WORKFLOW_CLIENT_UNAUTHORIZED = 43 [(errors.code) = 401];
+  // WORKFLOW_CLIENT_FORBIDDEN 凭据无权发起该流程，或代表用户已不可用，映射 HTTP 403。
+  WORKFLOW_CLIENT_FORBIDDEN = 44 [(errors.code) = 403];
+  // WORKFLOW_GRAPH_TOO_LARGE 流程图草稿超出大小上限，映射 HTTP 400。
+  WORKFLOW_GRAPH_TOO_LARGE = 45 [(errors.code) = 400];
+}

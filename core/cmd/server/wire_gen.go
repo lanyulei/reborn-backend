@@ -8,24 +8,34 @@ package main
 
 import (
 	"github.com/go-kratos/kratos/v3"
+	biz6 "github.com/lanyulei/reborn/backend/core/internal/biz"
 	biz3 "github.com/lanyulei/reborn/backend/core/internal/biz/assistant"
 	biz4 "github.com/lanyulei/reborn/backend/core/internal/biz/cmdb"
+	biz8 "github.com/lanyulei/reborn/backend/core/internal/biz/file"
 	biz2 "github.com/lanyulei/reborn/backend/core/internal/biz/notify"
 	biz5 "github.com/lanyulei/reborn/backend/core/internal/biz/oncall"
 	"github.com/lanyulei/reborn/backend/core/internal/biz/system"
+	biz7 "github.com/lanyulei/reborn/backend/core/internal/biz/ticket"
+	biz9 "github.com/lanyulei/reborn/backend/core/internal/biz/workflow"
 	"github.com/lanyulei/reborn/backend/core/internal/conf"
 	"github.com/lanyulei/reborn/backend/core/internal/data"
 	data4 "github.com/lanyulei/reborn/backend/core/internal/data/assistant"
 	data5 "github.com/lanyulei/reborn/backend/core/internal/data/cmdb"
+	data7 "github.com/lanyulei/reborn/backend/core/internal/data/file"
 	data3 "github.com/lanyulei/reborn/backend/core/internal/data/notify"
 	data6 "github.com/lanyulei/reborn/backend/core/internal/data/oncall"
 	data2 "github.com/lanyulei/reborn/backend/core/internal/data/system"
+	data8 "github.com/lanyulei/reborn/backend/core/internal/data/ticket"
+	data9 "github.com/lanyulei/reborn/backend/core/internal/data/workflow"
 	"github.com/lanyulei/reborn/backend/core/internal/server"
 	service3 "github.com/lanyulei/reborn/backend/core/internal/service/assistant"
 	service4 "github.com/lanyulei/reborn/backend/core/internal/service/cmdb"
+	service6 "github.com/lanyulei/reborn/backend/core/internal/service/file"
 	service2 "github.com/lanyulei/reborn/backend/core/internal/service/notify"
 	service5 "github.com/lanyulei/reborn/backend/core/internal/service/oncall"
 	"github.com/lanyulei/reborn/backend/core/internal/service/system"
+	service8 "github.com/lanyulei/reborn/backend/core/internal/service/ticket"
+	service7 "github.com/lanyulei/reborn/backend/core/internal/service/workflow"
 	"github.com/lanyulei/reborn/backend/core/internal/worker"
 	"log/slog"
 )
@@ -41,6 +51,10 @@ import (
 // 各域 data ProviderSet 在此显式列出；biz/service 顶层已聚合。
 // service 层消费的 biz 窄接口（AdminResolver ← UserUsecase）在组合根绑定，避免 biz 反向依赖 service。
 func wireApp(confServer *conf.Server, confData *conf.Data, security *conf.Security, notify *conf.Notify, assistant *conf.Assistant, logger *slog.Logger) (*kratos.App, func(), error) {
+	roles, err := server.NewRoles(confServer, logger)
+	if err != nil {
+		return nil, nil, err
+	}
 	dataData, cleanup, err := data.NewData(confData)
 	if err != nil {
 		return nil, nil, err
@@ -55,7 +69,9 @@ func wireApp(confServer *conf.Server, confData *conf.Data, security *conf.Securi
 	}
 	refreshTokenRepo := data2.NewRefreshTokenRepo(dataData)
 	userUsecase := biz.NewUserUsecase(userRepo, userRepo, userRoleRepo, roleRepo, passwordHasher, refreshTokenRepo)
-	userService := service.NewUserService(userUsecase)
+	deptRepo := data2.NewDeptRepo(dataData)
+	deptUsecase := biz.NewDeptUsecase(deptRepo, deptRepo, deptRepo, deptRepo, userRepo)
+	userService := service.NewUserService(userUsecase, deptUsecase)
 	permissionRepo := data2.NewPermissionRepo(dataData)
 	authorizer, err := biz.NewAuthorizer(permissionRepo, security, logger)
 	if err != nil {
@@ -68,6 +84,7 @@ func wireApp(confServer *conf.Server, confData *conf.Data, security *conf.Securi
 	txManager := data.NewTxManager(dataData)
 	permissionUsecase := biz.NewPermissionUsecase(roleRepo, permissionRepo, authorizer, notificationUsecase, txManager)
 	roleService := service.NewRoleService(roleUsecase, permissionUsecase, userUsecase)
+	deptService := service.NewDeptService(deptUsecase)
 	tokenSigner, err := biz.NewTokenSigner(security)
 	if err != nil {
 		cleanup()
@@ -192,11 +209,75 @@ func wireApp(confServer *conf.Server, confData *conf.Data, security *conf.Securi
 	}
 	shareUsecase := biz5.NewShareUsecase(store, dataGroupRepo, scheduleRepo, shiftRepo, shareRepo, dataGroupRepo, tokenBox)
 	oncallShareService := service5.NewOncallShareService(shareUsecase, userUsecase)
-	httpServer := server.NewHTTPServer(confServer, logger, userService, roleService, authService, systemConfigService, loginLogService, notifyChannelService, notifyTemplateService, notifyRouteService, notifySilenceService, notifySubscriptionService, notifyProducerService, notifyEventService, notifyDispatchService, notifyDeliveryLogService, notifyDeadLetterService, assistantService, assistantChatService, cmdbModelService, cmdbCIService, cmdbRelationService, cmdbScopeService, cmdbSyncService, cmdbInsightService, oncallGroupService, oncallScheduleService, oncallShareService, tokenSigner, authzUsecase)
+	fileRepo := data7.NewFileRepo(dataData)
+	stores, err := data7.NewStores(confData, dataData)
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	ticketRepo := data8.NewTicketRepo(dataData)
+	instanceRepo := data9.NewInstanceRepo(dataData)
+	supervisor := biz6.NewTicketSupervisor(authzUsecase)
+	access := biz7.NewAccess(ticketRepo, instanceRepo, supervisor)
+	accessCheckers := biz6.NewFileAccessCheckers(access)
+	usecase, err := biz8.NewUsecase(fileRepo, fileRepo, fileRepo, stores, accessCheckers)
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	fileService := service6.NewFileService(usecase)
+	definitionRepo := data9.NewDefinitionRepo(dataData)
+	configRepo, err := data9.NewConfigRepo(dataData, notify)
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	catalogRepo := data8.NewCatalogRepo(dataData)
+	definitionReferrers := biz6.NewWorkflowDefinitionReferrers(catalogRepo)
+	definitionUsecase := biz9.NewDefinitionUsecase(definitionRepo, definitionRepo, definitionRepo, definitionRepo, configRepo, definitionReferrers)
+	directoryRepo := data2.NewDirectoryRepo(dataData)
+	directoryUsecase := biz.NewDirectoryUsecase(directoryRepo, userRepo, deptRepo)
+	users := biz6.NewWorkflowUsers(directoryUsecase)
+	definitionService := service7.NewDefinitionService(definitionUsecase, directoryUsecase, users)
+	calendarUsecase := biz9.NewCalendarUsecase(configRepo)
+	statusSyncer := biz7.NewStatusSyncer(ticketRepo, ticketRepo)
+	listeners := biz6.NewWorkflowListeners(statusSyncer)
+	viewers := biz6.NewWorkflowViewers(access)
+	runtimeUsecase := biz9.NewRuntimeUsecase(definitionUsecase, instanceRepo, instanceRepo, instanceRepo, directoryUsecase, users, configRepo, calendarUsecase, txManager, notificationUsecase, listeners, viewers)
+	jobRepo := data9.NewJobRepo(dataData)
+	instanceService := service7.NewInstanceService(runtimeUsecase, jobRepo, authzUsecase)
+	taskService := service7.NewTaskService(runtimeUsecase)
+	delegationUsecase := biz9.NewDelegationUsecase(configRepo, directoryUsecase, users)
+	webhookUsecase := biz9.NewWebhookUsecase(configRepo)
+	clientUsecase := biz9.NewClientUsecase(configRepo, definitionRepo, directoryUsecase, users)
+	configService := service7.NewConfigService(calendarUsecase, delegationUsecase, webhookUsecase, clientUsecase)
+	openUsecase := biz9.NewOpenUsecase(runtimeUsecase, configRepo)
+	openService := service7.NewOpenService(openUsecase)
+	catalogManager := biz6.NewTicketCatalogManager(authzUsecase)
+	catalogUsecase := biz7.NewCatalogUsecase(catalogRepo, catalogRepo, catalogRepo, definitionUsecase, catalogManager, directoryUsecase)
+	catalogService := service8.NewCatalogService(catalogUsecase)
+	commentRepo := data8.NewCommentRepo(dataData)
+	deadlines := biz6.NewTicketDeadlines(calendarUsecase)
+	resources := biz6.NewTicketResources(ciUsecase, scopeUsecase, authzUsecase)
+	extensions := biz7.NewExtensions(ticketRepo, ticketRepo, runtimeUsecase, deadlines, resources, notificationUsecase, logger)
+	bizUsecase := biz7.NewUsecase(catalogRepo, ticketRepo, ticketRepo, commentRepo, runtimeUsecase, usecase, directoryUsecase, access, txManager, extensions)
+	ticketService := service8.NewTicketService(bizUsecase)
+	metrics, cleanup2, err := server.NewMetrics(jobRepo)
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	httpServer := server.NewHTTPServer(confServer, logger, userService, roleService, deptService, authService, systemConfigService, loginLogService, notifyChannelService, notifyTemplateService, notifyRouteService, notifySilenceService, notifySubscriptionService, notifyProducerService, notifyEventService, notifyDispatchService, notifyDeliveryLogService, notifyDeadLetterService, assistantService, assistantChatService, cmdbModelService, cmdbCIService, cmdbRelationService, cmdbScopeService, cmdbSyncService, cmdbInsightService, oncallGroupService, oncallScheduleService, oncallShareService, fileService, definitionService, instanceService, taskService, configService, openService, catalogService, ticketService, tokenSigner, authzUsecase, roles, dataData, metrics)
 	workerUsecase := biz5.NewWorkerUsecase(store, dataGroupRepo, scheduleRepo, shiftRepo, notifier)
-	oncallLoops := worker.NewOncallLoops(workerUsecase, logger)
-	app := newApp(logger, httpServer, oncallLoops)
+	oncallLoops := worker.NewOncallLoops(workerUsecase, logger, metrics)
+	fileLoops := worker.NewFileLoops(usecase, logger, metrics)
+	webhookCaller := data9.NewWebhookCaller()
+	jobUsecase := biz9.NewJobUsecase(runtimeUsecase, jobRepo, jobRepo, configRepo, webhookCaller, logger)
+	workflowLoops := worker.NewWorkflowLoops(jobUsecase, logger, metrics)
+	ticketLoops := worker.NewTicketLoops(bizUsecase, logger, metrics)
+	app := newApp(logger, roles, httpServer, oncallLoops, fileLoops, workflowLoops, ticketLoops)
 	return app, func() {
+		cleanup2()
 		cleanup()
 	}, nil
 }

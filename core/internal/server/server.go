@@ -3,7 +3,11 @@
 // 与 grpc.go 即可恢复）。
 package server
 
-import "github.com/google/wire"
+import (
+	"github.com/lanyulei/reborn/backend/kit/loop"
+
+	"github.com/google/wire"
+)
 
 // ProviderSet is server providers.
-var ProviderSet = wire.NewSet(NewHTTPServer)
+var ProviderSet = wire.NewSet(NewRoles, NewMetrics, wire.Bind(new(loop.Recorder), new(*Metrics)), NewHTTPServer)

@@ -1,0 +1,725 @@
+syntax = "proto3";
+
+package workflow.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "buf/validate/validate.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/workflow/v1;v1";
+
+// WorkflowInstanceService 流程实例：发起、查看、撤回与管理。
+// 查看权限：发起人、处理人 / 抄送人可看自己参与的实例；持有「查询全部流程实例」
+// 接口权限者可看全部。
+service WorkflowInstanceService {
+  // StartInstance 按流程标识发起一个独立的流程实例（不挂业务对象）。
+  rpc StartInstance(StartInstanceRequest) returns (StartInstanceResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/workflow/instance"
+      body: "*"
+    };
+    option (system.v1.title) = "发起流程";
+  }
+  // GetInstance 查询流程实例详情：实例、流程图、任务与流转历史。
+  rpc GetInstance(GetInstanceRequest) returns (GetInstanceResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/workflow/instance/{id}"
+    };
+    option (system.v1.title) = "查询流程实例详情";
+  }
+  // ListMyInstances 分页查询我发起的流程实例。
+  rpc ListMyInstances(ListMyInstancesRequest) returns (ListInstancesResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/workflow/my-instance"
+    };
+    option (system.v1.title) = "查询我发起的流程";
+  }
+  // ListInstances 分页查询全部流程实例（管理视图）。
+  rpc ListInstances(ListInstancesRequest) returns (ListInstancesResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/workflow/instance"
+    };
+    option (system.v1.title) = "查询全部流程实例";
+  }
+  // CancelInstance 发起人撤回进行中的流程。
+  rpc CancelInstance(CancelInstanceRequest) returns (CancelInstanceResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/workflow/instance/{id}/cancel"
+      body: "*"
+    };
+    option (system.v1.title) = "撤回流程";
+  }
+  // TerminateInstance 管理员终止进行中的流程（必须填写原因）。
+  rpc TerminateInstance(TerminateInstanceRequest) returns (TerminateInstanceResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/workflow/instance/{id}/terminate"
+      body: "*"
+    };
+    option (system.v1.title) = "终止流程";
+  }
+  // SignalInstance 向实例投递一个外部信号：正在等待该信号的定时节点继续；可附带数据并入流程变量。
+  rpc SignalInstance(SignalInstanceRequest) returns (TaskActionResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/workflow/instance/{id}/signal"
+      body: "*"
+    };
+    option (system.v1.title) = "投递流程信号";
+  }
+  // RetryInstanceJob 重试一条进入死信的自动任务（重新调用它的 Webhook 端点）。
+  rpc RetryInstanceJob(RetryInstanceJobRequest) returns (RetryInstanceJobResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/workflow/instance/{id}/job/{job_id}/retry"
+      body: "*"
+    };
+    option (system.v1.title) = "重试自动任务";
+  }
+  // SkipInstanceJob 跳过一个等待节点（死信的自动任务、未到期的定时节点），流程从它之后继续（必须填写原因）。
+  rpc SkipInstanceJob(SkipInstanceJobRequest) returns (TaskActionResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/workflow/instance/{id}/job/{job_id}/skip"
+      body: "*"
+    };
+    option (system.v1.title) = "跳过等待节点";
+  }
+  // HandoverTasks 把某个用户名下全部未了结的待办交接给另一个用户（离职 / 调岗）。一次至多处理
+  // 100 个流程实例，响应的 more 为 true 时应再次调用。
+  rpc HandoverTasks(HandoverTasksRequest) returns (HandoverTasksResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/workflow/handover"
+      body: "*"
+    };
+    option (system.v1.title) = "交接待办";
+  }
+}
+
+// WorkflowTaskService 任务：待办 / 已办 / 抄送列表与处理动作。
+service WorkflowTaskService {
+  // ListTodoTasks 分页查询我的待办。
+  rpc ListTodoTasks(ListTasksRequest) returns (ListTasksResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/workflow/task/todo"
+    };
+    option (system.v1.title) = "查询我的待办";
+  }
+  // ListDoneTasks 分页查询我的已办。
+  rpc ListDoneTasks(ListTasksRequest) returns (ListTasksResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/workflow/task/done"
+    };
+    option (system.v1.title) = "查询我的已办";
+  }
+  // ListCcTasks 分页查询抄送我的。
+  rpc ListCcTasks(ListTasksRequest) returns (ListTasksResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/workflow/task/cc"
+    };
+    option (system.v1.title) = "查询抄送我的";
+  }
+  // ApproveTask 同意。
+  rpc ApproveTask(ApproveTaskRequest) returns (TaskActionResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/workflow/task/{id}/approve"
+      body: "*"
+    };
+    option (system.v1.title) = "同意任务";
+  }
+  // RejectTask 拒绝：节点配置了拒绝去向则退回该节点，否则流程以「已拒绝」结束。
+  rpc RejectTask(RejectTaskRequest) returns (TaskActionResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/workflow/task/{id}/reject"
+      body: "*"
+    };
+    option (system.v1.title) = "拒绝任务";
+  }
+  // ReturnTask 退回到此前走过的某个节点。
+  rpc ReturnTask(ReturnTaskRequest) returns (TaskActionResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/workflow/task/{id}/return"
+      body: "*"
+    };
+    option (system.v1.title) = "退回任务";
+  }
+  // ListReturnTargets 查询当前任务可退回到的节点。
+  rpc ListReturnTargets(ListReturnTargetsRequest) returns (ListReturnTargetsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/workflow/task/{id}/return-target"
+    };
+    option (system.v1.title) = "查询可退回节点";
+  }
+  // TransferTask 转办给其他人。
+  rpc TransferTask(TransferTaskRequest) returns (TaskActionResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/workflow/task/{id}/transfer"
+      body: "*"
+    };
+    option (system.v1.title) = "转办任务";
+  }
+  // ReassignTask 管理员改派任务的处理人（必须填写原因）。
+  rpc ReassignTask(ReassignTaskRequest) returns (TaskActionResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/workflow/task/{id}/reassign"
+      body: "*"
+    };
+    option (system.v1.title) = "改派任务";
+  }
+  // AddSignTask 加签：请另外几个人也来处理。before = 他们全部同意后任务回到自己手上；
+  // after = 自己现在同意，他们全部同意后这份同意才生效。
+  rpc AddSignTask(AddSignTaskRequest) returns (TaskActionResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/workflow/task/{id}/add-sign"
+      body: "*"
+    };
+    option (system.v1.title) = "加签";
+  }
+  // DelegateTask 委派：请另一个人先给出意见，之后任务回到自己手上由自己决定。
+  rpc DelegateTask(DelegateTaskRequest) returns (TaskActionResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/workflow/task/{id}/delegate"
+      body: "*"
+    };
+    option (system.v1.title) = "委派任务";
+  }
+  // ListUserCandidates 可选用户（可用的系统用户，仅 ID 与显示名）；供转办 / 改派 / 设计器选人使用。
+  rpc ListUserCandidates(ListWorkflowUserCandidatesRequest) returns (ListWorkflowUserCandidatesResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/workflow/user-candidate"
+    };
+    option (system.v1.title) = "查询流程可选用户";
+  }
+}
+
+// Instance 流程实例（出参）。
+message Instance {
+  // id 实例唯一标识（UUIDv7）。
+  string id = 1;
+  // definition_id 流程定义 ID。
+  string definition_id = 2;
+  // definition_key 流程标识。
+  string definition_key = 3;
+  // definition_name 流程名称（发起时）。
+  string definition_name = 4;
+  // version 发起时的流程版本号。
+  int32 version = 5;
+  // business_type 业务类型；空 = 独立发起。
+  string business_type = 6;
+  // business_id 业务对象 ID。
+  string business_id = 7;
+  // title 标题。
+  string title = 8;
+  // initiator 发起人用户 ID。
+  string initiator = 9;
+  // initiator_name 发起人显示名。
+  string initiator_name = 10;
+  // initiator_dept 发起部门 ID；未指定为空。
+  string initiator_dept = 11;
+  // status 状态：1=进行中 2=已通过 3=已拒绝 4=已撤回 5=已终止。
+  int32 status = 12;
+  // start_time 发起时间。
+  google.protobuf.Timestamp start_time = 13;
+  // end_time 结束时间；进行中为空。
+  google.protobuf.Timestamp end_time = 14;
+  // current_nodes 当前待处理的节点名称（进行中时）。
+  repeated string current_nodes = 15;
+  // parent_instance_id 父流程实例 ID；由子流程节点发起时有值。
+  string parent_instance_id = 16;
+  // root_id 根流程实例 ID：顶层流程为自身，子流程为调用链最顶层的那个实例。
+  string root_id = 17;
+  // root_business_type / root_business_id 根流程所挂的业务对象（子流程继承；顶层流程上与
+  // business_type / business_id 相同）。子流程里的任务据此回到它最终所属的业务对象（如工单）。
+  string root_business_type = 18;
+  string root_business_id = 19;
+}
+
+// TaskAssignee 任务处理人（或抄送接收人）。
+message TaskAssignee {
+  // user_id 用户 ID。
+  string user_id = 1;
+  // user_name 用户显示名。
+  string user_name = 2;
+  // status 状态：1=待处理 2=排队中 3=已同意 4=已拒绝 5=已取消 6=已转办 7=已退回 8=已抄送
+  // 9=等待加签 / 委派的人处理。
+  int32 status = 3;
+  // comment 处理意见。
+  string comment = 4;
+  // action_time 处理时间；未处理为空。
+  google.protobuf.Timestamp action_time = 5;
+  // origin 席位来源：空=节点规则解析 before=前加签 after=后加签 delegate=委派。
+  string origin = 6;
+  // on_behalf 被代理人用户 ID：本席位是代理人替他处理；没有代理为空。
+  string on_behalf = 7;
+  // on_behalf_name 被代理人显示名。
+  string on_behalf_name = 8;
+}
+
+// Task 任务（实例详情内）。
+message Task {
+  // id 任务唯一标识。
+  string id = 1;
+  // node_id 所在节点 ID。
+  string node_id = 2;
+  // node_name 节点名称。
+  string node_name = 3;
+  // kind 类型：approve=人工任务 cc=抄送。
+  string kind = 4;
+  // mode 多人模式：any=或签 all=会签 sequential=依次审批。
+  string mode = 5;
+  // status 状态：1=待处理 2=已同意 3=已拒绝 4=已取消 5=已退回 6=已抄送。
+  int32 status = 6;
+  // create_time 到达时间。
+  google.protobuf.Timestamp create_time = 7;
+  // end_time 结束时间；待处理为空。
+  google.protobuf.Timestamp end_time = 8;
+  // assignees 处理人，按顺序。
+  repeated TaskAssignee assignees = 9;
+  // due_time 处理时限；节点未配置超时为空。
+  google.protobuf.Timestamp due_time = 10;
+}
+
+// InstanceWait 实例正停在其上的一个等待节点（定时 / 自动任务）。
+message InstanceWait {
+  // job_id 作业唯一标识（重试 / 跳过时使用）。
+  string job_id = 1;
+  // node_id 节点 ID。
+  string node_id = 2;
+  // kind 类型：timer=定时 service=自动任务 signal=等待外部信号（没有作业，job_id 为空）；
+  // 死信还可能是 timeout / remind / resume / stop（引擎内部作业遇到不可恢复的错误）。
+  string kind = 3;
+  // status 状态：1=等待中 4=死信（自动任务重试耗尽，待重试或跳过）。
+  int32 status = 4;
+  // due_time 定时节点的到期时间；自动任务为下一次尝试的时间。
+  google.protobuf.Timestamp due_time = 5;
+  // attempts 自动任务已尝试的次数。
+  int32 attempts = 6;
+  // last_error 自动任务最近一次失败的原因。
+  string last_error = 7;
+  // signal 等待的信号名（kind = signal）。
+  string signal = 8;
+}
+
+// ChildInstance 由子流程节点发起的子流程。
+message ChildInstance {
+  // id 子流程实例 ID。
+  string id = 1;
+  // node_id 发起它的子流程节点 ID。
+  string node_id = 2;
+  // definition_name 子流程的流程名称。
+  string definition_name = 3;
+  // status 状态：1=进行中 2=已通过 3=已拒绝 4=已撤回 5=已终止。
+  int32 status = 4;
+}
+
+// HistoryEntry 一条流转历史。
+message HistoryEntry {
+  // id 记录唯一标识。
+  string id = 1;
+  // node_id 节点 ID；与节点无关的动作为空。
+  string node_id = 2;
+  // node_name 节点名称。
+  string node_name = 3;
+  // action 动作：start / approve / reject / return / transfer / reassign / skip / cc / cancel / terminate / complete /
+  // addSign / delegate / reply / handover / timeout / timer / service / serviceFailed / subProcess / amend。
+  string action = 4;
+  // operator 操作人用户 ID；系统动作为空。
+  string operator = 5;
+  // operator_name 操作人显示名。
+  string operator_name = 6;
+  // comment 意见 / 原因。
+  string comment = 7;
+  // detail 动作明细（如退回目标节点、转办对象）。
+  google.protobuf.Struct detail = 8;
+  // create_time 发生时间。
+  google.protobuf.Timestamp create_time = 9;
+}
+
+// StartInstanceRequest 发起流程请求。
+message StartInstanceRequest {
+  // definition_key 流程标识。
+  string definition_key = 1 [(buf.validate.field).string = {
+    pattern: "^[a-z][a-z0-9_-]{1,63}$"
+  }];
+  // title 标题，1-255 位。
+  string title = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 255
+  }];
+  // variables 流程变量（表单数据），条件表达式以 form 引用；≤64KB。
+  google.protobuf.Struct variables = 3;
+  // initiator_dept 发起部门 ID，可选：须为发起人所属部门；不传取主部门。
+  optional string initiator_dept = 4 [(buf.validate.field).string.uuid = true];
+  // request_id 幂等键，可选（客户端生成的 UUID）：同一发起人以相同的键重复提交时，
+  // 返回首次发起的实例而不是再发起一次。
+  optional string request_id = 5 [(buf.validate.field).string.uuid = true];
+}
+
+// StartInstanceResponse 发起流程响应。
+message StartInstanceResponse {
+  // instance 已发起的流程实例。
+  Instance instance = 1;
+}
+
+// GetInstanceRequest 查询流程实例请求。
+message GetInstanceRequest {
+  // id 实例唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetInstanceResponse 查询流程实例响应。
+message GetInstanceResponse {
+  // instance 流程实例。
+  Instance instance = 1;
+  // graph 实例所用版本的流程图。
+  google.protobuf.Struct graph = 2;
+  // variables 流程变量。
+  google.protobuf.Struct variables = 3;
+  // tasks 全部任务，按到达时间升序。
+  repeated Task tasks = 4;
+  // histories 流转历史，按时间升序。
+  repeated HistoryEntry histories = 5;
+  // my_task_id 当前用户在该实例上可处理的任务 ID；没有为空。
+  string my_task_id = 6;
+  // can_cancel 当前用户能否撤回（发起人且流程进行中）。
+  bool can_cancel = 7;
+  // can_manage 当前用户能否终止该流程（流程进行中且持有终止接口权限）。
+  bool can_manage = 8;
+  // can_reassign 当前用户能否改派待处理的任务（流程进行中且持有改派接口权限）。
+  bool can_reassign = 9;
+  // my_seat_origin 当前用户待处理席位的来源（见 TaskAssignee.origin）：delegate 时只需给出意见。
+  string my_seat_origin = 10;
+  // waits 实例正停在其上的等待节点（定时 / 自动任务）。
+  repeated InstanceWait waits = 11;
+  // children 由子流程节点发起的子流程。
+  repeated ChildInstance children = 12;
+}
+
+// ListMyInstancesRequest 分页查询我发起的流程请求。
+message ListMyInstancesRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // keyword 关键字，可选；模糊匹配标题。
+  optional string keyword = 3 [(buf.validate.field).string.max_len = 64];
+  // status 状态过滤，可选：1=进行中 2=已通过 3=已拒绝 4=已撤回 5=已终止。
+  optional int32 status = 4 [(buf.validate.field).int32 = { in: [1, 2, 3, 4, 5] }];
+}
+
+// ListInstancesRequest 分页查询全部流程实例请求。
+message ListInstancesRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // keyword 关键字，可选；模糊匹配标题。
+  optional string keyword = 3 [(buf.validate.field).string.max_len = 64];
+  // status 状态过滤，可选：1=进行中 2=已通过 3=已拒绝 4=已撤回 5=已终止。
+  optional int32 status = 4 [(buf.validate.field).int32 = { in: [1, 2, 3, 4, 5] }];
+  // definition_id 流程定义过滤，可选。
+  optional string definition_id = 5 [(buf.validate.field).string.uuid = true];
+  // initiator 发起人过滤，可选。
+  optional string initiator = 6 [(buf.validate.field).string.uuid = true];
+  // business_type 业务类型过滤，可选（如 ticket）；"-" = 不挂业务对象的独立流程（含子流程）。
+  optional string business_type = 7 [(buf.validate.field).string = {
+    pattern: "^(-|[a-z][a-z0-9_]{0,31})$"
+  }];
+}
+
+// ListInstancesResponse 分页查询流程实例响应。
+message ListInstancesResponse {
+  // items 当前页数据，发起时间倒序。
+  repeated Instance items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// CancelInstanceRequest 撤回流程请求。
+message CancelInstanceRequest {
+  // id 实例唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // comment 撤回说明，≤1000 位。
+  string comment = 2 [(buf.validate.field).string.max_len = 1000];
+}
+
+// CancelInstanceResponse 撤回流程响应。
+message CancelInstanceResponse {}
+
+// TerminateInstanceRequest 终止流程请求。
+message TerminateInstanceRequest {
+  // id 实例唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // reason 终止原因，1-1000 位（必填，留痕）。
+  string reason = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 1000
+  }];
+}
+
+// TerminateInstanceResponse 终止流程响应。
+message TerminateInstanceResponse {}
+
+// TaskItem 待办 / 已办 / 抄送列表项。
+message TaskItem {
+  // task_id 任务唯一标识。
+  string task_id = 1;
+  // instance_id 所属流程实例 ID。
+  string instance_id = 2;
+  // title 实例标题。
+  string title = 3;
+  // definition_name 流程名称。
+  string definition_name = 4;
+  // node_name 节点名称。
+  string node_name = 5;
+  // initiator 发起人用户 ID。
+  string initiator = 6;
+  // initiator_name 发起人显示名。
+  string initiator_name = 7;
+  // instance_status 实例状态：1=进行中 2=已通过 3=已拒绝 4=已撤回 5=已终止。
+  int32 instance_status = 8;
+  // status 我在该任务上的状态：1=待处理 3=已同意 4=已拒绝 6=已转办 7=已退回 8=已抄送。
+  int32 status = 9;
+  // create_time 任务到达时间。
+  google.protobuf.Timestamp create_time = 10;
+  // action_time 我的处理时间；未处理为空。
+  google.protobuf.Timestamp action_time = 11;
+  // business_type 业务类型；空 = 独立发起。
+  string business_type = 12;
+  // business_id 业务对象 ID。
+  string business_id = 13;
+}
+
+// ListTasksRequest 分页查询任务请求（待办 / 已办 / 抄送共用）。
+message ListTasksRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // keyword 关键字，可选；模糊匹配实例标题。
+  optional string keyword = 3 [(buf.validate.field).string.max_len = 64];
+  // business_type 业务类型过滤，可选（如 ticket）：只返回挂在该类业务对象上的流程任务。
+  optional string business_type = 4 [(buf.validate.field).string = {
+    pattern: "^[a-z][a-z0-9_]{0,63}$"
+  }];
+}
+
+// ListTasksResponse 分页查询任务响应。
+message ListTasksResponse {
+  // items 当前页数据，时间倒序。
+  repeated TaskItem items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// ApproveTaskRequest 同意任务请求。
+message ApproveTaskRequest {
+  // id 任务唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // comment 处理意见，≤1000 位。
+  string comment = 2 [(buf.validate.field).string.max_len = 1000];
+}
+
+// RejectTaskRequest 拒绝任务请求。
+message RejectTaskRequest {
+  // id 任务唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // comment 拒绝理由，1-1000 位（必填）。
+  string comment = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 1000
+  }];
+}
+
+// ReturnTaskRequest 退回任务请求。
+message ReturnTaskRequest {
+  // id 任务唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // to_node_id 退回到的节点 ID（须为此前走过的人工任务节点）。
+  string to_node_id = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // comment 退回理由，1-1000 位（必填）。
+  string comment = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 1000
+  }];
+}
+
+// TransferTaskRequest 转办任务请求。
+message TransferTaskRequest {
+  // id 任务唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // to_user_id 转办对象用户 ID。
+  string to_user_id = 2 [(buf.validate.field).string.uuid = true];
+  // comment 转办说明，≤1000 位。
+  string comment = 3 [(buf.validate.field).string.max_len = 1000];
+}
+
+// ReassignTaskRequest 改派任务请求。
+message ReassignTaskRequest {
+  // id 任务唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // user_ids 新的处理人用户 ID，去重、1-20 个。
+  repeated string user_ids = 2 [(buf.validate.field).repeated = {
+    unique: true
+    min_items: 1
+    max_items: 20
+    items: { string: { uuid: true } }
+  }];
+  // reason 改派原因，1-1000 位（必填，留痕）。
+  string reason = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 1000
+  }];
+}
+
+// AddSignTaskRequest 加签请求。
+message AddSignTaskRequest {
+  // id 任务唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // user_ids 被加签的用户 ID，去重、1-10 个。
+  repeated string user_ids = 2 [(buf.validate.field).repeated = {
+    unique: true
+    min_items: 1
+    max_items: 10
+    items: { string: { uuid: true } }
+  }];
+  // position 加签方式：before=前加签 after=后加签。
+  string position = 3 [(buf.validate.field).string = { in: ["before", "after"] }];
+  // comment 说明，≤1000 位。
+  string comment = 4 [(buf.validate.field).string.max_len = 1000];
+}
+
+// DelegateTaskRequest 委派请求。
+message DelegateTaskRequest {
+  // id 任务唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // to_user_id 被委派的用户 ID。
+  string to_user_id = 2 [(buf.validate.field).string.uuid = true];
+  // comment 说明，≤1000 位。
+  string comment = 3 [(buf.validate.field).string.max_len = 1000];
+}
+
+// SignalInstanceRequest 投递流程信号请求。
+message SignalInstanceRequest {
+  // id 实例唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // name 信号名（与定时节点配置的一致）。
+  string name = 2 [(buf.validate.field).string = {
+    pattern: "^[A-Za-z][A-Za-z0-9_.-]{0,63}$"
+  }];
+  // variables 随信号带入的数据，并入流程变量（同名覆盖）。
+  google.protobuf.Struct variables = 3;
+}
+
+// RetryInstanceJobRequest 重试自动任务请求。
+message RetryInstanceJobRequest {
+  // id 实例唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // job_id 作业唯一标识，取自路径参数。
+  string job_id = 2 [(buf.validate.field).string.uuid = true];
+}
+
+// RetryInstanceJobResponse 重试自动任务响应。
+message RetryInstanceJobResponse {}
+
+// SkipInstanceJobRequest 跳过等待节点请求。
+message SkipInstanceJobRequest {
+  // id 实例唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // job_id 作业唯一标识，取自路径参数。
+  string job_id = 2 [(buf.validate.field).string.uuid = true];
+  // reason 跳过原因，1-1000 位（必填，留痕）。
+  string reason = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 1000
+  }];
+}
+
+// HandoverTasksRequest 交接待办请求。
+message HandoverTasksRequest {
+  // from_user_id 交出待办的用户 ID。
+  string from_user_id = 1 [(buf.validate.field).string.uuid = true];
+  // to_user_id 接手的用户 ID（须为可用用户）。
+  string to_user_id = 2 [(buf.validate.field).string.uuid = true];
+  // reason 交接原因，1-1000 位（必填，留痕）。
+  string reason = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 1000
+  }];
+  // cursor 续传游标：首次调用留空；响应的 more 为 true 时，带上响应里的 next_cursor 再次调用。
+  string cursor = 4 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+}
+
+// HandoverTasksResponse 交接待办响应。
+message HandoverTasksResponse {
+  // moved 本次交接的待办席位数。
+  int32 moved = 1;
+  // more 是否还有本次没轮到的流程实例（为 true 时应带上 next_cursor 再次调用）。与本次是否有
+  // 失败无关：失败的实例不会再被下一次调用处理。
+  bool more = 2;
+  // failed 本次没能交接的流程实例数（这些实例上的待办仍在原处理人名下，需逐个查看原因）。
+  int32 failed = 3;
+  // next_cursor 下一次调用应带上的游标；more 为 false 时为空。
+  string next_cursor = 4;
+}
+
+// TaskActionResponse 任务处理动作的统一响应。
+message TaskActionResponse {
+  // instance_status 动作完成后的实例状态：1=进行中 2=已通过 3=已拒绝 4=已撤回 5=已终止。
+  int32 instance_status = 1;
+}
+
+// ReturnTarget 可退回到的节点。
+message ReturnTarget {
+  // node_id 节点 ID。
+  string node_id = 1;
+  // node_name 节点名称。
+  string node_name = 2;
+}
+
+// ListReturnTargetsRequest 查询可退回节点请求。
+message ListReturnTargetsRequest {
+  // id 任务唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// ListReturnTargetsResponse 查询可退回节点响应。
+message ListReturnTargetsResponse {
+  // items 可退回到的节点，按最近到达时间倒序。
+  repeated ReturnTarget items = 1;
+}
+
+// WorkflowUserCandidate 可选用户（最小披露：不含手机号、邮箱）。
+message WorkflowUserCandidate {
+  // id 用户唯一标识。
+  string id = 1;
+  // username 登录名。
+  string username = 2;
+  // nickname 昵称。
+  string nickname = 3;
+}
+
+// ListWorkflowUserCandidatesRequest 查询可选用户请求。
+message ListWorkflowUserCandidatesRequest {
+  // keyword 登录名/昵称模糊匹配，可选。
+  optional string keyword = 1 [(buf.validate.field).string.max_len = 64];
+}
+
+// ListWorkflowUserCandidatesResponse 查询可选用户响应。
+message ListWorkflowUserCandidatesResponse {
+  // items 匹配的用户，最多 50 个。
+  repeated WorkflowUserCandidate items = 1;
+}

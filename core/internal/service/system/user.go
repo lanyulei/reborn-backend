@@ -14,12 +14,13 @@ import (
 
 // UserService 实现 api/system/v1 生成的 UserServiceServer。
 type UserService struct {
-	uc *biz.UserUsecase
+	uc    *biz.UserUsecase
+	depts *biz.DeptUsecase
 }
 
-// NewUserService new a UserService.
-func NewUserService(uc *biz.UserUsecase) *UserService {
-	return &UserService{uc: uc}
+// NewUserService new a UserService；depts 用于用户详情/列表批量填充所属部门。
+func NewUserService(uc *biz.UserUsecase, depts *biz.DeptUsecase) *UserService {
+	return &UserService{uc: uc, depts: depts}
 }
 
 // CreateUser implements proto UserService/CreateUser：创建超管账号须由超管
@@ -47,11 +48,19 @@ func (s *UserService) CreateUser(ctx context.Context, req *v1.CreateUserRequest)
 		Gender:   req.GetGender(),
 		IsAdmin:  req.GetIsAdmin(),
 		Status:   status,
+		Depts:    toDeptAssignment(req.GetDepts()),
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &v1.CreateUserResponse{User: toProtoUser(user)}, nil
+	resp := &v1.CreateUserResponse{User: toProtoUser(user)}
+	if req.GetDepts() != nil {
+		// 建号时指定了部门：回填所属部门，免二次查询。
+		if err := s.fillDepts(ctx, []*v1.User{resp.User}); err != nil {
+			return nil, err
+		}
+	}
+	return resp, nil
 }
 
 // UpdateUser implements proto UserService/UpdateUser：携带 is_admin 时走
@@ -73,6 +82,7 @@ func (s *UserService) UpdateUser(ctx context.Context, req *v1.UpdateUserRequest)
 		Phone:    req.Phone,
 		Gender:   req.Gender,
 		IsAdmin:  req.IsAdmin,
+		Depts:    toDeptAssignment(req.GetDepts()),
 	}
 	if err := s.uc.Update(ctx, req.GetId(), upd); err != nil {
 		return nil, err
@@ -123,12 +133,21 @@ func (s *UserService) GetUser(ctx context.Context, req *v1.GetUserRequest) (*v1.
 	if err != nil {
 		return nil, err
 	}
-	return &v1.GetUserResponse{User: toProtoUser(user)}, nil
+	resp := &v1.GetUserResponse{User: toProtoUser(user)}
+	if err := s.fillDepts(ctx, []*v1.User{resp.User}); err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 // ListUsers implements proto UserService/ListUsers.
 func (s *UserService) ListUsers(ctx context.Context, req *v1.ListUsersRequest) (*v1.ListUsersResponse, error) {
-	filter := biz.UserFilter{Keyword: req.GetKeyword(), Status: req.Status}
+	filter := biz.UserFilter{
+		Keyword:         req.GetKeyword(),
+		Status:          req.Status,
+		DeptID:          req.GetDeptId(),
+		IncludeSubDepts: req.GetIncludeSubDepts(),
+	}
 	users, total, err := s.uc.List(ctx, filter, req.GetPage(), int64(req.GetPageSize()))
 	if err != nil {
 		return nil, err
@@ -140,7 +159,29 @@ func (s *UserService) ListUsers(ctx context.Context, req *v1.ListUsersRequest) (
 	for _, u := range users {
 		resp.Items = append(resp.Items, toProtoUser(u))
 	}
+	if err := s.fillDepts(ctx, resp.Items); err != nil {
+		return nil, err
+	}
 	return resp, nil
+}
+
+// fillDepts 批量回填用户所属部门（单查询，无逐用户 N+1）。
+func (s *UserService) fillDepts(ctx context.Context, users []*v1.User) error {
+	if len(users) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(users))
+	for _, u := range users {
+		ids = append(ids, u.GetId())
+	}
+	depts, err := s.depts.UserDepts(ctx, ids)
+	if err != nil {
+		return err
+	}
+	for _, u := range users {
+		u.Depts = toProtoUserDepts(depts[u.GetId()])
+	}
+	return nil
 }
 
 // BindUserRoles implements proto UserService/BindUserRoles：非超管只能授予

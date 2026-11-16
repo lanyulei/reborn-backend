@@ -44,6 +44,7 @@ func newTestHTTPServerWithServices(t *testing.T) (*httptest.Server, testServices
 		testLogger(),
 		svc.user,
 		svc.role,
+		svc.dept,
 		svc.auth,
 		svc.syscfg,
 		svc.loginLog,
@@ -66,8 +67,12 @@ func newTestHTTPServerWithServices(t *testing.T) (*httptest.Server, testServices
 		svc.cmdbSync,
 		svc.cmdbInsight,
 		nil, nil, nil, // 值班域服务：需要 PostgreSQL，由 data 集成测试覆盖
+		svc.file,
+		nil, nil, nil, nil, nil, // 流程引擎域服务：执行状态存取需要 PostgreSQL，由 data 集成测试覆盖
+		nil, nil, // 工单域服务：依赖流程引擎，同样由 data 集成测试覆盖
 		svc.signer,
 		svc.authz,
+		AllRoles(), nil, nil, // 全部角色；探活不接数据库、不带指标
 	)
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)

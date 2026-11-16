@@ -33,6 +33,10 @@ message Server {
   }
   // http HTTP 配置。
   HTTP http = 1;
+  // roles 本进程启用的角色：api（对外提供业务接口）/ worker（运行后台循环：值班、附件清理、
+  // 流程作业、工单 SLA 巡检）。环境变量 SERVER_ROLES（逗号分隔）优先；两者皆空 = 全部角色
+  //（单进程部署）。分开部署时须保证至少有一个进程承担 worker 角色。
+  repeated string roles = 2;
 }
 
 // Data 是数据层资源配置；密钥类字段一律从环境变量注入，禁止明文入库。
@@ -48,11 +52,35 @@ message Data {
     // max_conn_idle_time 连接最大空闲时长；未设置使用驱动默认值。
     google.protobuf.Duration max_conn_idle_time = 4;
   }
-  // Upload 是本地上传文件的落盘配置。
+  // Upload 是上传文件的存储配置。
   message Upload {
+    // S3 是 S3 兼容对象存储（AWS S3 / MinIO / 阿里云 OSS 的 S3 兼容端点等）的连接参数；
+    // endpoint 非空即登记 s3 驱动，装配阶段校验，配置不全快速失败。
+    message S3 {
+      // endpoint 服务端点：http(s)://host[:port]，不含桶名与路径。
+      string endpoint = 1;
+      // region 签名用的区域；留空取 us-east-1（MinIO 等不分区域的服务的默认值）。
+      string region = 2;
+      // bucket 桶名（须已存在）。
+      string bucket = 3;
+      // access_key 访问密钥 ID；经 KRATOS_DATA_UPLOAD_S3_ACCESS_KEY 环境变量注入。
+      string access_key = 4;
+      // secret_key 访问密钥；一律经 KRATOS_DATA_UPLOAD_S3_SECRET_KEY 环境变量注入，不落配置文件。
+      string secret_key = 5;
+      // path_style 路径式寻址（<endpoint>/<bucket>/<key>，MinIO 常用）；
+      // false 为虚拟主机式（<bucket>.<endpoint>/<key>）。
+      bool path_style = 6;
+      // prefix 对象键前缀，可空（多个环境共用一个桶时区分）。
+      string prefix = 7;
+    }
     // dir 上传文件存储目录（相对或绝对路径），容器/裸机部署均需持久化；
     // 留空使用默认值 ./uploads。
     string dir = 1;
+    // driver 新上传附件使用的存储驱动：local（本地磁盘，<dir>/files；留空的缺省值）或 s3。
+    // 多实例部署时本地驱动的 dir 须为共享卷。每个文件记录自己的驱动，切换后旧文件仍按原驱动读取。
+    string driver = 2;
+    // s3 S3 兼容对象存储的连接参数；driver = s3 时必填。
+    S3 s3 = 3;
   }
   // database 数据库配置。
   Database database = 1;

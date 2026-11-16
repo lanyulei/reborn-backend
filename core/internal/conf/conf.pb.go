@@ -108,7 +108,11 @@ func (x *Bootstrap) GetAssistant() *Assistant {
 type Server struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// http HTTP 配置。
-	Http          *Server_HTTP `protobuf:"bytes,1,opt,name=http,proto3" json:"http,omitempty"`
+	Http *Server_HTTP `protobuf:"bytes,1,opt,name=http,proto3" json:"http,omitempty"`
+	// roles 本进程启用的角色：api（对外提供业务接口）/ worker（运行后台循环：值班、附件清理、
+	// 流程作业、工单 SLA 巡检）。环境变量 SERVER_ROLES（逗号分隔）优先；两者皆空 = 全部角色
+	//（单进程部署）。分开部署时须保证至少有一个进程承担 worker 角色。
+	Roles         []string `protobuf:"bytes,2,rep,name=roles,proto3" json:"roles,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -146,6 +150,13 @@ func (*Server) Descriptor() ([]byte, []int) {
 func (x *Server) GetHttp() *Server_HTTP {
 	if x != nil {
 		return x.Http
+	}
+	return nil
+}
+
+func (x *Server) GetRoles() []string {
+	if x != nil {
+		return x.Roles
 	}
 	return nil
 }
@@ -582,12 +593,17 @@ func (x *Data_Database) GetMaxConnIdleTime() *durationpb.Duration {
 	return nil
 }
 
-// Upload 是本地上传文件的落盘配置。
+// Upload 是上传文件的存储配置。
 type Data_Upload struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// dir 上传文件存储目录（相对或绝对路径），容器/裸机部署均需持久化；
 	// 留空使用默认值 ./uploads。
-	Dir           string `protobuf:"bytes,1,opt,name=dir,proto3" json:"dir,omitempty"`
+	Dir string `protobuf:"bytes,1,opt,name=dir,proto3" json:"dir,omitempty"`
+	// driver 新上传附件使用的存储驱动：local（本地磁盘，<dir>/files；留空的缺省值）或 s3。
+	// 多实例部署时本地驱动的 dir 须为共享卷。每个文件记录自己的驱动，切换后旧文件仍按原驱动读取。
+	Driver string `protobuf:"bytes,2,opt,name=driver,proto3" json:"driver,omitempty"`
+	// s3 S3 兼容对象存储的连接参数；driver = s3 时必填。
+	S3            *Data_Upload_S3 `protobuf:"bytes,3,opt,name=s3,proto3" json:"s3,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -629,6 +645,122 @@ func (x *Data_Upload) GetDir() string {
 	return ""
 }
 
+func (x *Data_Upload) GetDriver() string {
+	if x != nil {
+		return x.Driver
+	}
+	return ""
+}
+
+func (x *Data_Upload) GetS3() *Data_Upload_S3 {
+	if x != nil {
+		return x.S3
+	}
+	return nil
+}
+
+// S3 是 S3 兼容对象存储（AWS S3 / MinIO / 阿里云 OSS 的 S3 兼容端点等）的连接参数；
+// endpoint 非空即登记 s3 驱动，装配阶段校验，配置不全快速失败。
+type Data_Upload_S3 struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// endpoint 服务端点：http(s)://host[:port]，不含桶名与路径。
+	Endpoint string `protobuf:"bytes,1,opt,name=endpoint,proto3" json:"endpoint,omitempty"`
+	// region 签名用的区域；留空取 us-east-1（MinIO 等不分区域的服务的默认值）。
+	Region string `protobuf:"bytes,2,opt,name=region,proto3" json:"region,omitempty"`
+	// bucket 桶名（须已存在）。
+	Bucket string `protobuf:"bytes,3,opt,name=bucket,proto3" json:"bucket,omitempty"`
+	// access_key 访问密钥 ID；经 KRATOS_DATA_UPLOAD_S3_ACCESS_KEY 环境变量注入。
+	AccessKey string `protobuf:"bytes,4,opt,name=access_key,json=accessKey,proto3" json:"access_key,omitempty"`
+	// secret_key 访问密钥；一律经 KRATOS_DATA_UPLOAD_S3_SECRET_KEY 环境变量注入，不落配置文件。
+	SecretKey string `protobuf:"bytes,5,opt,name=secret_key,json=secretKey,proto3" json:"secret_key,omitempty"`
+	// path_style 路径式寻址（<endpoint>/<bucket>/<key>，MinIO 常用）；
+	// false 为虚拟主机式（<bucket>.<endpoint>/<key>）。
+	PathStyle bool `protobuf:"varint,6,opt,name=path_style,json=pathStyle,proto3" json:"path_style,omitempty"`
+	// prefix 对象键前缀，可空（多个环境共用一个桶时区分）。
+	Prefix        string `protobuf:"bytes,7,opt,name=prefix,proto3" json:"prefix,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Data_Upload_S3) Reset() {
+	*x = Data_Upload_S3{}
+	mi := &file_conf_conf_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Data_Upload_S3) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Data_Upload_S3) ProtoMessage() {}
+
+func (x *Data_Upload_S3) ProtoReflect() protoreflect.Message {
+	mi := &file_conf_conf_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Data_Upload_S3.ProtoReflect.Descriptor instead.
+func (*Data_Upload_S3) Descriptor() ([]byte, []int) {
+	return file_conf_conf_proto_rawDescGZIP(), []int{2, 1, 0}
+}
+
+func (x *Data_Upload_S3) GetEndpoint() string {
+	if x != nil {
+		return x.Endpoint
+	}
+	return ""
+}
+
+func (x *Data_Upload_S3) GetRegion() string {
+	if x != nil {
+		return x.Region
+	}
+	return ""
+}
+
+func (x *Data_Upload_S3) GetBucket() string {
+	if x != nil {
+		return x.Bucket
+	}
+	return ""
+}
+
+func (x *Data_Upload_S3) GetAccessKey() string {
+	if x != nil {
+		return x.AccessKey
+	}
+	return ""
+}
+
+func (x *Data_Upload_S3) GetSecretKey() string {
+	if x != nil {
+		return x.SecretKey
+	}
+	return ""
+}
+
+func (x *Data_Upload_S3) GetPathStyle() bool {
+	if x != nil {
+		return x.PathStyle
+	}
+	return false
+}
+
+func (x *Data_Upload_S3) GetPrefix() string {
+	if x != nil {
+		return x.Prefix
+	}
+	return ""
+}
+
 // Authz 是接口授权（Casbin）参数；构造 NewAuthorizer 时校验。
 type Security_Authz struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -641,7 +773,7 @@ type Security_Authz struct {
 
 func (x *Security_Authz) Reset() {
 	*x = Security_Authz{}
-	mi := &file_conf_conf_proto_msgTypes[9]
+	mi := &file_conf_conf_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -653,7 +785,7 @@ func (x *Security_Authz) String() string {
 func (*Security_Authz) ProtoMessage() {}
 
 func (x *Security_Authz) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[9]
+	mi := &file_conf_conf_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -691,7 +823,7 @@ type Security_Password struct {
 
 func (x *Security_Password) Reset() {
 	*x = Security_Password{}
-	mi := &file_conf_conf_proto_msgTypes[10]
+	mi := &file_conf_conf_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -703,7 +835,7 @@ func (x *Security_Password) String() string {
 func (*Security_Password) ProtoMessage() {}
 
 func (x *Security_Password) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[10]
+	mi := &file_conf_conf_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -758,7 +890,7 @@ type Security_Jwt struct {
 
 func (x *Security_Jwt) Reset() {
 	*x = Security_Jwt{}
-	mi := &file_conf_conf_proto_msgTypes[11]
+	mi := &file_conf_conf_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -770,7 +902,7 @@ func (x *Security_Jwt) String() string {
 func (*Security_Jwt) ProtoMessage() {}
 
 func (x *Security_Jwt) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[11]
+	mi := &file_conf_conf_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -828,7 +960,7 @@ type Notify_Master struct {
 
 func (x *Notify_Master) Reset() {
 	*x = Notify_Master{}
-	mi := &file_conf_conf_proto_msgTypes[12]
+	mi := &file_conf_conf_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -840,7 +972,7 @@ func (x *Notify_Master) String() string {
 func (*Notify_Master) ProtoMessage() {}
 
 func (x *Notify_Master) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[12]
+	mi := &file_conf_conf_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -874,13 +1006,14 @@ const file_conf_conf_proto_rawDesc = "" +
 	".conf.DataR\x04data\x12*\n" +
 	"\bsecurity\x18\x03 \x01(\v2\x0e.conf.SecurityR\bsecurity\x12$\n" +
 	"\x06notify\x18\x04 \x01(\v2\f.conf.NotifyR\x06notify\x12-\n" +
-	"\tassistant\x18\x05 \x01(\v2\x0f.conf.AssistantR\tassistant\"\x9a\x01\n" +
+	"\tassistant\x18\x05 \x01(\v2\x0f.conf.AssistantR\tassistant\"\xb0\x01\n" +
 	"\x06Server\x12%\n" +
-	"\x04http\x18\x01 \x01(\v2\x11.conf.Server.HTTPR\x04http\x1ai\n" +
+	"\x04http\x18\x01 \x01(\v2\x11.conf.Server.HTTPR\x04http\x12\x14\n" +
+	"\x05roles\x18\x02 \x03(\tR\x05roles\x1ai\n" +
 	"\x04HTTP\x12\x18\n" +
 	"\anetwork\x18\x01 \x01(\tR\anetwork\x12\x12\n" +
 	"\x04addr\x18\x02 \x01(\tR\x04addr\x123\n" +
-	"\atimeout\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\atimeout\"\xa5\x02\n" +
+	"\atimeout\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\atimeout\"\xac\x04\n" +
 	"\x04Data\x12/\n" +
 	"\bdatabase\x18\x01 \x01(\v2\x13.conf.Data.DatabaseR\bdatabase\x12)\n" +
 	"\x06upload\x18\x02 \x01(\v2\x11.conf.Data.UploadR\x06upload\x1a\xa4\x01\n" +
@@ -888,9 +1021,22 @@ const file_conf_conf_proto_rawDesc = "" +
 	"\x06source\x18\x01 \x01(\tR\x06source\x12\x1b\n" +
 	"\tmax_conns\x18\x02 \x01(\x05R\bmaxConns\x12\x1b\n" +
 	"\tmin_conns\x18\x03 \x01(\x05R\bminConns\x12F\n" +
-	"\x12max_conn_idle_time\x18\x04 \x01(\v2\x19.google.protobuf.DurationR\x0fmaxConnIdleTime\x1a\x1a\n" +
+	"\x12max_conn_idle_time\x18\x04 \x01(\v2\x19.google.protobuf.DurationR\x0fmaxConnIdleTime\x1a\xa0\x02\n" +
 	"\x06Upload\x12\x10\n" +
-	"\x03dir\x18\x01 \x01(\tR\x03dir\"\xed\x03\n" +
+	"\x03dir\x18\x01 \x01(\tR\x03dir\x12\x16\n" +
+	"\x06driver\x18\x02 \x01(\tR\x06driver\x12$\n" +
+	"\x02s3\x18\x03 \x01(\v2\x14.conf.Data.Upload.S3R\x02s3\x1a\xc5\x01\n" +
+	"\x02S3\x12\x1a\n" +
+	"\bendpoint\x18\x01 \x01(\tR\bendpoint\x12\x16\n" +
+	"\x06region\x18\x02 \x01(\tR\x06region\x12\x16\n" +
+	"\x06bucket\x18\x03 \x01(\tR\x06bucket\x12\x1d\n" +
+	"\n" +
+	"access_key\x18\x04 \x01(\tR\taccessKey\x12\x1d\n" +
+	"\n" +
+	"secret_key\x18\x05 \x01(\tR\tsecretKey\x12\x1d\n" +
+	"\n" +
+	"path_style\x18\x06 \x01(\bR\tpathStyle\x12\x16\n" +
+	"\x06prefix\x18\a \x01(\tR\x06prefix\"\xed\x03\n" +
 	"\bSecurity\x123\n" +
 	"\bpassword\x18\x01 \x01(\v2\x17.conf.Security.PasswordR\bpassword\x12$\n" +
 	"\x03jwt\x18\x02 \x01(\v2\x12.conf.Security.JwtR\x03jwt\x12*\n" +
@@ -939,7 +1085,7 @@ func file_conf_conf_proto_rawDescGZIP() []byte {
 	return file_conf_conf_proto_rawDescData
 }
 
-var file_conf_conf_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_conf_conf_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_conf_conf_proto_goTypes = []any{
 	(*Bootstrap)(nil),           // 0: conf.Bootstrap
 	(*Server)(nil),              // 1: conf.Server
@@ -950,11 +1096,12 @@ var file_conf_conf_proto_goTypes = []any{
 	(*Server_HTTP)(nil),         // 6: conf.Server.HTTP
 	(*Data_Database)(nil),       // 7: conf.Data.Database
 	(*Data_Upload)(nil),         // 8: conf.Data.Upload
-	(*Security_Authz)(nil),      // 9: conf.Security.Authz
-	(*Security_Password)(nil),   // 10: conf.Security.Password
-	(*Security_Jwt)(nil),        // 11: conf.Security.Jwt
-	(*Notify_Master)(nil),       // 12: conf.Notify.Master
-	(*durationpb.Duration)(nil), // 13: google.protobuf.Duration
+	(*Data_Upload_S3)(nil),      // 9: conf.Data.Upload.S3
+	(*Security_Authz)(nil),      // 10: conf.Security.Authz
+	(*Security_Password)(nil),   // 11: conf.Security.Password
+	(*Security_Jwt)(nil),        // 12: conf.Security.Jwt
+	(*Notify_Master)(nil),       // 13: conf.Notify.Master
+	(*durationpb.Duration)(nil), // 14: google.protobuf.Duration
 }
 var file_conf_conf_proto_depIdxs = []int32{
 	1,  // 0: conf.Bootstrap.server:type_name -> conf.Server
@@ -965,24 +1112,25 @@ var file_conf_conf_proto_depIdxs = []int32{
 	6,  // 5: conf.Server.http:type_name -> conf.Server.HTTP
 	7,  // 6: conf.Data.database:type_name -> conf.Data.Database
 	8,  // 7: conf.Data.upload:type_name -> conf.Data.Upload
-	10, // 8: conf.Security.password:type_name -> conf.Security.Password
-	11, // 9: conf.Security.jwt:type_name -> conf.Security.Jwt
-	9,  // 10: conf.Security.authz:type_name -> conf.Security.Authz
-	12, // 11: conf.Notify.master:type_name -> conf.Notify.Master
-	13, // 12: conf.Notify.dedup_ttl:type_name -> google.protobuf.Duration
-	13, // 13: conf.Assistant.timeout:type_name -> google.protobuf.Duration
-	13, // 14: conf.Assistant.llm_connect_timeout:type_name -> google.protobuf.Duration
-	13, // 15: conf.Assistant.tool_timeout:type_name -> google.protobuf.Duration
-	13, // 16: conf.Server.HTTP.timeout:type_name -> google.protobuf.Duration
-	13, // 17: conf.Data.Database.max_conn_idle_time:type_name -> google.protobuf.Duration
-	13, // 18: conf.Security.Authz.policy_ttl:type_name -> google.protobuf.Duration
-	13, // 19: conf.Security.Jwt.access_ttl:type_name -> google.protobuf.Duration
-	13, // 20: conf.Security.Jwt.refresh_ttl:type_name -> google.protobuf.Duration
-	21, // [21:21] is the sub-list for method output_type
-	21, // [21:21] is the sub-list for method input_type
-	21, // [21:21] is the sub-list for extension type_name
-	21, // [21:21] is the sub-list for extension extendee
-	0,  // [0:21] is the sub-list for field type_name
+	11, // 8: conf.Security.password:type_name -> conf.Security.Password
+	12, // 9: conf.Security.jwt:type_name -> conf.Security.Jwt
+	10, // 10: conf.Security.authz:type_name -> conf.Security.Authz
+	13, // 11: conf.Notify.master:type_name -> conf.Notify.Master
+	14, // 12: conf.Notify.dedup_ttl:type_name -> google.protobuf.Duration
+	14, // 13: conf.Assistant.timeout:type_name -> google.protobuf.Duration
+	14, // 14: conf.Assistant.llm_connect_timeout:type_name -> google.protobuf.Duration
+	14, // 15: conf.Assistant.tool_timeout:type_name -> google.protobuf.Duration
+	14, // 16: conf.Server.HTTP.timeout:type_name -> google.protobuf.Duration
+	14, // 17: conf.Data.Database.max_conn_idle_time:type_name -> google.protobuf.Duration
+	9,  // 18: conf.Data.Upload.s3:type_name -> conf.Data.Upload.S3
+	14, // 19: conf.Security.Authz.policy_ttl:type_name -> google.protobuf.Duration
+	14, // 20: conf.Security.Jwt.access_ttl:type_name -> google.protobuf.Duration
+	14, // 21: conf.Security.Jwt.refresh_ttl:type_name -> google.protobuf.Duration
+	22, // [22:22] is the sub-list for method output_type
+	22, // [22:22] is the sub-list for method input_type
+	22, // [22:22] is the sub-list for extension type_name
+	22, // [22:22] is the sub-list for extension extendee
+	0,  // [0:22] is the sub-list for field type_name
 }
 
 func init() { file_conf_conf_proto_init() }
@@ -996,7 +1144,7 @@ func file_conf_conf_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_conf_conf_proto_rawDesc), len(file_conf_conf_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   13,
+			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

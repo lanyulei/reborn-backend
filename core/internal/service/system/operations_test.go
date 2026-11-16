@@ -7,9 +7,11 @@ import (
 	"testing"
 
 	cmdbv1 "github.com/lanyulei/reborn/backend/core/api/cmdb/v1"
+	filev1 "github.com/lanyulei/reborn/backend/core/api/file/v1"
 	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
 	oncallv1 "github.com/lanyulei/reborn/backend/core/api/oncall/v1"
 	v1 "github.com/lanyulei/reborn/backend/core/api/system/v1"
+	workflowv1 "github.com/lanyulei/reborn/backend/core/api/workflow/v1"
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
 
 	"github.com/go-kratos/kratos/v3/errors"
@@ -43,7 +45,8 @@ func TestListOperations(t *testing.T) {
 		// 防止误挂无关 proto。
 		if !strings.HasPrefix(svc, "system.v1.") && !strings.HasPrefix(svc, "notify.v1.") &&
 			!strings.HasPrefix(svc, "assistant.v1.") && !strings.HasPrefix(svc, "cmdb.v1.") &&
-			!strings.HasPrefix(svc, "oncall.v1.") {
+			!strings.HasPrefix(svc, "oncall.v1.") && !strings.HasPrefix(svc, "workflow.v1.") &&
+			!strings.HasPrefix(svc, "ticket.v1.") {
 			t.Fatalf("operation %q not in an authorized proto package", op.Name)
 		}
 		if op.Title == "" {
@@ -166,6 +169,16 @@ func TestIsAuthzExempt(t *testing.T) {
 		v1.OperationAuthServiceGetUserAvatar,
 		// 公共值班日历：凭不可猜测的地址令牌匿名只读（管理接口不免检）
 		oncallv1.OperationOncallShareServiceGetPublicCalendar,
+		// 通用附件：已登录用户的自助能力（仍须 JWT）；访问控制在文件域按归属判定
+		filev1.OperationFileServiceUploadFile,
+		filev1.OperationFileServiceGetFile,
+		filev1.OperationFileServiceDownloadFile,
+		// 流程引擎的开放接口：供其他系统接入，凭接入令牌认证（库内只存哈希、可停用可重置），
+		// 能发起哪些流程由凭据配置决定、只能操作自己发起的实例；凭据的管理接口不免检
+		workflowv1.OperationWorkflowOpenServiceOpenStartInstance,
+		workflowv1.OperationWorkflowOpenServiceOpenGetInstance,
+		workflowv1.OperationWorkflowOpenServiceOpenSignalInstance,
+		workflowv1.OperationWorkflowOpenServiceOpenCancelInstance,
 	}
 	if len(authzExemptOperations) != len(want) {
 		t.Fatalf("authzExemptOperations has %d members, want exactly %d", len(authzExemptOperations), len(want))
@@ -178,6 +191,35 @@ func TestIsAuthzExempt(t *testing.T) {
 	for _, op := range []string{v1.OperationUserServiceListUsers, v1.OperationRoleServiceDeleteRole} {
 		if IsAuthzExempt(op) {
 			t.Errorf("IsAuthzExempt(%s) = true, want false", op)
+		}
+	}
+}
+
+// TestOperationRoutesUnambiguous 同一 HTTP 方法下，任意两条路由不得同时匹配同一个
+// 请求路径（如 /ticket/{id} 与 /ticket/mine）：路由按注册顺序匹配，静态段会被路径变量
+// 抢先吃掉，表现为另一条接口报参数校验错误。新增接口撞上时在此失败。
+func TestOperationRoutesUnambiguous(t *testing.T) {
+	t.Parallel()
+	// 整段是 {name} 才是路径变量；{id}:verb 这类带动作后缀的段按字面比较。
+	isVar := func(seg string) bool { return strings.HasPrefix(seg, "{") && strings.HasSuffix(seg, "}") }
+	overlap := func(a, b string) bool {
+		as, bs := strings.Split(a, "/"), strings.Split(b, "/")
+		if len(as) != len(bs) {
+			return false
+		}
+		for i := range as {
+			if !isVar(as[i]) && !isVar(bs[i]) && as[i] != bs[i] {
+				return false
+			}
+		}
+		return true
+	}
+	ops := listOperations()
+	for i, a := range ops {
+		for _, b := range ops[i+1:] {
+			if a.Method == b.Method && overlap(a.Path, b.Path) {
+				t.Errorf("routes overlap: %s %s (%s) and %s (%s)", a.Method, a.Path, a.Name, b.Path, b.Name)
+			}
 		}
 	}
 }

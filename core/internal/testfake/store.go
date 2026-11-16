@@ -26,6 +26,10 @@ var (
 	_ biz.RoleReader             = (*Store)(nil)
 	_ biz.RoleWriter             = (*Store)(nil)
 	_ biz.UserRoleRepo           = (*Store)(nil)
+	_ biz.DeptReader             = (*Store)(nil)
+	_ biz.DeptWriter             = (*Store)(nil)
+	_ biz.DeptMover              = (*Store)(nil)
+	_ biz.DeptMemberRepo         = (*Store)(nil)
 	_ biz.RefreshTokenReader     = (*Store)(nil)
 	_ biz.RefreshTokenWriter     = (*Store)(nil)
 	_ biz.PermissionPolicySource = (*Store)(nil)
@@ -73,6 +77,9 @@ type Store struct {
 	systemConfig  *biz.SystemConfig              // 单例配置行（nil = 未配置）
 	logoFile      []byte                         // logo 文件内容（nil = 未上传）
 	logoMime      string                         // logo 文件 MIME
+	depts         map[string]*biz.Dept           // deptID -> 部门（软删即移除；Leaders/MemberCount 读时派生）
+	deptLeaders   map[string][]string            // deptID -> 负责人 userID（按配置顺序）
+	userDepts     map[string][]userDeptEntry     // userID -> 所属部门（按加入顺序）
 }
 
 // NewStore new a Store.
@@ -90,6 +97,9 @@ func NewStore() *Store {
 		silences:      make(map[string]*silenceEntry),
 		subscriptions: make(map[string]*subscriptionEntry),
 		producers:     make(map[string]*producerEntry),
+		depts:         make(map[string]*biz.Dept),
+		deptLeaders:   make(map[string][]string),
+		userDepts:     make(map[string][]userDeptEntry),
 	}
 }
 
@@ -160,16 +170,20 @@ func (s *Store) ListUsers(_ context.Context, filter biz.UserFilter, page, pageSi
 	}
 	s.mu.RUnlock()
 
+	inDept := s.deptUserFilter(filter)
 	keyword := strings.ToLower(filter.Keyword)
 	matched := make([]*biz.User, 0, len(users))
 	for _, u := range users {
 		if filter.Status != nil && u.Status != *filter.Status {
 			continue
 		}
+		if inDept != nil && !inDept(u.ID) {
+			continue
+		}
 		if keyword != "" &&
 			!strings.Contains(strings.ToLower(u.Username), keyword) &&
 			!strings.Contains(strings.ToLower(u.Nickname), keyword) &&
-			!strings.Contains(strings.ToLower(u.Email), keyword) {
+			(filter.NameOnly || !strings.Contains(strings.ToLower(u.Email), keyword)) {
 			continue
 		}
 		matched = append(matched, cloneUser(u))
@@ -209,17 +223,31 @@ func (s *Store) CreateUser(_ context.Context, user *biz.User) error {
 	if cp.CreateTime.IsZero() {
 		cp.CreateTime, cp.UpdateTime = time.Now(), time.Now()
 	}
+	cp.Depts = nil // 所属部门不随用户实体存储（见 userDepts）
 	s.users[cp.ID] = &cp
 	return nil
 }
 
-// CreateUserWithRoles implements biz.UserWriter：建号并写入角色绑定。
+// CreateUserWithRoles implements biz.UserWriter：建号并写入角色绑定与所属部门
+// （部门不存在时整体不落库，对齐 data 层事务回滚）。
 func (s *Store) CreateUserWithRoles(ctx context.Context, user *biz.User, roleIDs []string) error {
+	if user.Depts != nil {
+		if err := s.checkDeptsExist(user.Depts.DeptIDs); err != nil {
+			return err
+		}
+	}
 	if err := s.CreateUser(ctx, user); err != nil {
 		return err
 	}
 	if len(roleIDs) > 0 {
-		return s.BindUserRoles(ctx, user.ID, roleIDs)
+		if err := s.BindUserRoles(ctx, user.ID, roleIDs); err != nil {
+			return err
+		}
+	}
+	if user.Depts != nil {
+		s.mu.Lock()
+		s.replaceUserDeptsLocked(user.ID, *user.Depts)
+		s.mu.Unlock()
 	}
 	return nil
 }
@@ -231,6 +259,14 @@ func (s *Store) UpdateUser(_ context.Context, id string, upd biz.UserUpdate) err
 	u, ok := s.users[id]
 	if !ok {
 		return biz.ErrUserNotFound
+	}
+	if upd.Depts != nil {
+		for _, deptID := range upd.Depts.DeptIDs {
+			if _, ok := s.depts[deptID]; !ok {
+				return biz.ErrDeptNotFound
+			}
+		}
+		s.replaceUserDeptsLocked(id, *upd.Depts)
 	}
 	if upd.Nickname != nil {
 		u.Nickname = *upd.Nickname
@@ -269,6 +305,10 @@ func (s *Store) DeleteUser(_ context.Context, id string) error {
 	}
 	delete(s.users, id)
 	delete(s.bindings, id)
+	delete(s.userDepts, id)
+	for deptID, leaders := range s.deptLeaders {
+		s.deptLeaders[deptID] = slices.DeleteFunc(leaders, func(userID string) bool { return userID == id })
+	}
 	return nil
 }
 

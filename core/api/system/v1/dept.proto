@@ -1,0 +1,352 @@
+syntax = "proto3";
+
+package system.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "buf/validate/validate.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/system/v1;v1";
+
+// DeptService 部门管理服务（组织架构）：部门树 CRUD、移动、负责人与成员维护。
+// 部门负责人可多人；用户可属多个部门（其中一个为主部门，见 UserService）。
+service DeptService {
+  // CreateDept 创建部门；同一上级下名称唯一，层级上限 10。
+  rpc CreateDept(CreateDeptRequest) returns (CreateDeptResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/system/dept"
+      body: "*"
+    };
+    option (system.v1.title) = "创建部门";
+  }
+  // UpdateDept 更新部门资料与负责人（可选字段，传哪个改哪个）；调整上级走 MoveDept。
+  rpc UpdateDept(UpdateDeptRequest) returns (UpdateDeptResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/system/dept/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "更新部门";
+  }
+  // MoveDept 调整部门的上级（连同整棵子树）；不能移到自身或自身的下级之下。
+  rpc MoveDept(MoveDeptRequest) returns (MoveDeptResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/system/dept/{id}/move"
+      body: "*"
+    };
+    option (system.v1.title) = "移动部门";
+  }
+  // DeleteDept 删除部门（软删）；存在下级部门或成员时拒绝。
+  rpc DeleteDept(DeleteDeptRequest) returns (DeleteDeptResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/system/dept/{id}"
+    };
+    option (system.v1.title) = "删除部门";
+  }
+  // GetDept 查询部门详情（含负责人）。
+  rpc GetDept(GetDeptRequest) returns (GetDeptResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/system/dept/{id}"
+    };
+    option (system.v1.title) = "查询部门详情";
+  }
+  // ListDepts 查询全部部门（平铺，按 parent_id 组树；部门总数有上限，不分页）。
+  rpc ListDepts(ListDeptsRequest) returns (ListDeptsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/system/dept"
+    };
+    option (system.v1.title) = "查询部门列表";
+  }
+  // AddDeptMembers 把用户加入部门（已在部门内的跳过）；用户尚无主部门时该部门成为主部门。
+  rpc AddDeptMembers(AddDeptMembersRequest) returns (AddDeptMembersResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/system/dept/{id}/member"
+      body: "*"
+    };
+    option (system.v1.title) = "添加部门成员";
+  }
+  // ListDeptMembers 分页查询部门成员（最小披露的用户视图，不含邮箱 / 手机号）。
+  rpc ListDeptMembers(ListDeptMembersRequest) returns (ListDeptMembersResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/system/dept/{id}/member"
+    };
+    option (system.v1.title) = "查询部门成员";
+  }
+  // ListUserCandidates 可选用户（可用的系统用户，仅 ID 与显示名）；供选择负责人、添加成员使用。
+  rpc ListUserCandidates(ListUserCandidatesRequest) returns (ListUserCandidatesResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/system/dept-user-candidate"
+    };
+    option (system.v1.title) = "查询部门可选用户";
+  }
+  // RemoveDeptMember 把用户移出部门；移出的是主部门且用户仍属其他部门时，最早加入的部门顶替为主部门。
+  rpc RemoveDeptMember(RemoveDeptMemberRequest) returns (RemoveDeptMemberResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/system/dept/{id}/member/{user_id}"
+    };
+    option (system.v1.title) = "移除部门成员";
+  }
+}
+
+// DeptLeader 部门负责人（用户展示信息的只读视图）。
+message DeptLeader {
+  // user_id 负责人用户 ID。
+  string user_id = 1;
+  // username 登录名。
+  string username = 2;
+  // nickname 昵称。
+  string nickname = 3;
+  // avatar 头像地址；空 = 未设置。
+  string avatar = 4;
+  // status 用户状态：1=可用 2=停用 3=暂停 4=离职（非可用的负责人在流程中会被跳过）。
+  int32 status = 5;
+}
+
+// Dept 部门实体（出参）。
+message Dept {
+  // id 部门唯一标识（UUIDv7）。
+  string id = 1;
+  // parent_id 上级部门 ID；空 = 根部门。
+  string parent_id = 2;
+  // name 部门名称。
+  string name = 3;
+  // code 部门编码；空 = 未设置。
+  string code = 4;
+  // sort 同级排序值，升序。
+  int32 sort = 5;
+  // status 状态：1=启用 0=停用。
+  int32 status = 6;
+  // description 说明。
+  string description = 7;
+  // leaders 部门负责人，按配置顺序。
+  repeated DeptLeader leaders = 8;
+  // member_count 直属成员数（不含下级部门）。
+  int32 member_count = 9;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 10;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 11;
+}
+
+// UserDept 用户所属部门（用户实体内嵌的只读视图）。
+message UserDept {
+  // id 部门 ID。
+  string id = 1;
+  // name 部门名称。
+  string name = 2;
+  // is_primary 是否主部门。
+  bool is_primary = 3;
+}
+
+// DeptLeaderIDs 负责人整组替换载荷（更新时须显式携带，空列表 = 清空负责人）。
+message DeptLeaderIDs {
+  // user_ids 负责人用户 ID，按顺序，去重、最多 20 个。
+  repeated string user_ids = 1 [(buf.validate.field).repeated = {
+    unique: true
+    max_items: 20
+    items: { string: { uuid: true } }
+  }];
+}
+
+// CreateDeptRequest 创建部门请求。
+message CreateDeptRequest {
+  // parent_id 上级部门 ID，可选；不传 = 根部门。
+  optional string parent_id = 1 [(buf.validate.field).string.uuid = true];
+  // name 部门名称，1-64 位。
+  string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // code 部门编码，可选：2-64 位字母/数字/下划线/中划线，未删除行内唯一。
+  optional string code = 3 [(buf.validate.field).string = {
+    pattern: "^[a-zA-Z0-9_-]{2,64}$"
+  }];
+  // sort 同级排序值，升序，0-9999。
+  int32 sort = 4 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 9999
+  }];
+  // description 说明，≤255 位。
+  string description = 5 [(buf.validate.field).string.max_len = 255];
+  // leader_ids 负责人用户 ID，按顺序，去重、最多 20 个。
+  repeated string leader_ids = 6 [(buf.validate.field).repeated = {
+    unique: true
+    max_items: 20
+    items: { string: { uuid: true } }
+  }];
+}
+
+// CreateDeptResponse 创建部门响应。
+message CreateDeptResponse {
+  // dept 已创建的部门实体。
+  Dept dept = 1;
+}
+
+// UpdateDeptRequest 更新部门请求，可选字段传哪个改哪个，至少传一个。
+message UpdateDeptRequest {
+  option (buf.validate.message).cel = {
+    id: "dept.update.non_empty"
+    message: "at least one updatable field must be provided"
+    expression: "has(this.name) || has(this.code) || has(this.sort) || has(this.status) || has(this.description) || has(this.leaders)"
+  };
+
+  // id 部门唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // name 新名称。
+  optional string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // code 新编码；传空串 = 清空。
+  optional string code = 3 [(buf.validate.field).string = {
+    pattern: "^$|^[a-zA-Z0-9_-]{2,64}$"
+  }];
+  // sort 新排序值。
+  optional int32 sort = 4 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 9999
+  }];
+  // status 新状态：1=启用 0=停用。
+  optional int32 status = 5 [(buf.validate.field).int32 = { in: [0, 1] }];
+  // description 新说明。
+  optional string description = 6 [(buf.validate.field).string.max_len = 255];
+  // leaders 负责人整组替换；不传 = 不改，传空列表 = 清空。
+  DeptLeaderIDs leaders = 7;
+}
+
+// UpdateDeptResponse 更新部门响应。
+message UpdateDeptResponse {
+  // dept 更新后的部门实体。
+  Dept dept = 1;
+}
+
+// MoveDeptRequest 移动部门请求。
+message MoveDeptRequest {
+  // id 部门唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // parent_id 新的上级部门 ID，可选；不传 = 移为根部门。
+  optional string parent_id = 2 [(buf.validate.field).string.uuid = true];
+}
+
+// MoveDeptResponse 移动部门响应。
+message MoveDeptResponse {}
+
+// DeleteDeptRequest 删除部门请求。
+message DeleteDeptRequest {
+  // id 部门唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteDeptResponse 删除部门响应。
+message DeleteDeptResponse {}
+
+// GetDeptRequest 查询部门请求。
+message GetDeptRequest {
+  // id 部门唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetDeptResponse 查询部门响应。
+message GetDeptResponse {
+  // dept 部门实体。
+  Dept dept = 1;
+}
+
+// ListDeptsRequest 查询部门列表请求。
+message ListDeptsRequest {}
+
+// ListDeptsResponse 查询部门列表响应。
+message ListDeptsResponse {
+  // items 全部未删除部门（平铺；上级在前，同级按 sort、创建时间升序）。
+  repeated Dept items = 1;
+}
+
+// AddDeptMembersRequest 添加部门成员请求。
+message AddDeptMembersRequest {
+  // id 部门唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // user_ids 待加入的用户 ID，去重、1-100 个。
+  repeated string user_ids = 2 [(buf.validate.field).repeated = {
+    unique: true
+    min_items: 1
+    max_items: 100
+    items: { string: { uuid: true } }
+  }];
+}
+
+// AddDeptMembersResponse 添加部门成员响应。
+message AddDeptMembersResponse {}
+
+// DeptMember 部门成员（最小披露：不含手机号、邮箱）。
+message DeptMember {
+  // id 用户唯一标识。
+  string id = 1;
+  // username 登录名。
+  string username = 2;
+  // nickname 昵称。
+  string nickname = 3;
+  // avatar 头像地址；空 = 未设置。
+  string avatar = 4;
+  // status 用户状态：1=可用 2=停用 3=暂停 4=离职。
+  int32 status = 5;
+  // depts 该用户的全部所属部门（主部门在前）。
+  repeated UserDept depts = 6;
+}
+
+// ListDeptMembersRequest 分页查询部门成员请求。
+message ListDeptMembersRequest {
+  // id 部门唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // page 页码，从 1 开始。
+  int64 page = 2 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 3 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // include_sub_depts 是否包含全部下级部门的成员。
+  bool include_sub_depts = 4;
+  // keyword 登录名/昵称模糊匹配，可选。
+  optional string keyword = 5 [(buf.validate.field).string.max_len = 64];
+}
+
+// ListDeptMembersResponse 分页查询部门成员响应。
+message ListDeptMembersResponse {
+  // items 当前页数据。
+  repeated DeptMember items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// DeptUserCandidate 可选用户（最小披露：不含手机号、邮箱）。
+message DeptUserCandidate {
+  // id 用户唯一标识。
+  string id = 1;
+  // username 登录名。
+  string username = 2;
+  // nickname 昵称。
+  string nickname = 3;
+}
+
+// ListUserCandidatesRequest 查询可选用户请求。
+message ListUserCandidatesRequest {
+  // keyword 登录名/昵称模糊匹配，可选。
+  optional string keyword = 1 [(buf.validate.field).string.max_len = 64];
+}
+
+// ListUserCandidatesResponse 查询可选用户响应。
+message ListUserCandidatesResponse {
+  // items 匹配的用户，最多 50 个。
+  repeated DeptUserCandidate items = 1;
+}
+
+// RemoveDeptMemberRequest 移除部门成员请求。
+message RemoveDeptMemberRequest {
+  // id 部门唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // user_id 用户唯一标识，取自路径参数。
+  string user_id = 2 [(buf.validate.field).string.uuid = true];
+}
+
+// RemoveDeptMemberResponse 移除部门成员响应。
+message RemoveDeptMemberResponse {}

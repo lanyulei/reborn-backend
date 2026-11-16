@@ -57,4 +57,22 @@ enum ErrorReason {
   ROLE_BUILTIN_PROTECTED = 18 [(errors.code) = 400];
   // AVATAR_NOT_FOUND 用户未设置头像（未配置语义，非错误状态），映射 HTTP 404。
   AVATAR_NOT_FOUND = 19 [(errors.code) = 404];
+  // DEPT_UNSPECIFIED 未指定的部门错误。
+  DEPT_UNSPECIFIED = 20;
+  // DEPT_NOT_FOUND 部门不存在，映射 HTTP 404。
+  DEPT_NOT_FOUND = 21 [(errors.code) = 404];
+  // DEPT_NAME_EXISTS 同一上级部门下名称已被占用，映射 HTTP 409。
+  DEPT_NAME_EXISTS = 22 [(errors.code) = 409];
+  // DEPT_CODE_EXISTS 部门编码已被占用，映射 HTTP 409。
+  DEPT_CODE_EXISTS = 23 [(errors.code) = 409];
+  // DEPT_HAS_CHILDREN 部门下仍有下级部门，不可删除，映射 HTTP 409。
+  DEPT_HAS_CHILDREN = 24 [(errors.code) = 409];
+  // DEPT_HAS_MEMBERS 部门下仍有成员，不可删除，映射 HTTP 409。
+  DEPT_HAS_MEMBERS = 25 [(errors.code) = 409];
+  // DEPT_MOVE_INVALID 不能把部门移到自身或自身的下级部门之下，映射 HTTP 400。
+  DEPT_MOVE_INVALID = 26 [(errors.code) = 400];
+  // DEPT_DEPTH_EXCEEDED 部门层级超过上限，映射 HTTP 400。
+  DEPT_DEPTH_EXCEEDED = 27 [(errors.code) = 400];
+  // DEPT_LIMIT_EXCEEDED 部门总数或单个用户所属部门数超过上限，映射 HTTP 400。
+  DEPT_LIMIT_EXCEEDED = 28 [(errors.code) = 400];
 }

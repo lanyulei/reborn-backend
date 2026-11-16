@@ -1,0 +1,115 @@
+syntax = "proto3";
+
+package workflow.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "buf/validate/validate.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/workflow/v1;v1";
+
+// WorkflowOpenService 流程引擎的开放接口：供其他系统接入。不走用户登录，凭接入凭据的令牌调用
+//（请求头 Authorization: Bearer <令牌>）；令牌在「流程配置 → 接入凭据」里签发。每个凭据只能
+// 发起被允许的流程，且只能查询 / 操作它自己发起的实例；流程以凭据配置的代表用户为发起人。
+service WorkflowOpenService {
+  // OpenStartInstance 发起流程。
+  rpc OpenStartInstance(OpenStartInstanceRequest) returns (OpenInstanceResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/open/workflow/instance"
+      body: "*"
+    };
+    option (system.v1.title) = "开放接口：发起流程";
+  }
+  // OpenGetInstance 查询自己发起的流程实例的状态。
+  rpc OpenGetInstance(OpenGetInstanceRequest) returns (OpenInstanceResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/open/workflow/instance/{id}"
+    };
+    option (system.v1.title) = "开放接口：查询流程";
+  }
+  // OpenSignalInstance 向自己发起的实例投递信号。
+  rpc OpenSignalInstance(OpenSignalInstanceRequest) returns (OpenInstanceResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/open/workflow/instance/{id}/signal"
+      body: "*"
+    };
+    option (system.v1.title) = "开放接口：投递信号";
+  }
+  // OpenCancelInstance 撤回自己发起的、仍在进行的实例。
+  rpc OpenCancelInstance(OpenCancelInstanceRequest) returns (OpenInstanceResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/open/workflow/instance/{id}/cancel"
+      body: "*"
+    };
+    option (system.v1.title) = "开放接口：撤回流程";
+  }
+}
+
+// OpenInstance 开放接口返回的实例视图。
+message OpenInstance {
+  // id 实例唯一标识。
+  string id = 1;
+  // definition_key 流程标识。
+  string definition_key = 2;
+  // title 标题。
+  string title = 3;
+  // status 状态：1=进行中 2=已通过 3=已拒绝 4=已撤回 5=已终止。
+  int32 status = 4;
+  // variables 流程变量（发起时带入的数据，以及流程中途并入的数据）。
+  google.protobuf.Struct variables = 5;
+  // start_time 发起时间。
+  google.protobuf.Timestamp start_time = 6;
+  // end_time 结束时间；进行中为空。
+  google.protobuf.Timestamp end_time = 7;
+}
+
+// OpenInstanceResponse 开放接口的统一响应。
+message OpenInstanceResponse {
+  // instance 流程实例。
+  OpenInstance instance = 1;
+}
+
+// OpenStartInstanceRequest 发起流程请求。
+message OpenStartInstanceRequest {
+  // definition_key 流程标识（须在凭据允许的范围内）。
+  string definition_key = 1 [(buf.validate.field).string = {
+    pattern: "^[a-z][a-z0-9_-]{1,63}$"
+  }];
+  // title 标题，1-255 位。
+  string title = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 255
+  }];
+  // variables 流程变量（表单数据），可选。
+  google.protobuf.Struct variables = 3;
+  // request_id 幂等键（UUID），强烈建议携带：网络重试时相同的键返回首次发起的实例，不会重复发起。
+  optional string request_id = 4 [(buf.validate.field).string.uuid = true];
+}
+
+// OpenGetInstanceRequest 查询流程请求。
+message OpenGetInstanceRequest {
+  // id 实例唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// OpenSignalInstanceRequest 投递信号请求。
+message OpenSignalInstanceRequest {
+  // id 实例唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // name 信号名（与流程里定时节点配置的一致）。
+  string name = 2 [(buf.validate.field).string = {
+    pattern: "^[A-Za-z][A-Za-z0-9_.-]{0,63}$"
+  }];
+  // variables 随信号带入的数据，并入流程变量（同名覆盖）。
+  google.protobuf.Struct variables = 3;
+}
+
+// OpenCancelInstanceRequest 撤回流程请求。
+message OpenCancelInstanceRequest {
+  // id 实例唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // comment 说明，≤1000 位。
+  string comment = 2 [(buf.validate.field).string.max_len = 1000];
+}

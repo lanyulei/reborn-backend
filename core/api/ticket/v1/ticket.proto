@@ -1,0 +1,729 @@
+syntax = "proto3";
+
+package ticket.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "buf/validate/validate.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/ticket/v1;v1";
+
+// TicketCatalogService 服务目录：工单分类与工单模板（表单 + 绑定的流程）。
+service TicketCatalogService {
+  // ListCatalog 查询可提单的服务目录：只含启用的模板，以及有启用模板的分类（不含表单；提单页用）。
+  rpc ListCatalog(ListCatalogRequest) returns (ListCatalogResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/ticket/catalog"
+    };
+    option (system.v1.title) = "查询服务目录";
+  }
+  // ListManagedCatalog 查询完整的服务目录：全部分类及其下的全部模板，含已停用的（管理页用）。
+  // 持有本接口权限者才能读取已停用模板的内容（见 GetTemplate）。
+  rpc ListManagedCatalog(ListManagedCatalogRequest) returns (ListCatalogResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/ticket/managed-catalog"
+    };
+    option (system.v1.title) = "查询完整服务目录";
+  }
+  // CreateCategory 创建工单分类。
+  rpc CreateCategory(CreateCategoryRequest) returns (CreateCategoryResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/ticket/category"
+      body: "*"
+    };
+    option (system.v1.title) = "创建工单分类";
+  }
+  // UpdateCategory 更新工单分类。
+  rpc UpdateCategory(UpdateCategoryRequest) returns (UpdateCategoryResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/ticket/category/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "更新工单分类";
+  }
+  // DeleteCategory 删除工单分类（软删）；分类下仍有模板时拒绝。
+  rpc DeleteCategory(DeleteCategoryRequest) returns (DeleteCategoryResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/ticket/category/{id}"
+    };
+    option (system.v1.title) = "删除工单分类";
+  }
+  // CreateTemplate 创建工单模板。
+  rpc CreateTemplate(CreateTemplateRequest) returns (CreateTemplateResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/ticket/template"
+      body: "*"
+    };
+    option (system.v1.title) = "创建工单模板";
+  }
+  // UpdateTemplate 更新工单模板（整组替换；已有工单保存的是提单时的表单快照，不受影响）。
+  rpc UpdateTemplate(UpdateTemplateRequest) returns (UpdateTemplateResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/ticket/template/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "更新工单模板";
+  }
+  // DeleteTemplate 删除工单模板（软删）；已有工单不受影响。
+  rpc DeleteTemplate(DeleteTemplateRequest) returns (DeleteTemplateResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/ticket/template/{id}"
+    };
+    option (system.v1.title) = "删除工单模板";
+  }
+  // GetTemplate 查询工单模板详情（含表单字段定义）。
+  rpc GetTemplate(GetTemplateRequest) returns (GetTemplateResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/ticket/template/{id}"
+    };
+    option (system.v1.title) = "查询工单模板详情";
+  }
+}
+
+// TicketService 工单：提单、查询与评论。工单的审批流转走流程引擎（workflow 域接口）。
+// 查看权限：提单人、流程的处理人 / 抄送人可看；持有「查询全部工单」接口权限者可看全部。
+service TicketService {
+  // CreateTicket 提交工单：校验表单 → 生成编号 → 发起绑定的流程（同一事务）。
+  rpc CreateTicket(CreateTicketRequest) returns (CreateTicketResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/ticket/order"
+      body: "*"
+    };
+    option (system.v1.title) = "提交工单";
+  }
+  // GetTicket 查询工单详情（含表单快照与表单数据）。
+  rpc GetTicket(GetTicketRequest) returns (GetTicketResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/ticket/order/{id}"
+    };
+    option (system.v1.title) = "查询工单详情";
+  }
+  // ListMyTickets 分页查询我提交的工单。
+  rpc ListMyTickets(ListMyTicketsRequest) returns (ListTicketsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/ticket/my-order"
+    };
+    option (system.v1.title) = "查询我的工单";
+  }
+  // ListTickets 分页查询全部工单（管理视图）。
+  rpc ListTickets(ListTicketsRequest) returns (ListTicketsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/ticket/order"
+    };
+    option (system.v1.title) = "查询全部工单";
+  }
+  // ListTicketComments 查询工单评论（时间升序，最多 500 条）。
+  rpc ListTicketComments(ListTicketCommentsRequest) returns (ListTicketCommentsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/ticket/order/{id}/comment"
+    };
+    option (system.v1.title) = "查询工单评论";
+  }
+  // AddTicketComment 发表评论（可查看工单的人都可以评论）。
+  rpc AddTicketComment(AddTicketCommentRequest) returns (AddTicketCommentResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/ticket/order/{id}/comment"
+      body: "*"
+    };
+    option (system.v1.title) = "发表工单评论";
+  }
+  // UpdateTicketForm 当前处理人补充 / 修改表单：只能改流程当前环节允许编辑的字段，改动同步到流程变量
+  //（后续的分支条件、处理人规则按新值计算）。
+  rpc UpdateTicketForm(UpdateTicketFormRequest) returns (UpdateTicketFormResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/ticket/order/{id}/form"
+      body: "*"
+    };
+    option (system.v1.title) = "修改工单表单";
+  }
+  // RateTicket 提单人对已完成的工单做满意度评价（每张工单一次）。
+  rpc RateTicket(RateTicketRequest) returns (RateTicketResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/ticket/order/{id}/rating"
+      body: "*"
+    };
+    option (system.v1.title) = "评价工单";
+  }
+  // GetTicketStats 工单统计：数量与状态分布、每日趋势、各服务的工单量、平均处理时长、SLA 达成率、满意度。
+  rpc GetTicketStats(GetTicketStatsRequest) returns (GetTicketStatsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/ticket/stats"
+    };
+    option (system.v1.title) = "查询工单统计";
+  }
+}
+
+// FormRule 字段校验规则。
+message FormRule {
+  // pattern 正则（Go RE2 语法），仅字符串类字段。
+  optional string pattern = 1 [(buf.validate.field).string.max_len = 255];
+  // min 数值下限。
+  optional double min = 2;
+  // max 数值上限。
+  optional double max = 3;
+  // min_len 字符串最小长度。
+  optional int32 min_len = 4 [(buf.validate.field).int32.gte = 0];
+  // max_len 字符串最大长度。
+  optional int32 max_len = 5 [(buf.validate.field).int32.gte = 1];
+}
+
+// FormField 表单字段定义。
+message FormField {
+  // code 字段码：字母开头的 1-32 位字母/数字/下划线，表单内唯一；流程条件以 form.<code> 引用。
+  string code = 1 [(buf.validate.field).string = {
+    pattern: "^[a-zA-Z][a-zA-Z0-9_]{0,31}$"
+  }];
+  // name 字段名称，1-64 位。
+  string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // type 类型：string / text / int / float / bool / enum / datetime / user / dept。
+  string type = 3 [(buf.validate.field).string = {
+    in: ["string", "text", "int", "float", "bool", "enum", "datetime", "user", "dept"]
+  }];
+  // required 是否必填。
+  bool required = 4;
+  // enum_values 枚举可选值（type = enum 时必填，≤50 项）。
+  repeated string enum_values = 5 [(buf.validate.field).repeated = {
+    unique: true
+    max_items: 50
+    items: { string: { min_len: 1, max_len: 64 } }
+  }];
+  // rule 校验规则。
+  FormRule rule = 6;
+  // description 填写说明，≤255 位。
+  string description = 7 [(buf.validate.field).string.max_len = 255];
+}
+
+// Category 工单分类。
+message Category {
+  // id 分类唯一标识（UUIDv7）。
+  string id = 1;
+  // name 分类名称。
+  string name = 2;
+  // description 说明。
+  string description = 3;
+  // sort 排序值，升序。
+  int32 sort = 4;
+  // templates 分类下的模板（不含表单），按排序值升序。
+  repeated Template templates = 5;
+}
+
+// SlaDuration 一段时限。
+message SlaDuration {
+  // value 数值，≥1。
+  int32 value = 1 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100000
+  }];
+  // unit 单位：minute / hour / day。
+  string unit = 2 [(buf.validate.field).string = { in: ["minute", "hour", "day"] }];
+  // work_time 是否按工作时间计（分钟 / 小时只算工作时段，天 = 工作日）。
+  bool work_time = 3;
+}
+
+// SlaRule 某个优先级的 SLA 规则；response / resolve 至少配一项。
+message SlaRule {
+  // priority 适用的优先级：1=低 2=普通 3=高 4=紧急。
+  int32 priority = 1 [(buf.validate.field).int32 = { in: [1, 2, 3, 4] }];
+  // response 响应时限：提单后处理人第一次有动作的期限；不传 = 不要求。
+  SlaDuration response = 2;
+  // resolve 解决时限：提单后工单结束的期限；不传 = 不要求。
+  SlaDuration resolve = 3;
+}
+
+// Template 工单模板。
+message Template {
+  // id 模板唯一标识（UUIDv7）。
+  string id = 1;
+  // category_id 所属分类 ID。
+  string category_id = 2;
+  // name 模板名称。
+  string name = 3;
+  // description 说明。
+  string description = 4;
+  // workflow_key 绑定的流程标识。
+  string workflow_key = 5;
+  // number_prefix 工单编号前缀。
+  string number_prefix = 6;
+  // status 状态：1=启用 0=停用。
+  int32 status = 7;
+  // sort 排序值，升序。
+  int32 sort = 8;
+  // form 表单字段定义；仅详情接口返回。
+  repeated FormField form = 9;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 10;
+  // sla SLA 规则（按优先级）；仅详情接口返回。
+  repeated SlaRule sla = 11;
+  // sla_escalate_to SLA 超时的升级通知对象（用户 ID）；仅详情接口返回。
+  repeated string sla_escalate_to = 12;
+  // ci_link 提单时关联 CMDB 资源：0=不关联 1=可选 2=必填。
+  int32 ci_link = 13;
+  // labels sla_escalate_to 里用户的显示名（ID → 名称）；仅详情接口返回。
+  map<string, string> labels = 14;
+  // icon 图标标识（前端图标集的键）；空 = 缺省图标。
+  string icon = 15;
+}
+
+// ListCatalogRequest 查询服务目录请求。
+message ListCatalogRequest {}
+
+// ListManagedCatalogRequest 查询完整服务目录请求。
+message ListManagedCatalogRequest {}
+
+// ListCatalogResponse 查询服务目录响应。
+message ListCatalogResponse {
+  // items 分类（按排序值升序），各含其下的模板。
+  repeated Category items = 1;
+}
+
+// CreateCategoryRequest 创建工单分类请求。
+message CreateCategoryRequest {
+  // name 分类名称，1-64 位。
+  string name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // description 说明，≤255 位。
+  string description = 2 [(buf.validate.field).string.max_len = 255];
+  // sort 排序值，0-9999。
+  int32 sort = 3 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 9999
+  }];
+}
+
+// CreateCategoryResponse 创建工单分类响应。
+message CreateCategoryResponse {
+  // category 已创建的分类。
+  Category category = 1;
+}
+
+// UpdateCategoryRequest 更新工单分类请求（整组替换）。
+message UpdateCategoryRequest {
+  // id 分类唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // name 分类名称，1-64 位。
+  string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // description 说明，≤255 位。
+  string description = 3 [(buf.validate.field).string.max_len = 255];
+  // sort 排序值，0-9999。
+  int32 sort = 4 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 9999
+  }];
+}
+
+// UpdateCategoryResponse 更新工单分类响应。
+message UpdateCategoryResponse {}
+
+// DeleteCategoryRequest 删除工单分类请求。
+message DeleteCategoryRequest {
+  // id 分类唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteCategoryResponse 删除工单分类响应。
+message DeleteCategoryResponse {}
+
+// TemplateSpec 工单模板的可编辑内容（创建 / 更新共用，整组替换）。
+message TemplateSpec {
+  // category_id 所属分类 ID。
+  string category_id = 1 [(buf.validate.field).string.uuid = true];
+  // name 模板名称，1-64 位。
+  string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // description 说明，≤255 位。
+  string description = 3 [(buf.validate.field).string.max_len = 255];
+  // workflow_key 绑定的流程标识（须为已存在的流程）。
+  string workflow_key = 4 [(buf.validate.field).string = {
+    pattern: "^[a-z][a-z0-9_-]{1,63}$"
+  }];
+  // number_prefix 工单编号前缀：2-8 位大写字母。
+  string number_prefix = 5 [(buf.validate.field).string = {
+    pattern: "^[A-Z]{2,8}$"
+  }];
+  // status 状态：1=启用 0=停用。
+  int32 status = 6 [(buf.validate.field).int32 = { in: [0, 1] }];
+  // sort 排序值，0-9999。
+  int32 sort = 7 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 9999
+  }];
+  // form 表单字段定义，≤50 个。
+  repeated FormField form = 8 [(buf.validate.field).repeated.max_items = 50];
+  // sla SLA 规则：每个优先级至多一条。
+  repeated SlaRule sla = 9 [(buf.validate.field).repeated.max_items = 4];
+  // sla_escalate_to SLA 超时的升级通知对象（用户 ID），去重、≤10 个；与当前处理人一并通知。
+  repeated string sla_escalate_to = 10 [(buf.validate.field).repeated = {
+    unique: true
+    max_items: 10
+    items: { string: { uuid: true } }
+  }];
+  // ci_link 提单时关联 CMDB 资源：0=不关联 1=可选 2=必填。
+  int32 ci_link = 11 [(buf.validate.field).int32 = { in: [0, 1, 2] }];
+  // icon 图标标识（前端图标集的键），可空；小写字母、数字、下划线与中划线，≤64 位。
+  string icon = 12 [(buf.validate.field).string = {
+    pattern: "^[a-z0-9_-]{0,64}$"
+  }];
+}
+
+// CreateTemplateRequest 创建工单模板请求。
+message CreateTemplateRequest {
+  // spec 模板内容。
+  TemplateSpec spec = 1 [(buf.validate.field).required = true];
+}
+
+// CreateTemplateResponse 创建工单模板响应。
+message CreateTemplateResponse {
+  // template 已创建的模板。
+  Template template = 1;
+}
+
+// UpdateTemplateRequest 更新工单模板请求。
+message UpdateTemplateRequest {
+  // id 模板唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // spec 模板内容（整组替换）。
+  TemplateSpec spec = 2 [(buf.validate.field).required = true];
+}
+
+// UpdateTemplateResponse 更新工单模板响应。
+message UpdateTemplateResponse {}
+
+// DeleteTemplateRequest 删除工单模板请求。
+message DeleteTemplateRequest {
+  // id 模板唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteTemplateResponse 删除工单模板响应。
+message DeleteTemplateResponse {}
+
+// GetTemplateRequest 查询工单模板请求。
+message GetTemplateRequest {
+  // id 模板唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetTemplateResponse 查询工单模板响应。
+message GetTemplateResponse {
+  // template 模板（含表单字段定义）。
+  Template template = 1;
+}
+
+// Ticket 工单。
+message Ticket {
+  // id 工单唯一标识（UUIDv7）。
+  string id = 1;
+  // number 工单编号。
+  string number = 2;
+  // template_id 模板 ID。
+  string template_id = 3;
+  // template_name 模板名称（提单时）。
+  string template_name = 4;
+  // category_name 分类名称（提单时）。
+  string category_name = 5;
+  // title 标题。
+  string title = 6;
+  // priority 优先级：1=低 2=普通 3=高 4=紧急。
+  int32 priority = 7;
+  // status 状态：1=处理中 2=已完成 3=已拒绝 4=已撤回 5=已终止。
+  int32 status = 8;
+  // creator 提单人用户 ID。
+  string creator = 9;
+  // creator_name 提单人显示名。
+  string creator_name = 10;
+  // instance_id 流程实例 ID（流转详情经流程接口查询）。
+  string instance_id = 11;
+  // create_time 提单时间。
+  google.protobuf.Timestamp create_time = 12;
+  // end_time 结束时间；处理中为空。
+  google.protobuf.Timestamp end_time = 13;
+  // form 提单时的表单字段定义快照；仅详情接口返回。
+  repeated FormField form = 14;
+  // data 表单数据；仅详情接口返回。
+  google.protobuf.Struct data = 15;
+  // response_due 响应时限；未配置 SLA 为空。
+  google.protobuf.Timestamp response_due = 16;
+  // resolve_due 解决时限；未配置 SLA 为空。
+  google.protobuf.Timestamp resolve_due = 17;
+  // response_time 首次响应时间；尚未响应为空。
+  google.protobuf.Timestamp response_time = 18;
+  // rating 满意度评分 1-5；未评价为 0。
+  int32 rating = 19;
+  // rating_comment 评价内容。
+  string rating_comment = 20;
+  // rating_time 评价时间。
+  google.protobuf.Timestamp rating_time = 21;
+}
+
+// TicketResource 工单关联的 CMDB 资源。
+message TicketResource {
+  // id 资源 ID。
+  string id = 1;
+  // name 资源名称（关联时的快照）。
+  string name = 2;
+  // model_name 资源类型名称（关联时的快照）。
+  string model_name = 3;
+}
+
+// CreateTicketRequest 提交工单请求。
+message CreateTicketRequest {
+  // template_id 工单模板 ID。
+  string template_id = 1 [(buf.validate.field).string.uuid = true];
+  // title 标题，1-255 位。
+  string title = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 255
+  }];
+  // priority 优先级：1=低 2=普通 3=高 4=紧急。
+  int32 priority = 3 [(buf.validate.field).int32 = { in: [1, 2, 3, 4] }];
+  // data 表单数据（按模板的字段定义校验）。
+  google.protobuf.Struct data = 4;
+  // creator_dept 提单部门 ID，可选：须为提单人所属部门；不传取主部门。
+  optional string creator_dept = 5 [(buf.validate.field).string.uuid = true];
+  // file_ids 附件（已上传的文件 ID），去重、≤20 个。
+  repeated string file_ids = 6 [(buf.validate.field).repeated = {
+    unique: true
+    max_items: 20
+    items: { string: { uuid: true } }
+  }];
+  // request_id 幂等键，可选（客户端生成的 UUID）：重复提交返回首次创建的工单。
+  optional string request_id = 7 [(buf.validate.field).string.uuid = true];
+  // ci_ids 关联的 CMDB 资源 ID，去重、≤20 个：须是提单人有权查看的资源；模板要求必填时至少一个。
+  repeated string ci_ids = 8 [(buf.validate.field).repeated = {
+    unique: true
+    max_items: 20
+    items: { string: { uuid: true } }
+  }];
+}
+
+// CreateTicketResponse 提交工单响应。
+message CreateTicketResponse {
+  // ticket 已创建的工单。
+  Ticket ticket = 1;
+}
+
+// GetTicketRequest 查询工单请求。
+message GetTicketRequest {
+  // id 工单唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// TicketFile 工单附件。
+message TicketFile {
+  // id 文件 ID（经文件下载接口取内容）。
+  string id = 1;
+  // filename 文件名。
+  string filename = 2;
+  // size 字节数。
+  int64 size = 3;
+}
+
+// GetTicketResponse 查询工单响应。
+message GetTicketResponse {
+  // ticket 工单（含表单快照与表单数据）。
+  Ticket ticket = 1;
+  // files 附件。
+  repeated TicketFile files = 2;
+  // labels 表单里人员 / 部门字段取值的显示名（ID → 名称）。
+  map<string, string> labels = 3;
+  // resources 关联的 CMDB 资源。
+  repeated TicketResource resources = 4;
+  // field_permissions 当前用户作为处理人时，流程当前环节对各表单字段的权限
+  //（字段码 → hidden / readonly / editable / required）；他当前没有待处理的任务时为空。
+  map<string, string> field_permissions = 5;
+  // can_edit_form 当前用户此刻能否修改表单（有待处理的任务，且该环节至少有一个可编辑的字段）。
+  bool can_edit_form = 6;
+  // can_rate 当前用户此刻能否评价（提单人、工单已完成且尚未评价）。
+  bool can_rate = 7;
+}
+
+// UpdateTicketFormRequest 修改工单表单请求。
+message UpdateTicketFormRequest {
+  // id 工单唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // data 要修改的字段（只传要改的；值为 null 表示清空）。
+  google.protobuf.Struct data = 2 [(buf.validate.field).required = true];
+}
+
+// UpdateTicketFormResponse 修改工单表单响应。
+message UpdateTicketFormResponse {}
+
+// RateTicketRequest 评价工单请求。
+message RateTicketRequest {
+  // id 工单唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // rating 评分 1-5。
+  int32 rating = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 5
+  }];
+  // comment 评价内容，≤500 位。
+  string comment = 3 [(buf.validate.field).string.max_len = 500];
+}
+
+// RateTicketResponse 评价工单响应。
+message RateTicketResponse {}
+
+// GetTicketStatsRequest 查询工单统计请求。
+message GetTicketStatsRequest {
+  // days 统计最近多少天提交的工单，1-366；不传 = 30。
+  optional int32 days = 1 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 366
+  }];
+  // timezone 趋势分日所用的时区（IANA 名称，如 Asia/Shanghai）：页面传浏览器所在时区，
+  // 「哪一天」即与页面按本地日期补齐的日历一致，统计窗口也从该时区的零点起算。
+  // 不传 = 按数据库会话时区分日，窗口从 days-1 天前的此刻起算。
+  string timezone = 2 [(buf.validate.field).string.max_len = 64];
+}
+
+// TicketCount 一个维度值上的工单数。
+message TicketCount {
+  // key 维度值（状态码 / 优先级 / 服务名称）。
+  string key = 1;
+  // count 工单数。
+  int64 count = 2;
+}
+
+// TicketTrendPoint 某一天的工单量。
+message TicketTrendPoint {
+  // day 日期 yyyy-mm-dd。
+  string day = 1;
+  // created 当天提交的工单数。
+  int64 created = 2;
+  // closed 当天结束的工单数。
+  int64 closed = 3;
+}
+
+// GetTicketStatsResponse 查询工单统计响应。
+message GetTicketStatsResponse {
+  // total 期间提交的工单总数。
+  int64 total = 1;
+  // by_status 按状态分布。
+  repeated TicketCount by_status = 2;
+  // by_priority 按优先级分布。
+  repeated TicketCount by_priority = 3;
+  // by_template 工单量最多的服务（至多 10 个）。
+  repeated TicketCount by_template = 4;
+  // trend 每日趋势，日期升序（只含有工单的日期）。
+  repeated TicketTrendPoint trend = 5;
+  // avg_resolve_seconds 已完成工单从提交到结束的平均用时（秒）；没有已完成的工单为 0。
+  int64 avg_resolve_seconds = 6;
+  // response_sla_total / response_sla_met 配置了响应时限且已见分晓的工单数 / 其中按时响应的。
+  int64 response_sla_total = 7;
+  int64 response_sla_met = 8;
+  // resolve_sla_total / resolve_sla_met 配置了解决时限且已见分晓的工单数 / 其中按时解决的。
+  int64 resolve_sla_total = 9;
+  int64 resolve_sla_met = 10;
+  // rated 已评价的工单数。
+  int64 rated = 11;
+  // avg_rating 平均评分（1-5）；没有评价为 0。
+  double avg_rating = 12;
+  // timezone 趋势分日实际所用的时区（回显请求里的 timezone）；未指定时为空。
+  string timezone = 13;
+}
+
+// ListMyTicketsRequest 分页查询我的工单请求。
+message ListMyTicketsRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // keyword 关键字，可选；模糊匹配标题 / 编号。
+  optional string keyword = 3 [(buf.validate.field).string.max_len = 64];
+  // status 状态过滤，可选。
+  optional int32 status = 4 [(buf.validate.field).int32 = { in: [1, 2, 3, 4, 5] }];
+}
+
+// ListTicketsRequest 分页查询全部工单请求。
+message ListTicketsRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // keyword 关键字，可选；模糊匹配标题 / 编号。
+  optional string keyword = 3 [(buf.validate.field).string.max_len = 64];
+  // status 状态过滤，可选。
+  optional int32 status = 4 [(buf.validate.field).int32 = { in: [1, 2, 3, 4, 5] }];
+  // template_id 模板过滤，可选。
+  optional string template_id = 5 [(buf.validate.field).string.uuid = true];
+  // priority 优先级过滤，可选。
+  optional int32 priority = 6 [(buf.validate.field).int32 = { in: [1, 2, 3, 4] }];
+  // ci_id 只看关联了该 CMDB 资源的工单，可选。
+  optional string ci_id = 7 [(buf.validate.field).string.uuid = true];
+  // overdue 只看 SLA 已超时的工单（响应或解决任一超时），可选。
+  optional bool overdue = 8;
+}
+
+// ListTicketsResponse 分页查询工单响应。
+message ListTicketsResponse {
+  // items 当前页数据，提单时间倒序。
+  repeated Ticket items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// Comment 工单评论。
+message Comment {
+  // id 评论唯一标识。
+  string id = 1;
+  // user_id 评论人用户 ID。
+  string user_id = 2;
+  // user_name 评论人显示名。
+  string user_name = 3;
+  // content 内容。
+  string content = 4;
+  // create_time 发表时间。
+  google.protobuf.Timestamp create_time = 5;
+  // parent_id 所回复的评论 ID；空 = 顶层评论。回复只有一层：被回复的一定是顶层评论。
+  string parent_id = 6;
+}
+
+// ListTicketCommentsRequest 查询工单评论请求。
+message ListTicketCommentsRequest {
+  // id 工单唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// ListTicketCommentsResponse 查询工单评论响应。
+message ListTicketCommentsResponse {
+  // items 评论（含回复，以 parent_id 关联），时间升序。
+  repeated Comment items = 1;
+}
+
+// AddTicketCommentRequest 发表评论请求。
+message AddTicketCommentRequest {
+  // id 工单唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // content 内容，1-2000 位。
+  string content = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 2000
+  }];
+  // parent_id 所回复的评论 ID，可选；须是本工单的顶层评论。
+  optional string parent_id = 3 [(buf.validate.field).string.uuid = true];
+}
+
+// AddTicketCommentResponse 发表评论响应。
+message AddTicketCommentResponse {
+  // comment 已发表的评论。
+  Comment comment = 1;
+}

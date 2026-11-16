@@ -149,11 +149,19 @@ func (r *userRepo) ListUsers(ctx context.Context, filter biz.UserFilter, page, p
 	if filter.Keyword != "" {
 		args = append(args, dbx.LikeContains(filter.Keyword))
 		n := strconv.Itoa(len(args))
-		where = append(where, "(username ILIKE $"+n+" OR nickname ILIKE $"+n+" OR email ILIKE $"+n+" OR phone ILIKE $"+n+")")
+		if filter.NameOnly {
+			where = append(where, "(username ILIKE $"+n+" OR nickname ILIKE $"+n+")")
+		} else {
+			where = append(where, "(username ILIKE $"+n+" OR nickname ILIKE $"+n+" OR email ILIKE $"+n+" OR phone ILIKE $"+n+")")
+		}
 	}
 	if filter.Status != nil {
 		args = append(args, *filter.Status)
 		where = append(where, "status = $"+strconv.Itoa(len(args)))
+	}
+	if filter.DeptID != "" {
+		args = append(args, filter.DeptID)
+		where = append(where, userDeptFilter(strconv.Itoa(len(args)), filter.IncludeSubDepts))
 	}
 	whereClause := strings.Join(where, " AND ")
 
@@ -187,6 +195,17 @@ func (r *userRepo) ListUsers(ctx context.Context, filter biz.UserFilter, page, p
 	return users, total, rows.Err()
 }
 
+// userDeptFilter 构造「属于某部门」的过滤子句（n 为部门 ID 实参序号）：
+// includeSub 时按物化路径前缀匹配整棵子树，否则只匹配直属。子树匹配由用户侧
+// 驱动（经归属表按 user_id 取其部门，再按主键取路径比对前缀），不扫部门表。
+func userDeptFilter(n string, includeSub bool) string {
+	if !includeSub {
+		return `EXISTS (SELECT 1 FROM system_user_dept ud WHERE ud.user_id = "system_user".id AND ud.dept_id = $` + n + `)`
+	}
+	return `EXISTS (SELECT 1 FROM system_user_dept ud JOIN system_dept d ON d.id = ud.dept_id AND d.delete_time IS NULL` +
+		` WHERE ud.user_id = "system_user".id AND d.path LIKE (SELECT path FROM system_dept WHERE id = $` + n + ` AND delete_time IS NULL) || '%')`
+}
+
 // CreateUser implements biz.UserWriter：审计时间由用例统一生成并显式落库（保证出参一致），
 // 空串邮箱/手机号经 NULLIF 归一为 NULL。
 func (r *userRepo) CreateUser(ctx context.Context, user *biz.User) error {
@@ -201,8 +220,8 @@ func (r *userRepo) CreateUser(ctx context.Context, user *biz.User) error {
 	return nil
 }
 
-// CreateUserWithRoles implements biz.UserWriter：建号与角色绑定同事务提交，
-// 任一步失败整体回滚。
+// CreateUserWithRoles implements biz.UserWriter：建号、角色绑定与所属部门
+// （user.Depts 非 nil 时）同事务提交，任一步失败整体回滚。
 func (r *userRepo) CreateUserWithRoles(ctx context.Context, user *biz.User, roleIDs []string) error {
 	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx,
@@ -223,12 +242,16 @@ func (r *userRepo) CreateUserWithRoles(ctx context.Context, user *biz.User, role
 				return fmt.Errorf("insert user role binding: %w", err)
 			}
 		}
+		if user.Depts != nil {
+			return replaceUserDepts(ctx, tx, user.ID, *user.Depts)
+		}
 		return nil
 	})
 }
 
 // UpdateUser implements biz.UserWriter：动态 SET 只允许静态列名白名单，值全部参数化；
-// 无可更新字段时幂等 no-op。
+// 无可更新字段时幂等 no-op。upd.Depts 非 nil 时走事务：先 UPDATE 用户行（判存在
+// 并加行锁，同一用户的并发部门归属写因此串行），再整组替换所属部门。
 func (r *userRepo) UpdateUser(ctx context.Context, id string, upd biz.UserUpdate) error {
 	sets := make([]string, 0, 7)
 	args := make([]any, 0, 8)
@@ -260,25 +283,38 @@ func (r *userRepo) UpdateUser(ctx context.Context, id string, upd biz.UserUpdate
 	if upd.Avatar != nil {
 		add("avatar", *upd.Avatar)
 	}
-	if len(sets) == 0 {
+	if len(sets) == 0 && upd.Depts == nil {
 		return nil
 	}
 
+	sets = append(sets, "update_time = now()")
 	args = append(args, id)
 	query := "UPDATE \"system_user\" SET " + strings.Join(sets, ", ") +
-		", update_time = now() WHERE id = $" + strconv.Itoa(len(args)) + " AND delete_time IS NULL"
-	tag, err := r.data.Pool.Exec(ctx, query, args...)
-	if err != nil {
-		return mapUserUniqueViolation(err)
+		" WHERE id = $" + strconv.Itoa(len(args)) + " AND delete_time IS NULL"
+	if upd.Depts == nil {
+		tag, err := r.data.Pool.Exec(ctx, query, args...)
+		if err != nil {
+			return mapUserUniqueViolation(err)
+		}
+		if tag.RowsAffected() == 0 {
+			return biz.ErrUserNotFound
+		}
+		return nil
 	}
-	if tag.RowsAffected() == 0 {
-		return biz.ErrUserNotFound
-	}
-	return nil
+	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, query, args...)
+		if err != nil {
+			return mapUserUniqueViolation(err)
+		}
+		if tag.RowsAffected() == 0 {
+			return biz.ErrUserNotFound
+		}
+		return replaceUserDepts(ctx, tx, id, *upd.Depts)
+	})
 }
 
 // DeleteUser implements biz.UserWriter：软删用户并同事务物理删除其全部角色绑定
-// 与刷新令牌（堵住「软删用户仍可刷新」的口子）。
+// 与刷新令牌（堵住「软删用户仍可刷新」的口子），以及部门归属与部门负责人身份。
 func (r *userRepo) DeleteUser(ctx context.Context, id string) error {
 	tx, err := r.data.Pool.Begin(ctx)
 	if err != nil {
@@ -299,6 +335,12 @@ func (r *userRepo) DeleteUser(ctx context.Context, id string) error {
 	}
 	if _, err := tx.Exec(ctx, "DELETE FROM system_refresh_token WHERE user_id = $1", id); err != nil {
 		return fmt.Errorf("delete user refresh tokens: %w", err)
+	}
+	if _, err := tx.Exec(ctx, "DELETE FROM system_user_dept WHERE user_id = $1", id); err != nil {
+		return fmt.Errorf("delete user depts: %w", err)
+	}
+	if _, err := tx.Exec(ctx, "DELETE FROM system_dept_leader WHERE user_id = $1", id); err != nil {
+		return fmt.Errorf("delete user dept leaderships: %w", err)
 	}
 	return tx.Commit(ctx)
 }

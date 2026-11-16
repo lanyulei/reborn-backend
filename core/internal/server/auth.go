@@ -5,6 +5,7 @@ import (
 
 	oncallv1 "github.com/lanyulei/reborn/backend/core/api/oncall/v1"
 	v1 "github.com/lanyulei/reborn/backend/core/api/system/v1"
+	workflowv1 "github.com/lanyulei/reborn/backend/core/api/workflow/v1"
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
 	"github.com/lanyulei/reborn/backend/core/internal/pkg/operator"
 	systemservice "github.com/lanyulei/reborn/backend/core/internal/service/system"
@@ -32,6 +33,12 @@ var authExempt = map[string]struct{}{
 	// 公共值班日历：凭地址里不可猜测的令牌访问（库内只存哈希，可过期可作废），
 	// 免登录页面不携带 Authorization 头；管理接口不免检。
 	oncallv1.OperationOncallShareServiceGetPublicCalendar: {},
+	// 流程引擎的开放接口：供其他系统接入，不走用户登录——凭请求头里的接入令牌认证
+	//（库内只存哈希，可停用可重置），校验在用例层完成；凭据的管理接口不免检。
+	workflowv1.OperationWorkflowOpenServiceOpenStartInstance:  {},
+	workflowv1.OperationWorkflowOpenServiceOpenGetInstance:    {},
+	workflowv1.OperationWorkflowOpenServiceOpenSignalInstance: {},
+	workflowv1.OperationWorkflowOpenServiceOpenCancelInstance: {},
 }
 
 // authMiddleware 组装鉴权中间件：白名单外的全部方法要求 Authorization: Bearer

@@ -8,9 +8,12 @@ import (
 
 	assistantv1 "github.com/lanyulei/reborn/backend/core/api/assistant/v1"
 	cmdbv1 "github.com/lanyulei/reborn/backend/core/api/cmdb/v1"
+	filev1 "github.com/lanyulei/reborn/backend/core/api/file/v1"
 	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
 	oncallv1 "github.com/lanyulei/reborn/backend/core/api/oncall/v1"
 	v1 "github.com/lanyulei/reborn/backend/core/api/system/v1"
+	ticketv1 "github.com/lanyulei/reborn/backend/core/api/ticket/v1"
+	workflowv1 "github.com/lanyulei/reborn/backend/core/api/workflow/v1"
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
 
 	"github.com/go-kratos/kratos/v3/errors"
@@ -29,6 +32,7 @@ import (
 var operationFiles = []protoreflect.FileDescriptor{
 	v1.File_system_v1_user_proto,
 	v1.File_system_v1_role_proto,
+	v1.File_system_v1_dept_proto,
 	v1.File_system_v1_auth_proto,
 	v1.File_system_v1_system_config_proto,
 	v1.File_system_v1_login_log_proto,
@@ -51,6 +55,12 @@ var operationFiles = []protoreflect.FileDescriptor{
 	oncallv1.File_oncall_v1_group_proto,
 	oncallv1.File_oncall_v1_schedule_proto,
 	oncallv1.File_oncall_v1_share_proto,
+	filev1.File_file_v1_file_proto,
+	workflowv1.File_workflow_v1_definition_proto,
+	workflowv1.File_workflow_v1_runtime_proto,
+	workflowv1.File_workflow_v1_config_proto,
+	workflowv1.File_workflow_v1_open_proto,
+	ticketv1.File_ticket_v1_ticket_proto,
 }
 
 // authzExemptOperations 是免授权检查的操作集合（proto full method），为鉴权
@@ -73,6 +83,16 @@ var authzExemptOperations = map[string]struct{}{
 	v1.OperationAuthServiceGetUserAvatar:  {},
 	// 公共值班日历（令牌即凭据，匿名可读）：随 authExempt 同步免 JWT。
 	oncallv1.OperationOncallShareServiceGetPublicCalendar: {},
+	// 通用附件：上传 / 查询 / 下载是已登录用户的自助能力（仍须 JWT）。访问控制不在
+	// 接口授权层：临时文件仅上传者本人可读，已绑定文件由所属业务域判定。
+	filev1.OperationFileServiceUploadFile:   {},
+	filev1.OperationFileServiceGetFile:      {},
+	filev1.OperationFileServiceDownloadFile: {},
+	// 流程引擎的开放接口（接入令牌即凭据，能做什么由凭据自身的配置决定）：随 authExempt 同步免 JWT。
+	workflowv1.OperationWorkflowOpenServiceOpenStartInstance:  {},
+	workflowv1.OperationWorkflowOpenServiceOpenGetInstance:    {},
+	workflowv1.OperationWorkflowOpenServiceOpenSignalInstance: {},
+	workflowv1.OperationWorkflowOpenServiceOpenCancelInstance: {},
 }
 
 // IsAuthzExempt 报告操作是否免授权检查；供 server 层 authz 中间件使用，

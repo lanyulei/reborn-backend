@@ -39,6 +39,10 @@
       "description": "CmdbSyncService 同步控制面：采集源（云账号 / 虚拟化平台）配置、手动触发、运行记录。\n采集与对账由独立的数据面进程（backend/cmdb）执行；本服务只写配置与任务、读结果。"
     },
     {
+      "name": "FileService",
+      "description": "FileService 通用附件服务：上传得到文件 ID，业务提交时由业务域把文件绑定到业务对象；\n下载按文件所属业务对象的访问权限判定（未绑定的临时文件仅上传者本人可读）。\n上传 / 下载是已登录用户的自助能力，不单独授权（见 authzExemptOperations）。"
+    },
+    {
       "name": "NotifyDeliveryLogService",
       "description": "NotifyDeliveryLogService 投递明细查询服务：只读运行表 notify_delivery_log\n（管道写 / core 读，设计 §5.2）。一行 = 发送任务的一次投递尝试结果\n（append-only，sender 每次尝试后追加，含成功/失败、耗时与渠道侧消息\n标识）；本服务仅提供控制台排障检索，无写路径。"
     },
@@ -95,6 +99,10 @@
       "description": "RoleService 角色管理服务。"
     },
     {
+      "name": "DeptService",
+      "description": "DeptService 部门管理服务（组织架构）：部门树 CRUD、移动、负责人与成员维护。\n部门负责人可多人；用户可属多个部门（其中一个为主部门，见 UserService）。"
+    },
+    {
       "name": "UserService",
       "description": "UserService 用户管理服务：用户 CRUD、状态、密码重置与角色绑定。"
     },
@@ -109,6 +117,34 @@
     {
       "name": "SystemConfigService",
       "description": "SystemConfigService 系统配置服务：全局展示配置（系统标题/子标题/logo/\n页脚文案）的单例读写。GetSystemConfig 匿名可读（登录页需在登录前拉取\n标题与 logo），UpdateSystemConfig 需登录且按接口授权判定（仅 admin 或\n被授权角色可调）。"
+    },
+    {
+      "name": "TicketCatalogService",
+      "description": "TicketCatalogService 服务目录：工单分类与工单模板（表单 + 绑定的流程）。"
+    },
+    {
+      "name": "TicketService",
+      "description": "TicketService 工单：提单、查询与评论。工单的审批流转走流程引擎（workflow 域接口）。\n查看权限：提单人、流程的处理人 / 抄送人可看；持有「查询全部工单」接口权限者可看全部。"
+    },
+    {
+      "name": "WorkflowConfigService",
+      "description": "WorkflowConfigService 流程引擎的配置：工作日历、个人代理设置、自动任务可调用的 Webhook 端点。"
+    },
+    {
+      "name": "WorkflowDefinitionService",
+      "description": "WorkflowDefinitionService 流程定义管理：草稿可反复保存，发布生成不可变版本，\n实例绑定发起时的版本（改定义不影响在途实例）。"
+    },
+    {
+      "name": "WorkflowOpenService",
+      "description": "WorkflowOpenService 流程引擎的开放接口：供其他系统接入。不走用户登录，凭接入凭据的令牌调用\n（请求头 Authorization: Bearer \u003c令牌\u003e）；令牌在「流程配置 → 接入凭据」里签发。每个凭据只能\n发起被允许的流程，且只能查询 / 操作它自己发起的实例；流程以凭据配置的代表用户为发起人。"
+    },
+    {
+      "name": "WorkflowInstanceService",
+      "description": "WorkflowInstanceService 流程实例：发起、查看、撤回与管理。\n查看权限：发起人、处理人 / 抄送人可看自己参与的实例；持有「查询全部流程实例」\n接口权限者可看全部。"
+    },
+    {
+      "name": "WorkflowTaskService",
+      "description": "WorkflowTaskService 任务：待办 / 已办 / 抄送列表与处理动作。"
     }
   ],
   "consumes": [
@@ -3055,6 +3091,103 @@
         ]
       }
     },
+    "/api/v1/file": {
+      "post": {
+        "summary": "UploadFile 上传一个文件（≤5MiB），返回文件元数据；文件类型按内容嗅探并校验白名单。",
+        "operationId": "FileService_UploadFile",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UploadFileResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UploadFileRequest"
+            }
+          }
+        ],
+        "tags": [
+          "FileService"
+        ]
+      }
+    },
+    "/api/v1/file/{id}": {
+      "get": {
+        "summary": "GetFile 查询文件元数据（访问权限同下载）。",
+        "operationId": "FileService_GetFile",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetFileResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 文件唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FileService"
+        ]
+      }
+    },
+    "/api/v1/file/{id}/content": {
+      "get": {
+        "summary": "DownloadFile 以原始字节流返回文件内容（HttpBody，附件方式下载）。",
+        "operationId": "FileService_DownloadFile",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/HttpBody"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 文件唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "FileService"
+        ]
+      }
+    },
     "/api/v1/login": {
       "post": {
         "summary": "Login 登录：校验用户名密码，签发 access + refresh 双令牌。\n用户不存在与密码错误统一返回 INVALID_CREDENTIALS，不区分口径以防枚举。",
@@ -4851,7 +4984,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/CreateTemplateResponse"
+              "$ref": "#/definitions/notify.v1.CreateTemplateResponse"
             }
           },
           "default": {
@@ -4867,7 +5000,7 @@
             "in": "body",
             "required": true,
             "schema": {
-              "$ref": "#/definitions/CreateTemplateRequest"
+              "$ref": "#/definitions/notify.v1.CreateTemplateRequest"
             }
           }
         ],
@@ -4884,7 +5017,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/GetTemplateResponse"
+              "$ref": "#/definitions/notify.v1.GetTemplateResponse"
             }
           },
           "default": {
@@ -4914,7 +5047,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/DeleteTemplateResponse"
+              "$ref": "#/definitions/notify.v1.DeleteTemplateResponse"
             }
           },
           "default": {
@@ -4944,7 +5077,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/UpdateTemplateResponse"
+              "$ref": "#/definitions/notify.v1.UpdateTemplateResponse"
             }
           },
           "default": {
@@ -4967,7 +5100,7 @@
             "in": "body",
             "required": true,
             "schema": {
-              "$ref": "#/definitions/UpdateTemplateBody"
+              "$ref": "#/definitions/NotifyTemplateService.UpdateTemplateBody"
             }
           }
         ],
@@ -6148,7 +6281,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/ListUserCandidatesResponse"
+              "$ref": "#/definitions/oncall.v1.ListUserCandidatesResponse"
             }
           },
           "default": {
@@ -6169,6 +6302,151 @@
         ],
         "tags": [
           "OncallGroupService"
+        ]
+      }
+    },
+    "/api/v1/open/workflow/instance": {
+      "post": {
+        "summary": "OpenStartInstance 发起流程。",
+        "operationId": "WorkflowOpenService_OpenStartInstance",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/OpenInstanceResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/OpenStartInstanceRequest"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowOpenService"
+        ]
+      }
+    },
+    "/api/v1/open/workflow/instance/{id}": {
+      "get": {
+        "summary": "OpenGetInstance 查询自己发起的流程实例的状态。",
+        "operationId": "WorkflowOpenService_OpenGetInstance",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/OpenInstanceResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 实例唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowOpenService"
+        ]
+      }
+    },
+    "/api/v1/open/workflow/instance/{id}/cancel": {
+      "post": {
+        "summary": "OpenCancelInstance 撤回自己发起的、仍在进行的实例。",
+        "operationId": "WorkflowOpenService_OpenCancelInstance",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/OpenInstanceResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 实例唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/OpenCancelInstanceBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowOpenService"
+        ]
+      }
+    },
+    "/api/v1/open/workflow/instance/{id}/signal": {
+      "post": {
+        "summary": "OpenSignalInstance 向自己发起的实例投递信号。",
+        "operationId": "WorkflowOpenService_OpenSignalInstance",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/OpenInstanceResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 实例唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/OpenSignalInstanceBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowOpenService"
         ]
       }
     },
@@ -6277,6 +6555,371 @@
         ],
         "tags": [
           "SystemConfigService"
+        ]
+      }
+    },
+    "/api/v1/system/dept": {
+      "get": {
+        "summary": "ListDepts 查询全部部门（平铺，按 parent_id 组树；部门总数有上限，不分页）。",
+        "operationId": "DeptService_ListDepts",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListDeptsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "tags": [
+          "DeptService"
+        ]
+      },
+      "post": {
+        "summary": "CreateDept 创建部门；同一上级下名称唯一，层级上限 10。",
+        "operationId": "DeptService_CreateDept",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/CreateDeptResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/CreateDeptRequest"
+            }
+          }
+        ],
+        "tags": [
+          "DeptService"
+        ]
+      }
+    },
+    "/api/v1/system/dept-user-candidate": {
+      "get": {
+        "summary": "ListUserCandidates 可选用户（可用的系统用户，仅 ID 与显示名）；供选择负责人、添加成员使用。",
+        "operationId": "DeptService_ListUserCandidates",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/system.v1.ListUserCandidatesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "keyword",
+            "description": "keyword 登录名/昵称模糊匹配，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "DeptService"
+        ]
+      }
+    },
+    "/api/v1/system/dept/{id}": {
+      "get": {
+        "summary": "GetDept 查询部门详情（含负责人）。",
+        "operationId": "DeptService_GetDept",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetDeptResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 部门唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "DeptService"
+        ]
+      },
+      "delete": {
+        "summary": "DeleteDept 删除部门（软删）；存在下级部门或成员时拒绝。",
+        "operationId": "DeptService_DeleteDept",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/DeleteDeptResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 部门唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "DeptService"
+        ]
+      },
+      "put": {
+        "summary": "UpdateDept 更新部门资料与负责人（可选字段，传哪个改哪个）；调整上级走 MoveDept。",
+        "operationId": "DeptService_UpdateDept",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UpdateDeptResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 部门唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UpdateDeptBody"
+            }
+          }
+        ],
+        "tags": [
+          "DeptService"
+        ]
+      }
+    },
+    "/api/v1/system/dept/{id}/member": {
+      "get": {
+        "summary": "ListDeptMembers 分页查询部门成员（最小披露的用户视图，不含邮箱 / 手机号）。",
+        "operationId": "DeptService_ListDeptMembers",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListDeptMembersResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 部门唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "page",
+            "description": "page 页码，从 1 开始。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "page_size 每页数量，1-100。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "includeSubDepts",
+            "description": "include_sub_depts 是否包含全部下级部门的成员。",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "keyword",
+            "description": "keyword 登录名/昵称模糊匹配，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "DeptService"
+        ]
+      },
+      "post": {
+        "summary": "AddDeptMembers 把用户加入部门（已在部门内的跳过）；用户尚无主部门时该部门成为主部门。",
+        "operationId": "DeptService_AddDeptMembers",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/AddDeptMembersResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 部门唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/AddDeptMembersBody"
+            }
+          }
+        ],
+        "tags": [
+          "DeptService"
+        ]
+      }
+    },
+    "/api/v1/system/dept/{id}/member/{userId}": {
+      "delete": {
+        "summary": "RemoveDeptMember 把用户移出部门；移出的是主部门且用户仍属其他部门时，最早加入的部门顶替为主部门。",
+        "operationId": "DeptService_RemoveDeptMember",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/RemoveDeptMemberResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 部门唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "userId",
+            "description": "user_id 用户唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "DeptService"
+        ]
+      }
+    },
+    "/api/v1/system/dept/{id}/move": {
+      "post": {
+        "summary": "MoveDept 调整部门的上级（连同整棵子树）；不能移到自身或自身的下级之下。",
+        "operationId": "DeptService_MoveDept",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/MoveDeptResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 部门唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/MoveDeptBody"
+            }
+          }
+        ],
+        "tags": [
+          "DeptService"
         ]
       }
     },
@@ -6704,6 +7347,20 @@
             "required": false,
             "type": "integer",
             "format": "int32"
+          },
+          {
+            "name": "deptId",
+            "description": "dept_id 部门过滤，可选：只返回属于该部门的用户。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "includeSubDepts",
+            "description": "include_sub_depts 与 dept_id 同用：是否包含其全部下级部门的用户。",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
           }
         ],
         "tags": [
@@ -6992,6 +7649,682 @@
         ]
       }
     },
+    "/api/v1/ticket/catalog": {
+      "get": {
+        "summary": "ListCatalog 查询可提单的服务目录：只含启用的模板，以及有启用模板的分类（不含表单；提单页用）。",
+        "operationId": "TicketCatalogService_ListCatalog",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListCatalogResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "tags": [
+          "TicketCatalogService"
+        ]
+      }
+    },
+    "/api/v1/ticket/category": {
+      "post": {
+        "summary": "CreateCategory 创建工单分类。",
+        "operationId": "TicketCatalogService_CreateCategory",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/CreateCategoryResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/CreateCategoryRequest"
+            }
+          }
+        ],
+        "tags": [
+          "TicketCatalogService"
+        ]
+      }
+    },
+    "/api/v1/ticket/category/{id}": {
+      "delete": {
+        "summary": "DeleteCategory 删除工单分类（软删）；分类下仍有模板时拒绝。",
+        "operationId": "TicketCatalogService_DeleteCategory",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/DeleteCategoryResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 分类唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "TicketCatalogService"
+        ]
+      },
+      "put": {
+        "summary": "UpdateCategory 更新工单分类。",
+        "operationId": "TicketCatalogService_UpdateCategory",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UpdateCategoryResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 分类唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UpdateCategoryBody"
+            }
+          }
+        ],
+        "tags": [
+          "TicketCatalogService"
+        ]
+      }
+    },
+    "/api/v1/ticket/managed-catalog": {
+      "get": {
+        "summary": "ListManagedCatalog 查询完整的服务目录：全部分类及其下的全部模板，含已停用的（管理页用）。\n持有本接口权限者才能读取已停用模板的内容（见 GetTemplate）。",
+        "operationId": "TicketCatalogService_ListManagedCatalog",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListCatalogResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "tags": [
+          "TicketCatalogService"
+        ]
+      }
+    },
+    "/api/v1/ticket/my-order": {
+      "get": {
+        "summary": "ListMyTickets 分页查询我提交的工单。",
+        "operationId": "TicketService_ListMyTickets",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListTicketsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "page",
+            "description": "page 页码，从 1 开始。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "page_size 每页数量，1-100。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "keyword",
+            "description": "keyword 关键字，可选；模糊匹配标题 / 编号。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "status",
+            "description": "status 状态过滤，可选。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "TicketService"
+        ]
+      }
+    },
+    "/api/v1/ticket/order": {
+      "get": {
+        "summary": "ListTickets 分页查询全部工单（管理视图）。",
+        "operationId": "TicketService_ListTickets",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListTicketsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "page",
+            "description": "page 页码，从 1 开始。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "page_size 每页数量，1-100。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "keyword",
+            "description": "keyword 关键字，可选；模糊匹配标题 / 编号。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "status",
+            "description": "status 状态过滤，可选。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "templateId",
+            "description": "template_id 模板过滤，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "priority",
+            "description": "priority 优先级过滤，可选。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "ciId",
+            "description": "ci_id 只看关联了该 CMDB 资源的工单，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "overdue",
+            "description": "overdue 只看 SLA 已超时的工单（响应或解决任一超时），可选。",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          }
+        ],
+        "tags": [
+          "TicketService"
+        ]
+      },
+      "post": {
+        "summary": "CreateTicket 提交工单：校验表单 → 生成编号 → 发起绑定的流程（同一事务）。",
+        "operationId": "TicketService_CreateTicket",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/CreateTicketResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/CreateTicketRequest"
+            }
+          }
+        ],
+        "tags": [
+          "TicketService"
+        ]
+      }
+    },
+    "/api/v1/ticket/order/{id}": {
+      "get": {
+        "summary": "GetTicket 查询工单详情（含表单快照与表单数据）。",
+        "operationId": "TicketService_GetTicket",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetTicketResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 工单唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "TicketService"
+        ]
+      }
+    },
+    "/api/v1/ticket/order/{id}/comment": {
+      "get": {
+        "summary": "ListTicketComments 查询工单评论（时间升序，最多 500 条）。",
+        "operationId": "TicketService_ListTicketComments",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListTicketCommentsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 工单唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "TicketService"
+        ]
+      },
+      "post": {
+        "summary": "AddTicketComment 发表评论（可查看工单的人都可以评论）。",
+        "operationId": "TicketService_AddTicketComment",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/AddTicketCommentResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 工单唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/AddTicketCommentBody"
+            }
+          }
+        ],
+        "tags": [
+          "TicketService"
+        ]
+      }
+    },
+    "/api/v1/ticket/order/{id}/form": {
+      "put": {
+        "summary": "UpdateTicketForm 当前处理人补充 / 修改表单：只能改流程当前环节允许编辑的字段，改动同步到流程变量\n（后续的分支条件、处理人规则按新值计算）。",
+        "operationId": "TicketService_UpdateTicketForm",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UpdateTicketFormResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 工单唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UpdateTicketFormBody"
+            }
+          }
+        ],
+        "tags": [
+          "TicketService"
+        ]
+      }
+    },
+    "/api/v1/ticket/order/{id}/rating": {
+      "post": {
+        "summary": "RateTicket 提单人对已完成的工单做满意度评价（每张工单一次）。",
+        "operationId": "TicketService_RateTicket",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/RateTicketResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 工单唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/RateTicketBody"
+            }
+          }
+        ],
+        "tags": [
+          "TicketService"
+        ]
+      }
+    },
+    "/api/v1/ticket/stats": {
+      "get": {
+        "summary": "GetTicketStats 工单统计：数量与状态分布、每日趋势、各服务的工单量、平均处理时长、SLA 达成率、满意度。",
+        "operationId": "TicketService_GetTicketStats",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetTicketStatsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "days",
+            "description": "days 统计最近多少天提交的工单，1-366；不传 = 30。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "timezone",
+            "description": "timezone 趋势分日所用的时区（IANA 名称，如 Asia/Shanghai）：页面传浏览器所在时区，\n「哪一天」即与页面按本地日期补齐的日历一致，统计窗口也从该时区的零点起算。\n不传 = 按数据库会话时区分日，窗口从 days-1 天前的此刻起算。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "TicketService"
+        ]
+      }
+    },
+    "/api/v1/ticket/template": {
+      "post": {
+        "summary": "CreateTemplate 创建工单模板。",
+        "operationId": "TicketCatalogService_CreateTemplate",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ticket.v1.CreateTemplateResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/ticket.v1.CreateTemplateRequest"
+            }
+          }
+        ],
+        "tags": [
+          "TicketCatalogService"
+        ]
+      }
+    },
+    "/api/v1/ticket/template/{id}": {
+      "get": {
+        "summary": "GetTemplate 查询工单模板详情（含表单字段定义）。",
+        "operationId": "TicketCatalogService_GetTemplate",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ticket.v1.GetTemplateResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 模板唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "TicketCatalogService"
+        ]
+      },
+      "delete": {
+        "summary": "DeleteTemplate 删除工单模板（软删）；已有工单不受影响。",
+        "operationId": "TicketCatalogService_DeleteTemplate",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ticket.v1.DeleteTemplateResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 模板唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "TicketCatalogService"
+        ]
+      },
+      "put": {
+        "summary": "UpdateTemplate 更新工单模板（整组替换；已有工单保存的是提单时的表单快照，不受影响）。",
+        "operationId": "TicketCatalogService_UpdateTemplate",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ticket.v1.UpdateTemplateResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 模板唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/TicketCatalogService.UpdateTemplateBody"
+            }
+          }
+        ],
+        "tags": [
+          "TicketCatalogService"
+        ]
+      }
+    },
     "/api/v1/token/refresh": {
       "post": {
         "summary": "RefreshToken 用刷新令牌换发新双令牌；旧刷新令牌即刻失效（轮换）。",
@@ -7056,9 +8389,1791 @@
           "AuthService"
         ]
       }
+    },
+    "/api/v1/workflow/calendar": {
+      "get": {
+        "summary": "GetCalendar 查询工作日历（全局一份）。",
+        "operationId": "WorkflowConfigService_GetCalendar",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetCalendarResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "tags": [
+          "WorkflowConfigService"
+        ]
+      },
+      "put": {
+        "summary": "UpdateCalendar 整组更新工作日历；只影响此后新算出的时限。",
+        "operationId": "WorkflowConfigService_UpdateCalendar",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UpdateCalendarResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UpdateCalendarRequest"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowConfigService"
+        ]
+      }
+    },
+    "/api/v1/workflow/client": {
+      "get": {
+        "summary": "ListClients 查询全部接入凭据（不含令牌）。",
+        "operationId": "WorkflowConfigService_ListClients",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListClientsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "tags": [
+          "WorkflowConfigService"
+        ]
+      },
+      "post": {
+        "summary": "CreateClient 创建接入凭据；响应里的令牌只返回这一次。",
+        "operationId": "WorkflowConfigService_CreateClient",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/CreateClientResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/CreateClientRequest"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowConfigService"
+        ]
+      }
+    },
+    "/api/v1/workflow/client/{id}": {
+      "delete": {
+        "summary": "DeleteClient 删除接入凭据：令牌立即失效；它发起的流程不受影响。",
+        "operationId": "WorkflowConfigService_DeleteClient",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/DeleteClientResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowConfigService"
+        ]
+      },
+      "put": {
+        "summary": "UpdateClient 整组更新接入凭据（不改令牌）。",
+        "operationId": "WorkflowConfigService_UpdateClient",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UpdateClientResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UpdateClientBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowConfigService"
+        ]
+      }
+    },
+    "/api/v1/workflow/client/{id}/token": {
+      "post": {
+        "summary": "RotateClientToken 重置令牌：旧令牌立即失效，新令牌只返回这一次。",
+        "operationId": "WorkflowConfigService_RotateClientToken",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/RotateClientTokenResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/RotateClientTokenBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowConfigService"
+        ]
+      }
+    },
+    "/api/v1/workflow/definition": {
+      "get": {
+        "summary": "ListDefinitions 分页查询流程定义，page_size 上限 100。",
+        "operationId": "WorkflowDefinitionService_ListDefinitions",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListDefinitionsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "page",
+            "description": "page 页码，从 1 开始。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "page_size 每页数量，1-100。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "keyword",
+            "description": "keyword 关键字，可选；模糊匹配名称 / 标识。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "status",
+            "description": "status 状态过滤，可选：1=启用 0=停用。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "published",
+            "description": "published 发布状态过滤，可选：true=已发布 false=从未发布。",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          }
+        ],
+        "tags": [
+          "WorkflowDefinitionService"
+        ]
+      },
+      "post": {
+        "summary": "CreateDefinition 创建流程定义（草稿为只含开始 / 结束节点的骨架）。",
+        "operationId": "WorkflowDefinitionService_CreateDefinition",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/CreateDefinitionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/CreateDefinitionRequest"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowDefinitionService"
+        ]
+      }
+    },
+    "/api/v1/workflow/definition/{id}": {
+      "get": {
+        "summary": "GetDefinition 查询流程定义详情（含草稿流程图与校验问题）。",
+        "operationId": "WorkflowDefinitionService_GetDefinition",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetDefinitionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 流程定义唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowDefinitionService"
+        ]
+      },
+      "delete": {
+        "summary": "DeleteDefinition 删除流程定义（软删）；仍有进行中的实例时拒绝。",
+        "operationId": "WorkflowDefinitionService_DeleteDefinition",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/DeleteDefinitionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 流程定义唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowDefinitionService"
+        ]
+      },
+      "put": {
+        "summary": "UpdateDefinition 更新流程的名称 / 分类 / 说明 / 启停（不涉及流程图）。",
+        "operationId": "WorkflowDefinitionService_UpdateDefinition",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UpdateDefinitionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 流程定义唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UpdateDefinitionBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowDefinitionService"
+        ]
+      }
+    },
+    "/api/v1/workflow/definition/{id}/draft": {
+      "put": {
+        "summary": "SaveDefinitionDraft 保存草稿流程图（可以是未完成状态）；revision 做乐观锁，\n响应带回当前的校验问题清单。",
+        "operationId": "WorkflowDefinitionService_SaveDefinitionDraft",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/SaveDefinitionDraftResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 流程定义唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/SaveDefinitionDraftBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowDefinitionService"
+        ]
+      }
+    },
+    "/api/v1/workflow/definition/{id}/publish": {
+      "post": {
+        "summary": "PublishDefinition 发布当前草稿为新版本；草稿未通过校验返回 WORKFLOW_DEFINITION_INVALID。",
+        "operationId": "WorkflowDefinitionService_PublishDefinition",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/PublishDefinitionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 流程定义唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/PublishDefinitionBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowDefinitionService"
+        ]
+      }
+    },
+    "/api/v1/workflow/definition/{id}/simulate": {
+      "post": {
+        "summary": "GetDefinitionVersion 查询某个已发布版本的流程图。\nSimulateDefinition 模拟运行一份流程图（设计器当前的内容，不必已保存）：不落库、不发通知、\n不调用外部系统，返回将会依次经过的节点与各节点解析出的处理人。",
+        "operationId": "WorkflowDefinitionService_SimulateDefinition",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/SimulateDefinitionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 流程定义唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/SimulateDefinitionBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowDefinitionService"
+        ]
+      }
+    },
+    "/api/v1/workflow/definition/{id}/version": {
+      "get": {
+        "summary": "ListDefinitionVersions 查询流程的全部已发布版本（不含流程图，版本号倒序）。",
+        "operationId": "WorkflowDefinitionService_ListDefinitionVersions",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListDefinitionVersionsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 流程定义唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowDefinitionService"
+        ]
+      }
+    },
+    "/api/v1/workflow/definition/{id}/version/{version}": {
+      "get": {
+        "operationId": "WorkflowDefinitionService_GetDefinitionVersion",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetDefinitionVersionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 流程定义唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "version",
+            "description": "version 版本号，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "WorkflowDefinitionService"
+        ]
+      }
+    },
+    "/api/v1/workflow/delegation": {
+      "get": {
+        "summary": "ListMyDelegations 查询我的代理设置。",
+        "operationId": "WorkflowConfigService_ListMyDelegations",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListMyDelegationsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "tags": [
+          "WorkflowConfigService"
+        ]
+      },
+      "post": {
+        "summary": "CreateDelegation 新增一条我的代理设置：这段时间内新到达我的待办交给代理人处理。",
+        "operationId": "WorkflowConfigService_CreateDelegation",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/CreateDelegationResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/CreateDelegationRequest"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowConfigService"
+        ]
+      }
+    },
+    "/api/v1/workflow/delegation/{id}": {
+      "delete": {
+        "summary": "DeleteDelegation 删除我的一条代理设置（已交给代理人的待办不受影响）。",
+        "operationId": "WorkflowConfigService_DeleteDelegation",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/DeleteDelegationResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowConfigService"
+        ]
+      }
+    },
+    "/api/v1/workflow/handover": {
+      "post": {
+        "summary": "HandoverTasks 把某个用户名下全部未了结的待办交接给另一个用户（离职 / 调岗）。一次至多处理\n100 个流程实例，响应的 more 为 true 时应再次调用。",
+        "operationId": "WorkflowInstanceService_HandoverTasks",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/HandoverTasksResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/HandoverTasksRequest"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowInstanceService"
+        ]
+      }
+    },
+    "/api/v1/workflow/instance": {
+      "get": {
+        "summary": "ListInstances 分页查询全部流程实例（管理视图）。",
+        "operationId": "WorkflowInstanceService_ListInstances",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListInstancesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "page",
+            "description": "page 页码，从 1 开始。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "page_size 每页数量，1-100。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "keyword",
+            "description": "keyword 关键字，可选；模糊匹配标题。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "status",
+            "description": "status 状态过滤，可选：1=进行中 2=已通过 3=已拒绝 4=已撤回 5=已终止。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "definitionId",
+            "description": "definition_id 流程定义过滤，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "initiator",
+            "description": "initiator 发起人过滤，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "businessType",
+            "description": "business_type 业务类型过滤，可选（如 ticket）；\"-\" = 不挂业务对象的独立流程（含子流程）。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowInstanceService"
+        ]
+      },
+      "post": {
+        "summary": "StartInstance 按流程标识发起一个独立的流程实例（不挂业务对象）。",
+        "operationId": "WorkflowInstanceService_StartInstance",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/StartInstanceResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/StartInstanceRequest"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowInstanceService"
+        ]
+      }
+    },
+    "/api/v1/workflow/instance/{id}": {
+      "get": {
+        "summary": "GetInstance 查询流程实例详情：实例、流程图、任务与流转历史。",
+        "operationId": "WorkflowInstanceService_GetInstance",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/GetInstanceResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 实例唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowInstanceService"
+        ]
+      }
+    },
+    "/api/v1/workflow/instance/{id}/cancel": {
+      "post": {
+        "summary": "CancelInstance 发起人撤回进行中的流程。",
+        "operationId": "WorkflowInstanceService_CancelInstance",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/CancelInstanceResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 实例唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/CancelInstanceBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowInstanceService"
+        ]
+      }
+    },
+    "/api/v1/workflow/instance/{id}/job/{jobId}/retry": {
+      "post": {
+        "summary": "RetryInstanceJob 重试一条进入死信的自动任务（重新调用它的 Webhook 端点）。",
+        "operationId": "WorkflowInstanceService_RetryInstanceJob",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/RetryInstanceJobResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 实例唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "jobId",
+            "description": "job_id 作业唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/RetryInstanceJobBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowInstanceService"
+        ]
+      }
+    },
+    "/api/v1/workflow/instance/{id}/job/{jobId}/skip": {
+      "post": {
+        "summary": "SkipInstanceJob 跳过一个等待节点（死信的自动任务、未到期的定时节点），流程从它之后继续（必须填写原因）。",
+        "operationId": "WorkflowInstanceService_SkipInstanceJob",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/TaskActionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 实例唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "jobId",
+            "description": "job_id 作业唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/SkipInstanceJobBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowInstanceService"
+        ]
+      }
+    },
+    "/api/v1/workflow/instance/{id}/signal": {
+      "post": {
+        "summary": "SignalInstance 向实例投递一个外部信号：正在等待该信号的定时节点继续；可附带数据并入流程变量。",
+        "operationId": "WorkflowInstanceService_SignalInstance",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/TaskActionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 实例唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/SignalInstanceBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowInstanceService"
+        ]
+      }
+    },
+    "/api/v1/workflow/instance/{id}/terminate": {
+      "post": {
+        "summary": "TerminateInstance 管理员终止进行中的流程（必须填写原因）。",
+        "operationId": "WorkflowInstanceService_TerminateInstance",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/TerminateInstanceResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 实例唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/TerminateInstanceBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowInstanceService"
+        ]
+      }
+    },
+    "/api/v1/workflow/my-instance": {
+      "get": {
+        "summary": "ListMyInstances 分页查询我发起的流程实例。",
+        "operationId": "WorkflowInstanceService_ListMyInstances",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListInstancesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "page",
+            "description": "page 页码，从 1 开始。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "page_size 每页数量，1-100。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "keyword",
+            "description": "keyword 关键字，可选；模糊匹配标题。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "status",
+            "description": "status 状态过滤，可选：1=进行中 2=已通过 3=已拒绝 4=已撤回 5=已终止。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "WorkflowInstanceService"
+        ]
+      }
+    },
+    "/api/v1/workflow/task/cc": {
+      "get": {
+        "summary": "ListCcTasks 分页查询抄送我的。",
+        "operationId": "WorkflowTaskService_ListCcTasks",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListTasksResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "page",
+            "description": "page 页码，从 1 开始。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "page_size 每页数量，1-100。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "keyword",
+            "description": "keyword 关键字，可选；模糊匹配实例标题。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "businessType",
+            "description": "business_type 业务类型过滤，可选（如 ticket）：只返回挂在该类业务对象上的流程任务。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowTaskService"
+        ]
+      }
+    },
+    "/api/v1/workflow/task/done": {
+      "get": {
+        "summary": "ListDoneTasks 分页查询我的已办。",
+        "operationId": "WorkflowTaskService_ListDoneTasks",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListTasksResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "page",
+            "description": "page 页码，从 1 开始。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "page_size 每页数量，1-100。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "keyword",
+            "description": "keyword 关键字，可选；模糊匹配实例标题。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "businessType",
+            "description": "business_type 业务类型过滤，可选（如 ticket）：只返回挂在该类业务对象上的流程任务。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowTaskService"
+        ]
+      }
+    },
+    "/api/v1/workflow/task/todo": {
+      "get": {
+        "summary": "ListTodoTasks 分页查询我的待办。",
+        "operationId": "WorkflowTaskService_ListTodoTasks",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListTasksResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "page",
+            "description": "page 页码，从 1 开始。",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          },
+          {
+            "name": "pageSize",
+            "description": "page_size 每页数量，1-100。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "keyword",
+            "description": "keyword 关键字，可选；模糊匹配实例标题。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "businessType",
+            "description": "business_type 业务类型过滤，可选（如 ticket）：只返回挂在该类业务对象上的流程任务。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowTaskService"
+        ]
+      }
+    },
+    "/api/v1/workflow/task/{id}/add-sign": {
+      "post": {
+        "summary": "AddSignTask 加签：请另外几个人也来处理。before = 他们全部同意后任务回到自己手上；\nafter = 自己现在同意，他们全部同意后这份同意才生效。",
+        "operationId": "WorkflowTaskService_AddSignTask",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/TaskActionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 任务唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/AddSignTaskBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowTaskService"
+        ]
+      }
+    },
+    "/api/v1/workflow/task/{id}/approve": {
+      "post": {
+        "summary": "ApproveTask 同意。",
+        "operationId": "WorkflowTaskService_ApproveTask",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/TaskActionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 任务唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/ApproveTaskBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowTaskService"
+        ]
+      }
+    },
+    "/api/v1/workflow/task/{id}/delegate": {
+      "post": {
+        "summary": "DelegateTask 委派：请另一个人先给出意见，之后任务回到自己手上由自己决定。",
+        "operationId": "WorkflowTaskService_DelegateTask",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/TaskActionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 任务唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/DelegateTaskBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowTaskService"
+        ]
+      }
+    },
+    "/api/v1/workflow/task/{id}/reassign": {
+      "post": {
+        "summary": "ReassignTask 管理员改派任务的处理人（必须填写原因）。",
+        "operationId": "WorkflowTaskService_ReassignTask",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/TaskActionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 任务唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/ReassignTaskBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowTaskService"
+        ]
+      }
+    },
+    "/api/v1/workflow/task/{id}/reject": {
+      "post": {
+        "summary": "RejectTask 拒绝：节点配置了拒绝去向则退回该节点，否则流程以「已拒绝」结束。",
+        "operationId": "WorkflowTaskService_RejectTask",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/TaskActionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 任务唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/RejectTaskBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowTaskService"
+        ]
+      }
+    },
+    "/api/v1/workflow/task/{id}/return": {
+      "post": {
+        "summary": "ReturnTask 退回到此前走过的某个节点。",
+        "operationId": "WorkflowTaskService_ReturnTask",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/TaskActionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 任务唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/ReturnTaskBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowTaskService"
+        ]
+      }
+    },
+    "/api/v1/workflow/task/{id}/return-target": {
+      "get": {
+        "summary": "ListReturnTargets 查询当前任务可退回到的节点。",
+        "operationId": "WorkflowTaskService_ListReturnTargets",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListReturnTargetsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 任务唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowTaskService"
+        ]
+      }
+    },
+    "/api/v1/workflow/task/{id}/transfer": {
+      "post": {
+        "summary": "TransferTask 转办给其他人。",
+        "operationId": "WorkflowTaskService_TransferTask",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/TaskActionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 任务唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/TransferTaskBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowTaskService"
+        ]
+      }
+    },
+    "/api/v1/workflow/user-candidate": {
+      "get": {
+        "summary": "ListUserCandidates 可选用户（可用的系统用户，仅 ID 与显示名）；供转办 / 改派 / 设计器选人使用。",
+        "operationId": "WorkflowTaskService_ListUserCandidates",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListWorkflowUserCandidatesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "keyword",
+            "description": "keyword 登录名/昵称模糊匹配，可选。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowTaskService"
+        ]
+      }
+    },
+    "/api/v1/workflow/webhook": {
+      "get": {
+        "summary": "ListWebhooks 查询全部 Webhook 端点（不含签名密钥）。",
+        "operationId": "WorkflowConfigService_ListWebhooks",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListWebhooksResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "tags": [
+          "WorkflowConfigService"
+        ]
+      },
+      "post": {
+        "summary": "CreateWebhook 创建 Webhook 端点。",
+        "operationId": "WorkflowConfigService_CreateWebhook",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/CreateWebhookResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/CreateWebhookRequest"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowConfigService"
+        ]
+      }
+    },
+    "/api/v1/workflow/webhook/{id}": {
+      "delete": {
+        "summary": "DeleteWebhook 删除 Webhook 端点；仍被已发布的流程引用时拒绝。",
+        "operationId": "WorkflowConfigService_DeleteWebhook",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/DeleteWebhookResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowConfigService"
+        ]
+      },
+      "put": {
+        "summary": "UpdateWebhook 整组更新 Webhook 端点；不传 secret 保留原签名密钥。",
+        "operationId": "WorkflowConfigService_UpdateWebhook",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/UpdateWebhookResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "id 唯一标识，取自路径参数。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/UpdateWebhookBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowConfigService"
+        ]
+      }
     }
   },
   "definitions": {
+    "AddDeptMembersBody": {
+      "type": "object",
+      "properties": {
+        "userIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "user_ids 待加入的用户 ID，去重、1-100 个。"
+        }
+      },
+      "title": "AddDeptMembersRequest 添加部门成员请求。"
+    },
+    "AddDeptMembersResponse": {
+      "type": "object",
+      "title": "AddDeptMembersResponse 添加部门成员响应。"
+    },
     "AddGroupMembersBody": {
       "type": "object",
       "properties": {
@@ -7088,6 +10203,51 @@
       },
       "title": "AddGroupMembersResponse 添加成员响应。"
     },
+    "AddSignTaskBody": {
+      "type": "object",
+      "properties": {
+        "userIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "user_ids 被加签的用户 ID，去重、1-10 个。"
+        },
+        "position": {
+          "type": "string",
+          "title": "position 加签方式：before=前加签 after=后加签。"
+        },
+        "comment": {
+          "type": "string",
+          "title": "comment 说明，≤1000 位。"
+        }
+      },
+      "title": "AddSignTaskRequest 加签请求。"
+    },
+    "AddTicketCommentBody": {
+      "type": "object",
+      "properties": {
+        "content": {
+          "type": "string",
+          "title": "content 内容，1-2000 位。"
+        },
+        "parentId": {
+          "type": "string",
+          "title": "parent_id 所回复的评论 ID，可选；须是本工单的顶层评论。"
+        }
+      },
+      "title": "AddTicketCommentRequest 发表评论请求。"
+    },
+    "AddTicketCommentResponse": {
+      "type": "object",
+      "properties": {
+        "comment": {
+          "$ref": "#/definitions/Comment",
+          "title": "comment 已发表的评论。"
+        }
+      },
+      "title": "AddTicketCommentResponse 发表评论响应。"
+    },
     "Any": {
       "type": "object",
       "properties": {
@@ -7098,6 +10258,16 @@
       },
       "additionalProperties": true,
       "description": "`Any` contains an arbitrary serialized protocol buffer message along with a\nURL that describes the type of the serialized message.\n\nIn its binary encoding, an `Any` is an ordinary message; but in other wire\nforms like JSON, it has a special encoding. The format of the type URL is\ndescribed on the `type_url` field.\n\nProtobuf APIs provide utilities to interact with `Any` values:\n\n- A 'pack' operation accepts a message and constructs a generic `Any` wrapper\n  around it.\n- An 'unpack' operation reads the content of an `Any` message, either into an\n  existing message or a new one. Unpack operations must check the type of the\n  value they unpack against the declared `type_url`.\n- An 'is' operation decides whether an `Any` contains a message of the given\n  type, i.e. whether it can 'unpack' that type.\n\nThe JSON format representation of an `Any` follows one of these cases:\n\n- For types without special-cased JSON encodings, the JSON format\n  representation of the `Any` is the same as that of the message, with an\n  additional `@type` field which contains the type URL.\n- For types with special-cased JSON encodings (typically called 'well-known'\n  types, listed in https://protobuf.dev/programming-guides/json/#any), the\n  JSON format representation has a key `@type` which contains the type URL\n  and a key `value` which contains the JSON-serialized value.\n\nThe text format representation of an `Any` is like a message with one field\nwhose name is the type URL in brackets. For example, an `Any` containing a\n`foo.Bar` message may be written `[type.googleapis.com/foo.Bar] { a: 2 }`."
+    },
+    "ApproveTaskBody": {
+      "type": "object",
+      "properties": {
+        "comment": {
+          "type": "string",
+          "title": "comment 处理意见，≤1000 位。"
+        }
+      },
+      "title": "ApproveTaskRequest 同意任务请求。"
     },
     "AssistantConversation": {
       "type": "object",
@@ -7364,6 +10534,74 @@
       },
       "title": "CIView 保存的资源列表视图。"
     },
+    "Calendar": {
+      "type": "object",
+      "properties": {
+        "timezone": {
+          "type": "string",
+          "title": "timezone IANA 时区名（如 Asia/Shanghai）：工作时段与节假日按它解释。"
+        },
+        "weekdays": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "title": "weekdays 每周的工作日：0=周日 … 6=周六。"
+        },
+        "segments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/CalendarSegment"
+          },
+          "title": "segments 每日工作时段，按时间先后、互不重叠，1-6 段。"
+        },
+        "holidays": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "holidays 节假日（yyyy-mm-dd），≤400 个。"
+        },
+        "workdays": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "workdays 调休上班日（yyyy-mm-dd），≤400 个。"
+        }
+      },
+      "title": "Calendar 工作日历。"
+    },
+    "CalendarSegment": {
+      "type": "object",
+      "properties": {
+        "start": {
+          "type": "string",
+          "title": "start 开始时间 HH:MM。"
+        },
+        "end": {
+          "type": "string",
+          "title": "end 结束时间 HH:MM（24:00 表示当日结束）。"
+        }
+      },
+      "title": "CalendarSegment 一段每日工作时段。"
+    },
+    "CancelInstanceBody": {
+      "type": "object",
+      "properties": {
+        "comment": {
+          "type": "string",
+          "title": "comment 撤回说明，≤1000 位。"
+        }
+      },
+      "title": "CancelInstanceRequest 撤回流程请求。"
+    },
+    "CancelInstanceResponse": {
+      "type": "object",
+      "title": "CancelInstanceResponse 撤回流程响应。"
+    },
     "CatalogElement": {
       "type": "object",
       "properties": {
@@ -7415,6 +10653,37 @@
         }
       },
       "title": "CatalogMenu 目录菜单（页面）：页面默认接口（进页面即调用，不归属于任何\n元素）+ 页面元素及其接口；仅描述页面结构，供授权页展示，授权不级联。"
+    },
+    "Category": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 分类唯一标识（UUIDv7）。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 分类名称。"
+        },
+        "description": {
+          "type": "string",
+          "title": "description 说明。"
+        },
+        "sort": {
+          "type": "integer",
+          "format": "int32",
+          "title": "sort 排序值，升序。"
+        },
+        "templates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/Template"
+          },
+          "title": "templates 分类下的模板（不含表单），按排序值升序。"
+        }
+      },
+      "title": "Category 工单分类。"
     },
     "ChangeLog": {
       "type": "object",
@@ -7509,6 +10778,29 @@
       },
       "title": "CheckUniqueRuleResponse 预检唯一规则响应。"
     },
+    "ChildInstance": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 子流程实例 ID。"
+        },
+        "nodeId": {
+          "type": "string",
+          "title": "node_id 发起它的子流程节点 ID。"
+        },
+        "definitionName": {
+          "type": "string",
+          "title": "definition_name 子流程的流程名称。"
+        },
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 状态：1=进行中 2=已通过 3=已拒绝 4=已撤回 5=已终止。"
+        }
+      },
+      "title": "ChildInstance 由子流程节点发起的子流程。"
+    },
     "ClaimConflictBody": {
       "type": "object",
       "properties": {
@@ -7530,6 +10822,88 @@
     "ClaimConflictResponse": {
       "type": "object",
       "title": "ClaimConflictResponse 认领同步冲突响应。"
+    },
+    "Client": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 唯一标识。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 名称（通常是接入系统的名字）。"
+        },
+        "tokenPrefix": {
+          "type": "string",
+          "title": "token_prefix 令牌开头几位（辨认用）。"
+        },
+        "actingUserId": {
+          "type": "string",
+          "title": "acting_user_id 代表用户 ID：该系统发起的流程以他为发起人。"
+        },
+        "actingUserName": {
+          "type": "string",
+          "title": "acting_user_name 代表用户显示名。"
+        },
+        "definitionKeys": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "definition_keys 允许发起的流程标识。"
+        },
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 状态：1=启用 0=停用。"
+        },
+        "description": {
+          "type": "string",
+          "title": "description 说明。"
+        },
+        "lastUsedTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "last_used_time 最近一次调用时间；从未调用为空。"
+        },
+        "updateTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "update_time 更新时间。"
+        }
+      },
+      "title": "Client 接入凭据（不含令牌）。"
+    },
+    "ClientSpec": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "name 名称，1-64 位，未删除行内唯一。"
+        },
+        "actingUserId": {
+          "type": "string",
+          "title": "acting_user_id 代表用户 ID（须为可用用户）。"
+        },
+        "definitionKeys": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "definition_keys 允许发起的流程标识，去重、1-50 个。"
+        },
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 状态：1=启用 0=停用。"
+        },
+        "description": {
+          "type": "string",
+          "title": "description 说明，≤255 位。"
+        }
+      },
+      "title": "ClientSpec 接入凭据内容（创建 / 整组更新）。"
     },
     "CmdbCI": {
       "type": "object",
@@ -7964,6 +11338,37 @@
       },
       "title": "CmdbUniqueRule 唯一规则：field_codes 这组字段的取值在类型内不可重复。\n任一字段为空（缺失 / null / 空串）的资源不受该规则约束。"
     },
+    "Comment": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 评论唯一标识。"
+        },
+        "userId": {
+          "type": "string",
+          "title": "user_id 评论人用户 ID。"
+        },
+        "userName": {
+          "type": "string",
+          "title": "user_name 评论人显示名。"
+        },
+        "content": {
+          "type": "string",
+          "title": "content 内容。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 发表时间。"
+        },
+        "parentId": {
+          "type": "string",
+          "title": "parent_id 所回复的评论 ID；空 = 顶层评论。回复只有一层：被回复的一定是顶层评论。"
+        }
+      },
+      "title": "Comment 工单评论。"
+    },
     "ConfirmRequest": {
       "type": "object",
       "properties": {
@@ -8037,6 +11442,35 @@
       },
       "title": "CreateCIResponse 创建资源响应。"
     },
+    "CreateCategoryRequest": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "name 分类名称，1-64 位。"
+        },
+        "description": {
+          "type": "string",
+          "title": "description 说明，≤255 位。"
+        },
+        "sort": {
+          "type": "integer",
+          "format": "int32",
+          "title": "sort 排序值，0-9999。"
+        }
+      },
+      "title": "CreateCategoryRequest 创建工单分类请求。"
+    },
+    "CreateCategoryResponse": {
+      "type": "object",
+      "properties": {
+        "category": {
+          "$ref": "#/definitions/Category",
+          "title": "category 已创建的分类。"
+        }
+      },
+      "title": "CreateCategoryResponse 创建工单分类响应。"
+    },
     "CreateChannelRequest": {
       "type": "object",
       "properties": {
@@ -8092,6 +11526,140 @@
         }
       },
       "title": "CreateChannelResponse 创建渠道响应。"
+    },
+    "CreateClientRequest": {
+      "type": "object",
+      "properties": {
+        "spec": {
+          "$ref": "#/definitions/ClientSpec",
+          "title": "spec 凭据内容。"
+        }
+      },
+      "title": "CreateClientRequest 创建接入凭据请求。"
+    },
+    "CreateClientResponse": {
+      "type": "object",
+      "properties": {
+        "client": {
+          "$ref": "#/definitions/Client",
+          "title": "client 已创建的凭据。"
+        },
+        "token": {
+          "type": "string",
+          "title": "token 令牌明文：只返回这一次，请立即妥善保存。"
+        }
+      },
+      "title": "CreateClientResponse 创建接入凭据响应。"
+    },
+    "CreateDefinitionRequest": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "title": "key 流程标识：2-64 位小写字母/数字/下划线/中划线，字母开头，创建后不可改。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 流程名称，1-64 位。"
+        },
+        "category": {
+          "type": "string",
+          "title": "category 分类，≤64 位。"
+        },
+        "description": {
+          "type": "string",
+          "title": "description 说明，≤255 位。"
+        }
+      },
+      "title": "CreateDefinitionRequest 创建流程定义请求。"
+    },
+    "CreateDefinitionResponse": {
+      "type": "object",
+      "properties": {
+        "definition": {
+          "$ref": "#/definitions/Definition",
+          "title": "definition 已创建的流程定义。"
+        }
+      },
+      "title": "CreateDefinitionResponse 创建流程定义响应。"
+    },
+    "CreateDelegationRequest": {
+      "type": "object",
+      "properties": {
+        "delegateId": {
+          "type": "string",
+          "title": "delegate_id 代理人用户 ID（须为可用用户，不能是自己）。"
+        },
+        "startTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "start_time 生效开始时间。"
+        },
+        "endTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "end_time 生效结束时间（须晚于开始时间与当前时间，跨度不超过一年）。"
+        },
+        "reason": {
+          "type": "string",
+          "title": "reason 说明，≤255 位。"
+        }
+      },
+      "title": "CreateDelegationRequest 新增代理设置请求。"
+    },
+    "CreateDelegationResponse": {
+      "type": "object",
+      "properties": {
+        "delegation": {
+          "$ref": "#/definitions/Delegation",
+          "title": "delegation 已创建的代理设置。"
+        }
+      },
+      "title": "CreateDelegationResponse 新增代理设置响应。"
+    },
+    "CreateDeptRequest": {
+      "type": "object",
+      "properties": {
+        "parentId": {
+          "type": "string",
+          "title": "parent_id 上级部门 ID，可选；不传 = 根部门。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 部门名称，1-64 位。"
+        },
+        "code": {
+          "type": "string",
+          "title": "code 部门编码，可选：2-64 位字母/数字/下划线/中划线，未删除行内唯一。"
+        },
+        "sort": {
+          "type": "integer",
+          "format": "int32",
+          "title": "sort 同级排序值，升序，0-9999。"
+        },
+        "description": {
+          "type": "string",
+          "title": "description 说明，≤255 位。"
+        },
+        "leaderIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "leader_ids 负责人用户 ID，按顺序，去重、最多 20 个。"
+        }
+      },
+      "title": "CreateDeptRequest 创建部门请求。"
+    },
+    "CreateDeptResponse": {
+      "type": "object",
+      "properties": {
+        "dept": {
+          "$ref": "#/definitions/Dept",
+          "title": "dept 已创建的部门实体。"
+        }
+      },
+      "title": "CreateDeptResponse 创建部门响应。"
     },
     "CreateFieldBody": {
       "type": "object",
@@ -8604,49 +12172,60 @@
       },
       "title": "CreateSourceResponse 创建采集源响应。"
     },
-    "CreateTemplateRequest": {
+    "CreateTicketRequest": {
       "type": "object",
       "properties": {
-        "bizId": {
+        "templateId": {
           "type": "string",
-          "title": "biz_id 业务租户标识，可选；未指定默认 default。"
+          "title": "template_id 工单模板 ID。"
         },
-        "eventType": {
+        "title": {
           "type": "string",
-          "title": "event_type 事件类型或 '*'；'*' 之外的值须为小写字母/数字开头的点分串。"
+          "title": "title 标题，1-255 位。"
         },
-        "channelType": {
+        "priority": {
+          "type": "integer",
+          "format": "int32",
+          "title": "priority 优先级：1=低 2=普通 3=高 4=紧急。"
+        },
+        "data": {
+          "type": "object",
+          "title": "data 表单数据（按模板的字段定义校验）。"
+        },
+        "creatorDept": {
           "type": "string",
-          "title": "channel_type 渠道类型或 '*' 通配。"
+          "title": "creator_dept 提单部门 ID，可选：须为提单人所属部门；不传取主部门。"
         },
-        "subject": {
+        "fileIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "file_ids 附件（已上传的文件 ID），去重、≤20 个。"
+        },
+        "requestId": {
           "type": "string",
-          "title": "subject 标题模板（Go template）。"
+          "title": "request_id 幂等键，可选（客户端生成的 UUID）：重复提交返回首次创建的工单。"
         },
-        "body": {
-          "type": "string",
-          "title": "body 正文模板（Go template）。"
-        },
-        "enabled": {
-          "type": "boolean",
-          "title": "enabled 初始启用状态，可选；未指定默认启用。"
-        },
-        "format": {
-          "type": "string",
-          "title": "format 输出格式，可选，缺省 text（text/markdown/html/card）。"
+        "ciIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "ci_ids 关联的 CMDB 资源 ID，去重、≤20 个：须是提单人有权查看的资源；模板要求必填时至少一个。"
         }
       },
-      "title": "CreateTemplateRequest 创建模板请求。"
+      "title": "CreateTicketRequest 提交工单请求。"
     },
-    "CreateTemplateResponse": {
+    "CreateTicketResponse": {
       "type": "object",
       "properties": {
-        "template": {
-          "$ref": "#/definitions/NotifyTemplate",
-          "title": "template 已创建的模板实体。"
+        "ticket": {
+          "$ref": "#/definitions/Ticket",
+          "title": "ticket 已创建的工单。"
         }
       },
-      "title": "CreateTemplateResponse 创建模板响应。"
+      "title": "CreateTicketResponse 提交工单响应。"
     },
     "CreateUniqueRuleBody": {
       "type": "object",
@@ -8710,6 +12289,10 @@
           "type": "integer",
           "format": "int32",
           "title": "status 初始状态，可选；未指定默认可用（1）。取值：1=可用 2=停用 3=暂停 4=离职。"
+        },
+        "depts": {
+          "$ref": "#/definitions/UserDeptAssignment",
+          "title": "depts 所属部门，可选；与建号同事务写入。"
         }
       },
       "title": "CreateUserRequest 创建用户请求。"
@@ -8723,6 +12306,26 @@
         }
       },
       "title": "CreateUserResponse 创建用户响应。"
+    },
+    "CreateWebhookRequest": {
+      "type": "object",
+      "properties": {
+        "spec": {
+          "$ref": "#/definitions/WebhookSpec",
+          "title": "spec 端点内容。"
+        }
+      },
+      "title": "CreateWebhookRequest 创建 Webhook 端点请求。"
+    },
+    "CreateWebhookResponse": {
+      "type": "object",
+      "properties": {
+        "webhook": {
+          "$ref": "#/definitions/Webhook",
+          "title": "webhook 已创建的端点。"
+        }
+      },
+      "title": "CreateWebhookResponse 创建 Webhook 端点响应。"
     },
     "CurrentDuty": {
       "type": "object",
@@ -8759,6 +12362,127 @@
       },
       "title": "CurrentDuty 某张值班表此刻的值班情况。"
     },
+    "Definition": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 流程定义唯一标识（UUIDv7）。"
+        },
+        "key": {
+          "type": "string",
+          "title": "key 流程标识，创建后不可改。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 流程名称。"
+        },
+        "category": {
+          "type": "string",
+          "title": "category 分类。"
+        },
+        "description": {
+          "type": "string",
+          "title": "description 说明。"
+        },
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 状态：1=启用 0=停用。"
+        },
+        "revision": {
+          "type": "integer",
+          "format": "int32",
+          "title": "revision 草稿修订号（保存草稿时回传做乐观锁）。"
+        },
+        "publishedVersion": {
+          "type": "integer",
+          "format": "int32",
+          "title": "published_version 当前发布的版本号；0 = 从未发布。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 创建时间。"
+        },
+        "updateTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "update_time 更新时间。"
+        }
+      },
+      "title": "Definition 流程定义（出参，不含流程图）。"
+    },
+    "DefinitionVersion": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 版本唯一标识。"
+        },
+        "version": {
+          "type": "integer",
+          "format": "int32",
+          "title": "version 版本号。"
+        },
+        "createUser": {
+          "type": "string",
+          "title": "create_user 发布人用户 ID。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 发布时间。"
+        }
+      },
+      "title": "DefinitionVersion 已发布版本（出参，不含流程图）。"
+    },
+    "DelegateTaskBody": {
+      "type": "object",
+      "properties": {
+        "toUserId": {
+          "type": "string",
+          "title": "to_user_id 被委派的用户 ID。"
+        },
+        "comment": {
+          "type": "string",
+          "title": "comment 说明，≤1000 位。"
+        }
+      },
+      "title": "DelegateTaskRequest 委派请求。"
+    },
+    "Delegation": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 唯一标识。"
+        },
+        "delegateId": {
+          "type": "string",
+          "title": "delegate_id 代理人用户 ID。"
+        },
+        "delegateName": {
+          "type": "string",
+          "title": "delegate_name 代理人显示名。"
+        },
+        "startTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "start_time 生效开始时间。"
+        },
+        "endTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "end_time 生效结束时间。"
+        },
+        "reason": {
+          "type": "string",
+          "title": "reason 说明。"
+        }
+      },
+      "title": "Delegation 一条代理设置。"
+    },
     "DeleteCIResponse": {
       "type": "object",
       "title": "DeleteCIResponse 删除资源响应。"
@@ -8781,13 +12505,33 @@
       "type": "object",
       "title": "DeleteCIViewResponse 删除视图响应。"
     },
+    "DeleteCategoryResponse": {
+      "type": "object",
+      "title": "DeleteCategoryResponse 删除工单分类响应。"
+    },
     "DeleteChannelResponse": {
       "type": "object",
       "title": "DeleteChannelResponse 删除渠道响应。"
     },
+    "DeleteClientResponse": {
+      "type": "object",
+      "title": "DeleteClientResponse 删除接入凭据响应。"
+    },
     "DeleteConversationResponse": {
       "type": "object",
       "title": "DeleteConversationResponse 删除会话响应。"
+    },
+    "DeleteDefinitionResponse": {
+      "type": "object",
+      "title": "DeleteDefinitionResponse 删除流程定义响应。"
+    },
+    "DeleteDelegationResponse": {
+      "type": "object",
+      "title": "DeleteDelegationResponse 删除代理设置响应。"
+    },
+    "DeleteDeptResponse": {
+      "type": "object",
+      "title": "DeleteDeptResponse 删除部门响应。"
     },
     "DeleteFieldResponse": {
       "type": "object",
@@ -8841,10 +12585,6 @@
       "type": "object",
       "title": "DeleteSubscriptionResponse 删除订阅响应。"
     },
-    "DeleteTemplateResponse": {
-      "type": "object",
-      "title": "DeleteTemplateResponse 删除模板响应。"
-    },
     "DeleteUniqueRuleResponse": {
       "type": "object",
       "title": "DeleteUniqueRuleResponse 删除唯一规则响应。"
@@ -8852,6 +12592,162 @@
     "DeleteUserResponse": {
       "type": "object",
       "title": "DeleteUserResponse 删除用户响应。"
+    },
+    "DeleteWebhookResponse": {
+      "type": "object",
+      "title": "DeleteWebhookResponse 删除 Webhook 端点响应。"
+    },
+    "Dept": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 部门唯一标识（UUIDv7）。"
+        },
+        "parentId": {
+          "type": "string",
+          "title": "parent_id 上级部门 ID；空 = 根部门。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 部门名称。"
+        },
+        "code": {
+          "type": "string",
+          "title": "code 部门编码；空 = 未设置。"
+        },
+        "sort": {
+          "type": "integer",
+          "format": "int32",
+          "title": "sort 同级排序值，升序。"
+        },
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 状态：1=启用 0=停用。"
+        },
+        "description": {
+          "type": "string",
+          "title": "description 说明。"
+        },
+        "leaders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/DeptLeader"
+          },
+          "title": "leaders 部门负责人，按配置顺序。"
+        },
+        "memberCount": {
+          "type": "integer",
+          "format": "int32",
+          "title": "member_count 直属成员数（不含下级部门）。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 创建时间。"
+        },
+        "updateTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "update_time 更新时间。"
+        }
+      },
+      "title": "Dept 部门实体（出参）。"
+    },
+    "DeptLeader": {
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "title": "user_id 负责人用户 ID。"
+        },
+        "username": {
+          "type": "string",
+          "title": "username 登录名。"
+        },
+        "nickname": {
+          "type": "string",
+          "title": "nickname 昵称。"
+        },
+        "avatar": {
+          "type": "string",
+          "title": "avatar 头像地址；空 = 未设置。"
+        },
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 用户状态：1=可用 2=停用 3=暂停 4=离职（非可用的负责人在流程中会被跳过）。"
+        }
+      },
+      "title": "DeptLeader 部门负责人（用户展示信息的只读视图）。"
+    },
+    "DeptLeaderIDs": {
+      "type": "object",
+      "properties": {
+        "userIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "user_ids 负责人用户 ID，按顺序，去重、最多 20 个。"
+        }
+      },
+      "title": "DeptLeaderIDs 负责人整组替换载荷（更新时须显式携带，空列表 = 清空负责人）。"
+    },
+    "DeptMember": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 用户唯一标识。"
+        },
+        "username": {
+          "type": "string",
+          "title": "username 登录名。"
+        },
+        "nickname": {
+          "type": "string",
+          "title": "nickname 昵称。"
+        },
+        "avatar": {
+          "type": "string",
+          "title": "avatar 头像地址；空 = 未设置。"
+        },
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 用户状态：1=可用 2=停用 3=暂停 4=离职。"
+        },
+        "depts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/UserDept"
+          },
+          "title": "depts 该用户的全部所属部门（主部门在前）。"
+        }
+      },
+      "title": "DeptMember 部门成员（最小披露：不含手机号、邮箱）。"
+    },
+    "DeptUserCandidate": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 用户唯一标识。"
+        },
+        "username": {
+          "type": "string",
+          "title": "username 登录名。"
+        },
+        "nickname": {
+          "type": "string",
+          "title": "nickname 昵称。"
+        }
+      },
+      "title": "DeptUserCandidate 可选用户（最小披露：不含手机号、邮箱）。"
     },
     "DisableWebhookResponse": {
       "type": "object",
@@ -8914,6 +12810,105 @@
       },
       "title": "FieldRule 字段校验规则；未设置的项不校验。"
     },
+    "File": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 文件唯一标识（UUIDv7）。"
+        },
+        "filename": {
+          "type": "string",
+          "title": "filename 原始文件名。"
+        },
+        "size": {
+          "type": "string",
+          "format": "int64",
+          "title": "size 字节数。"
+        },
+        "mime": {
+          "type": "string",
+          "title": "mime 内容类型（服务端按内容嗅探确定）。"
+        },
+        "createUser": {
+          "type": "string",
+          "title": "create_user 上传者用户 ID。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 上传时间。"
+        }
+      },
+      "title": "File 文件元数据（出参）。"
+    },
+    "FormField": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "title": "code 字段码：字母开头的 1-32 位字母/数字/下划线，表单内唯一；流程条件以 form.\u003ccode\u003e 引用。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 字段名称，1-64 位。"
+        },
+        "type": {
+          "type": "string",
+          "title": "type 类型：string / text / int / float / bool / enum / datetime / user / dept。"
+        },
+        "required": {
+          "type": "boolean",
+          "title": "required 是否必填。"
+        },
+        "enumValues": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "enum_values 枚举可选值（type = enum 时必填，≤50 项）。"
+        },
+        "rule": {
+          "$ref": "#/definitions/FormRule",
+          "title": "rule 校验规则。"
+        },
+        "description": {
+          "type": "string",
+          "title": "description 填写说明，≤255 位。"
+        }
+      },
+      "title": "FormField 表单字段定义。"
+    },
+    "FormRule": {
+      "type": "object",
+      "properties": {
+        "pattern": {
+          "type": "string",
+          "title": "pattern 正则（Go RE2 语法），仅字符串类字段。"
+        },
+        "min": {
+          "type": "number",
+          "format": "double",
+          "title": "min 数值下限。"
+        },
+        "max": {
+          "type": "number",
+          "format": "double",
+          "title": "max 数值上限。"
+        },
+        "minLen": {
+          "type": "integer",
+          "format": "int32",
+          "title": "min_len 字符串最小长度。"
+        },
+        "maxLen": {
+          "type": "integer",
+          "format": "int32",
+          "title": "max_len 字符串最大长度。"
+        }
+      },
+      "title": "FormRule 字段校验规则。"
+    },
     "GetCIAtResponse": {
       "type": "object",
       "properties": {
@@ -8945,6 +12940,16 @@
         }
       },
       "title": "GetCIResponse 查询资源详情响应。"
+    },
+    "GetCalendarResponse": {
+      "type": "object",
+      "properties": {
+        "calendar": {
+          "$ref": "#/definitions/Calendar",
+          "title": "calendar 工作日历。"
+        }
+      },
+      "title": "GetCalendarResponse 查询工作日历响应。"
     },
     "GetChannelResponse": {
       "type": "object",
@@ -8979,6 +12984,52 @@
         }
       },
       "title": "GetDeadLetterResponse 死信详情响应。"
+    },
+    "GetDefinitionResponse": {
+      "type": "object",
+      "properties": {
+        "definition": {
+          "$ref": "#/definitions/Definition",
+          "title": "definition 流程定义。"
+        },
+        "draft": {
+          "type": "object",
+          "title": "draft 草稿流程图。"
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/GraphIssue"
+          },
+          "title": "issues 草稿当前的校验问题；为空表示可发布。"
+        }
+      },
+      "title": "GetDefinitionResponse 查询流程定义响应。"
+    },
+    "GetDefinitionVersionResponse": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "$ref": "#/definitions/DefinitionVersion",
+          "title": "version 版本信息。"
+        },
+        "graph": {
+          "type": "object",
+          "title": "graph 该版本的流程图。"
+        }
+      },
+      "title": "GetDefinitionVersionResponse 查询流程版本详情响应。"
+    },
+    "GetDeptResponse": {
+      "type": "object",
+      "properties": {
+        "dept": {
+          "$ref": "#/definitions/Dept",
+          "title": "dept 部门实体。"
+        }
+      },
+      "title": "GetDeptResponse 查询部门响应。"
     },
     "GetDispatchResponse": {
       "type": "object",
@@ -9016,6 +13067,16 @@
       },
       "title": "GetEventResponse 事件详情响应：事件 + 发送任务 + 每个任务最近一次投递明细。"
     },
+    "GetFileResponse": {
+      "type": "object",
+      "properties": {
+        "file": {
+          "$ref": "#/definitions/File",
+          "title": "file 文件元数据。"
+        }
+      },
+      "title": "GetFileResponse 查询文件信息响应。"
+    },
     "GetGroupResponse": {
       "type": "object",
       "properties": {
@@ -9025,6 +13086,76 @@
         }
       },
       "title": "GetGroupResponse 查询分组详情响应。"
+    },
+    "GetInstanceResponse": {
+      "type": "object",
+      "properties": {
+        "instance": {
+          "$ref": "#/definitions/Instance",
+          "title": "instance 流程实例。"
+        },
+        "graph": {
+          "type": "object",
+          "title": "graph 实例所用版本的流程图。"
+        },
+        "variables": {
+          "type": "object",
+          "title": "variables 流程变量。"
+        },
+        "tasks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/Task"
+          },
+          "title": "tasks 全部任务，按到达时间升序。"
+        },
+        "histories": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/HistoryEntry"
+          },
+          "title": "histories 流转历史，按时间升序。"
+        },
+        "myTaskId": {
+          "type": "string",
+          "title": "my_task_id 当前用户在该实例上可处理的任务 ID；没有为空。"
+        },
+        "canCancel": {
+          "type": "boolean",
+          "title": "can_cancel 当前用户能否撤回（发起人且流程进行中）。"
+        },
+        "canManage": {
+          "type": "boolean",
+          "title": "can_manage 当前用户能否终止该流程（流程进行中且持有终止接口权限）。"
+        },
+        "canReassign": {
+          "type": "boolean",
+          "title": "can_reassign 当前用户能否改派待处理的任务（流程进行中且持有改派接口权限）。"
+        },
+        "mySeatOrigin": {
+          "type": "string",
+          "title": "my_seat_origin 当前用户待处理席位的来源（见 TaskAssignee.origin）：delegate 时只需给出意见。"
+        },
+        "waits": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/InstanceWait"
+          },
+          "title": "waits 实例正停在其上的等待节点（定时 / 自动任务）。"
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/ChildInstance"
+          },
+          "title": "children 由子流程节点发起的子流程。"
+        }
+      },
+      "title": "GetInstanceResponse 查询流程实例响应。"
     },
     "GetLoginProfileResponse": {
       "type": "object",
@@ -9394,15 +13525,133 @@
       },
       "title": "GetSystemConfigResponse 查询系统配置响应。"
     },
-    "GetTemplateResponse": {
+    "GetTicketResponse": {
       "type": "object",
       "properties": {
-        "template": {
-          "$ref": "#/definitions/NotifyTemplate",
-          "title": "template 模板实体。"
+        "ticket": {
+          "$ref": "#/definitions/Ticket",
+          "title": "ticket 工单（含表单快照与表单数据）。"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/TicketFile"
+          },
+          "title": "files 附件。"
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "labels 表单里人员 / 部门字段取值的显示名（ID → 名称）。"
+        },
+        "resources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/TicketResource"
+          },
+          "title": "resources 关联的 CMDB 资源。"
+        },
+        "fieldPermissions": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "field_permissions 当前用户作为处理人时，流程当前环节对各表单字段的权限\n（字段码 → hidden / readonly / editable / required）；他当前没有待处理的任务时为空。"
+        },
+        "canEditForm": {
+          "type": "boolean",
+          "title": "can_edit_form 当前用户此刻能否修改表单（有待处理的任务，且该环节至少有一个可编辑的字段）。"
+        },
+        "canRate": {
+          "type": "boolean",
+          "title": "can_rate 当前用户此刻能否评价（提单人、工单已完成且尚未评价）。"
         }
       },
-      "title": "GetTemplateResponse 查询模板响应。"
+      "title": "GetTicketResponse 查询工单响应。"
+    },
+    "GetTicketStatsResponse": {
+      "type": "object",
+      "properties": {
+        "total": {
+          "type": "string",
+          "format": "int64",
+          "title": "total 期间提交的工单总数。"
+        },
+        "byStatus": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/TicketCount"
+          },
+          "title": "by_status 按状态分布。"
+        },
+        "byPriority": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/TicketCount"
+          },
+          "title": "by_priority 按优先级分布。"
+        },
+        "byTemplate": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/TicketCount"
+          },
+          "title": "by_template 工单量最多的服务（至多 10 个）。"
+        },
+        "trend": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/TicketTrendPoint"
+          },
+          "title": "trend 每日趋势，日期升序（只含有工单的日期）。"
+        },
+        "avgResolveSeconds": {
+          "type": "string",
+          "format": "int64",
+          "title": "avg_resolve_seconds 已完成工单从提交到结束的平均用时（秒）；没有已完成的工单为 0。"
+        },
+        "responseSlaTotal": {
+          "type": "string",
+          "format": "int64",
+          "title": "response_sla_total / response_sla_met 配置了响应时限且已见分晓的工单数 / 其中按时响应的。"
+        },
+        "responseSlaMet": {
+          "type": "string",
+          "format": "int64"
+        },
+        "resolveSlaTotal": {
+          "type": "string",
+          "format": "int64",
+          "title": "resolve_sla_total / resolve_sla_met 配置了解决时限且已见分晓的工单数 / 其中按时解决的。"
+        },
+        "resolveSlaMet": {
+          "type": "string",
+          "format": "int64"
+        },
+        "rated": {
+          "type": "string",
+          "format": "int64",
+          "title": "rated 已评价的工单数。"
+        },
+        "avgRating": {
+          "type": "number",
+          "format": "double",
+          "title": "avg_rating 平均评分（1-5）；没有评价为 0。"
+        },
+        "timezone": {
+          "type": "string",
+          "title": "timezone 趋势分日实际所用的时区（回显请求里的 timezone）；未指定时为空。"
+        }
+      },
+      "title": "GetTicketStatsResponse 查询工单统计响应。"
     },
     "GetUserResponse": {
       "type": "object",
@@ -9413,6 +13662,28 @@
         }
       },
       "title": "GetUserResponse 查询用户响应。"
+    },
+    "GraphIssue": {
+      "type": "object",
+      "properties": {
+        "nodeId": {
+          "type": "string",
+          "title": "node_id 出问题的节点 ID；与节点无关时为空。"
+        },
+        "edgeId": {
+          "type": "string",
+          "title": "edge_id 出问题的连线 ID；与连线无关时为空。"
+        },
+        "code": {
+          "type": "string",
+          "title": "code 稳定的问题码（前端据此本地化），如 ASSIGNEE_MISSING。"
+        },
+        "message": {
+          "type": "string",
+          "title": "message 英文说明。"
+        }
+      },
+      "title": "GraphIssue 流程图的一条校验问题。"
     },
     "Group": {
       "type": "object",
@@ -9496,6 +13767,95 @@
         }
       },
       "title": "GroupMember 分组成员。"
+    },
+    "HandoverTasksRequest": {
+      "type": "object",
+      "properties": {
+        "fromUserId": {
+          "type": "string",
+          "title": "from_user_id 交出待办的用户 ID。"
+        },
+        "toUserId": {
+          "type": "string",
+          "title": "to_user_id 接手的用户 ID（须为可用用户）。"
+        },
+        "reason": {
+          "type": "string",
+          "title": "reason 交接原因，1-1000 位（必填，留痕）。"
+        },
+        "cursor": {
+          "type": "string",
+          "title": "cursor 续传游标：首次调用留空；响应的 more 为 true 时，带上响应里的 next_cursor 再次调用。"
+        }
+      },
+      "title": "HandoverTasksRequest 交接待办请求。"
+    },
+    "HandoverTasksResponse": {
+      "type": "object",
+      "properties": {
+        "moved": {
+          "type": "integer",
+          "format": "int32",
+          "title": "moved 本次交接的待办席位数。"
+        },
+        "more": {
+          "type": "boolean",
+          "title": "more 是否还有本次没轮到的流程实例（为 true 时应带上 next_cursor 再次调用）。与本次是否有\n失败无关：失败的实例不会再被下一次调用处理。"
+        },
+        "failed": {
+          "type": "integer",
+          "format": "int32",
+          "title": "failed 本次没能交接的流程实例数（这些实例上的待办仍在原处理人名下，需逐个查看原因）。"
+        },
+        "nextCursor": {
+          "type": "string",
+          "title": "next_cursor 下一次调用应带上的游标；more 为 false 时为空。"
+        }
+      },
+      "title": "HandoverTasksResponse 交接待办响应。"
+    },
+    "HistoryEntry": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 记录唯一标识。"
+        },
+        "nodeId": {
+          "type": "string",
+          "title": "node_id 节点 ID；与节点无关的动作为空。"
+        },
+        "nodeName": {
+          "type": "string",
+          "title": "node_name 节点名称。"
+        },
+        "action": {
+          "type": "string",
+          "title": "action 动作：start / approve / reject / return / transfer / reassign / skip / cc / cancel / terminate / complete /\naddSign / delegate / reply / handover / timeout / timer / service / serviceFailed / subProcess / amend。"
+        },
+        "operator": {
+          "type": "string",
+          "title": "operator 操作人用户 ID；系统动作为空。"
+        },
+        "operatorName": {
+          "type": "string",
+          "title": "operator_name 操作人显示名。"
+        },
+        "comment": {
+          "type": "string",
+          "title": "comment 意见 / 原因。"
+        },
+        "detail": {
+          "type": "object",
+          "title": "detail 动作明细（如退回目标节点、转办对象）。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 发生时间。"
+        }
+      },
+      "title": "HistoryEntry 一条流转历史。"
     },
     "HttpBody": {
       "type": "object",
@@ -9671,6 +14031,135 @@
       },
       "title": "ImportRowResult 单行结果。"
     },
+    "Instance": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 实例唯一标识（UUIDv7）。"
+        },
+        "definitionId": {
+          "type": "string",
+          "title": "definition_id 流程定义 ID。"
+        },
+        "definitionKey": {
+          "type": "string",
+          "title": "definition_key 流程标识。"
+        },
+        "definitionName": {
+          "type": "string",
+          "title": "definition_name 流程名称（发起时）。"
+        },
+        "version": {
+          "type": "integer",
+          "format": "int32",
+          "title": "version 发起时的流程版本号。"
+        },
+        "businessType": {
+          "type": "string",
+          "title": "business_type 业务类型；空 = 独立发起。"
+        },
+        "businessId": {
+          "type": "string",
+          "title": "business_id 业务对象 ID。"
+        },
+        "title": {
+          "type": "string",
+          "title": "title 标题。"
+        },
+        "initiator": {
+          "type": "string",
+          "title": "initiator 发起人用户 ID。"
+        },
+        "initiatorName": {
+          "type": "string",
+          "title": "initiator_name 发起人显示名。"
+        },
+        "initiatorDept": {
+          "type": "string",
+          "title": "initiator_dept 发起部门 ID；未指定为空。"
+        },
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 状态：1=进行中 2=已通过 3=已拒绝 4=已撤回 5=已终止。"
+        },
+        "startTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "start_time 发起时间。"
+        },
+        "endTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "end_time 结束时间；进行中为空。"
+        },
+        "currentNodes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "current_nodes 当前待处理的节点名称（进行中时）。"
+        },
+        "parentInstanceId": {
+          "type": "string",
+          "title": "parent_instance_id 父流程实例 ID；由子流程节点发起时有值。"
+        },
+        "rootId": {
+          "type": "string",
+          "title": "root_id 根流程实例 ID：顶层流程为自身，子流程为调用链最顶层的那个实例。"
+        },
+        "rootBusinessType": {
+          "type": "string",
+          "title": "root_business_type / root_business_id 根流程所挂的业务对象（子流程继承；顶层流程上与\nbusiness_type / business_id 相同）。子流程里的任务据此回到它最终所属的业务对象（如工单）。"
+        },
+        "rootBusinessId": {
+          "type": "string"
+        }
+      },
+      "title": "Instance 流程实例（出参）。"
+    },
+    "InstanceWait": {
+      "type": "object",
+      "properties": {
+        "jobId": {
+          "type": "string",
+          "title": "job_id 作业唯一标识（重试 / 跳过时使用）。"
+        },
+        "nodeId": {
+          "type": "string",
+          "title": "node_id 节点 ID。"
+        },
+        "kind": {
+          "type": "string",
+          "title": "kind 类型：timer=定时 service=自动任务 signal=等待外部信号（没有作业，job_id 为空）；\n死信还可能是 timeout / remind / resume / stop（引擎内部作业遇到不可恢复的错误）。"
+        },
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 状态：1=等待中 4=死信（自动任务重试耗尽，待重试或跳过）。"
+        },
+        "dueTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "due_time 定时节点的到期时间；自动任务为下一次尝试的时间。"
+        },
+        "attempts": {
+          "type": "integer",
+          "format": "int32",
+          "title": "attempts 自动任务已尝试的次数。"
+        },
+        "lastError": {
+          "type": "string",
+          "title": "last_error 自动任务最近一次失败的原因。"
+        },
+        "signal": {
+          "type": "string",
+          "title": "signal 等待的信号名（kind = signal）。"
+        }
+      },
+      "title": "InstanceWait 实例正停在其上的一个等待节点（定时 / 自动任务）。"
+    },
     "LinkCIsBody": {
       "type": "object",
       "properties": {
@@ -9759,6 +14248,20 @@
       },
       "title": "ListCIsResponse 分页查询资源响应。"
     },
+    "ListCatalogResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/Category"
+          },
+          "title": "items 分类（按排序值升序），各含其下的模板。"
+        }
+      },
+      "title": "ListCatalogResponse 查询服务目录响应。"
+    },
     "ListChangeLogsResponse": {
       "type": "object",
       "properties": {
@@ -9810,6 +14313,20 @@
         }
       },
       "title": "ListChannelsResponse 分页查询渠道响应。"
+    },
+    "ListClientsResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/Client"
+          },
+          "title": "items 全部接入凭据，名称升序。"
+        }
+      },
+      "title": "ListClientsResponse 查询接入凭据响应。"
     },
     "ListConflictsResponse": {
       "type": "object",
@@ -9872,6 +14389,39 @@
       },
       "title": "ListDeadLettersResponse 分页查询死信响应。"
     },
+    "ListDefinitionVersionsResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/DefinitionVersion"
+          },
+          "title": "items 已发布版本，版本号倒序（最多 100 个）。"
+        }
+      },
+      "title": "ListDefinitionVersionsResponse 查询流程版本列表响应。"
+    },
+    "ListDefinitionsResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/Definition"
+          },
+          "title": "items 当前页数据。"
+        },
+        "total": {
+          "type": "string",
+          "format": "int64",
+          "title": "total 总数。"
+        }
+      },
+      "title": "ListDefinitionsResponse 分页查询流程定义响应。"
+    },
     "ListDeliveryLogsResponse": {
       "type": "object",
       "properties": {
@@ -9890,6 +14440,39 @@
         }
       },
       "title": "ListDeliveryLogsResponse 分页查询投递明细响应。"
+    },
+    "ListDeptMembersResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/DeptMember"
+          },
+          "title": "items 当前页数据。"
+        },
+        "total": {
+          "type": "string",
+          "format": "int64",
+          "title": "total 总数。"
+        }
+      },
+      "title": "ListDeptMembersResponse 分页查询部门成员响应。"
+    },
+    "ListDeptsResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/Dept"
+          },
+          "title": "items 全部未删除部门（平铺；上级在前，同级按 sort、创建时间升序）。"
+        }
+      },
+      "title": "ListDeptsResponse 查询部门列表响应。"
     },
     "ListDispatchesResponse": {
       "type": "object",
@@ -9994,6 +14577,25 @@
       },
       "title": "ListHistoryResponse 全局变更审计查询响应。"
     },
+    "ListInstancesResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/Instance"
+          },
+          "title": "items 当前页数据，发起时间倒序。"
+        },
+        "total": {
+          "type": "string",
+          "format": "int64",
+          "title": "total 总数。"
+        }
+      },
+      "title": "ListInstancesResponse 分页查询流程实例响应。"
+    },
     "ListLoginLogsResponse": {
       "type": "object",
       "properties": {
@@ -10059,6 +14661,20 @@
         }
       },
       "title": "ListModelsResponse 分页查询资源类型响应。"
+    },
+    "ListMyDelegationsResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/Delegation"
+          },
+          "title": "items 我的代理设置，开始时间倒序。"
+        }
+      },
+      "title": "ListMyDelegationsResponse 查询我的代理设置响应。"
     },
     "ListOperationsResponse": {
       "type": "object",
@@ -10153,6 +14769,20 @@
         }
       },
       "title": "ListRelationTypesResponse 查询关系类型响应。"
+    },
+    "ListReturnTargetsResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/ReturnTarget"
+          },
+          "title": "items 可退回到的节点，按最近到达时间倒序。"
+        }
+      },
+      "title": "ListReturnTargetsResponse 查询可退回节点响应。"
     },
     "ListRoleScopesResponse": {
       "type": "object",
@@ -10365,6 +14995,25 @@
       },
       "title": "ListSubscriptionsResponse 分页查询订阅响应。"
     },
+    "ListTasksResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/TaskItem"
+          },
+          "title": "items 当前页数据，时间倒序。"
+        },
+        "total": {
+          "type": "string",
+          "format": "int64",
+          "title": "total 总数。"
+        }
+      },
+      "title": "ListTasksResponse 分页查询任务响应。"
+    },
     "ListTemplatesResponse": {
       "type": "object",
       "properties": {
@@ -10384,19 +15033,38 @@
       },
       "title": "ListTemplatesResponse 分页查询模板响应。"
     },
-    "ListUserCandidatesResponse": {
+    "ListTicketCommentsResponse": {
       "type": "object",
       "properties": {
         "items": {
           "type": "array",
           "items": {
             "type": "object",
-            "$ref": "#/definitions/UserCandidate"
+            "$ref": "#/definitions/Comment"
           },
-          "title": "items 匹配的用户，最多 50 个。"
+          "title": "items 评论（含回复，以 parent_id 关联），时间升序。"
         }
       },
-      "title": "ListUserCandidatesResponse 查询可选成员响应。"
+      "title": "ListTicketCommentsResponse 查询工单评论响应。"
+    },
+    "ListTicketsResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/Ticket"
+          },
+          "title": "items 当前页数据，提单时间倒序。"
+        },
+        "total": {
+          "type": "string",
+          "format": "int64",
+          "title": "total 总数。"
+        }
+      },
+      "title": "ListTicketsResponse 分页查询工单响应。"
     },
     "ListUserRolesResponse": {
       "type": "object",
@@ -10430,6 +15098,34 @@
         }
       },
       "title": "ListUsersResponse 分页查询用户响应。"
+    },
+    "ListWebhooksResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/Webhook"
+          },
+          "title": "items 全部端点，名称升序。"
+        }
+      },
+      "title": "ListWebhooksResponse 查询 Webhook 端点响应。"
+    },
+    "ListWorkflowUserCandidatesResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/WorkflowUserCandidate"
+          },
+          "title": "items 匹配的用户，最多 50 个。"
+        }
+      },
+      "title": "ListWorkflowUserCandidatesResponse 查询可选用户响应。"
     },
     "LoginLog": {
       "type": "object",
@@ -10537,6 +15233,20 @@
     "MoveCIResponse": {
       "type": "object",
       "title": "MoveCIResponse 关系迁移响应。"
+    },
+    "MoveDeptBody": {
+      "type": "object",
+      "properties": {
+        "parentId": {
+          "type": "string",
+          "title": "parent_id 新的上级部门 ID，可选；不传 = 移为根部门。"
+        }
+      },
+      "title": "MoveDeptRequest 移动部门请求。"
+    },
+    "MoveDeptResponse": {
+      "type": "object",
+      "title": "MoveDeptResponse 移动部门响应。"
     },
     "NeighborsResponse": {
       "type": "object",
@@ -11318,6 +16028,36 @@
       },
       "title": "NotifyTemplate 模板实体。"
     },
+    "NotifyTemplateService.UpdateTemplateBody": {
+      "type": "object",
+      "properties": {
+        "eventType": {
+          "type": "string",
+          "title": "event_type 新事件类型。"
+        },
+        "channelType": {
+          "type": "string",
+          "title": "channel_type 新渠道类型。"
+        },
+        "subject": {
+          "type": "string",
+          "title": "subject 新标题模板。"
+        },
+        "body": {
+          "type": "string",
+          "title": "body 新正文模板。"
+        },
+        "enabled": {
+          "type": "boolean",
+          "title": "enabled 新启用状态。"
+        },
+        "format": {
+          "type": "string",
+          "title": "format 输出格式，可选（text/markdown/html/card）。"
+        }
+      },
+      "title": "UpdateTemplateRequest 更新模板请求，可选字段传哪个改哪个，至少传一个；\nspec 可改但 (event_type, channel_type) 组合在同 biz 内仍须唯一。"
+    },
     "NullValue": {
       "type": "string",
       "enum": [
@@ -11325,6 +16065,99 @@
       ],
       "default": "NULL_VALUE",
       "description": "Represents a JSON `null`.\n\n`NullValue` is a sentinel, using an enum with only one value to represent\nthe null value for the `Value` type union.\n\nA field of type `NullValue` with any value other than `0` is considered\ninvalid. Most ProtoJSON serializers will emit a `Value` with a `null_value`\nset as a JSON `null` regardless of the integer value, and so will round trip\nto a `0` value.\n\n - NULL_VALUE: Null value."
+    },
+    "OpenCancelInstanceBody": {
+      "type": "object",
+      "properties": {
+        "comment": {
+          "type": "string",
+          "title": "comment 说明，≤1000 位。"
+        }
+      },
+      "title": "OpenCancelInstanceRequest 撤回流程请求。"
+    },
+    "OpenInstance": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 实例唯一标识。"
+        },
+        "definitionKey": {
+          "type": "string",
+          "title": "definition_key 流程标识。"
+        },
+        "title": {
+          "type": "string",
+          "title": "title 标题。"
+        },
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 状态：1=进行中 2=已通过 3=已拒绝 4=已撤回 5=已终止。"
+        },
+        "variables": {
+          "type": "object",
+          "title": "variables 流程变量（发起时带入的数据，以及流程中途并入的数据）。"
+        },
+        "startTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "start_time 发起时间。"
+        },
+        "endTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "end_time 结束时间；进行中为空。"
+        }
+      },
+      "title": "OpenInstance 开放接口返回的实例视图。"
+    },
+    "OpenInstanceResponse": {
+      "type": "object",
+      "properties": {
+        "instance": {
+          "$ref": "#/definitions/OpenInstance",
+          "title": "instance 流程实例。"
+        }
+      },
+      "title": "OpenInstanceResponse 开放接口的统一响应。"
+    },
+    "OpenSignalInstanceBody": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "name 信号名（与流程里定时节点配置的一致）。"
+        },
+        "variables": {
+          "type": "object",
+          "title": "variables 随信号带入的数据，并入流程变量（同名覆盖）。"
+        }
+      },
+      "title": "OpenSignalInstanceRequest 投递信号请求。"
+    },
+    "OpenStartInstanceRequest": {
+      "type": "object",
+      "properties": {
+        "definitionKey": {
+          "type": "string",
+          "title": "definition_key 流程标识（须在凭据允许的范围内）。"
+        },
+        "title": {
+          "type": "string",
+          "title": "title 标题，1-255 位。"
+        },
+        "variables": {
+          "type": "object",
+          "title": "variables 流程变量（表单数据），可选。"
+        },
+        "requestId": {
+          "type": "string",
+          "title": "request_id 幂等键（UUID），强烈建议携带：网络重试时相同的键返回首次发起的实例，不会重复发起。"
+        }
+      },
+      "title": "OpenStartInstanceRequest 发起流程请求。"
     },
     "OverviewCount": {
       "type": "object",
@@ -11587,6 +16420,27 @@
       },
       "title": "PublicShift 公共日历中的班次（最小披露）。"
     },
+    "PublishDefinitionBody": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "format": "int32",
+          "title": "revision 所见草稿的修订号；与库内不一致返回 WORKFLOW_DEFINITION_CONFLICT（防止发布了别人刚改的草稿）。"
+        }
+      },
+      "title": "PublishDefinitionRequest 发布流程定义请求。"
+    },
+    "PublishDefinitionResponse": {
+      "type": "object",
+      "properties": {
+        "definition": {
+          "$ref": "#/definitions/Definition",
+          "title": "definition 发布后的流程定义（published_version 已递增）。"
+        }
+      },
+      "title": "PublishDefinitionResponse 发布流程定义响应。"
+    },
     "QualityRow": {
       "type": "object",
       "properties": {
@@ -11631,6 +16485,42 @@
       },
       "title": "QualityRow 一个模型的数据质量计数。"
     },
+    "RateTicketBody": {
+      "type": "object",
+      "properties": {
+        "rating": {
+          "type": "integer",
+          "format": "int32",
+          "title": "rating 评分 1-5。"
+        },
+        "comment": {
+          "type": "string",
+          "title": "comment 评价内容，≤500 位。"
+        }
+      },
+      "title": "RateTicketRequest 评价工单请求。"
+    },
+    "RateTicketResponse": {
+      "type": "object",
+      "title": "RateTicketResponse 评价工单响应。"
+    },
+    "ReassignTaskBody": {
+      "type": "object",
+      "properties": {
+        "userIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "user_ids 新的处理人用户 ID，去重、1-20 个。"
+        },
+        "reason": {
+          "type": "string",
+          "title": "reason 改派原因，1-1000 位（必填，留痕）。"
+        }
+      },
+      "title": "ReassignTaskRequest 改派任务请求。"
+    },
     "RefreshTokenRequest": {
       "type": "object",
       "properties": {
@@ -11659,6 +16549,16 @@
         }
       },
       "title": "RefreshTokenResponse 刷新令牌响应：新双令牌（旧刷新令牌已失效）。"
+    },
+    "RejectTaskBody": {
+      "type": "object",
+      "properties": {
+        "comment": {
+          "type": "string",
+          "title": "comment 拒绝理由，1-1000 位（必填）。"
+        }
+      },
+      "title": "RejectTaskRequest 拒绝任务请求。"
     },
     "RelatedCI": {
       "type": "object",
@@ -11700,6 +16600,10 @@
         }
       },
       "title": "RelationSummary 资源在某个关系类型某个方向上的关联统计（详情页面板头）。"
+    },
+    "RemoveDeptMemberResponse": {
+      "type": "object",
+      "title": "RemoveDeptMemberResponse 移除部门成员响应。"
     },
     "RemoveGroupMemberResponse": {
       "type": "object",
@@ -11839,6 +16743,42 @@
       },
       "title": "RestoreCIResponse 恢复资源响应。"
     },
+    "RetryInstanceJobBody": {
+      "type": "object",
+      "title": "RetryInstanceJobRequest 重试自动任务请求。"
+    },
+    "RetryInstanceJobResponse": {
+      "type": "object",
+      "title": "RetryInstanceJobResponse 重试自动任务响应。"
+    },
+    "ReturnTarget": {
+      "type": "object",
+      "properties": {
+        "nodeId": {
+          "type": "string",
+          "title": "node_id 节点 ID。"
+        },
+        "nodeName": {
+          "type": "string",
+          "title": "node_name 节点名称。"
+        }
+      },
+      "title": "ReturnTarget 可退回到的节点。"
+    },
+    "ReturnTaskBody": {
+      "type": "object",
+      "properties": {
+        "toNodeId": {
+          "type": "string",
+          "title": "to_node_id 退回到的节点 ID（须为此前走过的人工任务节点）。"
+        },
+        "comment": {
+          "type": "string",
+          "title": "comment 退回理由，1-1000 位（必填）。"
+        }
+      },
+      "title": "ReturnTaskRequest 退回任务请求。"
+    },
     "RevokeOverrideResponse": {
       "type": "object",
       "title": "RevokeOverrideResponse 撤销替班响应。"
@@ -11939,6 +16879,20 @@
         }
       },
       "title": "RoleScope 角色数据范围。"
+    },
+    "RotateClientTokenBody": {
+      "type": "object",
+      "title": "RotateClientTokenRequest 重置接入令牌请求。"
+    },
+    "RotateClientTokenResponse": {
+      "type": "object",
+      "properties": {
+        "token": {
+          "type": "string",
+          "title": "token 新令牌明文：只返回这一次。"
+        }
+      },
+      "title": "RotateClientTokenResponse 重置接入令牌响应。"
     },
     "RotateProducerTokenBody": {
       "type": "object",
@@ -12078,6 +17032,40 @@
     "SaveCIViewResponse": {
       "type": "object",
       "title": "SaveCIViewResponse 保存视图响应。"
+    },
+    "SaveDefinitionDraftBody": {
+      "type": "object",
+      "properties": {
+        "graph": {
+          "type": "object",
+          "title": "graph 流程图（nodes / edges / settings）；可以是未完成状态。"
+        },
+        "revision": {
+          "type": "integer",
+          "format": "int32",
+          "title": "revision 读取草稿时拿到的修订号；与库内不一致返回 WORKFLOW_DEFINITION_CONFLICT。"
+        }
+      },
+      "title": "SaveDefinitionDraftRequest 保存流程草稿请求。"
+    },
+    "SaveDefinitionDraftResponse": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "format": "int32",
+          "title": "revision 保存后的修订号。"
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/GraphIssue"
+          },
+          "title": "issues 草稿当前的校验问题；为空表示可发布。"
+        }
+      },
+      "title": "SaveDefinitionDraftResponse 保存流程草稿响应。"
     },
     "Schedule": {
       "type": "object",
@@ -12561,6 +17549,20 @@
       },
       "title": "ShiftIssue 排班异常。"
     },
+    "SignalInstanceBody": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "name 信号名（与定时节点配置的一致）。"
+        },
+        "variables": {
+          "type": "object",
+          "title": "variables 随信号带入的数据，并入流程变量（同名覆盖）。"
+        }
+      },
+      "title": "SignalInstanceRequest 投递流程信号请求。"
+    },
     "SilenceSpec": {
       "type": "object",
       "properties": {
@@ -12605,6 +17607,179 @@
         }
       },
       "title": "SilenceWindow 免打扰时间窗：支持跨午夜（如 22:00→08:00 覆盖夜间）；\n时区缺省 UTC。"
+    },
+    "SimulateDefinitionBody": {
+      "type": "object",
+      "properties": {
+        "graph": {
+          "type": "object",
+          "title": "graph 要模拟的流程图（须通过校验）。"
+        },
+        "variables": {
+          "type": "object",
+          "title": "variables 表单样例数据。"
+        },
+        "initiator": {
+          "type": "string",
+          "title": "initiator 模拟的发起人用户 ID，可选；不传 = 当前用户。"
+        },
+        "initiatorDept": {
+          "type": "string",
+          "title": "initiator_dept 模拟的发起部门 ID，可选；不传 = 发起人的主部门。"
+        }
+      },
+      "title": "SimulateDefinitionRequest 模拟运行请求。"
+    },
+    "SimulateDefinitionResponse": {
+      "type": "object",
+      "properties": {
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/SimulatedStep"
+          },
+          "title": "steps 依次经过的节点（人工任务一律按「同意」推进）。"
+        },
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 模拟结束时的流程状态：2=走到结束 1=未走完（达到推进上限）。"
+        }
+      },
+      "title": "SimulateDefinitionResponse 模拟运行响应。"
+    },
+    "SimulatedStep": {
+      "type": "object",
+      "properties": {
+        "nodeId": {
+          "type": "string",
+          "title": "node_id 节点 ID。"
+        },
+        "nodeName": {
+          "type": "string",
+          "title": "node_name 节点名称。"
+        },
+        "type": {
+          "type": "string",
+          "title": "type 节点类型。"
+        },
+        "mode": {
+          "type": "string",
+          "title": "mode 多人模式（人工任务）。"
+        },
+        "assignees": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/SimulatedUser"
+          },
+          "title": "assignees 解析出的处理人 / 抄送人。"
+        },
+        "skipped": {
+          "type": "boolean",
+          "title": "skipped 处理人为空，节点被跳过。"
+        }
+      },
+      "title": "SimulatedStep 模拟运行经过的一个节点。"
+    },
+    "SimulatedUser": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 用户 ID。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 显示名。"
+        }
+      },
+      "title": "SimulatedUser 模拟运行解析出的一个处理人。"
+    },
+    "SkipInstanceJobBody": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string",
+          "title": "reason 跳过原因，1-1000 位（必填，留痕）。"
+        }
+      },
+      "title": "SkipInstanceJobRequest 跳过等待节点请求。"
+    },
+    "SlaDuration": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "integer",
+          "format": "int32",
+          "title": "value 数值，≥1。"
+        },
+        "unit": {
+          "type": "string",
+          "title": "unit 单位：minute / hour / day。"
+        },
+        "workTime": {
+          "type": "boolean",
+          "title": "work_time 是否按工作时间计（分钟 / 小时只算工作时段，天 = 工作日）。"
+        }
+      },
+      "title": "SlaDuration 一段时限。"
+    },
+    "SlaRule": {
+      "type": "object",
+      "properties": {
+        "priority": {
+          "type": "integer",
+          "format": "int32",
+          "title": "priority 适用的优先级：1=低 2=普通 3=高 4=紧急。"
+        },
+        "response": {
+          "$ref": "#/definitions/SlaDuration",
+          "title": "response 响应时限：提单后处理人第一次有动作的期限；不传 = 不要求。"
+        },
+        "resolve": {
+          "$ref": "#/definitions/SlaDuration",
+          "title": "resolve 解决时限：提单后工单结束的期限；不传 = 不要求。"
+        }
+      },
+      "title": "SlaRule 某个优先级的 SLA 规则；response / resolve 至少配一项。"
+    },
+    "StartInstanceRequest": {
+      "type": "object",
+      "properties": {
+        "definitionKey": {
+          "type": "string",
+          "title": "definition_key 流程标识。"
+        },
+        "title": {
+          "type": "string",
+          "title": "title 标题，1-255 位。"
+        },
+        "variables": {
+          "type": "object",
+          "title": "variables 流程变量（表单数据），条件表达式以 form 引用；≤64KB。"
+        },
+        "initiatorDept": {
+          "type": "string",
+          "title": "initiator_dept 发起部门 ID，可选：须为发起人所属部门；不传取主部门。"
+        },
+        "requestId": {
+          "type": "string",
+          "title": "request_id 幂等键，可选（客户端生成的 UUID）：同一发起人以相同的键重复提交时，\n返回首次发起的实例而不是再发起一次。"
+        }
+      },
+      "title": "StartInstanceRequest 发起流程请求。"
+    },
+    "StartInstanceResponse": {
+      "type": "object",
+      "properties": {
+        "instance": {
+          "$ref": "#/definitions/Instance",
+          "title": "instance 已发起的流程实例。"
+        }
+      },
+      "title": "StartInstanceResponse 发起流程响应。"
     },
     "Status": {
       "type": "object",
@@ -12873,6 +18048,524 @@
       },
       "title": "TagList 标签整组替换载体（区分\"不传\"与\"清空\"）。"
     },
+    "Task": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 任务唯一标识。"
+        },
+        "nodeId": {
+          "type": "string",
+          "title": "node_id 所在节点 ID。"
+        },
+        "nodeName": {
+          "type": "string",
+          "title": "node_name 节点名称。"
+        },
+        "kind": {
+          "type": "string",
+          "title": "kind 类型：approve=人工任务 cc=抄送。"
+        },
+        "mode": {
+          "type": "string",
+          "title": "mode 多人模式：any=或签 all=会签 sequential=依次审批。"
+        },
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 状态：1=待处理 2=已同意 3=已拒绝 4=已取消 5=已退回 6=已抄送。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 到达时间。"
+        },
+        "endTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "end_time 结束时间；待处理为空。"
+        },
+        "assignees": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/TaskAssignee"
+          },
+          "title": "assignees 处理人，按顺序。"
+        },
+        "dueTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "due_time 处理时限；节点未配置超时为空。"
+        }
+      },
+      "title": "Task 任务（实例详情内）。"
+    },
+    "TaskActionResponse": {
+      "type": "object",
+      "properties": {
+        "instanceStatus": {
+          "type": "integer",
+          "format": "int32",
+          "title": "instance_status 动作完成后的实例状态：1=进行中 2=已通过 3=已拒绝 4=已撤回 5=已终止。"
+        }
+      },
+      "title": "TaskActionResponse 任务处理动作的统一响应。"
+    },
+    "TaskAssignee": {
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "title": "user_id 用户 ID。"
+        },
+        "userName": {
+          "type": "string",
+          "title": "user_name 用户显示名。"
+        },
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 状态：1=待处理 2=排队中 3=已同意 4=已拒绝 5=已取消 6=已转办 7=已退回 8=已抄送\n9=等待加签 / 委派的人处理。"
+        },
+        "comment": {
+          "type": "string",
+          "title": "comment 处理意见。"
+        },
+        "actionTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "action_time 处理时间；未处理为空。"
+        },
+        "origin": {
+          "type": "string",
+          "title": "origin 席位来源：空=节点规则解析 before=前加签 after=后加签 delegate=委派。"
+        },
+        "onBehalf": {
+          "type": "string",
+          "title": "on_behalf 被代理人用户 ID：本席位是代理人替他处理；没有代理为空。"
+        },
+        "onBehalfName": {
+          "type": "string",
+          "title": "on_behalf_name 被代理人显示名。"
+        }
+      },
+      "title": "TaskAssignee 任务处理人（或抄送接收人）。"
+    },
+    "TaskItem": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string",
+          "title": "task_id 任务唯一标识。"
+        },
+        "instanceId": {
+          "type": "string",
+          "title": "instance_id 所属流程实例 ID。"
+        },
+        "title": {
+          "type": "string",
+          "title": "title 实例标题。"
+        },
+        "definitionName": {
+          "type": "string",
+          "title": "definition_name 流程名称。"
+        },
+        "nodeName": {
+          "type": "string",
+          "title": "node_name 节点名称。"
+        },
+        "initiator": {
+          "type": "string",
+          "title": "initiator 发起人用户 ID。"
+        },
+        "initiatorName": {
+          "type": "string",
+          "title": "initiator_name 发起人显示名。"
+        },
+        "instanceStatus": {
+          "type": "integer",
+          "format": "int32",
+          "title": "instance_status 实例状态：1=进行中 2=已通过 3=已拒绝 4=已撤回 5=已终止。"
+        },
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 我在该任务上的状态：1=待处理 3=已同意 4=已拒绝 6=已转办 7=已退回 8=已抄送。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 任务到达时间。"
+        },
+        "actionTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "action_time 我的处理时间；未处理为空。"
+        },
+        "businessType": {
+          "type": "string",
+          "title": "business_type 业务类型；空 = 独立发起。"
+        },
+        "businessId": {
+          "type": "string",
+          "title": "business_id 业务对象 ID。"
+        }
+      },
+      "title": "TaskItem 待办 / 已办 / 抄送列表项。"
+    },
+    "Template": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 模板唯一标识（UUIDv7）。"
+        },
+        "categoryId": {
+          "type": "string",
+          "title": "category_id 所属分类 ID。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 模板名称。"
+        },
+        "description": {
+          "type": "string",
+          "title": "description 说明。"
+        },
+        "workflowKey": {
+          "type": "string",
+          "title": "workflow_key 绑定的流程标识。"
+        },
+        "numberPrefix": {
+          "type": "string",
+          "title": "number_prefix 工单编号前缀。"
+        },
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 状态：1=启用 0=停用。"
+        },
+        "sort": {
+          "type": "integer",
+          "format": "int32",
+          "title": "sort 排序值，升序。"
+        },
+        "form": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/FormField"
+          },
+          "title": "form 表单字段定义；仅详情接口返回。"
+        },
+        "updateTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "update_time 更新时间。"
+        },
+        "sla": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/SlaRule"
+          },
+          "title": "sla SLA 规则（按优先级）；仅详情接口返回。"
+        },
+        "slaEscalateTo": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "sla_escalate_to SLA 超时的升级通知对象（用户 ID）；仅详情接口返回。"
+        },
+        "ciLink": {
+          "type": "integer",
+          "format": "int32",
+          "title": "ci_link 提单时关联 CMDB 资源：0=不关联 1=可选 2=必填。"
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "labels sla_escalate_to 里用户的显示名（ID → 名称）；仅详情接口返回。"
+        },
+        "icon": {
+          "type": "string",
+          "title": "icon 图标标识（前端图标集的键）；空 = 缺省图标。"
+        }
+      },
+      "title": "Template 工单模板。"
+    },
+    "TemplateSpec": {
+      "type": "object",
+      "properties": {
+        "categoryId": {
+          "type": "string",
+          "title": "category_id 所属分类 ID。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 模板名称，1-64 位。"
+        },
+        "description": {
+          "type": "string",
+          "title": "description 说明，≤255 位。"
+        },
+        "workflowKey": {
+          "type": "string",
+          "title": "workflow_key 绑定的流程标识（须为已存在的流程）。"
+        },
+        "numberPrefix": {
+          "type": "string",
+          "title": "number_prefix 工单编号前缀：2-8 位大写字母。"
+        },
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 状态：1=启用 0=停用。"
+        },
+        "sort": {
+          "type": "integer",
+          "format": "int32",
+          "title": "sort 排序值，0-9999。"
+        },
+        "form": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/FormField"
+          },
+          "title": "form 表单字段定义，≤50 个。"
+        },
+        "sla": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/SlaRule"
+          },
+          "title": "sla SLA 规则：每个优先级至多一条。"
+        },
+        "slaEscalateTo": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "sla_escalate_to SLA 超时的升级通知对象（用户 ID），去重、≤10 个；与当前处理人一并通知。"
+        },
+        "ciLink": {
+          "type": "integer",
+          "format": "int32",
+          "title": "ci_link 提单时关联 CMDB 资源：0=不关联 1=可选 2=必填。"
+        },
+        "icon": {
+          "type": "string",
+          "title": "icon 图标标识（前端图标集的键），可空；小写字母、数字、下划线与中划线，≤64 位。"
+        }
+      },
+      "title": "TemplateSpec 工单模板的可编辑内容（创建 / 更新共用，整组替换）。"
+    },
+    "TerminateInstanceBody": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string",
+          "title": "reason 终止原因，1-1000 位（必填，留痕）。"
+        }
+      },
+      "title": "TerminateInstanceRequest 终止流程请求。"
+    },
+    "TerminateInstanceResponse": {
+      "type": "object",
+      "title": "TerminateInstanceResponse 终止流程响应。"
+    },
+    "Ticket": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 工单唯一标识（UUIDv7）。"
+        },
+        "number": {
+          "type": "string",
+          "title": "number 工单编号。"
+        },
+        "templateId": {
+          "type": "string",
+          "title": "template_id 模板 ID。"
+        },
+        "templateName": {
+          "type": "string",
+          "title": "template_name 模板名称（提单时）。"
+        },
+        "categoryName": {
+          "type": "string",
+          "title": "category_name 分类名称（提单时）。"
+        },
+        "title": {
+          "type": "string",
+          "title": "title 标题。"
+        },
+        "priority": {
+          "type": "integer",
+          "format": "int32",
+          "title": "priority 优先级：1=低 2=普通 3=高 4=紧急。"
+        },
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 状态：1=处理中 2=已完成 3=已拒绝 4=已撤回 5=已终止。"
+        },
+        "creator": {
+          "type": "string",
+          "title": "creator 提单人用户 ID。"
+        },
+        "creatorName": {
+          "type": "string",
+          "title": "creator_name 提单人显示名。"
+        },
+        "instanceId": {
+          "type": "string",
+          "title": "instance_id 流程实例 ID（流转详情经流程接口查询）。"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "create_time 提单时间。"
+        },
+        "endTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "end_time 结束时间；处理中为空。"
+        },
+        "form": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/FormField"
+          },
+          "title": "form 提单时的表单字段定义快照；仅详情接口返回。"
+        },
+        "data": {
+          "type": "object",
+          "title": "data 表单数据；仅详情接口返回。"
+        },
+        "responseDue": {
+          "type": "string",
+          "format": "date-time",
+          "title": "response_due 响应时限；未配置 SLA 为空。"
+        },
+        "resolveDue": {
+          "type": "string",
+          "format": "date-time",
+          "title": "resolve_due 解决时限；未配置 SLA 为空。"
+        },
+        "responseTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "response_time 首次响应时间；尚未响应为空。"
+        },
+        "rating": {
+          "type": "integer",
+          "format": "int32",
+          "title": "rating 满意度评分 1-5；未评价为 0。"
+        },
+        "ratingComment": {
+          "type": "string",
+          "title": "rating_comment 评价内容。"
+        },
+        "ratingTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "rating_time 评价时间。"
+        }
+      },
+      "title": "Ticket 工单。"
+    },
+    "TicketCatalogService.UpdateTemplateBody": {
+      "type": "object",
+      "properties": {
+        "spec": {
+          "$ref": "#/definitions/TemplateSpec",
+          "title": "spec 模板内容（整组替换）。"
+        }
+      },
+      "title": "UpdateTemplateRequest 更新工单模板请求。"
+    },
+    "TicketCount": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "title": "key 维度值（状态码 / 优先级 / 服务名称）。"
+        },
+        "count": {
+          "type": "string",
+          "format": "int64",
+          "title": "count 工单数。"
+        }
+      },
+      "title": "TicketCount 一个维度值上的工单数。"
+    },
+    "TicketFile": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 文件 ID（经文件下载接口取内容）。"
+        },
+        "filename": {
+          "type": "string",
+          "title": "filename 文件名。"
+        },
+        "size": {
+          "type": "string",
+          "format": "int64",
+          "title": "size 字节数。"
+        }
+      },
+      "title": "TicketFile 工单附件。"
+    },
+    "TicketResource": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 资源 ID。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 资源名称（关联时的快照）。"
+        },
+        "modelName": {
+          "type": "string",
+          "title": "model_name 资源类型名称（关联时的快照）。"
+        }
+      },
+      "title": "TicketResource 工单关联的 CMDB 资源。"
+    },
+    "TicketTrendPoint": {
+      "type": "object",
+      "properties": {
+        "day": {
+          "type": "string",
+          "title": "day 日期 yyyy-mm-dd。"
+        },
+        "created": {
+          "type": "string",
+          "format": "int64",
+          "title": "created 当天提交的工单数。"
+        },
+        "closed": {
+          "type": "string",
+          "format": "int64",
+          "title": "closed 当天结束的工单数。"
+        }
+      },
+      "title": "TicketTrendPoint 某一天的工单量。"
+    },
     "TopologyEdge": {
       "type": "object",
       "properties": {
@@ -12933,6 +18626,20 @@
         }
       },
       "title": "TopologyNode 拓扑节点。"
+    },
+    "TransferTaskBody": {
+      "type": "object",
+      "properties": {
+        "toUserId": {
+          "type": "string",
+          "title": "to_user_id 转办对象用户 ID。"
+        },
+        "comment": {
+          "type": "string",
+          "title": "comment 转办说明，≤1000 位。"
+        }
+      },
+      "title": "TransferTaskRequest 转办任务请求。"
     },
     "TransitionCIBody": {
       "type": "object",
@@ -13072,6 +18779,43 @@
       },
       "title": "UpdateCIResponse 更新资源响应。"
     },
+    "UpdateCalendarRequest": {
+      "type": "object",
+      "properties": {
+        "calendar": {
+          "$ref": "#/definitions/Calendar",
+          "title": "calendar 工作日历（整组替换）。"
+        }
+      },
+      "title": "UpdateCalendarRequest 更新工作日历请求。"
+    },
+    "UpdateCalendarResponse": {
+      "type": "object",
+      "title": "UpdateCalendarResponse 更新工作日历响应。"
+    },
+    "UpdateCategoryBody": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "name 分类名称，1-64 位。"
+        },
+        "description": {
+          "type": "string",
+          "title": "description 说明，≤255 位。"
+        },
+        "sort": {
+          "type": "integer",
+          "format": "int32",
+          "title": "sort 排序值，0-9999。"
+        }
+      },
+      "title": "UpdateCategoryRequest 更新工单分类请求（整组替换）。"
+    },
+    "UpdateCategoryResponse": {
+      "type": "object",
+      "title": "UpdateCategoryResponse 更新工单分类响应。"
+    },
     "UpdateChannelBody": {
       "type": "object",
       "properties": {
@@ -13119,6 +18863,95 @@
         }
       },
       "title": "UpdateChannelResponse 更新渠道响应：返回更新后的渠道（不含 secret，免二次 GET）。"
+    },
+    "UpdateClientBody": {
+      "type": "object",
+      "properties": {
+        "spec": {
+          "$ref": "#/definitions/ClientSpec",
+          "title": "spec 凭据内容（整组替换）。"
+        }
+      },
+      "title": "UpdateClientRequest 更新接入凭据请求。"
+    },
+    "UpdateClientResponse": {
+      "type": "object",
+      "title": "UpdateClientResponse 更新接入凭据响应。"
+    },
+    "UpdateDefinitionBody": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "name 新名称。"
+        },
+        "category": {
+          "type": "string",
+          "title": "category 新分类。"
+        },
+        "description": {
+          "type": "string",
+          "title": "description 新说明。"
+        },
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 新状态：1=启用 0=停用。"
+        }
+      },
+      "title": "UpdateDefinitionRequest 更新流程定义请求，可选字段传哪个改哪个，至少传一个。"
+    },
+    "UpdateDefinitionResponse": {
+      "type": "object",
+      "properties": {
+        "definition": {
+          "$ref": "#/definitions/Definition",
+          "title": "definition 更新后的流程定义。"
+        }
+      },
+      "title": "UpdateDefinitionResponse 更新流程定义响应。"
+    },
+    "UpdateDeptBody": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "name 新名称。"
+        },
+        "code": {
+          "type": "string",
+          "title": "code 新编码；传空串 = 清空。"
+        },
+        "sort": {
+          "type": "integer",
+          "format": "int32",
+          "title": "sort 新排序值。"
+        },
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 新状态：1=启用 0=停用。"
+        },
+        "description": {
+          "type": "string",
+          "title": "description 新说明。"
+        },
+        "leaders": {
+          "$ref": "#/definitions/DeptLeaderIDs",
+          "title": "leaders 负责人整组替换；不传 = 不改，传空列表 = 清空。"
+        }
+      },
+      "title": "UpdateDeptRequest 更新部门请求，可选字段传哪个改哪个，至少传一个。"
+    },
+    "UpdateDeptResponse": {
+      "type": "object",
+      "properties": {
+        "dept": {
+          "$ref": "#/definitions/Dept",
+          "title": "dept 更新后的部门实体。"
+        }
+      },
+      "title": "UpdateDeptResponse 更新部门响应。"
     },
     "UpdateFieldBody": {
       "type": "object",
@@ -13557,45 +19390,19 @@
       "type": "object",
       "title": "UpdateSystemConfigResponse 全量覆盖系统配置响应。"
     },
-    "UpdateTemplateBody": {
+    "UpdateTicketFormBody": {
       "type": "object",
       "properties": {
-        "eventType": {
-          "type": "string",
-          "title": "event_type 新事件类型。"
-        },
-        "channelType": {
-          "type": "string",
-          "title": "channel_type 新渠道类型。"
-        },
-        "subject": {
-          "type": "string",
-          "title": "subject 新标题模板。"
-        },
-        "body": {
-          "type": "string",
-          "title": "body 新正文模板。"
-        },
-        "enabled": {
-          "type": "boolean",
-          "title": "enabled 新启用状态。"
-        },
-        "format": {
-          "type": "string",
-          "title": "format 输出格式，可选（text/markdown/html/card）。"
+        "data": {
+          "type": "object",
+          "title": "data 要修改的字段（只传要改的；值为 null 表示清空）。"
         }
       },
-      "title": "UpdateTemplateRequest 更新模板请求，可选字段传哪个改哪个，至少传一个；\nspec 可改但 (event_type, channel_type) 组合在同 biz 内仍须唯一。"
+      "title": "UpdateTicketFormRequest 修改工单表单请求。"
     },
-    "UpdateTemplateResponse": {
+    "UpdateTicketFormResponse": {
       "type": "object",
-      "properties": {
-        "template": {
-          "$ref": "#/definitions/NotifyTemplate",
-          "title": "template 更新后的模板。"
-        }
-      },
-      "title": "UpdateTemplateResponse 更新模板响应：返回更新后的模板（version 已 +1）。"
+      "title": "UpdateTicketFormResponse 修改工单表单响应。"
     },
     "UpdateUniqueRuleBody": {
       "type": "object",
@@ -13646,6 +19453,10 @@
         "isAdmin": {
           "type": "boolean",
           "title": "is_admin 是否超级管理员。"
+        },
+        "depts": {
+          "$ref": "#/definitions/UserDeptAssignment",
+          "title": "depts 所属部门整组替换；不传 = 不改，传空列表 = 移出全部部门。"
         }
       },
       "title": "UpdateUserRequest 更新用户请求，可选字段传哪个改哪个，至少传一个。"
@@ -13668,6 +19479,45 @@
     "UpdateUserStatusResponse": {
       "type": "object",
       "title": "UpdateUserStatusResponse 变更用户状态响应。"
+    },
+    "UpdateWebhookBody": {
+      "type": "object",
+      "properties": {
+        "spec": {
+          "$ref": "#/definitions/WebhookSpec",
+          "title": "spec 端点内容（整组替换）。"
+        }
+      },
+      "title": "UpdateWebhookRequest 更新 Webhook 端点请求。"
+    },
+    "UpdateWebhookResponse": {
+      "type": "object",
+      "title": "UpdateWebhookResponse 更新 Webhook 端点响应。"
+    },
+    "UploadFileRequest": {
+      "type": "object",
+      "properties": {
+        "filename": {
+          "type": "string",
+          "title": "filename 原始文件名，1-255 位。"
+        },
+        "data": {
+          "type": "string",
+          "format": "byte",
+          "title": "data 文件二进制内容，1B-5MiB（JSON 中为 Base64）。"
+        }
+      },
+      "title": "UploadFileRequest 上传文件请求。"
+    },
+    "UploadFileResponse": {
+      "type": "object",
+      "properties": {
+        "file": {
+          "$ref": "#/definitions/File",
+          "title": "file 已保存的文件元数据。"
+        }
+      },
+      "title": "UploadFileResponse 上传文件响应。"
     },
     "UploadMyAvatarRequest": {
       "type": "object",
@@ -13807,6 +19657,14 @@
         "avatar": {
           "type": "string",
           "title": "avatar 头像地址；空 = 未设置（前端回退首字母/图标）。"
+        },
+        "depts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/UserDept"
+          },
+          "title": "depts 所属部门（主部门在前）；仅用户详情与用户列表填充。"
         }
       },
       "title": "User 用户实体（出参，不含密码）。"
@@ -13828,6 +19686,41 @@
         }
       },
       "title": "UserCandidate 可选成员（最小披露：不含手机号、邮箱）。"
+    },
+    "UserDept": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 部门 ID。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 部门名称。"
+        },
+        "isPrimary": {
+          "type": "boolean",
+          "title": "is_primary 是否主部门。"
+        }
+      },
+      "title": "UserDept 用户所属部门（用户实体内嵌的只读视图）。"
+    },
+    "UserDeptAssignment": {
+      "type": "object",
+      "properties": {
+        "deptIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "dept_ids 所属部门 ID 全集，去重、最多 20 个。"
+        },
+        "primaryDeptId": {
+          "type": "string",
+          "title": "primary_dept_id 主部门 ID，须在 dept_ids 内；不传时取 dept_ids 的第一个。"
+        }
+      },
+      "title": "UserDeptAssignment 用户所属部门整组替换载荷（空列表 = 不属于任何部门）。"
     },
     "ViewSection": {
       "type": "object",
@@ -13869,6 +19762,42 @@
       },
       "title": "ViewSection 详情页的一个区块：属性分组或关联面板。"
     },
+    "Webhook": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 唯一标识（流程图里自动任务节点引用它）。"
+        },
+        "name": {
+          "type": "string",
+          "title": "name 名称。"
+        },
+        "url": {
+          "type": "string",
+          "title": "url 地址（https）。"
+        },
+        "description": {
+          "type": "string",
+          "title": "description 说明。"
+        },
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 状态：1=启用 0=停用。"
+        },
+        "hasSecret": {
+          "type": "boolean",
+          "title": "has_secret 是否配置了签名密钥。"
+        },
+        "updateTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "update_time 更新时间。"
+        }
+      },
+      "title": "Webhook 自动任务可调用的端点（不含签名密钥）。"
+    },
     "WebhookChannelConfig": {
       "type": "object",
       "properties": {
@@ -13894,6 +19823,185 @@
         }
       },
       "title": "WebhookChannelConfig Webhook 渠道配置（type=WEBHOOK）；仅允许 HTTPS，\nsecret 为出站 HMAC-SHA256 签名密钥（可选，未配置则不签名）。"
+    },
+    "WebhookSpec": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "name 名称，1-64 位，未删除行内唯一。"
+        },
+        "url": {
+          "type": "string",
+          "title": "url 地址：须为 https，不得带账号口令、不得指向内网。"
+        },
+        "description": {
+          "type": "string",
+          "title": "description 说明，≤255 位。"
+        },
+        "status": {
+          "type": "integer",
+          "format": "int32",
+          "title": "status 状态：1=启用 0=停用。"
+        },
+        "secret": {
+          "type": "string",
+          "title": "secret 签名密钥，可选：创建时不传 = 不签名；更新时不传 = 保留原密钥，传空串 = 清除。"
+        }
+      },
+      "title": "WebhookSpec Webhook 端点内容（创建 / 整组更新）。"
+    },
+    "WorkflowUserCandidate": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "id 用户唯一标识。"
+        },
+        "username": {
+          "type": "string",
+          "title": "username 登录名。"
+        },
+        "nickname": {
+          "type": "string",
+          "title": "nickname 昵称。"
+        }
+      },
+      "title": "WorkflowUserCandidate 可选用户（最小披露：不含手机号、邮箱）。"
+    },
+    "notify.v1.CreateTemplateRequest": {
+      "type": "object",
+      "properties": {
+        "bizId": {
+          "type": "string",
+          "title": "biz_id 业务租户标识，可选；未指定默认 default。"
+        },
+        "eventType": {
+          "type": "string",
+          "title": "event_type 事件类型或 '*'；'*' 之外的值须为小写字母/数字开头的点分串。"
+        },
+        "channelType": {
+          "type": "string",
+          "title": "channel_type 渠道类型或 '*' 通配。"
+        },
+        "subject": {
+          "type": "string",
+          "title": "subject 标题模板（Go template）。"
+        },
+        "body": {
+          "type": "string",
+          "title": "body 正文模板（Go template）。"
+        },
+        "enabled": {
+          "type": "boolean",
+          "title": "enabled 初始启用状态，可选；未指定默认启用。"
+        },
+        "format": {
+          "type": "string",
+          "title": "format 输出格式，可选，缺省 text（text/markdown/html/card）。"
+        }
+      },
+      "title": "CreateTemplateRequest 创建模板请求。"
+    },
+    "notify.v1.CreateTemplateResponse": {
+      "type": "object",
+      "properties": {
+        "template": {
+          "$ref": "#/definitions/NotifyTemplate",
+          "title": "template 已创建的模板实体。"
+        }
+      },
+      "title": "CreateTemplateResponse 创建模板响应。"
+    },
+    "notify.v1.DeleteTemplateResponse": {
+      "type": "object",
+      "title": "DeleteTemplateResponse 删除模板响应。"
+    },
+    "notify.v1.GetTemplateResponse": {
+      "type": "object",
+      "properties": {
+        "template": {
+          "$ref": "#/definitions/NotifyTemplate",
+          "title": "template 模板实体。"
+        }
+      },
+      "title": "GetTemplateResponse 查询模板响应。"
+    },
+    "notify.v1.UpdateTemplateResponse": {
+      "type": "object",
+      "properties": {
+        "template": {
+          "$ref": "#/definitions/NotifyTemplate",
+          "title": "template 更新后的模板。"
+        }
+      },
+      "title": "UpdateTemplateResponse 更新模板响应：返回更新后的模板（version 已 +1）。"
+    },
+    "oncall.v1.ListUserCandidatesResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/UserCandidate"
+          },
+          "title": "items 匹配的用户，最多 50 个。"
+        }
+      },
+      "title": "ListUserCandidatesResponse 查询可选成员响应。"
+    },
+    "system.v1.ListUserCandidatesResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/DeptUserCandidate"
+          },
+          "title": "items 匹配的用户，最多 50 个。"
+        }
+      },
+      "title": "ListUserCandidatesResponse 查询可选用户响应。"
+    },
+    "ticket.v1.CreateTemplateRequest": {
+      "type": "object",
+      "properties": {
+        "spec": {
+          "$ref": "#/definitions/TemplateSpec",
+          "title": "spec 模板内容。"
+        }
+      },
+      "title": "CreateTemplateRequest 创建工单模板请求。"
+    },
+    "ticket.v1.CreateTemplateResponse": {
+      "type": "object",
+      "properties": {
+        "template": {
+          "$ref": "#/definitions/Template",
+          "title": "template 已创建的模板。"
+        }
+      },
+      "title": "CreateTemplateResponse 创建工单模板响应。"
+    },
+    "ticket.v1.DeleteTemplateResponse": {
+      "type": "object",
+      "title": "DeleteTemplateResponse 删除工单模板响应。"
+    },
+    "ticket.v1.GetTemplateResponse": {
+      "type": "object",
+      "properties": {
+        "template": {
+          "$ref": "#/definitions/Template",
+          "title": "template 模板（含表单字段定义）。"
+        }
+      },
+      "title": "GetTemplateResponse 查询工单模板响应。"
+    },
+    "ticket.v1.UpdateTemplateResponse": {
+      "type": "object",
+      "title": "UpdateTemplateResponse 更新工单模板响应。"
     },
     "v1.Operation": {
       "type": "object",

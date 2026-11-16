@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+package ticket.v1;
+
+import "errors/errors.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/ticket/v1;v1";
+
+// ErrorReason 是工单域的业务错误码枚举，由 protoc-gen-go-errors 生成带 code 的错误构造器。
+// 枚举值沿用 Kratos 错误码惯例（域前缀而非枚举名前缀），故豁免 ENUM_VALUE_PREFIX。
+enum ErrorReason {
+  option (errors.default_code) = 500;
+  // TICKET_UNSPECIFIED 未指定的工单错误。
+  TICKET_UNSPECIFIED = 0;
+  // TICKET_CATEGORY_NOT_FOUND 工单分类不存在，映射 HTTP 404。
+  TICKET_CATEGORY_NOT_FOUND = 1 [(errors.code) = 404];
+  // TICKET_CATEGORY_NAME_EXISTS 分类名称已被占用，映射 HTTP 409。
+  TICKET_CATEGORY_NAME_EXISTS = 2 [(errors.code) = 409];
+  // TICKET_CATEGORY_IN_USE 分类下仍有模板，不能删除，映射 HTTP 409。
+  TICKET_CATEGORY_IN_USE = 3 [(errors.code) = 409];
+  // TICKET_TEMPLATE_NOT_FOUND 工单模板不存在，映射 HTTP 404。
+  TICKET_TEMPLATE_NOT_FOUND = 10 [(errors.code) = 404];
+  // TICKET_TEMPLATE_NAME_EXISTS 模板名称已被占用，映射 HTTP 409。
+  TICKET_TEMPLATE_NAME_EXISTS = 11 [(errors.code) = 409];
+  // TICKET_TEMPLATE_INVALID 模板的表单定义不合法，映射 HTTP 400。
+  TICKET_TEMPLATE_INVALID = 12 [(errors.code) = 400];
+  // TICKET_TEMPLATE_UNAVAILABLE 模板已停用，不能提单，映射 HTTP 409。
+  TICKET_TEMPLATE_UNAVAILABLE = 13 [(errors.code) = 409];
+  // TICKET_NOT_FOUND 工单不存在，映射 HTTP 404。
+  TICKET_NOT_FOUND = 20 [(errors.code) = 404];
+  // TICKET_FORBIDDEN 无权查看该工单，映射 HTTP 403。
+  TICKET_FORBIDDEN = 21 [(errors.code) = 403];
+  // TICKET_FORM_INVALID 表单数据未通过校验，映射 HTTP 400。
+  TICKET_FORM_INVALID = 22 [(errors.code) = 400];
+  // TICKET_LIMIT_EXCEEDED 数量达到上限（分类数 / 模板数 / 单张工单的评论数），映射 HTTP 409。
+  TICKET_LIMIT_EXCEEDED = 23 [(errors.code) = 409];
+  // TICKET_COMMENT_RATE_LIMITED 评论过于频繁（单人每分钟的条数上限），映射 HTTP 429。
+  TICKET_COMMENT_RATE_LIMITED = 24 [(errors.code) = 429];
+  // TICKET_RATING_UNAVAILABLE 当前不能评价（不是提单人、工单未结束或已评价过），映射 HTTP 409。
+  TICKET_RATING_UNAVAILABLE = 25 [(errors.code) = 409];
+  // TICKET_FORM_LOCKED 当前不能修改表单（没有待处理的任务，或本环节没有可编辑的字段），映射 HTTP 409。
+  TICKET_FORM_LOCKED = 26 [(errors.code) = 409];
+}

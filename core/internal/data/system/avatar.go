@@ -40,7 +40,7 @@ func (s *avatarStore) SaveAvatarFile(_ context.Context, userID string, data []by
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("create avatar dir: %w", err)
 	}
-	if err := writeFileAtomic(dir, filepath.Join(dir, userID+ext), data); err != nil {
+	if err := basedata.WriteFileAtomic(dir, filepath.Join(dir, userID+ext), data); err != nil {
 		return fmt.Errorf("write avatar file: %w", err)
 	}
 	for _, e := range avatarFileExts {

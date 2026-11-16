@@ -1,0 +1,414 @@
+syntax = "proto3";
+
+package workflow.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "buf/validate/validate.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/workflow/v1;v1";
+
+// WorkflowConfigService 流程引擎的配置：工作日历、个人代理设置、自动任务可调用的 Webhook 端点。
+service WorkflowConfigService {
+  // GetCalendar 查询工作日历（全局一份）。
+  rpc GetCalendar(GetCalendarRequest) returns (GetCalendarResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/workflow/calendar"
+    };
+    option (system.v1.title) = "查询工作日历";
+  }
+  // UpdateCalendar 整组更新工作日历；只影响此后新算出的时限。
+  rpc UpdateCalendar(UpdateCalendarRequest) returns (UpdateCalendarResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/workflow/calendar"
+      body: "*"
+    };
+    option (system.v1.title) = "更新工作日历";
+  }
+  // ListMyDelegations 查询我的代理设置。
+  rpc ListMyDelegations(ListMyDelegationsRequest) returns (ListMyDelegationsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/workflow/delegation"
+    };
+    option (system.v1.title) = "查询我的代理设置";
+  }
+  // CreateDelegation 新增一条我的代理设置：这段时间内新到达我的待办交给代理人处理。
+  rpc CreateDelegation(CreateDelegationRequest) returns (CreateDelegationResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/workflow/delegation"
+      body: "*"
+    };
+    option (system.v1.title) = "新增代理设置";
+  }
+  // DeleteDelegation 删除我的一条代理设置（已交给代理人的待办不受影响）。
+  rpc DeleteDelegation(DeleteDelegationRequest) returns (DeleteDelegationResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/workflow/delegation/{id}"
+    };
+    option (system.v1.title) = "删除代理设置";
+  }
+  // ListWebhooks 查询全部 Webhook 端点（不含签名密钥）。
+  rpc ListWebhooks(ListWebhooksRequest) returns (ListWebhooksResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/workflow/webhook"
+    };
+    option (system.v1.title) = "查询 Webhook 端点";
+  }
+  // CreateWebhook 创建 Webhook 端点。
+  rpc CreateWebhook(CreateWebhookRequest) returns (CreateWebhookResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/workflow/webhook"
+      body: "*"
+    };
+    option (system.v1.title) = "创建 Webhook 端点";
+  }
+  // UpdateWebhook 整组更新 Webhook 端点；不传 secret 保留原签名密钥。
+  rpc UpdateWebhook(UpdateWebhookRequest) returns (UpdateWebhookResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/workflow/webhook/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "更新 Webhook 端点";
+  }
+  // DeleteWebhook 删除 Webhook 端点；仍被已发布的流程引用时拒绝。
+  rpc DeleteWebhook(DeleteWebhookRequest) returns (DeleteWebhookResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/workflow/webhook/{id}"
+    };
+    option (system.v1.title) = "删除 Webhook 端点";
+  }
+  // ListClients 查询全部接入凭据（不含令牌）。
+  rpc ListClients(ListClientsRequest) returns (ListClientsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/workflow/client"
+    };
+    option (system.v1.title) = "查询接入凭据";
+  }
+  // CreateClient 创建接入凭据；响应里的令牌只返回这一次。
+  rpc CreateClient(CreateClientRequest) returns (CreateClientResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/workflow/client"
+      body: "*"
+    };
+    option (system.v1.title) = "创建接入凭据";
+  }
+  // UpdateClient 整组更新接入凭据（不改令牌）。
+  rpc UpdateClient(UpdateClientRequest) returns (UpdateClientResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/workflow/client/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "更新接入凭据";
+  }
+  // RotateClientToken 重置令牌：旧令牌立即失效，新令牌只返回这一次。
+  rpc RotateClientToken(RotateClientTokenRequest) returns (RotateClientTokenResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/workflow/client/{id}/token"
+      body: "*"
+    };
+    option (system.v1.title) = "重置接入令牌";
+  }
+  // DeleteClient 删除接入凭据：令牌立即失效；它发起的流程不受影响。
+  rpc DeleteClient(DeleteClientRequest) returns (DeleteClientResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/workflow/client/{id}"
+    };
+    option (system.v1.title) = "删除接入凭据";
+  }
+}
+
+// CalendarSegment 一段每日工作时段。
+message CalendarSegment {
+  // start 开始时间 HH:MM。
+  string start = 1 [(buf.validate.field).string = {
+    pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+  }];
+  // end 结束时间 HH:MM（24:00 表示当日结束）。
+  string end = 2 [(buf.validate.field).string = {
+    pattern: "^(([01][0-9]|2[0-3]):[0-5][0-9]|24:00)$"
+  }];
+}
+
+// Calendar 工作日历。
+message Calendar {
+  // timezone IANA 时区名（如 Asia/Shanghai）：工作时段与节假日按它解释。
+  string timezone = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // weekdays 每周的工作日：0=周日 … 6=周六。
+  repeated int32 weekdays = 2 [(buf.validate.field).repeated = {
+    unique: true
+    min_items: 1
+    max_items: 7
+    items: { int32: { gte: 0, lte: 6 } }
+  }];
+  // segments 每日工作时段，按时间先后、互不重叠，1-6 段。
+  repeated CalendarSegment segments = 3 [(buf.validate.field).repeated = {
+    min_items: 1
+    max_items: 6
+  }];
+  // holidays 节假日（yyyy-mm-dd），≤400 个。
+  repeated string holidays = 4 [(buf.validate.field).repeated = {
+    unique: true
+    max_items: 400
+    items: { string: { pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" } }
+  }];
+  // workdays 调休上班日（yyyy-mm-dd），≤400 个。
+  repeated string workdays = 5 [(buf.validate.field).repeated = {
+    unique: true
+    max_items: 400
+    items: { string: { pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" } }
+  }];
+}
+
+// GetCalendarRequest 查询工作日历请求。
+message GetCalendarRequest {}
+
+// GetCalendarResponse 查询工作日历响应。
+message GetCalendarResponse {
+  // calendar 工作日历。
+  Calendar calendar = 1;
+}
+
+// UpdateCalendarRequest 更新工作日历请求。
+message UpdateCalendarRequest {
+  // calendar 工作日历（整组替换）。
+  Calendar calendar = 1 [(buf.validate.field).required = true];
+}
+
+// UpdateCalendarResponse 更新工作日历响应。
+message UpdateCalendarResponse {}
+
+// Delegation 一条代理设置。
+message Delegation {
+  // id 唯一标识。
+  string id = 1;
+  // delegate_id 代理人用户 ID。
+  string delegate_id = 2;
+  // delegate_name 代理人显示名。
+  string delegate_name = 3;
+  // start_time 生效开始时间。
+  google.protobuf.Timestamp start_time = 4;
+  // end_time 生效结束时间。
+  google.protobuf.Timestamp end_time = 5;
+  // reason 说明。
+  string reason = 6;
+}
+
+// ListMyDelegationsRequest 查询我的代理设置请求。
+message ListMyDelegationsRequest {}
+
+// ListMyDelegationsResponse 查询我的代理设置响应。
+message ListMyDelegationsResponse {
+  // items 我的代理设置，开始时间倒序。
+  repeated Delegation items = 1;
+}
+
+// CreateDelegationRequest 新增代理设置请求。
+message CreateDelegationRequest {
+  // delegate_id 代理人用户 ID（须为可用用户，不能是自己）。
+  string delegate_id = 1 [(buf.validate.field).string.uuid = true];
+  // start_time 生效开始时间。
+  google.protobuf.Timestamp start_time = 2 [(buf.validate.field).required = true];
+  // end_time 生效结束时间（须晚于开始时间与当前时间，跨度不超过一年）。
+  google.protobuf.Timestamp end_time = 3 [(buf.validate.field).required = true];
+  // reason 说明，≤255 位。
+  string reason = 4 [(buf.validate.field).string.max_len = 255];
+}
+
+// CreateDelegationResponse 新增代理设置响应。
+message CreateDelegationResponse {
+  // delegation 已创建的代理设置。
+  Delegation delegation = 1;
+}
+
+// DeleteDelegationRequest 删除代理设置请求。
+message DeleteDelegationRequest {
+  // id 唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteDelegationResponse 删除代理设置响应。
+message DeleteDelegationResponse {}
+
+// Webhook 自动任务可调用的端点（不含签名密钥）。
+message Webhook {
+  // id 唯一标识（流程图里自动任务节点引用它）。
+  string id = 1;
+  // name 名称。
+  string name = 2;
+  // url 地址（https）。
+  string url = 3;
+  // description 说明。
+  string description = 4;
+  // status 状态：1=启用 0=停用。
+  int32 status = 5;
+  // has_secret 是否配置了签名密钥。
+  bool has_secret = 6;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 7;
+}
+
+// WebhookSpec Webhook 端点内容（创建 / 整组更新）。
+message WebhookSpec {
+  // name 名称，1-64 位，未删除行内唯一。
+  string name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // url 地址：须为 https，不得带账号口令、不得指向内网。
+  string url = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 1024
+  }];
+  // description 说明，≤255 位。
+  string description = 3 [(buf.validate.field).string.max_len = 255];
+  // status 状态：1=启用 0=停用。
+  int32 status = 4 [(buf.validate.field).int32 = { in: [0, 1] }];
+  // secret 签名密钥，可选：创建时不传 = 不签名；更新时不传 = 保留原密钥，传空串 = 清除。
+  optional string secret = 5 [(buf.validate.field).string.max_len = 255];
+}
+
+// ListWebhooksRequest 查询 Webhook 端点请求。
+message ListWebhooksRequest {}
+
+// ListWebhooksResponse 查询 Webhook 端点响应。
+message ListWebhooksResponse {
+  // items 全部端点，名称升序。
+  repeated Webhook items = 1;
+}
+
+// CreateWebhookRequest 创建 Webhook 端点请求。
+message CreateWebhookRequest {
+  // spec 端点内容。
+  WebhookSpec spec = 1 [(buf.validate.field).required = true];
+}
+
+// CreateWebhookResponse 创建 Webhook 端点响应。
+message CreateWebhookResponse {
+  // webhook 已创建的端点。
+  Webhook webhook = 1;
+}
+
+// UpdateWebhookRequest 更新 Webhook 端点请求。
+message UpdateWebhookRequest {
+  // id 唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // spec 端点内容（整组替换）。
+  WebhookSpec spec = 2 [(buf.validate.field).required = true];
+}
+
+// UpdateWebhookResponse 更新 Webhook 端点响应。
+message UpdateWebhookResponse {}
+
+// DeleteWebhookRequest 删除 Webhook 端点请求。
+message DeleteWebhookRequest {
+  // id 唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteWebhookResponse 删除 Webhook 端点响应。
+message DeleteWebhookResponse {}
+
+// Client 接入凭据（不含令牌）。
+message Client {
+  // id 唯一标识。
+  string id = 1;
+  // name 名称（通常是接入系统的名字）。
+  string name = 2;
+  // token_prefix 令牌开头几位（辨认用）。
+  string token_prefix = 3;
+  // acting_user_id 代表用户 ID：该系统发起的流程以他为发起人。
+  string acting_user_id = 4;
+  // acting_user_name 代表用户显示名。
+  string acting_user_name = 5;
+  // definition_keys 允许发起的流程标识。
+  repeated string definition_keys = 6;
+  // status 状态：1=启用 0=停用。
+  int32 status = 7;
+  // description 说明。
+  string description = 8;
+  // last_used_time 最近一次调用时间；从未调用为空。
+  google.protobuf.Timestamp last_used_time = 9;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 10;
+}
+
+// ClientSpec 接入凭据内容（创建 / 整组更新）。
+message ClientSpec {
+  // name 名称，1-64 位，未删除行内唯一。
+  string name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // acting_user_id 代表用户 ID（须为可用用户）。
+  string acting_user_id = 2 [(buf.validate.field).string.uuid = true];
+  // definition_keys 允许发起的流程标识，去重、1-50 个。
+  repeated string definition_keys = 3 [(buf.validate.field).repeated = {
+    unique: true
+    min_items: 1
+    max_items: 50
+    items: { string: { pattern: "^[a-z][a-z0-9_-]{1,63}$" } }
+  }];
+  // status 状态：1=启用 0=停用。
+  int32 status = 4 [(buf.validate.field).int32 = { in: [0, 1] }];
+  // description 说明，≤255 位。
+  string description = 5 [(buf.validate.field).string.max_len = 255];
+}
+
+// ListClientsRequest 查询接入凭据请求。
+message ListClientsRequest {}
+
+// ListClientsResponse 查询接入凭据响应。
+message ListClientsResponse {
+  // items 全部接入凭据，名称升序。
+  repeated Client items = 1;
+}
+
+// CreateClientRequest 创建接入凭据请求。
+message CreateClientRequest {
+  // spec 凭据内容。
+  ClientSpec spec = 1 [(buf.validate.field).required = true];
+}
+
+// CreateClientResponse 创建接入凭据响应。
+message CreateClientResponse {
+  // client 已创建的凭据。
+  Client client = 1;
+  // token 令牌明文：只返回这一次，请立即妥善保存。
+  string token = 2;
+}
+
+// UpdateClientRequest 更新接入凭据请求。
+message UpdateClientRequest {
+  // id 唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // spec 凭据内容（整组替换）。
+  ClientSpec spec = 2 [(buf.validate.field).required = true];
+}
+
+// UpdateClientResponse 更新接入凭据响应。
+message UpdateClientResponse {}
+
+// RotateClientTokenRequest 重置接入令牌请求。
+message RotateClientTokenRequest {
+  // id 唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// RotateClientTokenResponse 重置接入令牌响应。
+message RotateClientTokenResponse {
+  // token 新令牌明文：只返回这一次。
+  string token = 1;
+}
+
+// DeleteClientRequest 删除接入凭据请求。
+message DeleteClientRequest {
+  // id 唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteClientResponse 删除接入凭据响应。
+message DeleteClientResponse {}

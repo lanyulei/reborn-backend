@@ -23,7 +23,7 @@ func TestHTTPServer_LoginLogNoPlaintextPassword(t *testing.T) {
 	}))
 	svc := newTestServices(t)
 	signer := svc.signer
-	srv := NewHTTPServer(&conf.Server{Http: &conf.Server_HTTP{}}, logger, svc.user, svc.role, svc.auth, svc.syscfg, svc.loginLog, svc.notify, svc.template, svc.route, svc.silence, svc.subscription, svc.producer, svc.event, svc.dispatch, svc.deliveryLog, svc.deadLetter, svc.assistant, svc.assistantChat, svc.cmdbModel, svc.cmdbCI, svc.cmdbRelation, svc.cmdbScope, svc.cmdbSync, svc.cmdbInsight, nil, nil, nil, svc.signer, svc.authz)
+	srv := NewHTTPServer(&conf.Server{Http: &conf.Server_HTTP{}}, logger, svc.user, svc.role, svc.dept, svc.auth, svc.syscfg, svc.loginLog, svc.notify, svc.template, svc.route, svc.silence, svc.subscription, svc.producer, svc.event, svc.dispatch, svc.deliveryLog, svc.deadLetter, svc.assistant, svc.assistantChat, svc.cmdbModel, svc.cmdbCI, svc.cmdbRelation, svc.cmdbScope, svc.cmdbSync, svc.cmdbInsight, nil, nil, nil, svc.file, nil, nil, nil, nil, nil, nil, nil, svc.signer, svc.authz, AllRoles(), nil, nil)
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
 

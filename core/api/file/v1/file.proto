@@ -1,0 +1,93 @@
+syntax = "proto3";
+
+package file.v1;
+
+import "google/api/annotations.proto";
+import "google/api/httpbody.proto";
+import "google/protobuf/timestamp.proto";
+import "buf/validate/validate.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/file/v1;v1";
+
+// FileService 通用附件服务：上传得到文件 ID，业务提交时由业务域把文件绑定到业务对象；
+// 下载按文件所属业务对象的访问权限判定（未绑定的临时文件仅上传者本人可读）。
+// 上传 / 下载是已登录用户的自助能力，不单独授权（见 authzExemptOperations）。
+service FileService {
+  // UploadFile 上传一个文件（≤5MiB），返回文件元数据；文件类型按内容嗅探并校验白名单。
+  rpc UploadFile(UploadFileRequest) returns (UploadFileResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/file"
+      body: "*"
+    };
+    option (system.v1.title) = "上传文件";
+  }
+  // GetFile 查询文件元数据（访问权限同下载）。
+  rpc GetFile(GetFileRequest) returns (GetFileResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/file/{id}"
+    };
+    option (system.v1.title) = "查询文件信息";
+  }
+  // DownloadFile 以原始字节流返回文件内容（HttpBody，附件方式下载）。
+  rpc DownloadFile(DownloadFileRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {
+      get: "/api/v1/file/{id}/content"
+    };
+    option (system.v1.title) = "下载文件";
+  }
+}
+
+// File 文件元数据（出参）。
+message File {
+  // id 文件唯一标识（UUIDv7）。
+  string id = 1;
+  // filename 原始文件名。
+  string filename = 2;
+  // size 字节数。
+  int64 size = 3;
+  // mime 内容类型（服务端按内容嗅探确定）。
+  string mime = 4;
+  // create_user 上传者用户 ID。
+  string create_user = 5;
+  // create_time 上传时间。
+  google.protobuf.Timestamp create_time = 6;
+}
+
+// UploadFileRequest 上传文件请求。
+message UploadFileRequest {
+  // filename 原始文件名，1-255 位。
+  string filename = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 255
+  }];
+  // data 文件二进制内容，1B-5MiB（JSON 中为 Base64）。
+  bytes data = 2 [(buf.validate.field).bytes = {
+    min_len: 1
+    max_len: 5242880
+  }];
+}
+
+// UploadFileResponse 上传文件响应。
+message UploadFileResponse {
+  // file 已保存的文件元数据。
+  File file = 1;
+}
+
+// GetFileRequest 查询文件信息请求。
+message GetFileRequest {
+  // id 文件唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetFileResponse 查询文件信息响应。
+message GetFileResponse {
+  // file 文件元数据。
+  File file = 1;
+}
+
+// DownloadFileRequest 下载文件请求。
+message DownloadFileRequest {
+  // id 文件唯一标识，取自路径参数。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}

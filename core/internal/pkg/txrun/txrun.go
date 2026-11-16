@@ -27,3 +27,18 @@ type Row interface {
 type Manager interface {
 	WithinTx(ctx context.Context, fn func(tx Tx) error) error
 }
+
+type ctxKey struct{}
+
+// NewContext 返回携带事务句柄的 ctx：事务内调用的只读仓储（data 层）据此复用同一条
+// 连接，而不是再向连接池要一条——否则并发命令各占一条事务连接又各等第二条，
+// 连接池会被互相等待耗尽。
+func NewContext(ctx context.Context, tx Tx) context.Context {
+	return context.WithValue(ctx, ctxKey{}, tx)
+}
+
+// FromContext 取 ctx 携带的事务句柄；未携带返回 nil。
+func FromContext(ctx context.Context) Tx {
+	tx, _ := ctx.Value(ctxKey{}).(Tx)
+	return tx
+}

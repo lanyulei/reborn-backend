@@ -6,16 +6,22 @@ import (
 
 	assistantv1 "github.com/lanyulei/reborn/backend/core/api/assistant/v1"
 	cmdbv1 "github.com/lanyulei/reborn/backend/core/api/cmdb/v1"
+	filev1 "github.com/lanyulei/reborn/backend/core/api/file/v1"
 	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
 	oncallv1 "github.com/lanyulei/reborn/backend/core/api/oncall/v1"
 	v1 "github.com/lanyulei/reborn/backend/core/api/system/v1"
+	ticketv1 "github.com/lanyulei/reborn/backend/core/api/ticket/v1"
+	workflowv1 "github.com/lanyulei/reborn/backend/core/api/workflow/v1"
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
 	"github.com/lanyulei/reborn/backend/core/internal/conf"
 	assistantservice "github.com/lanyulei/reborn/backend/core/internal/service/assistant"
 	cmdbservice "github.com/lanyulei/reborn/backend/core/internal/service/cmdb"
+	fileservice "github.com/lanyulei/reborn/backend/core/internal/service/file"
 	notifyservice "github.com/lanyulei/reborn/backend/core/internal/service/notify"
 	oncallservice "github.com/lanyulei/reborn/backend/core/internal/service/oncall"
 	service "github.com/lanyulei/reborn/backend/core/internal/service/system"
+	ticketservice "github.com/lanyulei/reborn/backend/core/internal/service/ticket"
+	workflowservice "github.com/lanyulei/reborn/backend/core/internal/service/workflow"
 	"github.com/lanyulei/reborn/backend/kit/httpx"
 
 	"github.com/go-kratos/kratos/contrib/otel/v3/tracing"
@@ -35,7 +41,7 @@ const readTimeout = 60 * time.Second
 // （单次几十毫秒的显著 CPU 成本），限流必须先于认证与密码校验执行以防 DoS；
 // authz 在 auth 之后：授权判定依赖鉴权注入的 claims（deny-by-default）。
 func NewHTTPServer(c *conf.Server, logger *slog.Logger, user *service.UserService,
-	role *service.RoleService, auth *service.AuthService, syscfg *service.SystemConfigService,
+	role *service.RoleService, dept *service.DeptService, auth *service.AuthService, syscfg *service.SystemConfigService,
 	loginLog *service.LoginLogService, notify *notifyservice.NotifyChannelService,
 	tmpl *notifyservice.NotifyTemplateService, route *notifyservice.NotifyRouteService,
 	silence *notifyservice.NotifySilenceService,
@@ -49,7 +55,12 @@ func NewHTTPServer(c *conf.Server, logger *slog.Logger, user *service.UserServic
 	cmdbModel *cmdbservice.CmdbModelService, cmdbCI *cmdbservice.CmdbCIService, cmdbRelation *cmdbservice.CmdbRelationService,
 	cmdbScope *cmdbservice.CmdbScopeService, cmdbSync *cmdbservice.CmdbSyncService, cmdbInsight *cmdbservice.CmdbInsightService,
 	oncallGroup *oncallservice.OncallGroupService, oncallSchedule *oncallservice.OncallScheduleService, oncallShare *oncallservice.OncallShareService,
+	file *fileservice.FileService,
+	wfDefinition *workflowservice.DefinitionService, wfInstance *workflowservice.InstanceService, wfTask *workflowservice.TaskService,
+	wfConfig *workflowservice.ConfigService, wfOpen *workflowservice.OpenService,
+	ticketCatalog *ticketservice.CatalogService, ticket *ticketservice.TicketService,
 	signer *biz.TokenSigner, authzUC *biz.AuthzUsecase,
+	roles Roles, pinger Pinger, metrics *Metrics,
 ) *http.Server {
 	opts := []http.ServerOption{
 		http.Middleware(
@@ -82,8 +93,15 @@ func NewHTTPServer(c *conf.Server, logger *slog.Logger, user *service.UserServic
 	// 请求体占住连接。不设 WriteTimeout——助手 SSE 为分钟级长响应（其读截止
 	// 时间在进入流式阶段前清除，见 assistant.go）。
 	srv.ReadTimeout = readTimeout
+	// 探活与指标端点任何角色都有；业务接口只在 api 角色下注册——只跑后台循环的进程
+	// 不对外提供任何业务入口。
+	probes(srv, pinger, metrics)
+	if !roles.Has(RoleAPI) {
+		return srv
+	}
 	v1.RegisterUserServiceHTTPServer(srv, user)
 	v1.RegisterRoleServiceHTTPServer(srv, role)
+	v1.RegisterDeptServiceHTTPServer(srv, dept)
 	v1.RegisterAuthServiceHTTPServer(srv, auth)
 	v1.RegisterSystemConfigServiceHTTPServer(srv, syscfg)
 	v1.RegisterLoginLogServiceHTTPServer(srv, loginLog)
@@ -109,5 +127,13 @@ func NewHTTPServer(c *conf.Server, logger *slog.Logger, user *service.UserServic
 	oncallv1.RegisterOncallGroupServiceHTTPServer(srv, oncallGroup)
 	oncallv1.RegisterOncallScheduleServiceHTTPServer(srv, oncallSchedule)
 	oncallv1.RegisterOncallShareServiceHTTPServer(srv, oncallShare)
+	filev1.RegisterFileServiceHTTPServer(srv, file)
+	workflowv1.RegisterWorkflowDefinitionServiceHTTPServer(srv, wfDefinition)
+	workflowv1.RegisterWorkflowInstanceServiceHTTPServer(srv, wfInstance)
+	workflowv1.RegisterWorkflowTaskServiceHTTPServer(srv, wfTask)
+	workflowv1.RegisterWorkflowConfigServiceHTTPServer(srv, wfConfig)
+	workflowv1.RegisterWorkflowOpenServiceHTTPServer(srv, wfOpen)
+	ticketv1.RegisterTicketCatalogServiceHTTPServer(srv, ticketCatalog)
+	ticketv1.RegisterTicketServiceHTTPServer(srv, ticket)
 	return srv
 }

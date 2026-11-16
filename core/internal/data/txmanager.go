@@ -53,3 +53,31 @@ var (
 	_ txrun.Tx      = txHandle{}
 	_ txrun.Manager = (*TxManager)(nil)
 )
+
+// PgxTx 在 data 层内取回事务句柄背后的 pgx.Tx：biz 只见窄视图（Exec / QueryRow），
+// 域仓储需要结果集查询或批量写时经此还原。句柄不是本包签发的（如测试桩）返回 false。
+func PgxTx(tx txrun.Tx) (pgx.Tx, bool) {
+	if tx == nil {
+		return nil, false
+	}
+	h, ok := tx.(txHandle)
+	if !ok {
+		return nil, false
+	}
+	return h.tx, true
+}
+
+// Queryer 是 Pool 与 Tx 共有的查询面。
+type Queryer interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// QueryerFrom 返回本次查询应使用的连接：ctx 携带本包签发的事务句柄（txrun.NewContext）
+// 时用该事务，否则用连接池。供「既会在事务内、也会在事务外被调用」的只读仓储使用。
+func QueryerFrom(ctx context.Context, pool *pgxpool.Pool) Queryer {
+	if tx, ok := PgxTx(txrun.FromContext(ctx)); ok {
+		return tx
+	}
+	return pool
+}
