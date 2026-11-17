@@ -115,7 +115,7 @@ type FormField struct {
 	Code string `protobuf:"bytes,1,opt,name=code,proto3" json:"code,omitempty"`
 	// name 字段名称，1-64 位。
 	Name string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	// type 类型：string / text / int / float / bool / enum / datetime / user / dept。
+	// type 类型：string / text / int / float / bool / enum / datetime / date / user / dept。
 	Type string `protobuf:"bytes,3,opt,name=type,proto3" json:"type,omitempty"`
 	// required 是否必填。
 	Required bool `protobuf:"varint,4,opt,name=required,proto3" json:"required,omitempty"`
@@ -124,7 +124,25 @@ type FormField struct {
 	// rule 校验规则。
 	Rule *FormRule `protobuf:"bytes,6,opt,name=rule,proto3" json:"rule,omitempty"`
 	// description 填写说明，≤255 位。
-	Description   string `protobuf:"bytes,7,opt,name=description,proto3" json:"description,omitempty"`
+	Description string `protobuf:"bytes,7,opt,name=description,proto3" json:"description,omitempty"`
+	// enum_labels 下拉选项的展示值（实际值 → 展示值，≤64 位）；未配置的项显示实际值。
+	EnumLabels map[string]string `protobuf:"bytes,8,rep,name=enum_labels,json=enumLabels,proto3" json:"enum_labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// multiple 多选（仅 enum / user / dept）：取值为列表，至多 50 项。
+	Multiple bool `protobuf:"varint,9,opt,name=multiple,proto3" json:"multiple,omitempty"`
+	// default_value 提单表单的初始值（仅 string / text / int / float / bool / enum）。
+	DefaultValue *structpb.Value `protobuf:"bytes,10,opt,name=default_value,json=defaultValue,proto3" json:"default_value,omitempty"`
+	// placeholder 输入框里的示例文字，≤64 位。
+	Placeholder string `protobuf:"bytes,11,opt,name=placeholder,proto3" json:"placeholder,omitempty"`
+	// group 所属分组的标题，≤32 位；相邻且同组的字段归到一个小标题下。
+	Group string `protobuf:"bytes,12,opt,name=group,proto3" json:"group,omitempty"`
+	// format 单行文本的内置格式：email / phone / url；空 = 不限。
+	Format string `protobuf:"bytes,13,opt,name=format,proto3" json:"format,omitempty"`
+	// unit 数字的单位（仅展示），≤16 位。
+	Unit string `protobuf:"bytes,14,opt,name=unit,proto3" json:"unit,omitempty"`
+	// precision 小数位数上限 0-6（仅 float）。
+	Precision *int32 `protobuf:"varint,15,opt,name=precision,proto3,oneof" json:"precision,omitempty"`
+	// show_when 显示条件；不传 = 始终显示。
+	ShowWhen      *FormShowWhen `protobuf:"bytes,16,opt,name=show_when,json=showWhen,proto3" json:"show_when,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -208,6 +226,124 @@ func (x *FormField) GetDescription() string {
 	return ""
 }
 
+func (x *FormField) GetEnumLabels() map[string]string {
+	if x != nil {
+		return x.EnumLabels
+	}
+	return nil
+}
+
+func (x *FormField) GetMultiple() bool {
+	if x != nil {
+		return x.Multiple
+	}
+	return false
+}
+
+func (x *FormField) GetDefaultValue() *structpb.Value {
+	if x != nil {
+		return x.DefaultValue
+	}
+	return nil
+}
+
+func (x *FormField) GetPlaceholder() string {
+	if x != nil {
+		return x.Placeholder
+	}
+	return ""
+}
+
+func (x *FormField) GetGroup() string {
+	if x != nil {
+		return x.Group
+	}
+	return ""
+}
+
+func (x *FormField) GetFormat() string {
+	if x != nil {
+		return x.Format
+	}
+	return ""
+}
+
+func (x *FormField) GetUnit() string {
+	if x != nil {
+		return x.Unit
+	}
+	return ""
+}
+
+func (x *FormField) GetPrecision() int32 {
+	if x != nil && x.Precision != nil {
+		return *x.Precision
+	}
+	return 0
+}
+
+func (x *FormField) GetShowWhen() *FormShowWhen {
+	if x != nil {
+		return x.ShowWhen
+	}
+	return nil
+}
+
+// FormShowWhen 字段的显示条件：排在它前面的某个单选下拉 / 是否字段取到给定值之一时才显示。
+type FormShowWhen struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// field 控制字段的字段码。
+	Field string `protobuf:"bytes,1,opt,name=field,proto3" json:"field,omitempty"`
+	// values 控制字段取其中任一值时显示（是否字段用 "true" / "false"），1-20 个。
+	Values        []string `protobuf:"bytes,2,rep,name=values,proto3" json:"values,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FormShowWhen) Reset() {
+	*x = FormShowWhen{}
+	mi := &file_ticket_v1_ticket_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FormShowWhen) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FormShowWhen) ProtoMessage() {}
+
+func (x *FormShowWhen) ProtoReflect() protoreflect.Message {
+	mi := &file_ticket_v1_ticket_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FormShowWhen.ProtoReflect.Descriptor instead.
+func (*FormShowWhen) Descriptor() ([]byte, []int) {
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *FormShowWhen) GetField() string {
+	if x != nil {
+		return x.Field
+	}
+	return ""
+}
+
+func (x *FormShowWhen) GetValues() []string {
+	if x != nil {
+		return x.Values
+	}
+	return nil
+}
+
 // Category 工单分类。
 type Category struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -227,7 +363,7 @@ type Category struct {
 
 func (x *Category) Reset() {
 	*x = Category{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[2]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -239,7 +375,7 @@ func (x *Category) String() string {
 func (*Category) ProtoMessage() {}
 
 func (x *Category) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[2]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -252,7 +388,7 @@ func (x *Category) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Category.ProtoReflect.Descriptor instead.
 func (*Category) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{2}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *Category) GetId() string {
@@ -305,7 +441,7 @@ type SlaDuration struct {
 
 func (x *SlaDuration) Reset() {
 	*x = SlaDuration{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[3]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -317,7 +453,7 @@ func (x *SlaDuration) String() string {
 func (*SlaDuration) ProtoMessage() {}
 
 func (x *SlaDuration) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[3]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -330,7 +466,7 @@ func (x *SlaDuration) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SlaDuration.ProtoReflect.Descriptor instead.
 func (*SlaDuration) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{3}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *SlaDuration) GetValue() int32 {
@@ -369,7 +505,7 @@ type SlaRule struct {
 
 func (x *SlaRule) Reset() {
 	*x = SlaRule{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[4]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -381,7 +517,7 @@ func (x *SlaRule) String() string {
 func (*SlaRule) ProtoMessage() {}
 
 func (x *SlaRule) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[4]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -394,7 +530,7 @@ func (x *SlaRule) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SlaRule.ProtoReflect.Descriptor instead.
 func (*SlaRule) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{4}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *SlaRule) GetPriority() int32 {
@@ -459,7 +595,7 @@ type Template struct {
 
 func (x *Template) Reset() {
 	*x = Template{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[5]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -471,7 +607,7 @@ func (x *Template) String() string {
 func (*Template) ProtoMessage() {}
 
 func (x *Template) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[5]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -484,7 +620,7 @@ func (x *Template) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Template.ProtoReflect.Descriptor instead.
 func (*Template) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{5}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *Template) GetId() string {
@@ -608,7 +744,7 @@ type ListCatalogRequest struct {
 
 func (x *ListCatalogRequest) Reset() {
 	*x = ListCatalogRequest{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[6]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -620,7 +756,7 @@ func (x *ListCatalogRequest) String() string {
 func (*ListCatalogRequest) ProtoMessage() {}
 
 func (x *ListCatalogRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[6]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -633,7 +769,7 @@ func (x *ListCatalogRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListCatalogRequest.ProtoReflect.Descriptor instead.
 func (*ListCatalogRequest) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{6}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{7}
 }
 
 // ListManagedCatalogRequest 查询完整服务目录请求。
@@ -645,7 +781,7 @@ type ListManagedCatalogRequest struct {
 
 func (x *ListManagedCatalogRequest) Reset() {
 	*x = ListManagedCatalogRequest{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[7]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -657,7 +793,7 @@ func (x *ListManagedCatalogRequest) String() string {
 func (*ListManagedCatalogRequest) ProtoMessage() {}
 
 func (x *ListManagedCatalogRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[7]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -670,7 +806,7 @@ func (x *ListManagedCatalogRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListManagedCatalogRequest.ProtoReflect.Descriptor instead.
 func (*ListManagedCatalogRequest) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{7}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{8}
 }
 
 // ListCatalogResponse 查询服务目录响应。
@@ -684,7 +820,7 @@ type ListCatalogResponse struct {
 
 func (x *ListCatalogResponse) Reset() {
 	*x = ListCatalogResponse{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[8]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -696,7 +832,7 @@ func (x *ListCatalogResponse) String() string {
 func (*ListCatalogResponse) ProtoMessage() {}
 
 func (x *ListCatalogResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[8]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -709,7 +845,7 @@ func (x *ListCatalogResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListCatalogResponse.ProtoReflect.Descriptor instead.
 func (*ListCatalogResponse) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{8}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ListCatalogResponse) GetItems() []*Category {
@@ -734,7 +870,7 @@ type CreateCategoryRequest struct {
 
 func (x *CreateCategoryRequest) Reset() {
 	*x = CreateCategoryRequest{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[9]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -746,7 +882,7 @@ func (x *CreateCategoryRequest) String() string {
 func (*CreateCategoryRequest) ProtoMessage() {}
 
 func (x *CreateCategoryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[9]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -759,7 +895,7 @@ func (x *CreateCategoryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateCategoryRequest.ProtoReflect.Descriptor instead.
 func (*CreateCategoryRequest) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{9}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *CreateCategoryRequest) GetName() string {
@@ -794,7 +930,7 @@ type CreateCategoryResponse struct {
 
 func (x *CreateCategoryResponse) Reset() {
 	*x = CreateCategoryResponse{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[10]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -806,7 +942,7 @@ func (x *CreateCategoryResponse) String() string {
 func (*CreateCategoryResponse) ProtoMessage() {}
 
 func (x *CreateCategoryResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[10]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -819,7 +955,7 @@ func (x *CreateCategoryResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateCategoryResponse.ProtoReflect.Descriptor instead.
 func (*CreateCategoryResponse) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{10}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *CreateCategoryResponse) GetCategory() *Category {
@@ -846,7 +982,7 @@ type UpdateCategoryRequest struct {
 
 func (x *UpdateCategoryRequest) Reset() {
 	*x = UpdateCategoryRequest{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[11]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -858,7 +994,7 @@ func (x *UpdateCategoryRequest) String() string {
 func (*UpdateCategoryRequest) ProtoMessage() {}
 
 func (x *UpdateCategoryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[11]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -871,7 +1007,7 @@ func (x *UpdateCategoryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateCategoryRequest.ProtoReflect.Descriptor instead.
 func (*UpdateCategoryRequest) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{11}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *UpdateCategoryRequest) GetId() string {
@@ -911,7 +1047,7 @@ type UpdateCategoryResponse struct {
 
 func (x *UpdateCategoryResponse) Reset() {
 	*x = UpdateCategoryResponse{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[12]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -923,7 +1059,7 @@ func (x *UpdateCategoryResponse) String() string {
 func (*UpdateCategoryResponse) ProtoMessage() {}
 
 func (x *UpdateCategoryResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[12]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -936,7 +1072,7 @@ func (x *UpdateCategoryResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateCategoryResponse.ProtoReflect.Descriptor instead.
 func (*UpdateCategoryResponse) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{12}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{13}
 }
 
 // DeleteCategoryRequest 删除工单分类请求。
@@ -950,7 +1086,7 @@ type DeleteCategoryRequest struct {
 
 func (x *DeleteCategoryRequest) Reset() {
 	*x = DeleteCategoryRequest{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[13]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -962,7 +1098,7 @@ func (x *DeleteCategoryRequest) String() string {
 func (*DeleteCategoryRequest) ProtoMessage() {}
 
 func (x *DeleteCategoryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[13]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -975,7 +1111,7 @@ func (x *DeleteCategoryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteCategoryRequest.ProtoReflect.Descriptor instead.
 func (*DeleteCategoryRequest) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{13}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *DeleteCategoryRequest) GetId() string {
@@ -994,7 +1130,7 @@ type DeleteCategoryResponse struct {
 
 func (x *DeleteCategoryResponse) Reset() {
 	*x = DeleteCategoryResponse{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[14]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1006,7 +1142,7 @@ func (x *DeleteCategoryResponse) String() string {
 func (*DeleteCategoryResponse) ProtoMessage() {}
 
 func (x *DeleteCategoryResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[14]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1019,7 +1155,7 @@ func (x *DeleteCategoryResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteCategoryResponse.ProtoReflect.Descriptor instead.
 func (*DeleteCategoryResponse) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{14}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{15}
 }
 
 // TemplateSpec 工单模板的可编辑内容（创建 / 更新共用，整组替换）。
@@ -1057,7 +1193,7 @@ type TemplateSpec struct {
 
 func (x *TemplateSpec) Reset() {
 	*x = TemplateSpec{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[15]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1069,7 +1205,7 @@ func (x *TemplateSpec) String() string {
 func (*TemplateSpec) ProtoMessage() {}
 
 func (x *TemplateSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[15]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1082,7 +1218,7 @@ func (x *TemplateSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TemplateSpec.ProtoReflect.Descriptor instead.
 func (*TemplateSpec) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{15}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *TemplateSpec) GetCategoryId() string {
@@ -1187,7 +1323,7 @@ type CreateTemplateRequest struct {
 
 func (x *CreateTemplateRequest) Reset() {
 	*x = CreateTemplateRequest{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[16]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1199,7 +1335,7 @@ func (x *CreateTemplateRequest) String() string {
 func (*CreateTemplateRequest) ProtoMessage() {}
 
 func (x *CreateTemplateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[16]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1212,7 +1348,7 @@ func (x *CreateTemplateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateTemplateRequest.ProtoReflect.Descriptor instead.
 func (*CreateTemplateRequest) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{16}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *CreateTemplateRequest) GetSpec() *TemplateSpec {
@@ -1233,7 +1369,7 @@ type CreateTemplateResponse struct {
 
 func (x *CreateTemplateResponse) Reset() {
 	*x = CreateTemplateResponse{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[17]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1245,7 +1381,7 @@ func (x *CreateTemplateResponse) String() string {
 func (*CreateTemplateResponse) ProtoMessage() {}
 
 func (x *CreateTemplateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[17]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1258,7 +1394,7 @@ func (x *CreateTemplateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateTemplateResponse.ProtoReflect.Descriptor instead.
 func (*CreateTemplateResponse) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{17}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *CreateTemplateResponse) GetTemplate() *Template {
@@ -1281,7 +1417,7 @@ type UpdateTemplateRequest struct {
 
 func (x *UpdateTemplateRequest) Reset() {
 	*x = UpdateTemplateRequest{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[18]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1293,7 +1429,7 @@ func (x *UpdateTemplateRequest) String() string {
 func (*UpdateTemplateRequest) ProtoMessage() {}
 
 func (x *UpdateTemplateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[18]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1306,7 +1442,7 @@ func (x *UpdateTemplateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateTemplateRequest.ProtoReflect.Descriptor instead.
 func (*UpdateTemplateRequest) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{18}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *UpdateTemplateRequest) GetId() string {
@@ -1332,7 +1468,7 @@ type UpdateTemplateResponse struct {
 
 func (x *UpdateTemplateResponse) Reset() {
 	*x = UpdateTemplateResponse{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[19]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1344,7 +1480,7 @@ func (x *UpdateTemplateResponse) String() string {
 func (*UpdateTemplateResponse) ProtoMessage() {}
 
 func (x *UpdateTemplateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[19]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1357,7 +1493,7 @@ func (x *UpdateTemplateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateTemplateResponse.ProtoReflect.Descriptor instead.
 func (*UpdateTemplateResponse) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{19}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{20}
 }
 
 // DeleteTemplateRequest 删除工单模板请求。
@@ -1371,7 +1507,7 @@ type DeleteTemplateRequest struct {
 
 func (x *DeleteTemplateRequest) Reset() {
 	*x = DeleteTemplateRequest{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[20]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1383,7 +1519,7 @@ func (x *DeleteTemplateRequest) String() string {
 func (*DeleteTemplateRequest) ProtoMessage() {}
 
 func (x *DeleteTemplateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[20]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1396,7 +1532,7 @@ func (x *DeleteTemplateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteTemplateRequest.ProtoReflect.Descriptor instead.
 func (*DeleteTemplateRequest) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{20}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *DeleteTemplateRequest) GetId() string {
@@ -1415,7 +1551,7 @@ type DeleteTemplateResponse struct {
 
 func (x *DeleteTemplateResponse) Reset() {
 	*x = DeleteTemplateResponse{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[21]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1427,7 +1563,7 @@ func (x *DeleteTemplateResponse) String() string {
 func (*DeleteTemplateResponse) ProtoMessage() {}
 
 func (x *DeleteTemplateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[21]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1440,7 +1576,7 @@ func (x *DeleteTemplateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteTemplateResponse.ProtoReflect.Descriptor instead.
 func (*DeleteTemplateResponse) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{21}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{22}
 }
 
 // GetTemplateRequest 查询工单模板请求。
@@ -1454,7 +1590,7 @@ type GetTemplateRequest struct {
 
 func (x *GetTemplateRequest) Reset() {
 	*x = GetTemplateRequest{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[22]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1466,7 +1602,7 @@ func (x *GetTemplateRequest) String() string {
 func (*GetTemplateRequest) ProtoMessage() {}
 
 func (x *GetTemplateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[22]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1479,7 +1615,7 @@ func (x *GetTemplateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTemplateRequest.ProtoReflect.Descriptor instead.
 func (*GetTemplateRequest) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{22}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *GetTemplateRequest) GetId() string {
@@ -1500,7 +1636,7 @@ type GetTemplateResponse struct {
 
 func (x *GetTemplateResponse) Reset() {
 	*x = GetTemplateResponse{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[23]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1512,7 +1648,7 @@ func (x *GetTemplateResponse) String() string {
 func (*GetTemplateResponse) ProtoMessage() {}
 
 func (x *GetTemplateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[23]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1525,7 +1661,7 @@ func (x *GetTemplateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTemplateResponse.ProtoReflect.Descriptor instead.
 func (*GetTemplateResponse) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{23}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *GetTemplateResponse) GetTemplate() *Template {
@@ -1588,7 +1724,7 @@ type Ticket struct {
 
 func (x *Ticket) Reset() {
 	*x = Ticket{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[24]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1600,7 +1736,7 @@ func (x *Ticket) String() string {
 func (*Ticket) ProtoMessage() {}
 
 func (x *Ticket) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[24]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1613,7 +1749,7 @@ func (x *Ticket) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Ticket.ProtoReflect.Descriptor instead.
 func (*Ticket) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{24}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *Ticket) GetId() string {
@@ -1785,7 +1921,7 @@ type TicketResource struct {
 
 func (x *TicketResource) Reset() {
 	*x = TicketResource{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[25]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1797,7 +1933,7 @@ func (x *TicketResource) String() string {
 func (*TicketResource) ProtoMessage() {}
 
 func (x *TicketResource) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[25]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1810,7 +1946,7 @@ func (x *TicketResource) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TicketResource.ProtoReflect.Descriptor instead.
 func (*TicketResource) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{25}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *TicketResource) GetId() string {
@@ -1859,7 +1995,7 @@ type CreateTicketRequest struct {
 
 func (x *CreateTicketRequest) Reset() {
 	*x = CreateTicketRequest{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[26]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1871,7 +2007,7 @@ func (x *CreateTicketRequest) String() string {
 func (*CreateTicketRequest) ProtoMessage() {}
 
 func (x *CreateTicketRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[26]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1884,7 +2020,7 @@ func (x *CreateTicketRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateTicketRequest.ProtoReflect.Descriptor instead.
 func (*CreateTicketRequest) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{26}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *CreateTicketRequest) GetTemplateId() string {
@@ -1954,7 +2090,7 @@ type CreateTicketResponse struct {
 
 func (x *CreateTicketResponse) Reset() {
 	*x = CreateTicketResponse{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[27]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1966,7 +2102,7 @@ func (x *CreateTicketResponse) String() string {
 func (*CreateTicketResponse) ProtoMessage() {}
 
 func (x *CreateTicketResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[27]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1979,7 +2115,7 @@ func (x *CreateTicketResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateTicketResponse.ProtoReflect.Descriptor instead.
 func (*CreateTicketResponse) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{27}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *CreateTicketResponse) GetTicket() *Ticket {
@@ -2000,7 +2136,7 @@ type GetTicketRequest struct {
 
 func (x *GetTicketRequest) Reset() {
 	*x = GetTicketRequest{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[28]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2012,7 +2148,7 @@ func (x *GetTicketRequest) String() string {
 func (*GetTicketRequest) ProtoMessage() {}
 
 func (x *GetTicketRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[28]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2025,7 +2161,7 @@ func (x *GetTicketRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTicketRequest.ProtoReflect.Descriptor instead.
 func (*GetTicketRequest) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{28}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *GetTicketRequest) GetId() string {
@@ -2050,7 +2186,7 @@ type TicketFile struct {
 
 func (x *TicketFile) Reset() {
 	*x = TicketFile{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[29]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2062,7 +2198,7 @@ func (x *TicketFile) String() string {
 func (*TicketFile) ProtoMessage() {}
 
 func (x *TicketFile) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[29]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2075,7 +2211,7 @@ func (x *TicketFile) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TicketFile.ProtoReflect.Descriptor instead.
 func (*TicketFile) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{29}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *TicketFile) GetId() string {
@@ -2123,7 +2259,7 @@ type GetTicketResponse struct {
 
 func (x *GetTicketResponse) Reset() {
 	*x = GetTicketResponse{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[30]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2135,7 +2271,7 @@ func (x *GetTicketResponse) String() string {
 func (*GetTicketResponse) ProtoMessage() {}
 
 func (x *GetTicketResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[30]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2148,7 +2284,7 @@ func (x *GetTicketResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTicketResponse.ProtoReflect.Descriptor instead.
 func (*GetTicketResponse) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{30}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *GetTicketResponse) GetTicket() *Ticket {
@@ -2213,7 +2349,7 @@ type UpdateTicketFormRequest struct {
 
 func (x *UpdateTicketFormRequest) Reset() {
 	*x = UpdateTicketFormRequest{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[31]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2225,7 +2361,7 @@ func (x *UpdateTicketFormRequest) String() string {
 func (*UpdateTicketFormRequest) ProtoMessage() {}
 
 func (x *UpdateTicketFormRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[31]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2238,7 +2374,7 @@ func (x *UpdateTicketFormRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateTicketFormRequest.ProtoReflect.Descriptor instead.
 func (*UpdateTicketFormRequest) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{31}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *UpdateTicketFormRequest) GetId() string {
@@ -2264,7 +2400,7 @@ type UpdateTicketFormResponse struct {
 
 func (x *UpdateTicketFormResponse) Reset() {
 	*x = UpdateTicketFormResponse{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[32]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2276,7 +2412,7 @@ func (x *UpdateTicketFormResponse) String() string {
 func (*UpdateTicketFormResponse) ProtoMessage() {}
 
 func (x *UpdateTicketFormResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[32]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2289,7 +2425,7 @@ func (x *UpdateTicketFormResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateTicketFormResponse.ProtoReflect.Descriptor instead.
 func (*UpdateTicketFormResponse) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{32}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{33}
 }
 
 // RateTicketRequest 评价工单请求。
@@ -2307,7 +2443,7 @@ type RateTicketRequest struct {
 
 func (x *RateTicketRequest) Reset() {
 	*x = RateTicketRequest{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[33]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2319,7 +2455,7 @@ func (x *RateTicketRequest) String() string {
 func (*RateTicketRequest) ProtoMessage() {}
 
 func (x *RateTicketRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[33]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2332,7 +2468,7 @@ func (x *RateTicketRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RateTicketRequest.ProtoReflect.Descriptor instead.
 func (*RateTicketRequest) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{33}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *RateTicketRequest) GetId() string {
@@ -2365,7 +2501,7 @@ type RateTicketResponse struct {
 
 func (x *RateTicketResponse) Reset() {
 	*x = RateTicketResponse{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[34]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2377,7 +2513,7 @@ func (x *RateTicketResponse) String() string {
 func (*RateTicketResponse) ProtoMessage() {}
 
 func (x *RateTicketResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[34]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2390,7 +2526,7 @@ func (x *RateTicketResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RateTicketResponse.ProtoReflect.Descriptor instead.
 func (*RateTicketResponse) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{34}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{35}
 }
 
 // GetTicketStatsRequest 查询工单统计请求。
@@ -2408,7 +2544,7 @@ type GetTicketStatsRequest struct {
 
 func (x *GetTicketStatsRequest) Reset() {
 	*x = GetTicketStatsRequest{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[35]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2420,7 +2556,7 @@ func (x *GetTicketStatsRequest) String() string {
 func (*GetTicketStatsRequest) ProtoMessage() {}
 
 func (x *GetTicketStatsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[35]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2433,7 +2569,7 @@ func (x *GetTicketStatsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTicketStatsRequest.ProtoReflect.Descriptor instead.
 func (*GetTicketStatsRequest) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{35}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *GetTicketStatsRequest) GetDays() int32 {
@@ -2463,7 +2599,7 @@ type TicketCount struct {
 
 func (x *TicketCount) Reset() {
 	*x = TicketCount{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[36]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2475,7 +2611,7 @@ func (x *TicketCount) String() string {
 func (*TicketCount) ProtoMessage() {}
 
 func (x *TicketCount) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[36]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2488,7 +2624,7 @@ func (x *TicketCount) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TicketCount.ProtoReflect.Descriptor instead.
 func (*TicketCount) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{36}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *TicketCount) GetKey() string {
@@ -2520,7 +2656,7 @@ type TicketTrendPoint struct {
 
 func (x *TicketTrendPoint) Reset() {
 	*x = TicketTrendPoint{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[37]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2532,7 +2668,7 @@ func (x *TicketTrendPoint) String() string {
 func (*TicketTrendPoint) ProtoMessage() {}
 
 func (x *TicketTrendPoint) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[37]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2545,7 +2681,7 @@ func (x *TicketTrendPoint) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TicketTrendPoint.ProtoReflect.Descriptor instead.
 func (*TicketTrendPoint) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{37}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *TicketTrendPoint) GetDay() string {
@@ -2602,7 +2738,7 @@ type GetTicketStatsResponse struct {
 
 func (x *GetTicketStatsResponse) Reset() {
 	*x = GetTicketStatsResponse{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[38]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2614,7 +2750,7 @@ func (x *GetTicketStatsResponse) String() string {
 func (*GetTicketStatsResponse) ProtoMessage() {}
 
 func (x *GetTicketStatsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[38]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2627,7 +2763,7 @@ func (x *GetTicketStatsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTicketStatsResponse.ProtoReflect.Descriptor instead.
 func (*GetTicketStatsResponse) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{38}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *GetTicketStatsResponse) GetTotal() int64 {
@@ -2738,7 +2874,7 @@ type ListMyTicketsRequest struct {
 
 func (x *ListMyTicketsRequest) Reset() {
 	*x = ListMyTicketsRequest{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[39]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2750,7 +2886,7 @@ func (x *ListMyTicketsRequest) String() string {
 func (*ListMyTicketsRequest) ProtoMessage() {}
 
 func (x *ListMyTicketsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[39]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2763,7 +2899,7 @@ func (x *ListMyTicketsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListMyTicketsRequest.ProtoReflect.Descriptor instead.
 func (*ListMyTicketsRequest) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{39}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *ListMyTicketsRequest) GetPage() int64 {
@@ -2819,7 +2955,7 @@ type ListTicketsRequest struct {
 
 func (x *ListTicketsRequest) Reset() {
 	*x = ListTicketsRequest{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[40]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2831,7 +2967,7 @@ func (x *ListTicketsRequest) String() string {
 func (*ListTicketsRequest) ProtoMessage() {}
 
 func (x *ListTicketsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[40]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2844,7 +2980,7 @@ func (x *ListTicketsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTicketsRequest.ProtoReflect.Descriptor instead.
 func (*ListTicketsRequest) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{40}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *ListTicketsRequest) GetPage() int64 {
@@ -2916,7 +3052,7 @@ type ListTicketsResponse struct {
 
 func (x *ListTicketsResponse) Reset() {
 	*x = ListTicketsResponse{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[41]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2928,7 +3064,7 @@ func (x *ListTicketsResponse) String() string {
 func (*ListTicketsResponse) ProtoMessage() {}
 
 func (x *ListTicketsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[41]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2941,7 +3077,7 @@ func (x *ListTicketsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTicketsResponse.ProtoReflect.Descriptor instead.
 func (*ListTicketsResponse) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{41}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *ListTicketsResponse) GetItems() []*Ticket {
@@ -2979,7 +3115,7 @@ type Comment struct {
 
 func (x *Comment) Reset() {
 	*x = Comment{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[42]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2991,7 +3127,7 @@ func (x *Comment) String() string {
 func (*Comment) ProtoMessage() {}
 
 func (x *Comment) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[42]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3004,7 +3140,7 @@ func (x *Comment) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Comment.ProtoReflect.Descriptor instead.
 func (*Comment) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{42}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *Comment) GetId() string {
@@ -3060,7 +3196,7 @@ type ListTicketCommentsRequest struct {
 
 func (x *ListTicketCommentsRequest) Reset() {
 	*x = ListTicketCommentsRequest{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[43]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3072,7 +3208,7 @@ func (x *ListTicketCommentsRequest) String() string {
 func (*ListTicketCommentsRequest) ProtoMessage() {}
 
 func (x *ListTicketCommentsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[43]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3085,7 +3221,7 @@ func (x *ListTicketCommentsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTicketCommentsRequest.ProtoReflect.Descriptor instead.
 func (*ListTicketCommentsRequest) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{43}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *ListTicketCommentsRequest) GetId() string {
@@ -3106,7 +3242,7 @@ type ListTicketCommentsResponse struct {
 
 func (x *ListTicketCommentsResponse) Reset() {
 	*x = ListTicketCommentsResponse{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[44]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3118,7 +3254,7 @@ func (x *ListTicketCommentsResponse) String() string {
 func (*ListTicketCommentsResponse) ProtoMessage() {}
 
 func (x *ListTicketCommentsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[44]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3131,7 +3267,7 @@ func (x *ListTicketCommentsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTicketCommentsResponse.ProtoReflect.Descriptor instead.
 func (*ListTicketCommentsResponse) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{44}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *ListTicketCommentsResponse) GetItems() []*Comment {
@@ -3156,7 +3292,7 @@ type AddTicketCommentRequest struct {
 
 func (x *AddTicketCommentRequest) Reset() {
 	*x = AddTicketCommentRequest{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[45]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3168,7 +3304,7 @@ func (x *AddTicketCommentRequest) String() string {
 func (*AddTicketCommentRequest) ProtoMessage() {}
 
 func (x *AddTicketCommentRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[45]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3181,7 +3317,7 @@ func (x *AddTicketCommentRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AddTicketCommentRequest.ProtoReflect.Descriptor instead.
 func (*AddTicketCommentRequest) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{45}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *AddTicketCommentRequest) GetId() string {
@@ -3216,7 +3352,7 @@ type AddTicketCommentResponse struct {
 
 func (x *AddTicketCommentResponse) Reset() {
 	*x = AddTicketCommentResponse{}
-	mi := &file_ticket_v1_ticket_proto_msgTypes[46]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3228,7 +3364,7 @@ func (x *AddTicketCommentResponse) String() string {
 func (*AddTicketCommentResponse) ProtoMessage() {}
 
 func (x *AddTicketCommentResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ticket_v1_ticket_proto_msgTypes[46]
+	mi := &file_ticket_v1_ticket_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3241,7 +3377,7 @@ func (x *AddTicketCommentResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AddTicketCommentResponse.ProtoReflect.Descriptor instead.
 func (*AddTicketCommentResponse) Descriptor() ([]byte, []int) {
-	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{46}
+	return file_ticket_v1_ticket_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *AddTicketCommentResponse) GetComment() *Comment {
@@ -3269,16 +3405,36 @@ const file_ticket_v1_ticket_proto_rawDesc = "" +
 	"\n" +
 	"\b_min_lenB\n" +
 	"\n" +
-	"\b_max_len\"\xe0\x02\n" +
+	"\b_max_len\"\xe2\x06\n" +
 	"\tFormField\x127\n" +
 	"\x04code\x18\x01 \x01(\tB#\xbaH r\x1e2\x1c^[a-zA-Z][a-zA-Z0-9_]{0,31}$R\x04code\x12\x1d\n" +
-	"\x04name\x18\x02 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@R\x04name\x12U\n" +
-	"\x04type\x18\x03 \x01(\tBA\xbaH>r<R\x06stringR\x04textR\x03intR\x05floatR\x04boolR\x04enumR\bdatetimeR\x04userR\x04deptR\x04type\x12\x1a\n" +
+	"\x04name\x18\x02 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@R\x04name\x12[\n" +
+	"\x04type\x18\x03 \x01(\tBG\xbaHDrBR\x06stringR\x04textR\x03intR\x05floatR\x04boolR\x04enumR\bdatetimeR\x04dateR\x04userR\x04deptR\x04type\x12\x1a\n" +
 	"\brequired\x18\x04 \x01(\bR\brequired\x123\n" +
 	"\venum_values\x18\x05 \x03(\tB\x12\xbaH\x0f\x92\x01\f\x102\x18\x01\"\x06r\x04\x10\x01\x18@R\n" +
 	"enumValues\x12'\n" +
 	"\x04rule\x18\x06 \x01(\v2\x13.ticket.v1.FormRuleR\x04rule\x12*\n" +
-	"\vdescription\x18\a \x01(\tB\b\xbaH\x05r\x03\x18\xff\x01R\vdescription\"\x97\x01\n" +
+	"\vdescription\x18\a \x01(\tB\b\xbaH\x05r\x03\x18\xff\x01R\vdescription\x12U\n" +
+	"\venum_labels\x18\b \x03(\v2$.ticket.v1.FormField.EnumLabelsEntryB\x0e\xbaH\v\x9a\x01\b\x102*\x04r\x02\x18@R\n" +
+	"enumLabels\x12\x1a\n" +
+	"\bmultiple\x18\t \x01(\bR\bmultiple\x12;\n" +
+	"\rdefault_value\x18\n" +
+	" \x01(\v2\x16.google.protobuf.ValueR\fdefaultValue\x12)\n" +
+	"\vplaceholder\x18\v \x01(\tB\a\xbaH\x04r\x02\x18@R\vplaceholder\x12\x1d\n" +
+	"\x05group\x18\f \x01(\tB\a\xbaH\x04r\x02\x18 R\x05group\x122\n" +
+	"\x06format\x18\r \x01(\tB\x1a\xbaH\x17r\x15R\x00R\x05emailR\x05phoneR\x03urlR\x06format\x12\x1b\n" +
+	"\x04unit\x18\x0e \x01(\tB\a\xbaH\x04r\x02\x18\x10R\x04unit\x12,\n" +
+	"\tprecision\x18\x0f \x01(\x05B\t\xbaH\x06\x1a\x04\x18\x06(\x00H\x00R\tprecision\x88\x01\x01\x124\n" +
+	"\tshow_when\x18\x10 \x01(\v2\x17.ticket.v1.FormShowWhenR\bshowWhen\x1a=\n" +
+	"\x0fEnumLabelsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\f\n" +
+	"\n" +
+	"_precision\"s\n" +
+	"\fFormShowWhen\x129\n" +
+	"\x05field\x18\x01 \x01(\tB#\xbaH r\x1e2\x1c^[a-zA-Z][a-zA-Z0-9_]{0,31}$R\x05field\x12(\n" +
+	"\x06values\x18\x02 \x03(\tB\x10\xbaH\r\x92\x01\n" +
+	"\b\x01\x10\x14\"\x04r\x02\x18@R\x06values\"\x97\x01\n" +
 	"\bCategory\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12 \n" +
@@ -3571,143 +3727,149 @@ func file_ticket_v1_ticket_proto_rawDescGZIP() []byte {
 	return file_ticket_v1_ticket_proto_rawDescData
 }
 
-var file_ticket_v1_ticket_proto_msgTypes = make([]protoimpl.MessageInfo, 50)
+var file_ticket_v1_ticket_proto_msgTypes = make([]protoimpl.MessageInfo, 52)
 var file_ticket_v1_ticket_proto_goTypes = []any{
 	(*FormRule)(nil),                   // 0: ticket.v1.FormRule
 	(*FormField)(nil),                  // 1: ticket.v1.FormField
-	(*Category)(nil),                   // 2: ticket.v1.Category
-	(*SlaDuration)(nil),                // 3: ticket.v1.SlaDuration
-	(*SlaRule)(nil),                    // 4: ticket.v1.SlaRule
-	(*Template)(nil),                   // 5: ticket.v1.Template
-	(*ListCatalogRequest)(nil),         // 6: ticket.v1.ListCatalogRequest
-	(*ListManagedCatalogRequest)(nil),  // 7: ticket.v1.ListManagedCatalogRequest
-	(*ListCatalogResponse)(nil),        // 8: ticket.v1.ListCatalogResponse
-	(*CreateCategoryRequest)(nil),      // 9: ticket.v1.CreateCategoryRequest
-	(*CreateCategoryResponse)(nil),     // 10: ticket.v1.CreateCategoryResponse
-	(*UpdateCategoryRequest)(nil),      // 11: ticket.v1.UpdateCategoryRequest
-	(*UpdateCategoryResponse)(nil),     // 12: ticket.v1.UpdateCategoryResponse
-	(*DeleteCategoryRequest)(nil),      // 13: ticket.v1.DeleteCategoryRequest
-	(*DeleteCategoryResponse)(nil),     // 14: ticket.v1.DeleteCategoryResponse
-	(*TemplateSpec)(nil),               // 15: ticket.v1.TemplateSpec
-	(*CreateTemplateRequest)(nil),      // 16: ticket.v1.CreateTemplateRequest
-	(*CreateTemplateResponse)(nil),     // 17: ticket.v1.CreateTemplateResponse
-	(*UpdateTemplateRequest)(nil),      // 18: ticket.v1.UpdateTemplateRequest
-	(*UpdateTemplateResponse)(nil),     // 19: ticket.v1.UpdateTemplateResponse
-	(*DeleteTemplateRequest)(nil),      // 20: ticket.v1.DeleteTemplateRequest
-	(*DeleteTemplateResponse)(nil),     // 21: ticket.v1.DeleteTemplateResponse
-	(*GetTemplateRequest)(nil),         // 22: ticket.v1.GetTemplateRequest
-	(*GetTemplateResponse)(nil),        // 23: ticket.v1.GetTemplateResponse
-	(*Ticket)(nil),                     // 24: ticket.v1.Ticket
-	(*TicketResource)(nil),             // 25: ticket.v1.TicketResource
-	(*CreateTicketRequest)(nil),        // 26: ticket.v1.CreateTicketRequest
-	(*CreateTicketResponse)(nil),       // 27: ticket.v1.CreateTicketResponse
-	(*GetTicketRequest)(nil),           // 28: ticket.v1.GetTicketRequest
-	(*TicketFile)(nil),                 // 29: ticket.v1.TicketFile
-	(*GetTicketResponse)(nil),          // 30: ticket.v1.GetTicketResponse
-	(*UpdateTicketFormRequest)(nil),    // 31: ticket.v1.UpdateTicketFormRequest
-	(*UpdateTicketFormResponse)(nil),   // 32: ticket.v1.UpdateTicketFormResponse
-	(*RateTicketRequest)(nil),          // 33: ticket.v1.RateTicketRequest
-	(*RateTicketResponse)(nil),         // 34: ticket.v1.RateTicketResponse
-	(*GetTicketStatsRequest)(nil),      // 35: ticket.v1.GetTicketStatsRequest
-	(*TicketCount)(nil),                // 36: ticket.v1.TicketCount
-	(*TicketTrendPoint)(nil),           // 37: ticket.v1.TicketTrendPoint
-	(*GetTicketStatsResponse)(nil),     // 38: ticket.v1.GetTicketStatsResponse
-	(*ListMyTicketsRequest)(nil),       // 39: ticket.v1.ListMyTicketsRequest
-	(*ListTicketsRequest)(nil),         // 40: ticket.v1.ListTicketsRequest
-	(*ListTicketsResponse)(nil),        // 41: ticket.v1.ListTicketsResponse
-	(*Comment)(nil),                    // 42: ticket.v1.Comment
-	(*ListTicketCommentsRequest)(nil),  // 43: ticket.v1.ListTicketCommentsRequest
-	(*ListTicketCommentsResponse)(nil), // 44: ticket.v1.ListTicketCommentsResponse
-	(*AddTicketCommentRequest)(nil),    // 45: ticket.v1.AddTicketCommentRequest
-	(*AddTicketCommentResponse)(nil),   // 46: ticket.v1.AddTicketCommentResponse
-	nil,                                // 47: ticket.v1.Template.LabelsEntry
-	nil,                                // 48: ticket.v1.GetTicketResponse.LabelsEntry
-	nil,                                // 49: ticket.v1.GetTicketResponse.FieldPermissionsEntry
-	(*timestamppb.Timestamp)(nil),      // 50: google.protobuf.Timestamp
-	(*structpb.Struct)(nil),            // 51: google.protobuf.Struct
+	(*FormShowWhen)(nil),               // 2: ticket.v1.FormShowWhen
+	(*Category)(nil),                   // 3: ticket.v1.Category
+	(*SlaDuration)(nil),                // 4: ticket.v1.SlaDuration
+	(*SlaRule)(nil),                    // 5: ticket.v1.SlaRule
+	(*Template)(nil),                   // 6: ticket.v1.Template
+	(*ListCatalogRequest)(nil),         // 7: ticket.v1.ListCatalogRequest
+	(*ListManagedCatalogRequest)(nil),  // 8: ticket.v1.ListManagedCatalogRequest
+	(*ListCatalogResponse)(nil),        // 9: ticket.v1.ListCatalogResponse
+	(*CreateCategoryRequest)(nil),      // 10: ticket.v1.CreateCategoryRequest
+	(*CreateCategoryResponse)(nil),     // 11: ticket.v1.CreateCategoryResponse
+	(*UpdateCategoryRequest)(nil),      // 12: ticket.v1.UpdateCategoryRequest
+	(*UpdateCategoryResponse)(nil),     // 13: ticket.v1.UpdateCategoryResponse
+	(*DeleteCategoryRequest)(nil),      // 14: ticket.v1.DeleteCategoryRequest
+	(*DeleteCategoryResponse)(nil),     // 15: ticket.v1.DeleteCategoryResponse
+	(*TemplateSpec)(nil),               // 16: ticket.v1.TemplateSpec
+	(*CreateTemplateRequest)(nil),      // 17: ticket.v1.CreateTemplateRequest
+	(*CreateTemplateResponse)(nil),     // 18: ticket.v1.CreateTemplateResponse
+	(*UpdateTemplateRequest)(nil),      // 19: ticket.v1.UpdateTemplateRequest
+	(*UpdateTemplateResponse)(nil),     // 20: ticket.v1.UpdateTemplateResponse
+	(*DeleteTemplateRequest)(nil),      // 21: ticket.v1.DeleteTemplateRequest
+	(*DeleteTemplateResponse)(nil),     // 22: ticket.v1.DeleteTemplateResponse
+	(*GetTemplateRequest)(nil),         // 23: ticket.v1.GetTemplateRequest
+	(*GetTemplateResponse)(nil),        // 24: ticket.v1.GetTemplateResponse
+	(*Ticket)(nil),                     // 25: ticket.v1.Ticket
+	(*TicketResource)(nil),             // 26: ticket.v1.TicketResource
+	(*CreateTicketRequest)(nil),        // 27: ticket.v1.CreateTicketRequest
+	(*CreateTicketResponse)(nil),       // 28: ticket.v1.CreateTicketResponse
+	(*GetTicketRequest)(nil),           // 29: ticket.v1.GetTicketRequest
+	(*TicketFile)(nil),                 // 30: ticket.v1.TicketFile
+	(*GetTicketResponse)(nil),          // 31: ticket.v1.GetTicketResponse
+	(*UpdateTicketFormRequest)(nil),    // 32: ticket.v1.UpdateTicketFormRequest
+	(*UpdateTicketFormResponse)(nil),   // 33: ticket.v1.UpdateTicketFormResponse
+	(*RateTicketRequest)(nil),          // 34: ticket.v1.RateTicketRequest
+	(*RateTicketResponse)(nil),         // 35: ticket.v1.RateTicketResponse
+	(*GetTicketStatsRequest)(nil),      // 36: ticket.v1.GetTicketStatsRequest
+	(*TicketCount)(nil),                // 37: ticket.v1.TicketCount
+	(*TicketTrendPoint)(nil),           // 38: ticket.v1.TicketTrendPoint
+	(*GetTicketStatsResponse)(nil),     // 39: ticket.v1.GetTicketStatsResponse
+	(*ListMyTicketsRequest)(nil),       // 40: ticket.v1.ListMyTicketsRequest
+	(*ListTicketsRequest)(nil),         // 41: ticket.v1.ListTicketsRequest
+	(*ListTicketsResponse)(nil),        // 42: ticket.v1.ListTicketsResponse
+	(*Comment)(nil),                    // 43: ticket.v1.Comment
+	(*ListTicketCommentsRequest)(nil),  // 44: ticket.v1.ListTicketCommentsRequest
+	(*ListTicketCommentsResponse)(nil), // 45: ticket.v1.ListTicketCommentsResponse
+	(*AddTicketCommentRequest)(nil),    // 46: ticket.v1.AddTicketCommentRequest
+	(*AddTicketCommentResponse)(nil),   // 47: ticket.v1.AddTicketCommentResponse
+	nil,                                // 48: ticket.v1.FormField.EnumLabelsEntry
+	nil,                                // 49: ticket.v1.Template.LabelsEntry
+	nil,                                // 50: ticket.v1.GetTicketResponse.LabelsEntry
+	nil,                                // 51: ticket.v1.GetTicketResponse.FieldPermissionsEntry
+	(*structpb.Value)(nil),             // 52: google.protobuf.Value
+	(*timestamppb.Timestamp)(nil),      // 53: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),            // 54: google.protobuf.Struct
 }
 var file_ticket_v1_ticket_proto_depIdxs = []int32{
 	0,  // 0: ticket.v1.FormField.rule:type_name -> ticket.v1.FormRule
-	5,  // 1: ticket.v1.Category.templates:type_name -> ticket.v1.Template
-	3,  // 2: ticket.v1.SlaRule.response:type_name -> ticket.v1.SlaDuration
-	3,  // 3: ticket.v1.SlaRule.resolve:type_name -> ticket.v1.SlaDuration
-	1,  // 4: ticket.v1.Template.form:type_name -> ticket.v1.FormField
-	50, // 5: ticket.v1.Template.update_time:type_name -> google.protobuf.Timestamp
-	4,  // 6: ticket.v1.Template.sla:type_name -> ticket.v1.SlaRule
-	47, // 7: ticket.v1.Template.labels:type_name -> ticket.v1.Template.LabelsEntry
-	2,  // 8: ticket.v1.ListCatalogResponse.items:type_name -> ticket.v1.Category
-	2,  // 9: ticket.v1.CreateCategoryResponse.category:type_name -> ticket.v1.Category
-	1,  // 10: ticket.v1.TemplateSpec.form:type_name -> ticket.v1.FormField
-	4,  // 11: ticket.v1.TemplateSpec.sla:type_name -> ticket.v1.SlaRule
-	15, // 12: ticket.v1.CreateTemplateRequest.spec:type_name -> ticket.v1.TemplateSpec
-	5,  // 13: ticket.v1.CreateTemplateResponse.template:type_name -> ticket.v1.Template
-	15, // 14: ticket.v1.UpdateTemplateRequest.spec:type_name -> ticket.v1.TemplateSpec
-	5,  // 15: ticket.v1.GetTemplateResponse.template:type_name -> ticket.v1.Template
-	50, // 16: ticket.v1.Ticket.create_time:type_name -> google.protobuf.Timestamp
-	50, // 17: ticket.v1.Ticket.end_time:type_name -> google.protobuf.Timestamp
-	1,  // 18: ticket.v1.Ticket.form:type_name -> ticket.v1.FormField
-	51, // 19: ticket.v1.Ticket.data:type_name -> google.protobuf.Struct
-	50, // 20: ticket.v1.Ticket.response_due:type_name -> google.protobuf.Timestamp
-	50, // 21: ticket.v1.Ticket.resolve_due:type_name -> google.protobuf.Timestamp
-	50, // 22: ticket.v1.Ticket.response_time:type_name -> google.protobuf.Timestamp
-	50, // 23: ticket.v1.Ticket.rating_time:type_name -> google.protobuf.Timestamp
-	51, // 24: ticket.v1.CreateTicketRequest.data:type_name -> google.protobuf.Struct
-	24, // 25: ticket.v1.CreateTicketResponse.ticket:type_name -> ticket.v1.Ticket
-	24, // 26: ticket.v1.GetTicketResponse.ticket:type_name -> ticket.v1.Ticket
-	29, // 27: ticket.v1.GetTicketResponse.files:type_name -> ticket.v1.TicketFile
-	48, // 28: ticket.v1.GetTicketResponse.labels:type_name -> ticket.v1.GetTicketResponse.LabelsEntry
-	25, // 29: ticket.v1.GetTicketResponse.resources:type_name -> ticket.v1.TicketResource
-	49, // 30: ticket.v1.GetTicketResponse.field_permissions:type_name -> ticket.v1.GetTicketResponse.FieldPermissionsEntry
-	51, // 31: ticket.v1.UpdateTicketFormRequest.data:type_name -> google.protobuf.Struct
-	36, // 32: ticket.v1.GetTicketStatsResponse.by_status:type_name -> ticket.v1.TicketCount
-	36, // 33: ticket.v1.GetTicketStatsResponse.by_priority:type_name -> ticket.v1.TicketCount
-	36, // 34: ticket.v1.GetTicketStatsResponse.by_template:type_name -> ticket.v1.TicketCount
-	37, // 35: ticket.v1.GetTicketStatsResponse.trend:type_name -> ticket.v1.TicketTrendPoint
-	24, // 36: ticket.v1.ListTicketsResponse.items:type_name -> ticket.v1.Ticket
-	50, // 37: ticket.v1.Comment.create_time:type_name -> google.protobuf.Timestamp
-	42, // 38: ticket.v1.ListTicketCommentsResponse.items:type_name -> ticket.v1.Comment
-	42, // 39: ticket.v1.AddTicketCommentResponse.comment:type_name -> ticket.v1.Comment
-	6,  // 40: ticket.v1.TicketCatalogService.ListCatalog:input_type -> ticket.v1.ListCatalogRequest
-	7,  // 41: ticket.v1.TicketCatalogService.ListManagedCatalog:input_type -> ticket.v1.ListManagedCatalogRequest
-	9,  // 42: ticket.v1.TicketCatalogService.CreateCategory:input_type -> ticket.v1.CreateCategoryRequest
-	11, // 43: ticket.v1.TicketCatalogService.UpdateCategory:input_type -> ticket.v1.UpdateCategoryRequest
-	13, // 44: ticket.v1.TicketCatalogService.DeleteCategory:input_type -> ticket.v1.DeleteCategoryRequest
-	16, // 45: ticket.v1.TicketCatalogService.CreateTemplate:input_type -> ticket.v1.CreateTemplateRequest
-	18, // 46: ticket.v1.TicketCatalogService.UpdateTemplate:input_type -> ticket.v1.UpdateTemplateRequest
-	20, // 47: ticket.v1.TicketCatalogService.DeleteTemplate:input_type -> ticket.v1.DeleteTemplateRequest
-	22, // 48: ticket.v1.TicketCatalogService.GetTemplate:input_type -> ticket.v1.GetTemplateRequest
-	26, // 49: ticket.v1.TicketService.CreateTicket:input_type -> ticket.v1.CreateTicketRequest
-	28, // 50: ticket.v1.TicketService.GetTicket:input_type -> ticket.v1.GetTicketRequest
-	39, // 51: ticket.v1.TicketService.ListMyTickets:input_type -> ticket.v1.ListMyTicketsRequest
-	40, // 52: ticket.v1.TicketService.ListTickets:input_type -> ticket.v1.ListTicketsRequest
-	43, // 53: ticket.v1.TicketService.ListTicketComments:input_type -> ticket.v1.ListTicketCommentsRequest
-	45, // 54: ticket.v1.TicketService.AddTicketComment:input_type -> ticket.v1.AddTicketCommentRequest
-	31, // 55: ticket.v1.TicketService.UpdateTicketForm:input_type -> ticket.v1.UpdateTicketFormRequest
-	33, // 56: ticket.v1.TicketService.RateTicket:input_type -> ticket.v1.RateTicketRequest
-	35, // 57: ticket.v1.TicketService.GetTicketStats:input_type -> ticket.v1.GetTicketStatsRequest
-	8,  // 58: ticket.v1.TicketCatalogService.ListCatalog:output_type -> ticket.v1.ListCatalogResponse
-	8,  // 59: ticket.v1.TicketCatalogService.ListManagedCatalog:output_type -> ticket.v1.ListCatalogResponse
-	10, // 60: ticket.v1.TicketCatalogService.CreateCategory:output_type -> ticket.v1.CreateCategoryResponse
-	12, // 61: ticket.v1.TicketCatalogService.UpdateCategory:output_type -> ticket.v1.UpdateCategoryResponse
-	14, // 62: ticket.v1.TicketCatalogService.DeleteCategory:output_type -> ticket.v1.DeleteCategoryResponse
-	17, // 63: ticket.v1.TicketCatalogService.CreateTemplate:output_type -> ticket.v1.CreateTemplateResponse
-	19, // 64: ticket.v1.TicketCatalogService.UpdateTemplate:output_type -> ticket.v1.UpdateTemplateResponse
-	21, // 65: ticket.v1.TicketCatalogService.DeleteTemplate:output_type -> ticket.v1.DeleteTemplateResponse
-	23, // 66: ticket.v1.TicketCatalogService.GetTemplate:output_type -> ticket.v1.GetTemplateResponse
-	27, // 67: ticket.v1.TicketService.CreateTicket:output_type -> ticket.v1.CreateTicketResponse
-	30, // 68: ticket.v1.TicketService.GetTicket:output_type -> ticket.v1.GetTicketResponse
-	41, // 69: ticket.v1.TicketService.ListMyTickets:output_type -> ticket.v1.ListTicketsResponse
-	41, // 70: ticket.v1.TicketService.ListTickets:output_type -> ticket.v1.ListTicketsResponse
-	44, // 71: ticket.v1.TicketService.ListTicketComments:output_type -> ticket.v1.ListTicketCommentsResponse
-	46, // 72: ticket.v1.TicketService.AddTicketComment:output_type -> ticket.v1.AddTicketCommentResponse
-	32, // 73: ticket.v1.TicketService.UpdateTicketForm:output_type -> ticket.v1.UpdateTicketFormResponse
-	34, // 74: ticket.v1.TicketService.RateTicket:output_type -> ticket.v1.RateTicketResponse
-	38, // 75: ticket.v1.TicketService.GetTicketStats:output_type -> ticket.v1.GetTicketStatsResponse
-	58, // [58:76] is the sub-list for method output_type
-	40, // [40:58] is the sub-list for method input_type
-	40, // [40:40] is the sub-list for extension type_name
-	40, // [40:40] is the sub-list for extension extendee
-	0,  // [0:40] is the sub-list for field type_name
+	48, // 1: ticket.v1.FormField.enum_labels:type_name -> ticket.v1.FormField.EnumLabelsEntry
+	52, // 2: ticket.v1.FormField.default_value:type_name -> google.protobuf.Value
+	2,  // 3: ticket.v1.FormField.show_when:type_name -> ticket.v1.FormShowWhen
+	6,  // 4: ticket.v1.Category.templates:type_name -> ticket.v1.Template
+	4,  // 5: ticket.v1.SlaRule.response:type_name -> ticket.v1.SlaDuration
+	4,  // 6: ticket.v1.SlaRule.resolve:type_name -> ticket.v1.SlaDuration
+	1,  // 7: ticket.v1.Template.form:type_name -> ticket.v1.FormField
+	53, // 8: ticket.v1.Template.update_time:type_name -> google.protobuf.Timestamp
+	5,  // 9: ticket.v1.Template.sla:type_name -> ticket.v1.SlaRule
+	49, // 10: ticket.v1.Template.labels:type_name -> ticket.v1.Template.LabelsEntry
+	3,  // 11: ticket.v1.ListCatalogResponse.items:type_name -> ticket.v1.Category
+	3,  // 12: ticket.v1.CreateCategoryResponse.category:type_name -> ticket.v1.Category
+	1,  // 13: ticket.v1.TemplateSpec.form:type_name -> ticket.v1.FormField
+	5,  // 14: ticket.v1.TemplateSpec.sla:type_name -> ticket.v1.SlaRule
+	16, // 15: ticket.v1.CreateTemplateRequest.spec:type_name -> ticket.v1.TemplateSpec
+	6,  // 16: ticket.v1.CreateTemplateResponse.template:type_name -> ticket.v1.Template
+	16, // 17: ticket.v1.UpdateTemplateRequest.spec:type_name -> ticket.v1.TemplateSpec
+	6,  // 18: ticket.v1.GetTemplateResponse.template:type_name -> ticket.v1.Template
+	53, // 19: ticket.v1.Ticket.create_time:type_name -> google.protobuf.Timestamp
+	53, // 20: ticket.v1.Ticket.end_time:type_name -> google.protobuf.Timestamp
+	1,  // 21: ticket.v1.Ticket.form:type_name -> ticket.v1.FormField
+	54, // 22: ticket.v1.Ticket.data:type_name -> google.protobuf.Struct
+	53, // 23: ticket.v1.Ticket.response_due:type_name -> google.protobuf.Timestamp
+	53, // 24: ticket.v1.Ticket.resolve_due:type_name -> google.protobuf.Timestamp
+	53, // 25: ticket.v1.Ticket.response_time:type_name -> google.protobuf.Timestamp
+	53, // 26: ticket.v1.Ticket.rating_time:type_name -> google.protobuf.Timestamp
+	54, // 27: ticket.v1.CreateTicketRequest.data:type_name -> google.protobuf.Struct
+	25, // 28: ticket.v1.CreateTicketResponse.ticket:type_name -> ticket.v1.Ticket
+	25, // 29: ticket.v1.GetTicketResponse.ticket:type_name -> ticket.v1.Ticket
+	30, // 30: ticket.v1.GetTicketResponse.files:type_name -> ticket.v1.TicketFile
+	50, // 31: ticket.v1.GetTicketResponse.labels:type_name -> ticket.v1.GetTicketResponse.LabelsEntry
+	26, // 32: ticket.v1.GetTicketResponse.resources:type_name -> ticket.v1.TicketResource
+	51, // 33: ticket.v1.GetTicketResponse.field_permissions:type_name -> ticket.v1.GetTicketResponse.FieldPermissionsEntry
+	54, // 34: ticket.v1.UpdateTicketFormRequest.data:type_name -> google.protobuf.Struct
+	37, // 35: ticket.v1.GetTicketStatsResponse.by_status:type_name -> ticket.v1.TicketCount
+	37, // 36: ticket.v1.GetTicketStatsResponse.by_priority:type_name -> ticket.v1.TicketCount
+	37, // 37: ticket.v1.GetTicketStatsResponse.by_template:type_name -> ticket.v1.TicketCount
+	38, // 38: ticket.v1.GetTicketStatsResponse.trend:type_name -> ticket.v1.TicketTrendPoint
+	25, // 39: ticket.v1.ListTicketsResponse.items:type_name -> ticket.v1.Ticket
+	53, // 40: ticket.v1.Comment.create_time:type_name -> google.protobuf.Timestamp
+	43, // 41: ticket.v1.ListTicketCommentsResponse.items:type_name -> ticket.v1.Comment
+	43, // 42: ticket.v1.AddTicketCommentResponse.comment:type_name -> ticket.v1.Comment
+	7,  // 43: ticket.v1.TicketCatalogService.ListCatalog:input_type -> ticket.v1.ListCatalogRequest
+	8,  // 44: ticket.v1.TicketCatalogService.ListManagedCatalog:input_type -> ticket.v1.ListManagedCatalogRequest
+	10, // 45: ticket.v1.TicketCatalogService.CreateCategory:input_type -> ticket.v1.CreateCategoryRequest
+	12, // 46: ticket.v1.TicketCatalogService.UpdateCategory:input_type -> ticket.v1.UpdateCategoryRequest
+	14, // 47: ticket.v1.TicketCatalogService.DeleteCategory:input_type -> ticket.v1.DeleteCategoryRequest
+	17, // 48: ticket.v1.TicketCatalogService.CreateTemplate:input_type -> ticket.v1.CreateTemplateRequest
+	19, // 49: ticket.v1.TicketCatalogService.UpdateTemplate:input_type -> ticket.v1.UpdateTemplateRequest
+	21, // 50: ticket.v1.TicketCatalogService.DeleteTemplate:input_type -> ticket.v1.DeleteTemplateRequest
+	23, // 51: ticket.v1.TicketCatalogService.GetTemplate:input_type -> ticket.v1.GetTemplateRequest
+	27, // 52: ticket.v1.TicketService.CreateTicket:input_type -> ticket.v1.CreateTicketRequest
+	29, // 53: ticket.v1.TicketService.GetTicket:input_type -> ticket.v1.GetTicketRequest
+	40, // 54: ticket.v1.TicketService.ListMyTickets:input_type -> ticket.v1.ListMyTicketsRequest
+	41, // 55: ticket.v1.TicketService.ListTickets:input_type -> ticket.v1.ListTicketsRequest
+	44, // 56: ticket.v1.TicketService.ListTicketComments:input_type -> ticket.v1.ListTicketCommentsRequest
+	46, // 57: ticket.v1.TicketService.AddTicketComment:input_type -> ticket.v1.AddTicketCommentRequest
+	32, // 58: ticket.v1.TicketService.UpdateTicketForm:input_type -> ticket.v1.UpdateTicketFormRequest
+	34, // 59: ticket.v1.TicketService.RateTicket:input_type -> ticket.v1.RateTicketRequest
+	36, // 60: ticket.v1.TicketService.GetTicketStats:input_type -> ticket.v1.GetTicketStatsRequest
+	9,  // 61: ticket.v1.TicketCatalogService.ListCatalog:output_type -> ticket.v1.ListCatalogResponse
+	9,  // 62: ticket.v1.TicketCatalogService.ListManagedCatalog:output_type -> ticket.v1.ListCatalogResponse
+	11, // 63: ticket.v1.TicketCatalogService.CreateCategory:output_type -> ticket.v1.CreateCategoryResponse
+	13, // 64: ticket.v1.TicketCatalogService.UpdateCategory:output_type -> ticket.v1.UpdateCategoryResponse
+	15, // 65: ticket.v1.TicketCatalogService.DeleteCategory:output_type -> ticket.v1.DeleteCategoryResponse
+	18, // 66: ticket.v1.TicketCatalogService.CreateTemplate:output_type -> ticket.v1.CreateTemplateResponse
+	20, // 67: ticket.v1.TicketCatalogService.UpdateTemplate:output_type -> ticket.v1.UpdateTemplateResponse
+	22, // 68: ticket.v1.TicketCatalogService.DeleteTemplate:output_type -> ticket.v1.DeleteTemplateResponse
+	24, // 69: ticket.v1.TicketCatalogService.GetTemplate:output_type -> ticket.v1.GetTemplateResponse
+	28, // 70: ticket.v1.TicketService.CreateTicket:output_type -> ticket.v1.CreateTicketResponse
+	31, // 71: ticket.v1.TicketService.GetTicket:output_type -> ticket.v1.GetTicketResponse
+	42, // 72: ticket.v1.TicketService.ListMyTickets:output_type -> ticket.v1.ListTicketsResponse
+	42, // 73: ticket.v1.TicketService.ListTickets:output_type -> ticket.v1.ListTicketsResponse
+	45, // 74: ticket.v1.TicketService.ListTicketComments:output_type -> ticket.v1.ListTicketCommentsResponse
+	47, // 75: ticket.v1.TicketService.AddTicketComment:output_type -> ticket.v1.AddTicketCommentResponse
+	33, // 76: ticket.v1.TicketService.UpdateTicketForm:output_type -> ticket.v1.UpdateTicketFormResponse
+	35, // 77: ticket.v1.TicketService.RateTicket:output_type -> ticket.v1.RateTicketResponse
+	39, // 78: ticket.v1.TicketService.GetTicketStats:output_type -> ticket.v1.GetTicketStatsResponse
+	61, // [61:79] is the sub-list for method output_type
+	43, // [43:61] is the sub-list for method input_type
+	43, // [43:43] is the sub-list for extension type_name
+	43, // [43:43] is the sub-list for extension extendee
+	0,  // [0:43] is the sub-list for field type_name
 }
 
 func init() { file_ticket_v1_ticket_proto_init() }
@@ -3716,18 +3878,19 @@ func file_ticket_v1_ticket_proto_init() {
 		return
 	}
 	file_ticket_v1_ticket_proto_msgTypes[0].OneofWrappers = []any{}
-	file_ticket_v1_ticket_proto_msgTypes[26].OneofWrappers = []any{}
-	file_ticket_v1_ticket_proto_msgTypes[35].OneofWrappers = []any{}
-	file_ticket_v1_ticket_proto_msgTypes[39].OneofWrappers = []any{}
+	file_ticket_v1_ticket_proto_msgTypes[1].OneofWrappers = []any{}
+	file_ticket_v1_ticket_proto_msgTypes[27].OneofWrappers = []any{}
+	file_ticket_v1_ticket_proto_msgTypes[36].OneofWrappers = []any{}
 	file_ticket_v1_ticket_proto_msgTypes[40].OneofWrappers = []any{}
-	file_ticket_v1_ticket_proto_msgTypes[45].OneofWrappers = []any{}
+	file_ticket_v1_ticket_proto_msgTypes[41].OneofWrappers = []any{}
+	file_ticket_v1_ticket_proto_msgTypes[46].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_ticket_v1_ticket_proto_rawDesc), len(file_ticket_v1_ticket_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   50,
+			NumMessages:   52,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

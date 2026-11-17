@@ -3,6 +3,7 @@ package biz
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -101,7 +102,13 @@ func (uc *CatalogUsecase) DeleteCategory(ctx context.Context, id string) error {
 var formTypes = map[string]struct{}{
 	formschema.TypeString: {}, formschema.TypeText: {}, formschema.TypeInt: {}, formschema.TypeFloat: {},
 	formschema.TypeBool: {}, formschema.TypeEnum: {}, formschema.TypeDatetime: {},
-	formschema.TypeUser: {}, formschema.TypeDept: {},
+	formschema.TypeUser: {}, formschema.TypeDept: {}, formschema.TypeDate: {},
+}
+
+// defaultTypes 可以设初始值的字段类型。
+var defaultTypes = map[string]struct{}{
+	formschema.TypeString: {}, formschema.TypeText: {}, formschema.TypeInt: {}, formschema.TypeFloat: {},
+	formschema.TypeBool: {}, formschema.TypeEnum: {},
 }
 
 // validateForm 校验表单字段定义：数量、字段码唯一、类型合法、枚举有可选值、规则自洽。
@@ -111,7 +118,9 @@ func validateForm(form []FormField) error {
 		return detail(ErrTemplateInvalid, fmt.Sprintf("a form may have at most %d fields", maxFormFields))
 	}
 	seen := make(map[string]struct{}, len(form))
-	for _, f := range form {
+	earlier := make(map[string]*FormField, len(form))
+	for i := range form {
+		f := &form[i]
 		bad := func(msg string) error {
 			return detail(ErrTemplateInvalid, fmt.Sprintf("field %q %s", f.Code, msg))
 		}
@@ -141,6 +150,64 @@ func validateForm(form []FormField) error {
 		if r.Pattern != nil && *r.Pattern != "" {
 			if _, err := formschema.CompilePattern(*r.Pattern); err != nil {
 				return bad("has an invalid pattern")
+			}
+		}
+		if err := validateFieldExtras(f, earlier); err != nil {
+			return bad(err.Error())
+		}
+		earlier[f.Code] = f
+	}
+	return nil
+}
+
+// validateFieldExtras 校验字段的扩展配置（展示值、多选、初始值、格式、小数位、显示条件）并归一化
+// 初始值。earlier 是排在它前面的字段。返回的错误只是说明文字，由调用方包成业务错误。
+func validateFieldExtras(f *FormField, earlier map[string]*FormField) error {
+	multi := f.Type == formschema.TypeEnum || f.Type == formschema.TypeUser || f.Type == formschema.TypeDept
+	if f.Multiple && !multi {
+		return fmt.Errorf("cannot be multiple for its type")
+	}
+	for value := range f.EnumLabels {
+		if f.Type != formschema.TypeEnum || !slices.Contains(f.EnumValues, value) {
+			return fmt.Errorf("has a display label for an unknown option")
+		}
+	}
+	if f.Format != "" && (f.Type != formschema.TypeString || !formschema.ValidFormat(f.Format)) {
+		return fmt.Errorf("has an unsupported format")
+	}
+	if f.Precision != nil && (f.Type != formschema.TypeFloat || *f.Precision < 0 || *f.Precision > 6) {
+		return fmt.Errorf("has an invalid precision")
+	}
+	if f.Unit != "" && f.Type != formschema.TypeInt && f.Type != formschema.TypeFloat {
+		return fmt.Errorf("cannot have a unit for its type")
+	}
+	if f.Default != nil {
+		if _, ok := defaultTypes[f.Type]; !ok {
+			return fmt.Errorf("cannot have a default value for its type")
+		}
+		sf := schemaFields([]FormField{*f})
+		sf[0].Required = false
+		out, err := formschema.Validate(sf, map[string]any{f.Code: f.Default}, true)
+		if err != nil {
+			return fmt.Errorf("has an invalid default value")
+		}
+		f.Default = out[f.Code] // 空串 / 空列表归一后不保留
+	}
+	if w := f.ShowWhen; w != nil {
+		ctl := earlier[w.Field]
+		if ctl == nil || ctl.Multiple || (ctl.Type != formschema.TypeEnum && ctl.Type != formschema.TypeBool) {
+			return fmt.Errorf("must depend on an earlier single-choice or yes/no field")
+		}
+		if len(w.Values) == 0 || len(w.Values) > 20 {
+			return fmt.Errorf("needs between 1 and 20 values in its display condition")
+		}
+		for _, v := range w.Values {
+			known := slices.Contains(ctl.EnumValues, v)
+			if ctl.Type == formschema.TypeBool {
+				known = v == "true" || v == "false"
+			}
+			if !known {
+				return fmt.Errorf("has a display condition value its controlling field cannot take")
 			}
 		}
 	}
@@ -203,6 +270,17 @@ func (uc *CatalogUsecase) checkTemplate(ctx context.Context, t *Template) error 
 		// 枚举值与正则同样要去掉 NUL：它们存进 jsonb，带着 \u0000 落库会报内部错误。
 		for j := range f.EnumValues {
 			f.EnumValues[j] = clean(f.EnumValues[j])
+		}
+		f.Placeholder, f.Group, f.Unit = clean(f.Placeholder), clean(f.Group), clean(f.Unit)
+		for value, label := range f.EnumLabels {
+			if label = clean(label); label == "" {
+				delete(f.EnumLabels, value)
+			} else {
+				f.EnumLabels[value] = label
+			}
+		}
+		if s, ok := f.Default.(string); ok {
+			f.Default = clean(s)
 		}
 		if f.Rule.Pattern != nil {
 			p := strings.ReplaceAll(*f.Rule.Pattern, "\x00", "")

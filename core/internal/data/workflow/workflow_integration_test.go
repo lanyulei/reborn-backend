@@ -138,7 +138,7 @@ func newEnv(t *testing.T) *env {
 	listener := &listenerStub{}
 	txs := basedata.NewTxManager(d)
 	rt := biz.NewRuntimeUsecase(defs, instRepo, instRepo, instRepo, dir, usersAdapter{dir}, cfg, biz.NewCalendarUsecase(cfg), txs,
-		biznotify.NewNotificationUsecase(datanotify.NewEventRepo(d), nil), biz.Listeners{"ticket": listener}, nil)
+		biznotify.NewNotificationUsecase(datanotify.NewEventRepo(d), nil), biz.Listeners{"ticket": listener}, nil, nil)
 	return &env{t: t, d: d, defs: defs, rt: rt, listener: listener, cfg: cfg, jobs: NewJobRepo(d), dir: dir}
 }
 
@@ -556,7 +556,7 @@ func TestIntegration_IdempotencyAndPoolUsage(t *testing.T) {
 	}
 	rt := biz.NewRuntimeUsecase(biz.NewDefinitionUsecase(defRepo, defRepo, defRepo, defRepo, cfg, nil), instRepo, instRepo, instRepo, dir,
 		usersAdapter{dir}, cfg, biz.NewCalendarUsecase(cfg), basedata.NewTxManager(small),
-		biznotify.NewNotificationUsecase(datanotify.NewEventRepo(small), nil), nil, nil)
+		biznotify.NewNotificationUsecase(datanotify.NewEventRepo(small), nil), nil, nil, nil)
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	var wg sync.WaitGroup

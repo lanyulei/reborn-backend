@@ -383,6 +383,7 @@ type Execution struct {
 	s       *State
 	dir     Directory
 	proxies Proxies
+	duty    Duty
 	cal     *Calendar
 	now     time.Time
 	steps   int
@@ -405,6 +406,19 @@ func (x *Execution) WithApproveGuard(guard func(ctx context.Context, n *Node) er
 // Proxies 代理设置：给定用户在 at 时刻生效的代理人（用户 → 代理人）；没有设置的不在结果中。
 type Proxies interface {
 	ActiveProxies(ctx context.Context, userIDs []string, at time.Time) (map[string]string, error)
+}
+
+// Duty 值班查询端口（由值班域实现）：值班人规则据此取人。
+type Duty interface {
+	// OnDuty 值班表 scheduleID 在 at 时刻的主、备值班人（用户 ID；替班的取替班人）。值班表
+	// 不存在、已停用或那一刻没有排班返回空，不报错。
+	OnDuty(ctx context.Context, scheduleID string, at time.Time) ([]string, error)
+}
+
+// WithDuty 启用值班人规则；不启用时该规则解析为空。
+func (x *Execution) WithDuty(d Duty) *Execution {
+	x.duty = d
+	return x
 }
 
 // WithProxies 启用代理设置：新产生的待办席位落到代理人头上。
@@ -687,6 +701,12 @@ func (x *Execution) lookup(ctx context.Context, n *Node) ([]string, error) {
 				}
 				got = append(got, leaders...)
 			}
+		case RuleOncall:
+			if x.duty != nil {
+				got, err = x.duty.OnDuty(ctx, r.ScheduleID, x.now)
+			}
+			// 与表单人员同理：值班人里的发起人本人不参与审批，由另一位值班人处理。
+			got = slices.DeleteFunc(got, func(id string) bool { return strings.EqualFold(id, in.Initiator) })
 		}
 		if err != nil {
 			return nil, err

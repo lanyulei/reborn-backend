@@ -181,7 +181,7 @@ func newEnv(t *testing.T) *env {
 	rt := bizworkflow.NewRuntimeUsecase(defs, instRepo, instRepo, instRepo, dir, usersAdapter{dir}, wfCfg,
 		bizworkflow.NewCalendarUsecase(wfCfg), txs,
 		notify, bizworkflow.Listeners{biz.BusinessType: biz.NewStatusSyncer(ticketRepo, ticketRepo)},
-		bizworkflow.Viewers{biz.BusinessType: access})
+		bizworkflow.Viewers{biz.BusinessType: access}, nil)
 	stores, err := datafile.NewStores(c, d)
 	if err != nil {
 		t.Fatalf("NewStores() error = %v", err)
@@ -835,6 +835,92 @@ func TestIntegration_FormPermissionsByTemplate(t *testing.T) {
 	}
 	if _, err := e.rt.Approve(ctx, taskOf(b.InstanceID), uLead, ""); err != nil {
 		t.Fatalf("Approve(plain) error = %v", err)
+	}
+}
+
+// 字段的扩展配置：定义的校验与归一化、显示条件对必填与取值的影响、多选人员的名称回显。
+func TestIntegration_FieldExtras(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.publish("extras_flow", flowGraph)
+	c, err := e.catalog.CreateCategory(ctx, &biz.Category{Name: "扩展"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	form := func() []biz.FormField {
+		return []biz.FormField{
+			{Code: "env", Name: "环境", Type: formschema.TypeEnum, EnumValues: []string{"prod", "test"}, Required: true,
+				EnumLabels: map[string]string{"prod": "生产"}, Default: "test", Group: "基本信息"},
+			{Code: "window", Name: "变更窗口", Type: formschema.TypeString, Required: true,
+				ShowWhen: &biz.ShowWhen{Field: "env", Values: []string{"prod"}}},
+			{Code: "owners", Name: "负责人", Type: formschema.TypeUser, Multiple: true},
+			{Code: "mail", Name: "邮箱", Type: formschema.TypeString, Format: formschema.FormatEmail, Placeholder: "a@b.c"},
+		}
+	}
+	tpl := func(mutate func(f []biz.FormField)) error {
+		f := form()
+		if mutate != nil {
+			mutate(f)
+		}
+		_, err := e.catalog.CreateTemplate(ctx, &biz.Template{
+			CategoryID: c.ID, Name: "扩展-" + time.Now().Format("150405.000000000"), WorkflowKey: "extras_flow", NumberPrefix: "EXT",
+			Status: biz.TemplateEnabled, Form: f,
+		})
+		return err
+	}
+	for name, mutate := range map[string]func(f []biz.FormField){
+		"label for unknown option": func(f []biz.FormField) { f[0].EnumLabels = map[string]string{"moon": "月球"} },
+		"default not an option":    func(f []biz.FormField) { f[0].Default = "moon" },
+		"default on a user field":  func(f []biz.FormField) { f[2].Default = uLead },
+		"multiple on text":         func(f []biz.FormField) { f[1].Multiple = true },
+		"depends on later field":   func(f []biz.FormField) { f[0].ShowWhen = &biz.ShowWhen{Field: "window", Values: []string{"x"}} },
+		"depends on unknown value": func(f []biz.FormField) { f[1].ShowWhen.Values = []string{"moon"} },
+		"format on enum":           func(f []biz.FormField) { f[0].Format = formschema.FormatEmail },
+	} {
+		if err := tpl(mutate); !errors.Is(err, biz.ErrTemplateInvalid) {
+			t.Errorf("CreateTemplate(%s) error = %v, want ErrTemplateInvalid", name, err)
+		}
+	}
+	created, err := e.catalog.CreateTemplate(ctx, &biz.Template{
+		CategoryID: c.ID, Name: "扩展", WorkflowKey: "extras_flow", NumberPrefix: "EXT", Status: biz.TemplateEnabled, Form: form(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := e.catalog.GetTemplate(ctx, created.ID, uSuper)
+	if err != nil || got.Form[0].EnumLabels["prod"] != "生产" || got.Form[0].Default != "test" || got.Form[0].Group != "基本信息" ||
+		got.Form[1].ShowWhen == nil || !got.Form[2].Multiple || got.Form[3].Placeholder != "a@b.c" {
+		t.Fatalf("GetTemplate() form = %+v, err %v", got.Form, err)
+	}
+	submit := func(data map[string]any) (*biz.Ticket, error) {
+		return e.uc.Create(ctx, biz.CreateParams{TemplateID: created.ID, Title: "t", Priority: 2, Creator: uInit, Data: data})
+	}
+	// 显示条件满足：受控字段必填。
+	if _, err := submit(map[string]any{"env": "prod"}); !errors.Is(err, biz.ErrFormInvalid) {
+		t.Fatalf("Create(prod without window) error = %v, want ErrFormInvalid", err)
+	}
+	if _, err := submit(map[string]any{"env": "test", "mail": "nope"}); !errors.Is(err, biz.ErrFormInvalid) {
+		t.Fatalf("Create(bad email) error = %v, want ErrFormInvalid", err)
+	}
+	// 显示条件不满足：不要求必填，带上来的值不保留；多选人员去重后落成列表。
+	tk, err := submit(map[string]any{"env": "test", "window": "stale", "owners": []any{uLead, uOther, uLead}})
+	if err != nil {
+		t.Fatalf("Create(test) error = %v", err)
+	}
+	d, err := e.uc.Get(ctx, tk.ID, uInit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, kept := d.Ticket.Data["window"]; kept {
+		t.Fatal("value of a hidden field was kept")
+	}
+	if owners, _ := d.Ticket.Data["owners"].([]any); len(owners) != 2 || d.Labels[uLead] == "" || d.Labels[uOther] == "" {
+		t.Fatalf("owners = %v labels = %v, want two users with names", d.Ticket.Data["owners"], d.Labels)
+	}
+	if tk2, err := submit(map[string]any{"env": "prod", "window": "周六 22:00"}); err != nil {
+		t.Fatalf("Create(prod with window) error = %v", err)
+	} else if d2, _ := e.uc.Get(ctx, tk2.ID, uInit); d2.Ticket.Data["window"] != "周六 22:00" {
+		t.Fatalf("window = %v", d2.Ticket.Data["window"])
 	}
 }
 

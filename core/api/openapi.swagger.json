@@ -12855,7 +12855,7 @@
         },
         "type": {
           "type": "string",
-          "title": "type 类型：string / text / int / float / bool / enum / datetime / user / dept。"
+          "title": "type 类型：string / text / int / float / bool / enum / datetime / date / user / dept。"
         },
         "required": {
           "type": "boolean",
@@ -12875,6 +12875,45 @@
         "description": {
           "type": "string",
           "title": "description 填写说明，≤255 位。"
+        },
+        "enumLabels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "enum_labels 下拉选项的展示值（实际值 → 展示值，≤64 位）；未配置的项显示实际值。"
+        },
+        "multiple": {
+          "type": "boolean",
+          "title": "multiple 多选（仅 enum / user / dept）：取值为列表，至多 50 项。"
+        },
+        "defaultValue": {
+          "title": "default_value 提单表单的初始值（仅 string / text / int / float / bool / enum）。"
+        },
+        "placeholder": {
+          "type": "string",
+          "title": "placeholder 输入框里的示例文字，≤64 位。"
+        },
+        "group": {
+          "type": "string",
+          "title": "group 所属分组的标题，≤32 位；相邻且同组的字段归到一个小标题下。"
+        },
+        "format": {
+          "type": "string",
+          "title": "format 单行文本的内置格式：email / phone / url；空 = 不限。"
+        },
+        "unit": {
+          "type": "string",
+          "title": "unit 数字的单位（仅展示），≤16 位。"
+        },
+        "precision": {
+          "type": "integer",
+          "format": "int32",
+          "title": "precision 小数位数上限 0-6（仅 float）。"
+        },
+        "showWhen": {
+          "$ref": "#/definitions/FormShowWhen",
+          "title": "show_when 显示条件；不传 = 始终显示。"
         }
       },
       "title": "FormField 表单字段定义。"
@@ -12908,6 +12947,23 @@
         }
       },
       "title": "FormRule 字段校验规则。"
+    },
+    "FormShowWhen": {
+      "type": "object",
+      "properties": {
+        "field": {
+          "type": "string",
+          "title": "field 控制字段的字段码。"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "values 控制字段取其中任一值时显示（是否字段用 \"true\" / \"false\"），1-20 个。"
+        }
+      },
+      "title": "FormShowWhen 字段的显示条件：排在它前面的某个单选下拉 / 是否字段取到给定值之一时才显示。"
     },
     "GetCIAtResponse": {
       "type": "object",

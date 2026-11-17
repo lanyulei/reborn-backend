@@ -6,6 +6,8 @@ package biz
 import (
 	"context"
 	stderrors "errors"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -97,6 +99,61 @@ type FormField struct {
 	EnumValues  []string        `json:"enumValues,omitempty"`
 	Rule        formschema.Rule `json:"rule"`
 	Description string          `json:"description,omitempty"`
+	// EnumLabels 下拉选项的展示值（实际值 → 展示值）；未配置的项显示实际值。
+	EnumLabels map[string]string `json:"enumLabels,omitempty"`
+	// Multiple 多选（下拉 / 人员 / 部门）：取值为列表。
+	Multiple bool `json:"multiple,omitempty"`
+	// Default 提单表单的初始值（仅文本 / 数字 / 是否 / 下拉）；提单人可以改掉。
+	Default any `json:"default,omitempty"`
+	// Placeholder 输入框里的示例文字。
+	Placeholder string `json:"placeholder,omitempty"`
+	// Group 所属分组的标题：相邻且同组的字段在表单里归到一个小标题下；空 = 不分组。
+	Group string `json:"group,omitempty"`
+	// Format 单行文本的内置格式：email / phone / url；空 = 不限。
+	Format string `json:"format,omitempty"`
+	// Unit 数字的单位（仅展示，如 GB）。
+	Unit string `json:"unit,omitempty"`
+	// Precision 小数位数上限（仅小数）。
+	Precision *int32 `json:"precision,omitempty"`
+	// ShowWhen 显示条件：只有排在它前面的某个下拉（单选）/ 是否字段取到给定的值时才显示；
+	// 不显示时不要求必填、提交的值也不保留。
+	ShowWhen *ShowWhen `json:"showWhen,omitempty"`
+}
+
+// ShowWhen 字段的显示条件。
+type ShowWhen struct {
+	// Field 控制它的字段码；Values 该字段取其中任一值时显示（是否字段用 "true" / "false"）。
+	Field  string   `json:"field"`
+	Values []string `json:"values"`
+}
+
+// conditionValue 字段取值在显示条件里的文本形式；不是下拉 / 是否的取值返回空串。
+func conditionValue(v any) string {
+	switch val := v.(type) {
+	case string:
+		return val
+	case bool:
+		return strconv.FormatBool(val)
+	}
+	return ""
+}
+
+// hiddenFields 按显示条件算出这份数据下不显示的字段（控制字段本身不显示时，受它控制的也不显示）。
+// 控制字段一定排在前面（见 validateForm），顺序走一遍即可。
+func hiddenFields(form []FormField, data map[string]any) map[string]bool {
+	var hidden map[string]bool
+	for _, f := range form {
+		if f.ShowWhen == nil {
+			continue
+		}
+		if hidden[f.ShowWhen.Field] || !slices.Contains(f.ShowWhen.Values, conditionValue(data[f.ShowWhen.Field])) {
+			if hidden == nil {
+				hidden = map[string]bool{}
+			}
+			hidden[f.Code] = true
+		}
+	}
+	return hidden
 }
 
 // 提单时关联 CMDB 资源的要求（ticket_template.ci_link）。

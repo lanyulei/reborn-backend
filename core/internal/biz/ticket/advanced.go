@@ -163,9 +163,16 @@ func (uc *Usecase) UpdateForm(ctx context.Context, id, userID string, data map[s
 		if err != nil {
 			return nil, err
 		}
+		// 按改动后的取值判断显示条件：不显示的字段不能改。
+		preview := maps.Clone(current)
+		if preview == nil {
+			preview = map[string]any{}
+		}
+		maps.Copy(preview, data)
+		hidden := hiddenFields(form, preview)
 		editable := make([]FormField, 0, len(form))
 		for _, f := range form {
-			if p := perms[f.Code]; p == permEditable || p == permRequired {
+			if p := perms[f.Code]; (p == permEditable || p == permRequired) && !hidden[f.Code] {
 				editable = append(editable, f)
 			}
 		}
@@ -199,6 +206,13 @@ func (uc *Usecase) UpdateForm(ctx context.Context, id, userID string, data map[s
 			if v, ok := changed[code]; ok {
 				merged[code], vars[code] = v, v
 			} else { // 传 null：清空
+				delete(merged, code)
+				vars[code] = nil
+			}
+		}
+		// 改动让某些字段不再显示：它们的值一并清掉（流程变量同步），不留下看不见的旧值。
+		for code := range hiddenFields(form, merged) {
+			if _, has := merged[code]; has {
 				delete(merged, code)
 				vars[code] = nil
 			}

@@ -31,13 +31,25 @@ func ts(t time.Time) *timestamppb.Timestamp {
 func toProtoForm(form []biz.FormField) []*v1.FormField {
 	out := make([]*v1.FormField, 0, len(form))
 	for _, f := range form {
-		out = append(out, &v1.FormField{
+		pf := &v1.FormField{
 			Code: f.Code, Name: f.Name, Type: f.Type, Required: f.Required, EnumValues: f.EnumValues,
 			Rule: &v1.FormRule{
 				Pattern: f.Rule.Pattern, Min: f.Rule.Min, Max: f.Rule.Max, MinLen: f.Rule.MinLen, MaxLen: f.Rule.MaxLen,
 			},
 			Description: f.Description,
-		})
+			EnumLabels:  f.EnumLabels, Multiple: f.Multiple, Placeholder: f.Placeholder, Group: f.Group,
+			Format: f.Format, Unit: f.Unit, Precision: f.Precision,
+		}
+		if f.Default != nil {
+			// 初始值是保存时校验过的 JSON 取值；转换失败（不应发生）就当没有。
+			if v, err := structpb.NewValue(f.Default); err == nil {
+				pf.DefaultValue = v
+			}
+		}
+		if f.ShowWhen != nil {
+			pf.ShowWhen = &v1.FormShowWhen{Field: f.ShowWhen.Field, Values: f.ShowWhen.Values}
+		}
+		out = append(out, pf)
 	}
 	return out
 }
@@ -46,11 +58,20 @@ func fromProtoForm(form []*v1.FormField) []biz.FormField {
 	out := make([]biz.FormField, 0, len(form))
 	for _, f := range form {
 		r := f.GetRule()
-		out = append(out, biz.FormField{
+		bf := biz.FormField{
 			Code: f.GetCode(), Name: f.GetName(), Type: f.GetType(), Required: f.GetRequired(), EnumValues: f.GetEnumValues(),
 			Rule:        formschema.Rule{Pattern: r.Pattern, Min: r.Min, Max: r.Max, MinLen: r.MinLen, MaxLen: r.MaxLen},
 			Description: f.GetDescription(),
-		})
+			EnumLabels:  f.GetEnumLabels(), Multiple: f.GetMultiple(), Placeholder: f.GetPlaceholder(), Group: f.GetGroup(),
+			Format: f.GetFormat(), Unit: f.GetUnit(), Precision: f.Precision,
+		}
+		if f.GetDefaultValue() != nil {
+			bf.Default = f.GetDefaultValue().AsInterface()
+		}
+		if w := f.GetShowWhen(); w != nil {
+			bf.ShowWhen = &biz.ShowWhen{Field: w.GetField(), Values: w.GetValues()}
+		}
+		out = append(out, bf)
 	}
 	return out
 }

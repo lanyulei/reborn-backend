@@ -36,11 +36,12 @@ const (
 // Simulate 在内存里把一份流程图走一遍（不落库、不发通知、不调用外部系统）：人工任务一律
 // 按「同意」处理，定时 / 自动任务 / 子流程节点视为顺利通过，据此给出将会经过的节点
 // 与各节点解析出的处理人。用于设计器的「模拟运行」。
-func Simulate(ctx context.Context, g *Graph, in Instance, dir Directory) (*SimResult, error) {
+func Simulate(ctx context.Context, g *Graph, in Instance, dir Directory, duty Duty) (*SimResult, error) {
 	in.ID, in.Status = "simulation", InstanceRunning
 	s := &State{Instance: in}
 	res := &SimResult{}
-	x := NewExecution(g, s, dir, time.Now())
+	// 值班人按此刻的排班解析，与真实发起一致。
+	x := NewExecution(g, s, dir, time.Now()).WithDuty(duty)
 	x.memo = map[string][]string{}
 	x.trace = func(n *Node) {
 		// 汇聚网关每到达一条分支就经过一次：只记第一次。
@@ -117,7 +118,7 @@ func simNext(g *Graph, s *State) *Token {
 }
 
 // Simulate 模拟运行一份流程图（设计器当前的内容，不必已保存）。流程图须先通过校验。
-func (uc *DefinitionUsecase) Simulate(ctx context.Context, id string, raw []byte, in Instance, dir Directory, users Users) (*SimResult, error) {
+func (uc *DefinitionUsecase) Simulate(ctx context.Context, id string, raw []byte, in Instance, dir Directory, users Users, duty Duty) (*SimResult, error) {
 	d, err := uc.reader.GetDefinition(ctx, id)
 	if err != nil {
 		return nil, err
@@ -138,7 +139,7 @@ func (uc *DefinitionUsecase) Simulate(ctx context.Context, id string, raw []byte
 			return nil, err
 		}
 	}
-	res, err := Simulate(ctx, g, in, dir)
+	res, err := Simulate(ctx, g, in, dir, duty)
 	if err != nil {
 		return nil, err
 	}

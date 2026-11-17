@@ -98,6 +98,9 @@ const (
 	RuleFormUser = "formUser"
 	// RuleFormDeptLeader 表单中部门字段（field）所指部门的负责人。
 	RuleFormDeptLeader = "formDeptLeader"
+	// RuleOncall 值班表（scheduleId）在流程到达该节点那一刻的主、备值班人；其中的发起人本人
+	// 会被排除（不能自己审批自己）。groupId 是值班表所属的值班组，仅供设计器回显。
+	RuleOncall = "oncall"
 )
 
 // 定义规模上限：发布校验与执行成本都必须有界。
@@ -141,6 +144,9 @@ type AssigneeRule struct {
 	DeptID    string   `json:"deptId,omitempty"`
 	Level     int      `json:"level,omitempty"`
 	Field     string   `json:"field,omitempty"`
+	// GroupID / ScheduleID 值班人规则：值班组与其下的值班表。
+	GroupID    string `json:"groupId,omitempty"`
+	ScheduleID string `json:"scheduleId,omitempty"`
 }
 
 // Assignee 节点的处理人配置：多条规则的结果取并集（去重）。
@@ -578,6 +584,8 @@ func (v *validator) assignee(n *Node) {
 			ok = r.DeptID != "" && len(r.DeptID) <= 64
 		case RuleFormUser, RuleFormDeptLeader:
 			ok = r.Field != "" && len(r.Field) <= 64
+		case RuleOncall:
+			ok = r.ScheduleID != "" && len(r.ScheduleID) <= 64 && len(r.GroupID) <= 64
 		default:
 			v.node(n.ID, "ASSIGNEE_RULE_UNKNOWN", "unknown assignee rule kind %q", r.Kind)
 			continue

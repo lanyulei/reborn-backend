@@ -155,7 +155,10 @@ func NewUsecase(catalog CatalogReader, store TicketStore, reader TicketReader, c
 func schemaFields(form []FormField) []formschema.Field {
 	out := make([]formschema.Field, len(form))
 	for i, f := range form {
-		out[i] = formschema.Field{Code: f.Code, Type: f.Type, Required: f.Required, EnumValues: f.EnumValues, Rule: f.Rule}
+		out[i] = formschema.Field{
+			Code: f.Code, Type: f.Type, Required: f.Required, EnumValues: f.EnumValues, Rule: f.Rule,
+			Multiple: f.Multiple, Format: f.Format, Precision: f.Precision,
+		}
 	}
 	return out
 }
@@ -165,7 +168,18 @@ func validateData(form []FormField, data map[string]any) (map[string]any, error)
 	if err := checkRaw(form, data); err != nil {
 		return nil, err
 	}
-	out, err := formschema.Validate(schemaFields(form), data, false)
+	fields := schemaFields(form)
+	// 显示条件不满足的字段：不要求必填，带上来的值也不保留。
+	if hidden := hiddenFields(form, data); len(hidden) > 0 {
+		data = maps.Clone(data)
+		for i := range fields {
+			if hidden[fields[i].Code] {
+				fields[i].Required = false
+				delete(data, fields[i].Code)
+			}
+		}
+	}
+	out, err := formschema.Validate(fields, data, false)
 	if err != nil {
 		var fe *formschema.Error
 		if errors.As(err, &fe) {
@@ -377,13 +391,24 @@ func (uc *Usecase) Get(ctx context.Context, id, userID string) (*Detail, error) 
 	d.CanRate = t.Creator == userID && t.Rating == 0 && (t.Status == StatusCompleted || t.Status == StatusRejected)
 	users, depts := []string{t.Creator}, []string(nil)
 	for _, f := range t.Form {
-		v, _ := t.Data[f.Code].(string)
-		switch {
-		case v == "":
-		case f.Type == formschema.TypeUser:
-			users = append(users, v)
-		case f.Type == formschema.TypeDept:
-			depts = append(depts, v)
+		// 单选是一个 ID，多选是 ID 列表。
+		var ids []string
+		switch v := t.Data[f.Code].(type) {
+		case string:
+			ids = []string{v}
+		case []any:
+			for _, item := range v {
+				if s, ok := item.(string); ok {
+					ids = append(ids, s)
+				}
+			}
+		}
+		ids = slices.DeleteFunc(ids, func(id string) bool { return id == "" })
+		switch f.Type {
+		case formschema.TypeUser:
+			users = append(users, ids...)
+		case formschema.TypeDept:
+			depts = append(depts, ids...)
 		}
 	}
 	labels, err := uc.dir.UserNames(ctx, users)
@@ -490,7 +515,11 @@ func (s *StatusSyncer) BeforeApprove(ctx context.Context, tx txrun.Tx, in *bizwo
 		return err
 	}
 	slices.Sort(required)
+	hidden := hiddenFields(form, data)
 	for _, code := range required {
+		if hidden[code] {
+			continue // 显示条件不满足：处理人看不到这个字段，不要求填写
+		}
 		// 流程节点上配置的字段码不在这张工单的表单里（同一流程绑了不同的模板、或模板后来
 		// 删了字段）：处理人无从填写，不拦——否则这个任务永远同意不了。
 		i := slices.IndexFunc(form, func(f FormField) bool { return f.Code == code })

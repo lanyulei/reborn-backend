@@ -14,12 +14,13 @@ import (
 type DefinitionService struct {
 	uc    *biz.DefinitionUsecase
 	dir   biz.Directory
+	duty  biz.Duty
 	users biz.Users
 }
 
 // NewDefinitionService new a DefinitionService。dir / users 供模拟运行解析处理人与显示名。
-func NewDefinitionService(uc *biz.DefinitionUsecase, dir biz.Directory, users biz.Users) *DefinitionService {
-	return &DefinitionService{uc: uc, dir: dir, users: users}
+func NewDefinitionService(uc *biz.DefinitionUsecase, dir biz.Directory, users biz.Users, duty biz.Duty) *DefinitionService {
+	return &DefinitionService{uc: uc, dir: dir, users: users, duty: duty}
 }
 
 // SimulateDefinition implements proto WorkflowDefinitionService/SimulateDefinition。
@@ -38,7 +39,7 @@ func (s *DefinitionService) SimulateDefinition(ctx context.Context, req *v1.Simu
 	}
 	res, err := s.uc.Simulate(ctx, req.GetId(), raw, biz.Instance{
 		Initiator: initiator, InitiatorDept: strings.ToLower(req.GetInitiatorDept()), Variables: req.GetVariables().AsMap(),
-	}, s.dir, s.users)
+	}, s.dir, s.users, s.duty)
 	if err != nil {
 		return nil, err
 	}

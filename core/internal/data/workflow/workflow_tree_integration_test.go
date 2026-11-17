@@ -61,7 +61,7 @@ func (f viewerFunc) CanViewInstance(ctx context.Context, userID, businessID stri
 func (e *env) runtime(listeners biz.Listeners, viewers biz.Viewers) *biz.RuntimeUsecase {
 	inst := NewInstanceRepo(e.d)
 	return biz.NewRuntimeUsecase(e.defs, inst, inst, inst, e.dir, usersAdapter{e.dir}, e.cfg, biz.NewCalendarUsecase(e.cfg),
-		basedata.NewTxManager(e.d), biznotify.NewNotificationUsecase(datanotify.NewEventRepo(e.d), nil), listeners, viewers)
+		basedata.NewTxManager(e.d), biznotify.NewNotificationUsecase(datanotify.NewEventRepo(e.d), nil), listeners, viewers, nil)
 }
 
 // 工单流程里的子流程：子流程自己不挂业务对象，但它的处理人面对的仍是根流程的那个业务对象——

@@ -232,6 +232,9 @@ var permissionCatalog = []MenuSpec{
 					"/workflow.v1.WorkflowTaskService/ListUserCandidates",
 					"/system.v1.RoleService/ListRoles",
 					"/system.v1.DeptService/ListDepts",
+					// 值班人规则：选值班组与其下的值班表。
+					"/oncall.v1.OncallGroupService/ListGroups",
+					"/oncall.v1.OncallScheduleService/ListSchedules",
 				},
 			},
 			{
@@ -401,6 +404,8 @@ var permissionCatalog = []MenuSpec{
 					"/ticket.v1.TicketCatalogService/UpdateTemplate",
 					"/ticket.v1.TicketCatalogService/DeleteTemplate",
 					"/workflow.v1.WorkflowDefinitionService/ListDefinitions",
+					// 改字段码 / 删字段前提醒「所绑定的流程里哪些节点引用了它」：需要读流程图。
+					"/workflow.v1.WorkflowDefinitionService/GetDefinition",
 					"/workflow.v1.WorkflowTaskService/ListUserCandidates",
 				},
 			},

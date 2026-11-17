@@ -180,9 +180,9 @@ message FormField {
     min_len: 1
     max_len: 64
   }];
-  // type 类型：string / text / int / float / bool / enum / datetime / user / dept。
+  // type 类型：string / text / int / float / bool / enum / datetime / date / user / dept。
   string type = 3 [(buf.validate.field).string = {
-    in: ["string", "text", "int", "float", "bool", "enum", "datetime", "user", "dept"]
+    in: ["string", "text", "int", "float", "bool", "enum", "datetime", "date", "user", "dept"]
   }];
   // required 是否必填。
   bool required = 4;
@@ -196,6 +196,44 @@ message FormField {
   FormRule rule = 6;
   // description 填写说明，≤255 位。
   string description = 7 [(buf.validate.field).string.max_len = 255];
+  // enum_labels 下拉选项的展示值（实际值 → 展示值，≤64 位）；未配置的项显示实际值。
+  map<string, string> enum_labels = 8 [(buf.validate.field).map = {
+    max_pairs: 50
+    values: { string: { max_len: 64 } }
+  }];
+  // multiple 多选（仅 enum / user / dept）：取值为列表，至多 50 项。
+  bool multiple = 9;
+  // default_value 提单表单的初始值（仅 string / text / int / float / bool / enum）。
+  google.protobuf.Value default_value = 10;
+  // placeholder 输入框里的示例文字，≤64 位。
+  string placeholder = 11 [(buf.validate.field).string.max_len = 64];
+  // group 所属分组的标题，≤32 位；相邻且同组的字段归到一个小标题下。
+  string group = 12 [(buf.validate.field).string.max_len = 32];
+  // format 单行文本的内置格式：email / phone / url；空 = 不限。
+  string format = 13 [(buf.validate.field).string = { in: ["", "email", "phone", "url"] }];
+  // unit 数字的单位（仅展示），≤16 位。
+  string unit = 14 [(buf.validate.field).string.max_len = 16];
+  // precision 小数位数上限 0-6（仅 float）。
+  optional int32 precision = 15 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 6
+  }];
+  // show_when 显示条件；不传 = 始终显示。
+  FormShowWhen show_when = 16;
+}
+
+// FormShowWhen 字段的显示条件：排在它前面的某个单选下拉 / 是否字段取到给定值之一时才显示。
+message FormShowWhen {
+  // field 控制字段的字段码。
+  string field = 1 [(buf.validate.field).string = {
+    pattern: "^[a-zA-Z][a-zA-Z0-9_]{0,31}$"
+  }];
+  // values 控制字段取其中任一值时显示（是否字段用 "true" / "false"），1-20 个。
+  repeated string values = 2 [(buf.validate.field).repeated = {
+    min_items: 1
+    max_items: 20
+    items: { string: { max_len: 64 } }
+  }];
 }
 
 // Category 工单分类。

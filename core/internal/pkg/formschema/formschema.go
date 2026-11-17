@@ -44,7 +44,32 @@ const (
 	TypeUser = "user"
 	// TypeDept 部门（部门 ID，UUID 文本，归一为小写）；是否存在由消费方判定。
 	TypeDept = "dept"
+	// TypeDate 日期（不含时间），YYYY-MM-DD 字符串。
+	TypeDate = "date"
 )
+
+// 单行文本的内置格式（Field.Format）。
+const (
+	FormatEmail = "email"
+	FormatPhone = "phone"
+	FormatURL   = "url"
+)
+
+// MaxMultiple 多选字段一次最多选的个数。
+const MaxMultiple = 50
+
+// formatPatterns 内置格式的校验正则：宽松但足以拦下明显写错的值。
+var formatPatterns = map[string]*regexp.Regexp{
+	FormatEmail: regexp.MustCompile(`^[^\s@]+@[^\s@]+\.[^\s@]+$`),
+	FormatPhone: regexp.MustCompile(`^\+?[0-9][0-9 \-]{4,19}$`),
+	FormatURL:   regexp.MustCompile(`^https?://[^\s]+$`),
+}
+
+// ValidFormat 报告 format 是否为受支持的内置格式（空串 = 不限格式）。
+func ValidFormat(format string) bool {
+	_, ok := formatPatterns[format]
+	return format == "" || ok
+}
 
 // uuidText UUID 的文本形式（不区分大小写）。
 var uuidText = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
@@ -72,6 +97,12 @@ type Field struct {
 	Rule Rule
 	// Deprecated 已废弃：不再接受写入，也不再要求必填。
 	Deprecated bool
+	// Multiple 多选（仅 TypeEnum / TypeUser / TypeDept）：取值为字符串列表，去重、至多 MaxMultiple 项。
+	Multiple bool
+	// Format 单行文本的内置格式（Format* 常量）；空 = 不限。
+	Format string
+	// Precision 小数位数上限（仅 TypeFloat）：超出的部分四舍五入；nil = 不限。
+	Precision *int32
 }
 
 // Error 取值校验失败：Field 为出错的字段码，Error() 为面向调用方的英文说明。
@@ -130,9 +161,16 @@ func Validate(fields []Field, values map[string]any, partial bool) (map[string]a
 		if err != nil {
 			return nil, err
 		}
-		// 必填字段写入空串视为未填。只约束本次写入的键：存量值不重校验。
+		// 必填字段写入空串 / 空列表视为未填。只约束本次写入的键：存量值不重校验。
 		if s, ok := v.(string); ok && s == "" && f.Required {
 			return nil, fieldError(key, "field %q is required", key)
+		}
+		// 只对多选字段这样处理：JSON 字段的空数组是合法取值，原样保留。
+		if list, ok := v.([]any); ok && f.Multiple && len(list) == 0 {
+			if f.Required {
+				return nil, fieldError(key, "field %q is required", key)
+			}
+			continue // 空列表 = 没选：不落值
 		}
 		out[key] = v
 	}
@@ -167,6 +205,29 @@ func CheckRequired(fields []Field, values map[string]any) error {
 // normalizeValue 单字段校验与归一化。
 func normalizeValue(f *Field, raw any) (any, error) {
 	bad := func(msg string) error { return fieldError(f.Code, "field %q %s", f.Code, msg) }
+	if f.Multiple && (f.Type == TypeEnum || f.Type == TypeUser || f.Type == TypeDept) {
+		items, ok := raw.([]any)
+		if !ok {
+			return nil, bad("must be a list")
+		}
+		if len(items) > MaxMultiple {
+			return nil, bad(fmt.Sprintf("accepts at most %d items", MaxMultiple))
+		}
+		single := *f
+		single.Multiple = false
+		out := make([]any, 0, len(items))
+		for _, item := range items {
+			v, err := normalizeValue(&single, item)
+			if err != nil {
+				return nil, err
+			}
+			// 空串是「未填」的占位，不进列表；重复的只留一个。
+			if v != "" && !slices.Contains(out, v) {
+				out = append(out, v)
+			}
+		}
+		return out, nil
+	}
 	switch f.Type {
 	case TypeString, TypeRef, TypeText:
 		s, ok := raw.(string)
@@ -177,6 +238,21 @@ func normalizeValue(f *Field, raw any) (any, error) {
 			if err := checkStringRule(f, s); err != nil {
 				return nil, err
 			}
+		}
+		if re := formatPatterns[f.Format]; re != nil && f.Type == TypeString && s != "" && !re.MatchString(s) {
+			return nil, bad("is not a valid " + f.Format)
+		}
+		return s, nil
+	case TypeDate:
+		s, ok := raw.(string)
+		if !ok {
+			return nil, bad("must be a date string (YYYY-MM-DD)")
+		}
+		if s == "" {
+			return s, nil // 空串 = 未填
+		}
+		if _, err := time.Parse(time.DateOnly, s); err != nil {
+			return nil, bad("must be a date string (YYYY-MM-DD)")
 		}
 		return s, nil
 	case TypeUser, TypeDept:
@@ -207,6 +283,10 @@ func normalizeValue(f *Field, raw any) (any, error) {
 		}
 		if err := checkRange(f, n); err != nil {
 			return nil, err
+		}
+		if f.Precision != nil && *f.Precision >= 0 && *f.Precision <= 9 {
+			scale := math.Pow10(int(*f.Precision))
+			n = math.Round(n*scale) / scale
 		}
 		return n, nil
 	case TypeBool:

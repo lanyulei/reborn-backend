@@ -197,6 +197,79 @@ func (d *countingDir) ActiveUserIDs(ctx context.Context, ids []string) ([]string
 	return d.dirStub.ActiveUserIDs(ctx, ids)
 }
 
+// dutyStub 值班查询桩：值班表 ID → 当前的值班人（主在前、备在后）。
+type dutyStub map[string][]string
+
+func (d dutyStub) OnDuty(_ context.Context, scheduleID string, _ time.Time) ([]string, error) {
+	return slices.Clone(d[scheduleID]), nil
+}
+
+// 值班人规则：取值班表此刻的主、备值班人，两人都能处理；发起人本人被剔除；值班表没人
+// 值班（或没有接入值班查询）时按「处理人为空」处理。
+func TestOncallRule(t *testing.T) {
+	t.Parallel()
+	graph := func(onEmpty string) string {
+		return `{"nodes":[{"id":"s","type":"start"},
+			{"id":"a","type":"userTask","assignee":{"rules":[{"kind":"oncall","groupId":"g1","scheduleId":"sch"}]` + onEmpty + `}},
+			{"id":"e","type":"end"}],
+			"edges":[{"id":"e1","source":"s","target":"a"},{"id":"e2","source":"a","target":"e"}],"settings":{"admins":["boss"]}}`
+	}
+	run := func(raw string, duty Duty, initiator string) *State {
+		t.Helper()
+		st := &State{Instance: Instance{ID: "inst", Initiator: initiator, Status: InstanceRunning}}
+		if err := NewExecution(mustGraph(t, raw), st, &dirStub{}, time.Now()).WithDuty(duty).Start(context.Background()); err != nil {
+			t.Fatalf("Start() error = %v", err)
+		}
+		return st
+	}
+	pending := func(st *State) []string {
+		var users []string
+		for _, task := range st.Tasks {
+			for _, a := range task.Assignees {
+				if task.Status == TaskPending && a.Status == AssigneePending {
+					users = append(users, a.UserID)
+				}
+			}
+		}
+		return users
+	}
+	duty := dutyStub{"sch": {"primary", "backup"}}
+	// 主、备都是处理人；缺省或签：一人同意即通过。
+	st := run(graph(""), duty, "init")
+	if got := pending(st); !slices.Equal(got, []string{"primary", "backup"}) {
+		t.Fatalf("assignees = %v, want [primary backup]", got)
+	}
+	x := NewExecution(mustGraph(t, graph("")), st, &dirStub{}, time.Now()).WithDuty(duty)
+	if err := x.Approve(context.Background(), st.Tasks[0].ID, "backup", ""); err != nil {
+		t.Fatalf("Approve(backup) error = %v", err)
+	}
+	if st.Instance.Status != InstanceCompleted {
+		t.Fatalf("status = %d, want approved after either on-call user approves", st.Instance.Status)
+	}
+	// 发起人正是主值班：剔除，只剩备值班。
+	if got := pending(run(graph(""), duty, "primary")); !slices.Equal(got, []string{"backup"}) {
+		t.Fatalf("assignees (initiator is primary) = %v, want [backup]", got)
+	}
+	// 没人值班：按 onEmpty 转交流程管理员；没有接入值班查询时同样视为空。
+	for name, d := range map[string]Duty{"nobody on duty": dutyStub{}, "no duty source": nil} {
+		if got := pending(run(graph(`,"onEmpty":"admin"`), d, "init")); !slices.Equal(got, []string{"boss"}) {
+			t.Errorf("%s: assignees = %v, want [boss]", name, got)
+		}
+	}
+	// 只有主值班且他就是发起人：剔除后为空，缺省跳过该节点，流程直接结束。
+	if st := run(graph(""), dutyStub{"sch": {"init"}}, "init"); st.Instance.Status != InstanceCompleted || len(pending(st)) != 0 {
+		t.Fatalf("status = %d pending = %v, want the node skipped", st.Instance.Status, pending(st))
+	}
+	// 校验：必须选了值班表。
+	g, err := ParseGraph([]byte(strings.Replace(graph(""), `"scheduleId":"sch"`, `"scheduleId":""`, 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if issues := g.Validate(); !slices.ContainsFunc(issues, func(i Issue) bool { return i.Code == "ASSIGNEE_RULE_INVALID" }) {
+		t.Fatalf("Validate() issues = %+v, want ASSIGNEE_RULE_INVALID", issues)
+	}
+}
+
 // 模拟运行带回路的流程图：总步数有上限、同一节点的处理人只解析一次。
 func TestSimulate_LoopIsBounded(t *testing.T) {
 	t.Parallel()
@@ -208,7 +281,7 @@ func TestSimulate_LoopIsBounded(t *testing.T) {
 		{"id":"back","source":"gw","target":"a","condition":"true","priority":1,"jump":true},
 		{"id":"def","source":"gw","target":"m","isDefault":true},{"id":"e5","source":"m","target":"e"}],"settings":{}}`
 	dir := &countingDir{}
-	res, err := Simulate(context.Background(), mustGraph(t, raw), Instance{Initiator: "init"}, dir)
+	res, err := Simulate(context.Background(), mustGraph(t, raw), Instance{Initiator: "init"}, dir, nil)
 	if err != nil {
 		t.Fatalf("Simulate() error = %v", err)
 	}

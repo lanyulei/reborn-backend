@@ -42,6 +42,7 @@ type env struct {
 	shares    *biz.ShareUsecase
 	worker    *biz.WorkerUsecase
 	shiftRepo biz.ShiftRepo
+	schedRepo biz.ScheduleRepo
 	admin     biz.Actor
 }
 
@@ -93,6 +94,7 @@ func newEnv(t *testing.T) *env {
 		shares:    biz.NewShareUsecase(store, groups, schedules, shifts, shares, groups, tokenBox),
 		worker:    biz.NewWorkerUsecase(store, groups, schedules, shifts, notifier),
 		shiftRepo: shifts,
+		schedRepo: schedules,
 		admin:     biz.Actor{UserID: uAdmin},
 	}
 }
@@ -593,6 +595,81 @@ func TestIntegration_IssuesAndCurrent(t *testing.T) {
 	_ = e.pool.QueryRow(ctx, "SELECT count(*) FROM oncall_shift").Scan(&after)
 	if before != after {
 		t.Errorf("preview wrote shifts: %d → %d", before, after)
+	}
+}
+
+// 值班人查询（流程引擎的值班人规则用）：主在前、备在后；替班取替班人；停用、不存在或
+// 那一刻没有排班都返回空而不报错。
+func TestIntegration_OnDuty(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	g := e.group(t, uA, uB, uC)
+	now := time.Now().UTC().Truncate(time.Second)
+	sc, err := e.schedules.Create(ctx, e.admin, g.ID, dailyConfig(now.Add(-time.Hour), uA, uB, uC))
+	if err != nil {
+		t.Fatalf("create schedule: %v", err)
+	}
+	duty := biz.NewDutyUsecase(e.schedRepo, e.shiftRepo)
+	onDuty := func(at time.Time) []string {
+		t.Helper()
+		users, err := duty.OnDuty(ctx, sc.ID, at)
+		if err != nil {
+			t.Fatalf("OnDuty() error = %v", err)
+		}
+		return users
+	}
+	// 与值班模块自己的「当前值班」口径一致。
+	cur, err := e.schedules.Current(ctx, "", sc.ID)
+	if err != nil || len(cur) != 1 || cur[0].Primary == nil || cur[0].Backup == nil {
+		t.Fatalf("Current() = %+v, err %v", cur, err)
+	}
+	want := []string{cur[0].Primary.UserID, cur[0].Backup.UserID}
+	if got := onDuty(now); !slices.Equal(got, want) || got[0] == got[1] {
+		t.Fatalf("OnDuty(now) = %v, want %v", got, want)
+	}
+	// 明天是下一班：值班人随日期轮转。
+	if got := onDuty(now.Add(24 * time.Hour)); len(got) != 2 || got[0] == want[0] {
+		t.Fatalf("OnDuty(tomorrow) = %v, want a different primary than %s", got, want[0])
+	}
+	// 排班范围之外没有班次。
+	if got := onDuty(now.AddDate(1, 0, 0)); len(got) != 0 {
+		t.Fatalf("OnDuty(next year) = %v, want none", got)
+	}
+	// 替班：把后天那一整班的主值班换成不在那一班的人（替班以天为单位，须对齐交接时刻）。
+	shifts := e.roleShifts(t, sc.ID, biz.RolePrimary, now.Add(-time.Hour), now.AddDate(0, 0, 5))
+	target := shifts[2]
+	at := target.Start.Add(time.Hour)
+	planned := onDuty(at)
+	if len(planned) != 2 || planned[0] != target.UserID {
+		t.Fatalf("OnDuty(day 3) = %v, want primary %s", planned, target.UserID)
+	}
+	var sub string
+	for _, u := range []string{uA, uB, uC} {
+		if !slices.Contains(planned, u) {
+			sub = u
+		}
+	}
+	if _, err := e.schedules.CreateOverride(ctx, e.admin, biz.OverrideInput{
+		ScheduleID: sc.ID, Role: biz.RolePrimary, UserID: sub, Start: target.Start, End: target.End,
+	}); err != nil {
+		t.Fatalf("CreateOverride() error = %v", err)
+	}
+	if got := onDuty(at); !slices.Equal(got, []string{sub, planned[1]}) {
+		t.Fatalf("OnDuty(after override) = %v, want [%s %s]", got, sub, planned[1])
+	}
+	// 交接时刻归新的一班：班次结束的那一刻已不是这一班的人。
+	if got := onDuty(target.End); len(got) != 2 || got[0] == sub {
+		t.Fatalf("OnDuty(at handover) = %v, want the next shift", got)
+	}
+	// 停用、不存在的值班表：空，不报错。
+	if err := e.schedules.SetStatus(ctx, e.admin, sc.ID, biz.StatusDisabled); err != nil {
+		t.Fatal(err)
+	}
+	if got := onDuty(now); len(got) != 0 {
+		t.Fatalf("OnDuty(disabled schedule) = %v, want none", got)
+	}
+	if got, err := duty.OnDuty(ctx, uOther, now); err != nil || len(got) != 0 {
+		t.Fatalf("OnDuty(unknown schedule) = %v, err %v", got, err)
 	}
 }
 

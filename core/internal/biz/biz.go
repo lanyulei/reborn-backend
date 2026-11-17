@@ -44,6 +44,8 @@ var ProviderSet = wire.NewSet(
 	NewWorkflowDefinitionReferrers,
 	// 流程引擎解析处理人 / 用户信息：由 system 域的组织目录实现（单向依赖 workflow → system）。
 	wire.Bind(new(bizworkflow.Directory), new(*bizsystem.DirectoryUsecase)),
+	// 值班人规则：流程引擎定义的 Duty 由值班域实现（单向依赖 workflow → oncall 的只读查询）。
+	wire.Bind(new(bizworkflow.Duty), new(*bizoncall.DutyUsecase)),
 	NewWorkflowUsers,
 	// 工单域：流程 / 附件 / 组织目录 / 管理视图判定由其他域实现（单向依赖 ticket → workflow / file / system）。
 	bizticket.ProviderSet,
