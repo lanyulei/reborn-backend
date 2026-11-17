@@ -38,7 +38,7 @@ func toProtoForm(form []biz.FormField) []*v1.FormField {
 			},
 			Description: f.Description,
 			EnumLabels:  f.EnumLabels, Multiple: f.Multiple, Placeholder: f.Placeholder, Group: f.Group,
-			Format: f.Format, Unit: f.Unit, Precision: f.Precision,
+			Format: f.Format, Unit: f.Unit, Precision: f.Precision, Width: f.Width,
 		}
 		if f.Default != nil {
 			// 初始值是保存时校验过的 JSON 取值；转换失败（不应发生）就当没有。
@@ -63,7 +63,7 @@ func fromProtoForm(form []*v1.FormField) []biz.FormField {
 			Rule:        formschema.Rule{Pattern: r.Pattern, Min: r.Min, Max: r.Max, MinLen: r.MinLen, MaxLen: r.MaxLen},
 			Description: f.GetDescription(),
 			EnumLabels:  f.GetEnumLabels(), Multiple: f.GetMultiple(), Placeholder: f.GetPlaceholder(), Group: f.GetGroup(),
-			Format: f.GetFormat(), Unit: f.GetUnit(), Precision: f.Precision,
+			Format: f.GetFormat(), Unit: f.GetUnit(), Precision: f.Precision, Width: f.GetWidth(),
 		}
 		if f.GetDefaultValue() != nil {
 			bf.Default = f.GetDefaultValue().AsInterface()

@@ -6,7 +6,7 @@ import (
 )
 
 // WriteFileAtomic 经同目录临时文件 + fsync + rename 原子落盘 target（0600）。
-// 任一步失败清理临时文件，目标文件保持原状。各域的本地落盘（logo / 头像 / 附件）共用。
+// 任一步失败清理临时文件，目标文件保持原状。本地存储驱动落盘用。
 func WriteFileAtomic(dir, target string, data []byte) (err error) {
 	tmp, err := os.CreateTemp(dir, ".upload-*.tmp")
 	if err != nil {

@@ -48,7 +48,7 @@ func (p systemConfigPO) toEntity() *biz.SystemConfig {
 }
 
 // systemConfigRepo 是系统配置仓储的 PostgreSQL 实现：手写参数化 SQL；
-// logo 文件走本地磁盘（data.LogoDir，覆盖式单文件）。
+// 另提供旧存放位置（data.LogoDir 下的 logo<扩展名>）上 logo 文件的只读访问。
 type systemConfigRepo struct {
 	data *basedata.Data
 }
@@ -106,7 +106,7 @@ func (r *systemConfigRepo) SaveConfig(ctx context.Context, cfg *biz.SystemConfig
 	return nil
 }
 
-// logoFileExts 是 logo 落盘文件可能的扩展名集合（读取时探查存在者）。
+// logoFileExts 是旧位置上 logo 文件可能的扩展名集合（读取时探查存在者）。
 var logoFileExts = []string{".png", ".jpg", ".svg", ".webp", ".ico"}
 
 // extMime 是扩展名回推 MIME 的映射（读取时构造响应 Content-Type）。
@@ -118,33 +118,8 @@ var extMime = map[string]string{
 	".ico":  "image/x-icon",
 }
 
-// SaveLogoFile implements biz.SystemConfigRepo：覆盖式写入 logo 文件（单文件
-// 语义）。原子替换：先写同目录临时文件并 fsync，再 rename 到目标名（POSIX
-// rename 原子，并发读方要么看到完整旧文件要么看到完整新文件，绝不会读到
-// 半截或 404），最后清理其他扩展名的旧文件。目录不存在时递归创建。version
-// 由 biz 侧统一算法计算（sha256 前 8 位）。
-func (r *systemConfigRepo) SaveLogoFile(ctx context.Context, data []byte, ext string) (string, error) {
-	dir := r.data.LogoDir
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return "", fmt.Errorf("create logo dir: %w", err)
-	}
-	target := filepath.Join(dir, "logo"+ext)
-	if err := basedata.WriteFileAtomic(dir, target, data); err != nil {
-		return "", fmt.Errorf("write logo file: %w", err)
-	}
-	for _, e := range logoFileExts {
-		if e == ext {
-			continue
-		}
-		if err := os.Remove(filepath.Join(dir, "logo"+e)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return "", fmt.Errorf("remove old logo: %w", err)
-		}
-	}
-	return biz.LogoVersion(data), nil
-}
-
-// ReadLogoFile implements biz.SystemConfigRepo：按扩展名集合探查现存文件；
-// 一个都不存在视为从未上传，返回 biz.ErrLogoNotFound。
+// ReadLogoFile implements biz.SystemConfigRepo：按扩展名集合探查旧位置上现存的文件；
+// 一个都不存在返回 biz.ErrLogoNotFound。
 func (r *systemConfigRepo) ReadLogoFile(ctx context.Context) ([]byte, string, error) {
 	for _, ext := range logoFileExts {
 		// #nosec G304 -- 路径由受控配置目录与固定扩展名白名单拼接，无外部输入

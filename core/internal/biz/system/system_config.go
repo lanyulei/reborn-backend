@@ -25,7 +25,7 @@ type SystemConfig struct {
 	UpdateUser string
 }
 
-// SystemConfigRepo 是系统配置仓储接口（单例读写 + logo 文件落盘），
+// SystemConfigRepo 是系统配置仓储接口（单例读写 + 旧位置上的 logo 文件），
 // 由 data 层实现（依赖倒置）。
 type SystemConfigRepo interface {
 	// GetConfig 读取系统配置行；表内无行时返回零值配置（未配置语义），不报错。
@@ -33,10 +33,8 @@ type SystemConfigRepo interface {
 	// SaveConfig 全量保存系统配置：已有行则覆盖更新（沿用原行主键），
 	// 无行则以 cfg.ID 插入（单行语义由本方法保证）。
 	SaveConfig(ctx context.Context, cfg *SystemConfig) error
-	// SaveLogoFile 覆盖式写入 logo 图片文件（单文件语义：先清掉旧扩展名
-	// 文件），返回内容指纹（sha1 前 8 位，内容变化即变化，作缓存刷新参数）。
-	SaveLogoFile(ctx context.Context, data []byte, ext string) (version string, err error)
-	// ReadLogoFile 读取当前 logo 文件；从未上传过时返回 ErrLogoNotFound。
+	// ReadLogoFile 读取旧存放位置（上传目录下的 logo<扩展名>，改用对象存储之前上传的 logo）
+	// 上的文件：只读，首次读到时导入对象存储。没有返回 ErrLogoNotFound。
 	ReadLogoFile(ctx context.Context) (data []byte, mime string, err error)
 }
 
@@ -44,7 +42,7 @@ type SystemConfigRepo interface {
 var ErrLogoNotFound = errors.New("logo not found")
 
 // LogoMimeExts 是允许的 logo MIME 类型到文件扩展名的映射（与 proto 校验
-// 白名单一致；扩展名决定落盘文件名）。
+// 白名单一致）。
 var LogoMimeExts = map[string]string{
 	"image/png":     ".png",
 	"image/jpeg":    ".jpg",
@@ -58,12 +56,13 @@ const logoURLPath = "/api/v1/system/config/logo"
 
 // SystemConfigUsecase 是系统配置用例：单例配置的读与全量覆盖写。
 type SystemConfigUsecase struct {
-	repo SystemConfigRepo
+	repo  SystemConfigRepo
+	files SingletonFiles
 }
 
 // NewSystemConfigUsecase new a SystemConfigUsecase.
-func NewSystemConfigUsecase(repo SystemConfigRepo) *SystemConfigUsecase {
-	return &SystemConfigUsecase{repo: repo}
+func NewSystemConfigUsecase(repo SystemConfigRepo, files SingletonFiles) *SystemConfigUsecase {
+	return &SystemConfigUsecase{repo: repo, files: files}
 }
 
 // Get 读取系统配置；未配置过时返回零值配置（各字段空串，前端兜底默认值）。
@@ -84,28 +83,40 @@ func (uc *SystemConfigUsecase) Save(ctx context.Context, cfg *SystemConfig, upda
 	return uc.repo.SaveConfig(ctx, cfg)
 }
 
-// UploadLogo 保存本地上传的 logo 图片（覆盖旧文件），返回带内容指纹的
-// 访问 URL；文件不落配置行，前端拿到 URL 后随配置保存写入 logo 字段。
-func (uc *SystemConfigUsecase) UploadLogo(ctx context.Context, data []byte, mime string) (string, error) {
+// UploadLogo 保存上传的 logo 图片（存入对象存储，替换原有的），返回带内容指纹的
+// 访问 URL；文件不落配置行，前端拿到 URL 后随配置保存写入 logo 字段。uploader 为操作人。
+func (uc *SystemConfigUsecase) UploadLogo(ctx context.Context, uploader string, data []byte, mime string) (string, error) {
 	ext, ok := LogoMimeExts[mime]
 	if !ok {
 		// proto 校验白名单外的类型（防御双保险，正常到不了这里）
 		return "", fmt.Errorf("unsupported logo mime: %s", mime)
 	}
-	version, err := uc.repo.SaveLogoFile(ctx, data, ext)
-	if err != nil {
+	if _, err := uc.files.PutSingleton(ctx, uploader, FileBizLogo, logoBizID, "logo"+ext, mime, data, false); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s?v=%s", logoURLPath, version), nil
+	return fmt.Sprintf("%s?v=%s", logoURLPath, LogoVersion(data)), nil
 }
 
-// GetLogo 读取当前 logo 图片二进制与 MIME；从未上传过返回 ErrLogoNotFound。
+// GetLogo 读取当前 logo 图片二进制与 MIME；从未上传过返回 ErrLogoNotFound。对象存储里没有时
+// 退回旧位置，读到即顺手导入（仅在仍然没有时写入，不会盖掉并发的新上传；导入失败不影响
+// 这次读取）。
 func (uc *SystemConfigUsecase) GetLogo(ctx context.Context) ([]byte, string, error) {
-	return uc.repo.ReadLogoFile(ctx)
+	data, mime, found, err := uc.files.ReadSingleton(ctx, FileBizLogo, logoBizID)
+	if err != nil || found {
+		return data, mime, err
+	}
+	data, mime, err = uc.repo.ReadLogoFile(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	if ext, ok := LogoMimeExts[mime]; ok {
+		_, _ = uc.files.PutSingleton(context.WithoutCancel(ctx), systemUploader, FileBizLogo, logoBizID, "logo"+ext, mime, data, true)
+	}
+	return data, mime, nil
 }
 
 // LogoVersion 计算内容指纹（sha256 前 8 位 hex）；内容变化即变化，
-// 作为 logo URL 的缓存刷新参数（data 层落盘后回填）。仅作缓存键，
+// 作为 logo / 头像 URL 的缓存刷新参数。仅作缓存键，
 // 非安全哈希用途，但仍取强原语避免弱算法告警。
 func LogoVersion(data []byte) string {
 	sum := sha256.Sum256(data)

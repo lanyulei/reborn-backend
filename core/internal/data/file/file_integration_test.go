@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -296,5 +297,100 @@ func TestIntegration_UploadQuota(t *testing.T) {
 	}
 	if _, err := uc.Upload(ctx, stranger, "a.png", pngData); err != nil {
 		t.Fatalf("Upload(other user) error = %v", err)
+	}
+}
+
+// 「每个归属只有一份」的文件：写入即替换（旧的软删、对象留待清理），仅在没有时写入不盖已有的；
+// 并发替换同一个归属后恰好剩一份，且读到的内容与类型是同一次写入的。
+func TestIntegration_Singleton(t *testing.T) {
+	uc, _, _, d, root := newIntegration(t)
+	ctx := context.Background()
+	live := func(bizType, bizID string) (n int) {
+		t.Helper()
+		if err := d.Pool.QueryRow(ctx,
+			"SELECT count(*) FROM file_object WHERE biz_type = $1 AND biz_id = $2 AND status = 2 AND delete_time IS NULL",
+			bizType, bizID).Scan(&n); err != nil {
+			t.Fatalf("count live: %v", err)
+		}
+		return n
+	}
+	if _, _, found, err := uc.ReadSingleton(ctx, "system_logo", "logo"); err != nil || found {
+		t.Fatalf("ReadSingleton(empty) = %v, %v", found, err)
+	}
+	svg := []byte("<svg/>")
+	if done, err := uc.PutSingleton(ctx, uploader, "system_logo", "logo", "logo.svg", "image/svg+xml", svg, false); err != nil || !done {
+		t.Fatalf("PutSingleton() = %v, %v", done, err)
+	}
+	if done, err := uc.PutSingleton(ctx, uploader, "system_logo", "logo", "logo.png", "image/png", pngData, true); err != nil || done {
+		t.Fatalf("PutSingleton(ifAbsent, exists) = %v, %v; want false", done, err)
+	}
+	if data, mime, found, err := uc.ReadSingleton(ctx, "system_logo", "logo"); err != nil || !found || mime != "image/svg+xml" || !bytes.Equal(data, svg) {
+		t.Fatalf("ReadSingleton() = %q, %q, %v, %v", data, mime, found, err)
+	}
+	var rows int
+	if err := d.Pool.QueryRow(ctx, "SELECT count(*) FROM file_object").Scan(&rows); err != nil || rows != 1 {
+		t.Fatalf("rows = %d, %v; want 1 (the skipped import must leave nothing)", rows, err)
+	}
+
+	// 并发替换（含一半「仅在没有时写入」）：恰好剩一份。
+	const workers = 16
+	var wg sync.WaitGroup
+	errs := make(chan error, workers)
+	for i := range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			body := append(bytes.Clone(pngData), byte(i))
+			if _, err := uc.PutSingleton(ctx, uploader, "user_avatar", stranger, "avatar.png", fmt.Sprintf("image/x-%d", i), body, i%2 == 0); err != nil {
+				errs <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("concurrent PutSingleton() error = %v", err)
+	}
+	if n := live("user_avatar", stranger); n != 1 {
+		t.Fatalf("live avatars = %d, want exactly 1", n)
+	}
+	data, mime, found, err := uc.ReadSingleton(ctx, "user_avatar", stranger)
+	if err != nil || !found || mime != fmt.Sprintf("image/x-%d", data[len(data)-1]) {
+		t.Fatalf("ReadSingleton(avatar) = %q, %v, %v; content and type must come from the same write", mime, found, err)
+	}
+	if n := live("system_logo", "logo"); n != 1 {
+		t.Fatalf("live logos = %d, want 1 (other owners untouched)", n)
+	}
+	// 没有留下临时文件；被替换的过了保留期连同磁盘对象清理，当前的两份不动。
+	if err := d.Pool.QueryRow(ctx, "SELECT count(*) FROM file_object WHERE status = 1").Scan(&rows); err != nil || rows != 0 {
+		t.Fatalf("temp rows = %d, %v; want 0", rows, err)
+	}
+	if _, err := d.Pool.Exec(ctx, "UPDATE file_object SET delete_time = delete_time - interval '2 days' WHERE delete_time IS NOT NULL"); err != nil {
+		t.Fatalf("backdate: %v", err)
+	}
+	for {
+		n, err := uc.Purge(ctx)
+		if err != nil {
+			t.Fatalf("Purge() error = %v", err)
+		}
+		if n == 0 {
+			break
+		}
+	}
+	if err := d.Pool.QueryRow(ctx, "SELECT count(*) FROM file_object").Scan(&rows); err != nil || rows != 2 {
+		t.Fatalf("rows after purge = %d, %v; want 2", rows, err)
+	}
+	onDisk := 0
+	_ = filepath.WalkDir(root+"/files", func(_ string, e os.DirEntry, _ error) error {
+		if e != nil && !e.IsDir() {
+			onDisk++
+		}
+		return nil
+	})
+	if onDisk != 2 {
+		t.Fatalf("objects on disk = %d, want 2", onDisk)
+	}
+	if _, _, found, err := uc.ReadSingleton(ctx, "user_avatar", stranger); err != nil || !found {
+		t.Fatalf("avatar after purge: found %v, %v", found, err)
 	}
 }

@@ -187,7 +187,7 @@ func newEnv(t *testing.T) *env {
 		t.Fatalf("NewStores() error = %v", err)
 	}
 	fileRepo := datafile.NewFileRepo(d)
-	files, err := bizfile.NewUsecase(fileRepo, fileRepo, fileRepo, stores, bizfile.AccessCheckers{biz.BusinessType: access})
+	files, err := bizfile.NewUsecase(fileRepo, fileRepo, fileRepo, stores, bizfile.AccessCheckers{biz.BusinessType: biz.NewFileAccess(access, rt)})
 	if err != nil {
 		t.Fatalf("NewUsecase(file) error = %v", err)
 	}

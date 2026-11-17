@@ -41,6 +41,9 @@ const (
 const (
 	// maxFormFields 模板表单字段数上限（与 proto 校验一致）。
 	maxFormFields = 50
+	// maxFileFields 一张表单里附件字段的个数上限：每个至多 formschema.MaxFiles 个文件，
+	// 合起来一张工单经字段带的文件不超过文件域单次绑定的上限。
+	maxFileFields = 5
 	// maxCategories / maxTemplates 服务目录规模上限（目录接口不分页）。
 	maxCategories = 100
 	maxTemplates  = 500
@@ -118,6 +121,9 @@ type FormField struct {
 	// ShowWhen 显示条件：只有排在它前面的某个下拉（单选）/ 是否字段取到给定的值时才显示；
 	// 不显示时不要求必填、提交的值也不保留。
 	ShowWhen *ShowWhen `json:"showWhen,omitempty"`
+	// Width 双列布局下所占的宽度：full = 独占一行 / half = 占半行；空 = 缺省（多行文本独占
+	// 一行，其余占半行）。只影响界面排版。
+	Width string `json:"width,omitempty"`
 }
 
 // ShowWhen 字段的显示条件。
@@ -469,6 +475,8 @@ type Attachments interface {
 	Bind(ctx context.Context, tx txrun.Tx, uploader, bizType, bizID string, fileIDs []string) error
 	// ListByBiz 某业务对象的附件。
 	ListByBiz(ctx context.Context, bizType, bizID string) ([]*bizfile.File, error)
+	// ReleaseFiles 在调用方事务内作废工单的指定附件（表单不再引用它们）；不属于该工单的不受影响。
+	ReleaseFiles(ctx context.Context, tx txrun.Tx, bizType, bizID string, fileIDs []string) error
 }
 
 // Directory 组织目录端口（由 system 域实现）：取显示名。

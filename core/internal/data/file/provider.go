@@ -21,7 +21,7 @@ var ProviderSet = wire.NewSet(
 	wire.Bind(new(biz.PurgeRepo), new(*fileRepo)),
 )
 
-// localSubDir 附件在上传根目录下的子目录（与 logo / 头像分开）。
+// localSubDir 本地驱动在上传根目录下的子目录（根目录下另有改用对象存储之前的旧 logo / 头像文件）。
 const localSubDir = "files"
 
 // s3DefaultRegion 未配置区域时的缺省值（MinIO 等不分区域的服务的默认区域）。

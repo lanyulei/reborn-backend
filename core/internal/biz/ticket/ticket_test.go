@@ -2,6 +2,7 @@ package biz
 
 import (
 	"context"
+	"strconv"
 	"testing"
 
 	"github.com/lanyulei/reborn/backend/core/internal/pkg/formschema"
@@ -53,12 +54,13 @@ func TestAccess(t *testing.T) {
 		{"missing", "boss", false},
 	}
 	for _, c := range cases {
-		for name, check := range map[string]func(context.Context, string, string) (bool, error){
-			"CanReadFile": a.CanReadFile, "CanViewInstance": a.CanViewInstance,
-		} {
-			if got, err := check(ctx, c.user, c.ticket); err != nil || got != c.want {
-				t.Errorf("%s(%s, %s) = %v, %v; want %v", name, c.user, c.ticket, got, err, c.want)
-			}
+		if got, err := a.CanViewInstance(ctx, c.user, c.ticket); err != nil || got != c.want {
+			t.Errorf("CanViewInstance(%s, %s) = %v, %v; want %v", c.user, c.ticket, got, err, c.want)
+		}
+		// 不挂在字段上的文件（工单级附件）：读取权限 = 工单的查看权限。
+		files := NewFileAccess(a, formAccessStub{})
+		if got, err := files.CanReadFile(ctx, c.user, c.ticket, "018f3e1a-0000-7000-8000-0000000000ff"); err != nil || got != c.want {
+			t.Errorf("CanReadFile(%s, %s) = %v, %v; want %v", c.user, c.ticket, got, err, c.want)
 		}
 	}
 	if _, err := a.visible(ctx, "t1", "stranger"); !errors.Is(err, ErrTicketForbidden) {
@@ -67,6 +69,15 @@ func TestAccess(t *testing.T) {
 	if _, err := a.visible(ctx, "missing", "boss"); !errors.Is(err, ErrTicketNotFound) {
 		t.Errorf("visible(missing) error = %v, want ErrTicketNotFound", err)
 	}
+}
+
+// fileFields n 个附件字段的表单。
+func fileFields(n int) []FormField {
+	form := make([]FormField, n)
+	for i := range form {
+		form[i] = FormField{Name: "n", Code: "f" + strconv.Itoa(i), Type: formschema.TypeFile}
+	}
+	return form
 }
 
 func TestValidateForm(t *testing.T) {
@@ -79,8 +90,12 @@ func TestValidateForm(t *testing.T) {
 		{Name: "n", Code: "owner", Type: formschema.TypeUser},
 		{Name: "n", Code: "dept", Type: formschema.TypeDept},
 	}
+	valid = append(valid, FormField{Name: "n", Code: "proof", Type: formschema.TypeFile, Multiple: true, Required: true})
 	if err := validateForm(valid); err != nil {
 		t.Fatalf("validateForm(valid) error = %v", err)
+	}
+	if err := validateForm(fileFields(maxFileFields)); err != nil {
+		t.Fatalf("validateForm(max file fields) error = %v", err)
 	}
 	invalid := map[string][]FormField{
 		"reserved code":   {{Name: "n", Code: priorityVar, Type: formschema.TypeInt}},
@@ -91,6 +106,12 @@ func TestValidateForm(t *testing.T) {
 		"minLen > maxLen": {{Name: "n", Code: "a", Type: formschema.TypeString, Rule: formschema.Rule{MinLen: &hi, MaxLen: &lo}}},
 		"bad pattern":     {{Name: "n", Code: "a", Type: formschema.TypeString, Rule: formschema.Rule{Pattern: &bad}}},
 		"too many fields": make([]FormField, maxFormFields+1),
+		"file default":    {{Name: "n", Code: "a", Type: formschema.TypeFile, Default: []any{}}},
+		"file as control": {
+			{Name: "n", Code: "a", Type: formschema.TypeFile},
+			{Name: "n", Code: "b", Type: formschema.TypeString, ShowWhen: &ShowWhen{Field: "a", Values: []string{"x"}}},
+		},
+		"too many file fields": fileFields(maxFileFields + 1),
 	}
 	for name, form := range invalid {
 		if err := validateForm(form); !errors.Is(err, ErrTemplateInvalid) {

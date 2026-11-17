@@ -10,6 +10,7 @@ import (
 	"maps"
 	"math"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -82,9 +83,10 @@ func (a *Access) visible(ctx context.Context, id, userID string) (*Ticket, error
 	return t, nil
 }
 
-// CanReadFile implements bizfile.AccessChecker：工单附件的读取权限 = 工单的查看权限。
-func (a *Access) CanReadFile(ctx context.Context, userID, bizID string) (bool, error) {
-	t, err := a.reader.Get(ctx, bizID)
+// CanViewInstance implements bizworkflow.Viewer：工单流程的查看权限 = 工单的查看权限
+// （管理视图的持有者不是流程参与者，也能看流程进度）。
+func (a *Access) CanViewInstance(ctx context.Context, userID, businessID string) (bool, error) {
+	t, err := a.reader.Get(ctx, businessID)
 	if err != nil {
 		if errors.Is(err, ErrTicketNotFound) {
 			return false, nil
@@ -92,12 +94,6 @@ func (a *Access) CanReadFile(ctx context.Context, userID, bizID string) (bool, e
 		return false, err
 	}
 	return a.canView(ctx, t, userID)
-}
-
-// CanViewInstance implements bizworkflow.Viewer：工单流程的查看权限 = 工单的查看权限
-// （管理视图的持有者不是流程参与者，也能看流程进度）。
-func (a *Access) CanViewInstance(ctx context.Context, userID, businessID string) (bool, error) {
-	return a.CanReadFile(ctx, userID, businessID)
 }
 
 // Usecase 工单用例。
@@ -296,6 +292,12 @@ func (uc *Usecase) create(ctx context.Context, p CreateParams) (*Ticket, error) 
 		if err := checkResourceLink(tpl, p.ResourceIDs); err != nil {
 			return err
 		}
+		// 附件字段引用的文件（显示条件不满足的字段已被 validateData 去掉，它们的文件不绑定，
+		// 留作临时文件到期清理）。
+		fieldFiles, dup := fileOwners(tpl.Form, data)
+		if dup != "" {
+			return detail(ErrFormInvalid, "a file cannot be attached to more than one field")
+		}
 		id, err := idgen.NewID()
 		if err != nil {
 			return err
@@ -323,10 +325,16 @@ func (uc *Usecase) create(ctx context.Context, p CreateParams) (*Ticket, error) 
 		if err := uc.ext.Ops.LinkResourcesTx(ctx, tx, id, resources); err != nil {
 			return err
 		}
-		if err := uc.files.Bind(ctx, tx, p.Creator, BusinessType, id, p.FileIDs); err != nil {
-			if errors.Is(err, bizfile.ErrFileNotFound) {
-				return detail(ErrFormInvalid, "an attachment does not exist or was not uploaded by you")
-			}
+		// 工单级附件（不挂在字段上，旧客户端的提交方式）与附件字段的文件分两批绑定：各自不超过
+		// 文件域单次绑定的上限。同一个文件两边都带了，按字段的算。
+		loose := slices.DeleteFunc(slices.Clone(p.FileIDs), func(fid string) bool {
+			_, inField := fieldFiles[strings.ToLower(fid)]
+			return inField
+		})
+		if err := uc.bindFieldFiles(ctx, tx, p.Creator, id, loose); err != nil {
+			return err
+		}
+		if err := uc.bindFieldFiles(ctx, tx, p.Creator, id, sortedKeys(fieldFiles)); err != nil {
 			return err
 		}
 		// 流程变量 = 表单数据 + 优先级（条件表达式以 form.<字段码> / form.priority 引用）。
@@ -382,9 +390,12 @@ func (uc *Usecase) Get(ctx context.Context, id, userID string) (*Detail, error) 
 		return nil, err
 	}
 	d := &Detail{Ticket: t, Files: files}
+	// 按隐藏之前的完整表单记下各文件挂在哪个字段上：字段对查看者隐藏时文件一并不返回。
+	owners, _ := fileOwners(t.Form, t.Data)
 	if err := uc.applyFormAccess(ctx, d, userID); err != nil {
 		return nil, err
 	}
+	d.Files = visibleFiles(files, owners, t.Form)
 	if d.Resources, err = uc.ext.Insight.ListResources(ctx, t.ID); err != nil {
 		return nil, err
 	}

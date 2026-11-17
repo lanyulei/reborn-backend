@@ -46,6 +46,9 @@ const (
 	TypeDept = "dept"
 	// TypeDate 日期（不含时间），YYYY-MM-DD 字符串。
 	TypeDate = "date"
+	// TypeFile 附件：取值恒为文件 ID（UUID 文本，归一为小写）的列表，去重；未开多选至多 1 个，
+	// 开了多选至多 MaxFiles 个。文件是否存在、归谁所有由消费方判定。
+	TypeFile = "file"
 )
 
 // 单行文本的内置格式（Field.Format）。
@@ -57,6 +60,9 @@ const (
 
 // MaxMultiple 多选字段一次最多选的个数。
 const MaxMultiple = 50
+
+// MaxFiles 一个附件字段最多带的文件数。
+const MaxFiles = 10
 
 // formatPatterns 内置格式的校验正则：宽松但足以拦下明显写错的值。
 var formatPatterns = map[string]*regexp.Regexp{
@@ -98,6 +104,7 @@ type Field struct {
 	// Deprecated 已废弃：不再接受写入，也不再要求必填。
 	Deprecated bool
 	// Multiple 多选（仅 TypeEnum / TypeUser / TypeDept）：取值为字符串列表，去重、至多 MaxMultiple 项。
+	// 对 TypeFile 表示可以带多个文件（取值本来就是列表）。
 	Multiple bool
 	// Format 单行文本的内置格式（Format* 常量）；空 = 不限。
 	Format string
@@ -165,8 +172,8 @@ func Validate(fields []Field, values map[string]any, partial bool) (map[string]a
 		if s, ok := v.(string); ok && s == "" && f.Required {
 			return nil, fieldError(key, "field %q is required", key)
 		}
-		// 只对多选字段这样处理：JSON 字段的空数组是合法取值，原样保留。
-		if list, ok := v.([]any); ok && f.Multiple && len(list) == 0 {
+		// 只对多选与附件字段这样处理：JSON 字段的空数组是合法取值，原样保留。
+		if list, ok := v.([]any); ok && (f.Multiple || f.Type == TypeFile) && len(list) == 0 {
 			if f.Required {
 				return nil, fieldError(key, "field %q is required", key)
 			}
@@ -205,6 +212,31 @@ func CheckRequired(fields []Field, values map[string]any) error {
 // normalizeValue 单字段校验与归一化。
 func normalizeValue(f *Field, raw any) (any, error) {
 	bad := func(msg string) error { return fieldError(f.Code, "field %q %s", f.Code, msg) }
+	if f.Type == TypeFile {
+		items, ok := raw.([]any)
+		if !ok {
+			return nil, bad("must be a list of file ids")
+		}
+		limit := 1
+		if f.Multiple {
+			limit = MaxFiles
+		}
+		out := make([]any, 0, len(items))
+		for _, item := range items {
+			s, ok := item.(string)
+			if !ok || !uuidText.MatchString(s) {
+				return nil, bad("must be a list of file ids")
+			}
+			if s = strings.ToLower(s); !slices.Contains(out, any(s)) {
+				out = append(out, s)
+			}
+		}
+		// 去重之后再数：同一个文件写两遍不算两个。
+		if len(out) > limit {
+			return nil, bad(fmt.Sprintf("accepts at most %d file(s)", limit))
+		}
+		return out, nil
+	}
 	if f.Multiple && (f.Type == TypeEnum || f.Type == TypeUser || f.Type == TypeDept) {
 		items, ok := raw.([]any)
 		if !ok {

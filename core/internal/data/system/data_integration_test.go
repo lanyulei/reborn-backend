@@ -4,10 +4,7 @@ package data
 
 import (
 	"context"
-	stderrors "errors"
-	"io/fs"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -209,7 +206,7 @@ func TestIntegration_UserCRUD(t *testing.T) {
 	}
 }
 
-// 头像：avatar 列随用户读写往返；文件仓储按用户落盘、扩展名切换清理旧文件、UUID 白名单。
+// 头像：avatar 列随用户读写往返（文件内容的存取见 file 域的集成用例）。
 func TestIntegration_UserAvatar(t *testing.T) {
 	d := newIntegrationData(t)
 	ctx := context.Background()
@@ -225,26 +222,5 @@ func TestIntegration_UserAvatar(t *testing.T) {
 	got, err := repo.GetUser(ctx, u.ID)
 	if err != nil || got.Avatar != url {
 		t.Fatalf("avatar roundtrip = %q err=%v", got.Avatar, err)
-	}
-	store := NewAvatarStore(d)
-	d.LogoDir = t.TempDir()
-	if _, _, err := store.ReadAvatarFile(ctx, u.ID); !stderrors.Is(err, biz.ErrAvatarNotFound) {
-		t.Fatalf("missing avatar error = %v", err)
-	}
-	if err := store.SaveAvatarFile(ctx, u.ID, []byte("png"), ".png"); err != nil {
-		t.Fatalf("save png: %v", err)
-	}
-	if err := store.SaveAvatarFile(ctx, u.ID, []byte("webp"), ".webp"); err != nil {
-		t.Fatalf("save webp: %v", err)
-	}
-	data, mime, err := store.ReadAvatarFile(ctx, u.ID)
-	if err != nil || mime != "image/webp" || string(data) != "webp" {
-		t.Fatalf("read avatar = %q %q err=%v", data, mime, err)
-	}
-	if _, err := os.Stat(filepath.Join(d.LogoDir, "avatars", u.ID+".png")); !stderrors.Is(err, fs.ErrNotExist) {
-		t.Fatal("old extension file must be removed")
-	}
-	if err := store.SaveAvatarFile(ctx, "../../etc/passwd", []byte("x"), ".png"); err == nil {
-		t.Fatal("non-uuid id must be rejected")
 	}
 }

@@ -52,6 +52,8 @@ var ProviderSet = wire.NewSet(
 	wire.Bind(new(bizticket.Workflow), new(*bizworkflow.RuntimeUsecase)),
 	wire.Bind(new(bizticket.WorkflowCatalog), new(*bizworkflow.DefinitionUsecase)),
 	wire.Bind(new(bizticket.Attachments), new(*bizfile.Usecase)),
+	// 系统 logo / 用户头像：内容经 file 域落在对象存储驱动里（单向依赖 system → file）。
+	wire.Bind(new(bizsystem.SingletonFiles), new(*bizfile.Usecase)),
 	wire.Bind(new(bizticket.Directory), new(*bizsystem.DirectoryUsecase)),
 	NewTicketSupervisor,
 	NewTicketCatalogManager,
@@ -77,7 +79,7 @@ var ProviderSet = wire.NewSet(
 
 // NewFileAccessCheckers 装配附件访问检查器（业务类型 → 检查器）：持有附件的业务域
 // 在此登记自己的检查器；未登记的业务类型其附件一律不可读（deny-by-default）。
-func NewFileAccessCheckers(tickets *bizticket.Access) bizfile.AccessCheckers {
+func NewFileAccessCheckers(tickets *bizticket.FileAccess) bizfile.AccessCheckers {
 	return bizfile.AccessCheckers{bizticket.BusinessType: tickets}
 }
 

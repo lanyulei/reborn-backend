@@ -125,6 +125,70 @@ func (r *fileRepo) ReleaseTx(ctx context.Context, tx txrun.Tx, bizType, bizID st
 	return nil
 }
 
+// PromoteSingleton implements biz.BindRepo：事务级咨询锁按业务对象串行——并发的两次替换
+// 不会各自看不见对方而留下两份。
+func (r *fileRepo) PromoteSingleton(ctx context.Context, id, bizType, bizID string, ifAbsent bool) (bool, error) {
+	done := false
+	err := pgx.BeginFunc(ctx, r.data.Pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1 || ':' || $2, 0))", bizType, bizID); err != nil {
+			return fmt.Errorf("lock singleton file: %w", err)
+		}
+		const live = "biz_type = $1 AND biz_id = $2 AND status = 2 AND delete_time IS NULL"
+		if ifAbsent {
+			var exists bool
+			if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM file_object WHERE "+live+")", bizType, bizID).Scan(&exists); err != nil {
+				return fmt.Errorf("check singleton file: %w", err)
+			}
+			if exists {
+				return nil
+			}
+		}
+		if _, err := tx.Exec(ctx, "UPDATE file_object SET delete_time = now() WHERE "+live, bizType, bizID); err != nil {
+			return fmt.Errorf("release singleton file: %w", err)
+		}
+		tag, err := tx.Exec(ctx,
+			`UPDATE file_object SET status = 2, biz_type = $2, biz_id = $3, bind_time = now()
+			 WHERE id = $1 AND status = 1 AND delete_time IS NULL`, id, bizType, bizID)
+		if err != nil {
+			return fmt.Errorf("promote singleton file: %w", err)
+		}
+		if tag.RowsAffected() != 1 {
+			return biz.ErrFileNotFound
+		}
+		done = true
+		return nil
+	})
+	return done, err
+}
+
+// LatestByBiz implements biz.BindRepo（走 idx_file_object_biz；id 为 UUIDv7，倒序即最新）。
+func (r *fileRepo) LatestByBiz(ctx context.Context, bizType, bizID string) (*biz.File, error) {
+	f := biz.File{Status: biz.StatusBound, BizType: bizType, BizID: bizID}
+	err := basedata.QueryerFrom(ctx, r.data.Pool).QueryRow(ctx,
+		`SELECT id, driver, object_key, filename, size, mime, create_user, create_time FROM file_object
+		 WHERE biz_type = $1 AND biz_id = $2 AND status = 2 AND delete_time IS NULL ORDER BY id DESC LIMIT 1`,
+		bizType, bizID).Scan(&f.ID, &f.Driver, &f.ObjectKey, &f.Filename, &f.Size, &f.Mime, &f.CreateUser, &f.CreateTime)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, biz.ErrFileNotFound
+		}
+		return nil, fmt.Errorf("get latest file by biz: %w", err)
+	}
+	return &f, nil
+}
+
+// ReleaseFilesTx implements biz.BindRepo：业务类型与对象 ID 都在条件里——传入别的对象的文件 ID
+// 不命中任何行。
+func (r *fileRepo) ReleaseFilesTx(ctx context.Context, tx txrun.Tx, bizType, bizID string, fileIDs []string) error {
+	if _, err := tx.Exec(ctx,
+		`UPDATE file_object SET delete_time = now()
+		 WHERE biz_type = $1 AND biz_id = $2 AND status = 2 AND delete_time IS NULL
+		   AND id IN (SELECT unnest($3::text[])::uuid)`, bizType, bizID, fileIDs); err != nil {
+		return fmt.Errorf("release files: %w", err)
+	}
+	return nil
+}
+
 // PurgeExpired implements biz.PurgeRepo：事务内以 SKIP LOCKED 领取一批（多实例各取
 // 各的，互不阻塞），逐个删除对象，再物理删除对象已删掉的元数据行。删除对象失败的
 // 文件保留元数据并记下失败时间，retryAfter 之内不再领取——否则一批坏行（驱动被下线、

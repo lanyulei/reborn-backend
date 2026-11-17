@@ -115,7 +115,8 @@ type FormField struct {
 	Code string `protobuf:"bytes,1,opt,name=code,proto3" json:"code,omitempty"`
 	// name 字段名称，1-64 位。
 	Name string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	// type 类型：string / text / int / float / bool / enum / datetime / date / user / dept。
+	// type 类型：string / text / int / float / bool / enum / datetime / date / user / dept / file。
+	// file = 附件：取值为文件 ID 的列表（未开 multiple 至多 1 个，开了至多 10 个），一张表单至多 5 个附件字段。
 	Type string `protobuf:"bytes,3,opt,name=type,proto3" json:"type,omitempty"`
 	// required 是否必填。
 	Required bool `protobuf:"varint,4,opt,name=required,proto3" json:"required,omitempty"`
@@ -127,7 +128,7 @@ type FormField struct {
 	Description string `protobuf:"bytes,7,opt,name=description,proto3" json:"description,omitempty"`
 	// enum_labels 下拉选项的展示值（实际值 → 展示值，≤64 位）；未配置的项显示实际值。
 	EnumLabels map[string]string `protobuf:"bytes,8,rep,name=enum_labels,json=enumLabels,proto3" json:"enum_labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	// multiple 多选（仅 enum / user / dept）：取值为列表，至多 50 项。
+	// multiple 多选（仅 enum / user / dept / file）：取值为列表，至多 50 项；file 表示可带多个文件（至多 10 个）。
 	Multiple bool `protobuf:"varint,9,opt,name=multiple,proto3" json:"multiple,omitempty"`
 	// default_value 提单表单的初始值（仅 string / text / int / float / bool / enum）。
 	DefaultValue *structpb.Value `protobuf:"bytes,10,opt,name=default_value,json=defaultValue,proto3" json:"default_value,omitempty"`
@@ -142,7 +143,10 @@ type FormField struct {
 	// precision 小数位数上限 0-6（仅 float）。
 	Precision *int32 `protobuf:"varint,15,opt,name=precision,proto3,oneof" json:"precision,omitempty"`
 	// show_when 显示条件；不传 = 始终显示。
-	ShowWhen      *FormShowWhen `protobuf:"bytes,16,opt,name=show_when,json=showWhen,proto3" json:"show_when,omitempty"`
+	ShowWhen *FormShowWhen `protobuf:"bytes,16,opt,name=show_when,json=showWhen,proto3" json:"show_when,omitempty"`
+	// width 双列布局下所占的宽度：full = 独占一行 / half = 占半行；空 = 缺省（多行文本独占一行，
+	// 其余占半行）。单列布局下不起作用。
+	Width         string `protobuf:"bytes,17,opt,name=width,proto3" json:"width,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -287,6 +291,13 @@ func (x *FormField) GetShowWhen() *FormShowWhen {
 		return x.ShowWhen
 	}
 	return nil
+}
+
+func (x *FormField) GetWidth() string {
+	if x != nil {
+		return x.Width
+	}
+	return ""
 }
 
 // FormShowWhen 字段的显示条件：排在它前面的某个单选下拉 / 是否字段取到给定值之一时才显示。
@@ -1983,7 +1994,8 @@ type CreateTicketRequest struct {
 	Data *structpb.Struct `protobuf:"bytes,4,opt,name=data,proto3" json:"data,omitempty"`
 	// creator_dept 提单部门 ID，可选：须为提单人所属部门；不传取主部门。
 	CreatorDept *string `protobuf:"bytes,5,opt,name=creator_dept,json=creatorDept,proto3,oneof" json:"creator_dept,omitempty"`
-	// file_ids 附件（已上传的文件 ID），去重、≤20 个。
+	// file_ids 工单级附件（已上传的文件 ID），去重、≤20 个：不挂在任何表单字段上。新的做法是在模板里
+	// 加 file 类型的字段、把文件 ID 放进 data；本字段为兼容保留。
 	FileIds []string `protobuf:"bytes,6,rep,name=file_ids,json=fileIds,proto3" json:"file_ids,omitempty"`
 	// request_id 幂等键，可选（客户端生成的 UUID）：重复提交返回首次创建的工单。
 	RequestId *string `protobuf:"bytes,7,opt,name=request_id,json=requestId,proto3,oneof" json:"request_id,omitempty"`
@@ -3405,11 +3417,11 @@ const file_ticket_v1_ticket_proto_rawDesc = "" +
 	"\n" +
 	"\b_min_lenB\n" +
 	"\n" +
-	"\b_max_len\"\xe2\x06\n" +
+	"\b_max_len\"\x93\a\n" +
 	"\tFormField\x127\n" +
 	"\x04code\x18\x01 \x01(\tB#\xbaH r\x1e2\x1c^[a-zA-Z][a-zA-Z0-9_]{0,31}$R\x04code\x12\x1d\n" +
-	"\x04name\x18\x02 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@R\x04name\x12[\n" +
-	"\x04type\x18\x03 \x01(\tBG\xbaHDrBR\x06stringR\x04textR\x03intR\x05floatR\x04boolR\x04enumR\bdatetimeR\x04dateR\x04userR\x04deptR\x04type\x12\x1a\n" +
+	"\x04name\x18\x02 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@R\x04name\x12a\n" +
+	"\x04type\x18\x03 \x01(\tBM\xbaHJrHR\x06stringR\x04textR\x03intR\x05floatR\x04boolR\x04enumR\bdatetimeR\x04dateR\x04userR\x04deptR\x04fileR\x04type\x12\x1a\n" +
 	"\brequired\x18\x04 \x01(\bR\brequired\x123\n" +
 	"\venum_values\x18\x05 \x03(\tB\x12\xbaH\x0f\x92\x01\f\x102\x18\x01\"\x06r\x04\x10\x01\x18@R\n" +
 	"enumValues\x12'\n" +
@@ -3425,7 +3437,8 @@ const file_ticket_v1_ticket_proto_rawDesc = "" +
 	"\x06format\x18\r \x01(\tB\x1a\xbaH\x17r\x15R\x00R\x05emailR\x05phoneR\x03urlR\x06format\x12\x1b\n" +
 	"\x04unit\x18\x0e \x01(\tB\a\xbaH\x04r\x02\x18\x10R\x04unit\x12,\n" +
 	"\tprecision\x18\x0f \x01(\x05B\t\xbaH\x06\x1a\x04\x18\x06(\x00H\x00R\tprecision\x88\x01\x01\x124\n" +
-	"\tshow_when\x18\x10 \x01(\v2\x17.ticket.v1.FormShowWhenR\bshowWhen\x1a=\n" +
+	"\tshow_when\x18\x10 \x01(\v2\x17.ticket.v1.FormShowWhenR\bshowWhen\x12)\n" +
+	"\x05width\x18\x11 \x01(\tB\x13\xbaH\x10r\x0eR\x00R\x04fullR\x04halfR\x05width\x1a=\n" +
 	"\x0fEnumLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\f\n" +

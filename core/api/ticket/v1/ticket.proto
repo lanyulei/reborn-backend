@@ -180,9 +180,10 @@ message FormField {
     min_len: 1
     max_len: 64
   }];
-  // type 类型：string / text / int / float / bool / enum / datetime / date / user / dept。
+  // type 类型：string / text / int / float / bool / enum / datetime / date / user / dept / file。
+  // file = 附件：取值为文件 ID 的列表（未开 multiple 至多 1 个，开了至多 10 个），一张表单至多 5 个附件字段。
   string type = 3 [(buf.validate.field).string = {
-    in: ["string", "text", "int", "float", "bool", "enum", "datetime", "date", "user", "dept"]
+    in: ["string", "text", "int", "float", "bool", "enum", "datetime", "date", "user", "dept", "file"]
   }];
   // required 是否必填。
   bool required = 4;
@@ -201,7 +202,7 @@ message FormField {
     max_pairs: 50
     values: { string: { max_len: 64 } }
   }];
-  // multiple 多选（仅 enum / user / dept）：取值为列表，至多 50 项。
+  // multiple 多选（仅 enum / user / dept / file）：取值为列表，至多 50 项；file 表示可带多个文件（至多 10 个）。
   bool multiple = 9;
   // default_value 提单表单的初始值（仅 string / text / int / float / bool / enum）。
   google.protobuf.Value default_value = 10;
@@ -220,6 +221,9 @@ message FormField {
   }];
   // show_when 显示条件；不传 = 始终显示。
   FormShowWhen show_when = 16;
+  // width 双列布局下所占的宽度：full = 独占一行 / half = 占半行；空 = 缺省（多行文本独占一行，
+  // 其余占半行）。单列布局下不起作用。
+  string width = 17 [(buf.validate.field).string = { in: ["", "full", "half"] }];
 }
 
 // FormShowWhen 字段的显示条件：排在它前面的某个单选下拉 / 是否字段取到给定值之一时才显示。
@@ -536,7 +540,8 @@ message CreateTicketRequest {
   google.protobuf.Struct data = 4;
   // creator_dept 提单部门 ID，可选：须为提单人所属部门；不传取主部门。
   optional string creator_dept = 5 [(buf.validate.field).string.uuid = true];
-  // file_ids 附件（已上传的文件 ID），去重、≤20 个。
+  // file_ids 工单级附件（已上传的文件 ID），去重、≤20 个：不挂在任何表单字段上。新的做法是在模板里
+  // 加 file 类型的字段、把文件 ID 放进 data；本字段为兼容保留。
   repeated string file_ids = 6 [(buf.validate.field).repeated = {
     unique: true
     max_items: 20

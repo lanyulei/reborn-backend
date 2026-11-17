@@ -599,7 +599,8 @@ type Data_Upload struct {
 	// dir 上传文件存储目录（相对或绝对路径），容器/裸机部署均需持久化；
 	// 留空使用默认值 ./uploads。
 	Dir string `protobuf:"bytes,1,opt,name=dir,proto3" json:"dir,omitempty"`
-	// driver 新上传附件使用的存储驱动：local（本地磁盘，<dir>/files；留空的缺省值）或 s3。
+	// driver 新上传文件（系统 logo / 头像 / 附件）使用的存储驱动：local（本地磁盘，<dir>/files；
+	// 留空的缺省值）或 s3。
 	// 多实例部署时本地驱动的 dir 须为共享卷。每个文件记录自己的驱动，切换后旧文件仍按原驱动读取。
 	Driver string `protobuf:"bytes,2,opt,name=driver,proto3" json:"driver,omitempty"`
 	// s3 S3 兼容对象存储的连接参数；driver = s3 时必填。

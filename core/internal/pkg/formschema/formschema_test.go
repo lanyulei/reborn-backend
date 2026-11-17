@@ -2,6 +2,7 @@ package formschema
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 )
 
@@ -254,5 +255,46 @@ func TestValidate_Extensions(t *testing.T) {
 	}
 	if !ValidFormat("") || !ValidFormat(FormatURL) || ValidFormat("ssn") {
 		t.Error("ValidFormat() mismatch")
+	}
+}
+
+// 附件字段：取值恒为文件 ID 列表；未开多选至多 1 个，开了至多 MaxFiles 个。
+func TestValidate_File(t *testing.T) {
+	t.Parallel()
+	fields := []Field{
+		{Code: "one", Type: TypeFile, Required: true},
+		{Code: "many", Type: TypeFile, Multiple: true},
+	}
+	const a, b = "018F3E1A-0A20-7000-8000-000000000001", "018f3e1a-0a20-7000-8000-000000000002"
+	out, err := Validate(fields, map[string]any{"one": []any{a}, "many": []any{a, b, a}}, false)
+	if err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	if got := out["one"].([]any); len(got) != 1 || got[0] != "018f3e1a-0a20-7000-8000-000000000001" {
+		t.Errorf("one = %v, want one lower-cased id", got)
+	}
+	if got := out["many"].([]any); len(got) != 2 {
+		t.Errorf("many = %v, want 2 deduplicated ids", got)
+	}
+	// 不必填的空列表 = 没传：不落值。
+	if out, err := Validate(fields, map[string]any{"one": []any{a}, "many": []any{}}, false); err != nil || out["many"] != nil {
+		t.Errorf("empty optional list: out = %v, err = %v", out, err)
+	}
+	tooMany := make([]any, 0, MaxFiles+1)
+	for i := range MaxFiles + 1 {
+		tooMany = append(tooMany, fmt.Sprintf("018f3e1a-0a20-7000-8000-%012d", i))
+	}
+	for name, values := range map[string]map[string]any{
+		"scalar":              {"one": a},
+		"not an id":           {"one": []any{"../../etc/passwd"}},
+		"non-string item":     {"one": []any{1}},
+		"two for single":      {"one": []any{a, b}},
+		"too many":            {"one": []any{a}, "many": tooMany},
+		"empty required list": {"one": []any{}},
+		"missing required":    {"many": []any{a}},
+	} {
+		if _, err := Validate(fields, values, false); err == nil {
+			t.Errorf("%s: want an error", name)
+		}
 	}
 }

@@ -644,19 +644,14 @@ func (s *Store) SaveConfig(_ context.Context, cfg *biz.SystemConfig) error {
 	return nil
 }
 
-// SaveLogoFile implements biz.SystemConfigRepo：内存覆盖保存 logo 文件。
-func (s *Store) SaveLogoFile(_ context.Context, data []byte, ext string) (string, error) {
+// SetLegacyLogo 在旧存放位置上放一个 logo 文件（导入用例用）。
+func (s *Store) SetLegacyLogo(data []byte, mime string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.logoFile = append([]byte(nil), data...)
-	s.logoMime = map[string]string{
-		".png": "image/png", ".jpg": "image/jpeg", ".svg": "image/svg+xml",
-		".webp": "image/webp", ".ico": "image/x-icon",
-	}[ext]
-	return biz.LogoVersion(data), nil
+	s.logoFile, s.logoMime = append([]byte(nil), data...), mime
 }
 
-// ReadLogoFile implements biz.SystemConfigRepo：未上传（nil）返回 ErrLogoNotFound。
+// ReadLogoFile implements biz.SystemConfigRepo（旧位置）：没有（nil）返回 ErrLogoNotFound。
 func (s *Store) ReadLogoFile(_ context.Context) ([]byte, string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -720,7 +715,7 @@ func (s *Store) ListLoginLogs(_ context.Context, filter biz.LoginLogFilter, page
 	return matched[start:end], total, nil
 }
 
-// AvatarStore 头像文件内存桩（biz.AvatarStore）。
+// AvatarStore 头像旧存放位置的内存桩（biz.AvatarStore，只读）。
 type AvatarStore struct {
 	mu    sync.Mutex
 	files map[string]avatarFile
@@ -734,13 +729,11 @@ type avatarFile struct {
 // NewAvatarStore new an AvatarStore.
 func NewAvatarStore() *AvatarStore { return &AvatarStore{files: map[string]avatarFile{}} }
 
-// SaveAvatarFile implements biz.AvatarStore.
-func (s *AvatarStore) SaveAvatarFile(_ context.Context, userID string, data []byte, ext string) error {
+// SetLegacyAvatar 在旧存放位置上放一个头像文件（导入用例用）。
+func (s *AvatarStore) SetLegacyAvatar(userID string, data []byte, mime string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	mime := map[string]string{".png": "image/png", ".jpg": "image/jpeg", ".webp": "image/webp"}[ext]
 	s.files[userID] = avatarFile{data: append([]byte(nil), data...), mime: mime}
-	return nil
 }
 
 // ReadAvatarFile implements biz.AvatarStore.

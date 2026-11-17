@@ -6,11 +6,32 @@ import (
 	"fmt"
 )
 
-// AvatarStore 头像文件仓储（data 层本地磁盘实现；按用户 ID 一人一文件）。
+// SingletonFiles 「每个归属只有一份」的文件的存取端口（由 file 域实现，内容落在对象存储
+// 驱动里）：系统 logo、用户头像经它保存与读取，随 upload.driver 走本地磁盘或 S3。
+type SingletonFiles interface {
+	// PutSingleton 保存 bizType / bizID 的那一份文件并作废它原有的文件；ifAbsent 为真时仅在
+	// 还没有文件时写入。返回是否写入。
+	PutSingleton(ctx context.Context, uploader, bizType, bizID, filename, contentType string, data []byte, ifAbsent bool) (bool, error)
+	// ReadSingleton 读取 bizType / bizID 的那一份文件；没有时 found 为 false。
+	ReadSingleton(ctx context.Context, bizType, bizID string) (data []byte, contentType string, found bool, err error)
+}
+
+// 文件域里的归属类型（file_object.biz_type）。
+const (
+	// FileBizAvatar 用户头像：biz_id 为用户 ID。
+	FileBizAvatar = "user_avatar"
+	// FileBizLogo 系统 logo：biz_id 恒为 logoBizID。
+	FileBizLogo = "system_logo"
+	logoBizID   = "logo"
+)
+
+// systemUploader 导入旧 logo 文件时记的上传者（全零 UUID）：旧文件没有留下是谁传的。
+const systemUploader = "00000000-0000-0000-0000-000000000000"
+
+// AvatarStore 头像的旧存放位置（上传目录下的 avatars/<用户 ID><扩展名>，改用对象存储之前
+// 上传的头像）：只读，首次读到时导入对象存储。
 type AvatarStore interface {
-	// SaveAvatarFile 覆盖式写入用户头像文件（原子替换，清理其它扩展名的旧文件）。
-	SaveAvatarFile(ctx context.Context, userID string, data []byte, ext string) error
-	// ReadAvatarFile 读取用户头像；未上传过返回 ErrAvatarNotFound。
+	// ReadAvatarFile 读取旧位置上的用户头像；没有返回 ErrAvatarNotFound。
 	ReadAvatarFile(ctx context.Context, userID string) (data []byte, mime string, err error)
 }
 
@@ -30,16 +51,17 @@ func AvatarURL(userID, version string) string {
 	return fmt.Sprintf("/api/v1/user/%s/avatar?v=%s", userID, version)
 }
 
-// AvatarUsecase 用户头像：自助上传（落盘 + 回写 avatar 字段）与读取。
+// AvatarUsecase 用户头像：自助上传（存入对象存储 + 回写 avatar 字段）与读取。
 type AvatarUsecase struct {
 	reader UserReader
 	writer UserWriter
-	store  AvatarStore
+	files  SingletonFiles
+	legacy AvatarStore
 }
 
 // NewAvatarUsecase new an AvatarUsecase.
-func NewAvatarUsecase(reader UserReader, writer UserWriter, store AvatarStore) *AvatarUsecase {
-	return &AvatarUsecase{reader: reader, writer: writer, store: store}
+func NewAvatarUsecase(reader UserReader, writer UserWriter, files SingletonFiles, legacy AvatarStore) *AvatarUsecase {
+	return &AvatarUsecase{reader: reader, writer: writer, files: files, legacy: legacy}
 }
 
 // Upload 保存头像并把带指纹的访问地址写入用户 avatar 字段，返回该地址。
@@ -51,7 +73,7 @@ func (uc *AvatarUsecase) Upload(ctx context.Context, userID string, data []byte,
 	if _, err := uc.reader.GetUser(ctx, userID); err != nil {
 		return "", err
 	}
-	if err := uc.store.SaveAvatarFile(ctx, userID, data, ext); err != nil {
+	if _, err := uc.files.PutSingleton(ctx, userID, FileBizAvatar, userID, "avatar"+ext, mime, data, false); err != nil {
 		return "", err
 	}
 	url := AvatarURL(userID, LogoVersion(data))
@@ -61,7 +83,19 @@ func (uc *AvatarUsecase) Upload(ctx context.Context, userID string, data []byte,
 	return url, nil
 }
 
-// Get 读取用户头像二进制与 MIME；未设置返回 ErrAvatarNotFound。
+// Get 读取用户头像二进制与 MIME；未设置返回 ErrAvatarNotFound。对象存储里没有时退回旧位置，
+// 读到即顺手导入（仅在仍然没有时写入，不会盖掉并发的新上传；导入失败不影响这次读取）。
 func (uc *AvatarUsecase) Get(ctx context.Context, userID string) ([]byte, string, error) {
-	return uc.store.ReadAvatarFile(ctx, userID)
+	data, mime, found, err := uc.files.ReadSingleton(ctx, FileBizAvatar, userID)
+	if err != nil || found {
+		return data, mime, err
+	}
+	data, mime, err = uc.legacy.ReadAvatarFile(ctx, userID)
+	if err != nil {
+		return nil, "", err
+	}
+	if ext, ok := AvatarMimeExts[mime]; ok {
+		_, _ = uc.files.PutSingleton(context.WithoutCancel(ctx), userID, FileBizAvatar, userID, "avatar"+ext, mime, data, true)
+	}
+	return data, mime, nil
 }

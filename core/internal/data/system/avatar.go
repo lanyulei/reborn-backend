@@ -15,8 +15,9 @@ import (
 
 var _ biz.AvatarStore = (*avatarStore)(nil)
 
-// avatarStore 头像文件本地磁盘仓储：<上传目录>/avatars/<userID><ext>，与 logo 同一
-// 原子落盘策略。userID 经 UUID 白名单校验后才参与路径拼接（防路径穿越）。
+// avatarStore 头像的旧存放位置（只读）：<上传目录>/avatars/<userID><ext>，改用对象存储之前
+// 上传的头像，首次读到时由用例导入对象存储。userID 经 UUID 白名单校验后才参与路径拼接
+// （防路径穿越）。
 type avatarStore struct {
 	data *basedata.Data
 }
@@ -30,29 +31,6 @@ var (
 )
 
 func (s *avatarStore) dir() string { return filepath.Join(s.data.LogoDir, "avatars") }
-
-// SaveAvatarFile implements biz.AvatarStore.
-func (s *avatarStore) SaveAvatarFile(_ context.Context, userID string, data []byte, ext string) error {
-	if !avatarIDPattern.MatchString(userID) {
-		return fmt.Errorf("invalid user id for avatar: %q", userID)
-	}
-	dir := s.dir()
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return fmt.Errorf("create avatar dir: %w", err)
-	}
-	if err := basedata.WriteFileAtomic(dir, filepath.Join(dir, userID+ext), data); err != nil {
-		return fmt.Errorf("write avatar file: %w", err)
-	}
-	for _, e := range avatarFileExts {
-		if e == ext {
-			continue
-		}
-		if err := os.Remove(filepath.Join(dir, userID+e)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("remove old avatar: %w", err)
-		}
-	}
-	return nil
-}
 
 // ReadAvatarFile implements biz.AvatarStore.
 func (s *avatarStore) ReadAvatarFile(_ context.Context, userID string) ([]byte, string, error) {

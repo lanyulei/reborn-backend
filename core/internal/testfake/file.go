@@ -2,6 +2,7 @@ package testfake
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"sync"
@@ -117,6 +118,64 @@ func (s *FileStore) ReleaseTx(_ context.Context, _ txrun.Tx, bizType, bizID stri
 	return nil
 }
 
+// PromoteSingleton implements bizfile.BindRepo.
+func (s *FileStore) PromoteSingleton(_ context.Context, id, bizType, bizID string, ifAbsent bool) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	live := func(e *fileEntry) bool {
+		return e.deleteTime.IsZero() && e.file.Status == bizfile.StatusBound && e.file.BizType == bizType && e.file.BizID == bizID
+	}
+	if ifAbsent {
+		for _, e := range s.files {
+			if live(e) {
+				return false, nil
+			}
+		}
+	}
+	target, ok := s.files[id]
+	if !ok || !target.deleteTime.IsZero() || target.file.Status != bizfile.StatusTemp {
+		return false, bizfile.ErrFileNotFound
+	}
+	for _, e := range s.files {
+		if live(e) {
+			e.deleteTime = time.Now()
+		}
+	}
+	target.file.Status, target.file.BizType, target.file.BizID = bizfile.StatusBound, bizType, bizID
+	return true, nil
+}
+
+// LatestByBiz implements bizfile.BindRepo.
+func (s *FileStore) LatestByBiz(_ context.Context, bizType, bizID string) (*bizfile.File, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var latest *bizfile.File
+	for _, e := range s.files {
+		if e.deleteTime.IsZero() && e.file.Status == bizfile.StatusBound && e.file.BizType == bizType && e.file.BizID == bizID &&
+			(latest == nil || e.file.ID > latest.ID) {
+			cp := e.file
+			latest = &cp
+		}
+	}
+	if latest == nil {
+		return nil, bizfile.ErrFileNotFound
+	}
+	return latest, nil
+}
+
+// ReleaseFilesTx implements bizfile.BindRepo.
+func (s *FileStore) ReleaseFilesTx(_ context.Context, _ txrun.Tx, bizType, bizID string, fileIDs []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, id := range fileIDs {
+		e, ok := s.files[id]
+		if ok && e.deleteTime.IsZero() && e.file.Status == bizfile.StatusBound && e.file.BizType == bizType && e.file.BizID == bizID {
+			e.deleteTime = time.Now()
+		}
+	}
+	return nil
+}
+
 // PurgeExpired implements bizfile.PurgeRepo.
 func (s *FileStore) PurgeExpired(ctx context.Context, tempBefore, deletedBefore time.Time, _ time.Duration, limit int, remove func(ctx context.Context, f *bizfile.File) error) (int, error) {
 	s.mu.Lock()
@@ -157,10 +216,43 @@ func (s *FileStore) Backdate(id string, d time.Duration) {
 	}
 }
 
+// BackdateDeleted 把全部已软删文件的软删时间前移 d，供清理用例构造过期数据。
+func (s *FileStore) BackdateDeleted(d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, e := range s.files {
+		if !e.deleteTime.IsZero() {
+			e.deleteTime = e.deleteTime.Add(-d)
+		}
+	}
+}
+
+// Len 当前元数据行数（含已软删、尚未清理的）。
+func (s *FileStore) Len() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.files)
+}
+
 // ObjectStore 是 storage.ObjectStore 的内存实现。
 type ObjectStore struct {
-	mu      sync.Mutex
-	objects map[string][]byte
+	mu       sync.Mutex
+	objects  map[string][]byte
+	failPuts bool
+}
+
+// FailPuts 让之后的写入失败 / 恢复（模拟存储不可用）。
+func (s *ObjectStore) FailPuts(fail bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failPuts = fail
+}
+
+// Clear 丢掉全部对象（模拟对象丢失）。
+func (s *ObjectStore) Clear() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	clear(s.objects)
 }
 
 // NewObjectStore new an ObjectStore.
@@ -170,6 +262,9 @@ func NewObjectStore() *ObjectStore { return &ObjectStore{objects: map[string][]b
 func (s *ObjectStore) Put(_ context.Context, key string, data []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.failPuts {
+		return errors.New("object store unavailable")
+	}
 	s.objects[key] = slices.Clone(data)
 	return nil
 }
@@ -200,11 +295,15 @@ func (s *ObjectStore) Len() int {
 	return len(s.objects)
 }
 
-// FileChecker 是 bizfile.AccessChecker 的桩：按 userID|bizID 白名单放行。
+// FileChecker 是 bizfile.AccessChecker 的桩：按 userID|bizID 白名单放行；键为
+// userID|bizID|fileID 且值为 false 时单独拒绝这个文件。
 type FileChecker map[string]bool
 
 // CanReadFile implements bizfile.AccessChecker.
-func (c FileChecker) CanReadFile(_ context.Context, userID, bizID string) (bool, error) {
+func (c FileChecker) CanReadFile(_ context.Context, userID, bizID, fileID string) (bool, error) {
+	if allowed, ok := c[userID+"|"+bizID+"|"+fileID]; ok {
+		return allowed, nil
+	}
 	return c[userID+"|"+bizID], nil
 }
 

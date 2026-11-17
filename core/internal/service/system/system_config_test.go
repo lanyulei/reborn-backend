@@ -14,8 +14,17 @@ import (
 func newSystemConfigService(t *testing.T) (*SystemConfigService, *testfake.Store) {
 	t.Helper()
 	store := testfake.NewStore()
-	return NewSystemConfigService(biz.NewSystemConfigUsecase(store)), store
+	files, _, _, err := testfake.NewFileUsecase(nil)
+	if err != nil {
+		t.Fatalf("testfake.NewFileUsecase() error = %v", err)
+	}
+	return NewSystemConfigService(biz.NewSystemConfigUsecase(store, files)), store
 }
+
+// logoUploader 上传 logo 的操作人（上传接口须登录）。
+const logoUploader = "018f3e1a-0000-7000-8000-0000000000aa"
+
+func logoCtx() context.Context { return claimsContext(logoUploader) }
 
 // 未配置过：Get 返回空配置（各字段空串），不报错——前端按空值兜底默认。
 func TestSystemConfigService_GetUnconfigured(t *testing.T) {
@@ -85,7 +94,7 @@ func TestSystemConfigService_UploadThenGetLogo(t *testing.T) {
 	t.Parallel()
 	svc, _ := newSystemConfigService(t)
 
-	resp, err := svc.UploadSystemLogo(context.Background(), &v1.UploadSystemLogoRequest{
+	resp, err := svc.UploadSystemLogo(logoCtx(), &v1.UploadSystemLogoRequest{
 		Data: []byte("\x89PNG-fake-1"), Mime: "image/png",
 	})
 	if err != nil {
@@ -104,7 +113,7 @@ func TestSystemConfigService_UploadThenGetLogo(t *testing.T) {
 	}
 
 	// 覆盖上传：内容变化指纹随之变化，读回新内容
-	resp2, err := svc.UploadSystemLogo(context.Background(), &v1.UploadSystemLogoRequest{
+	resp2, err := svc.UploadSystemLogo(logoCtx(), &v1.UploadSystemLogoRequest{
 		Data: []byte("<svg>fake-2</svg>"), Mime: "image/svg+xml",
 	})
 	if err != nil {
@@ -119,6 +128,43 @@ func TestSystemConfigService_UploadThenGetLogo(t *testing.T) {
 	}
 	if body2.GetContentType() != "image/svg+xml" || string(body2.GetData()) != "<svg>fake-2</svg>" {
 		t.Fatalf("GetSystemLogo() after overwrite = (%q, %q), want new content", body2.GetContentType(), body2.GetData())
+	}
+}
+
+// 上传接口须登录：没有身份时拒绝，不落文件。
+func TestSystemConfigService_UploadLogoNeedsUser(t *testing.T) {
+	t.Parallel()
+	svc, _ := newSystemConfigService(t)
+	if _, err := svc.UploadSystemLogo(context.Background(), &v1.UploadSystemLogoRequest{Data: []byte("x"), Mime: "image/png"}); !errors.Is(err, biz.ErrTokenInvalid) {
+		t.Fatalf("UploadSystemLogo(anonymous) error = %v, want ErrTokenInvalid", err)
+	}
+	if _, err := svc.GetSystemLogo(context.Background(), &v1.GetSystemLogoRequest{}); !errors.Is(err, v1.ErrorLogoNotFound("")) {
+		t.Fatalf("GetSystemLogo() error = %v, want LOGO_NOT_FOUND", err)
+	}
+}
+
+// 改用对象存储之前上传的 logo（旧位置上的文件）：照常读到，并在首次读取时导入；之后的上传
+// 以新文件为准，旧位置上的文件不再生效。
+func TestSystemConfigService_LegacyLogo(t *testing.T) {
+	t.Parallel()
+	svc, store := newSystemConfigService(t)
+	store.SetLegacyLogo([]byte("<svg>old</svg>"), "image/svg+xml")
+	for range 2 {
+		body, err := svc.GetSystemLogo(context.Background(), &v1.GetSystemLogoRequest{})
+		if err != nil || body.GetContentType() != "image/svg+xml" || string(body.GetData()) != "<svg>old</svg>" {
+			t.Fatalf("GetSystemLogo(legacy) = (%q, %q), %v", body.GetContentType(), body.GetData(), err)
+		}
+	}
+	// 已导入：旧位置上的文件变了也不影响读取。
+	store.SetLegacyLogo([]byte("changed-on-disk"), "image/png")
+	if body, err := svc.GetSystemLogo(context.Background(), &v1.GetSystemLogoRequest{}); err != nil || string(body.GetData()) != "<svg>old</svg>" {
+		t.Fatalf("GetSystemLogo(after import) = %q, %v; want the imported copy", body.GetData(), err)
+	}
+	if _, err := svc.UploadSystemLogo(logoCtx(), &v1.UploadSystemLogoRequest{Data: []byte("\x89PNG-new"), Mime: "image/png"}); err != nil {
+		t.Fatalf("UploadSystemLogo() error = %v", err)
+	}
+	if body, err := svc.GetSystemLogo(context.Background(), &v1.GetSystemLogoRequest{}); err != nil || body.GetContentType() != "image/png" || string(body.GetData()) != "\x89PNG-new" {
+		t.Fatalf("GetSystemLogo(after upload) = (%q, %q), %v", body.GetContentType(), body.GetData(), err)
 	}
 }
 

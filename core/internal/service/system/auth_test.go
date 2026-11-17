@@ -43,7 +43,11 @@ func newAuthService(t *testing.T) (*AuthService, *biz.AuthUsecase, *testfake.Sto
 		t.Fatalf("testfake.NewAuthorizer() error = %v", err)
 	}
 	authz := biz.NewAuthzUsecase(store, store, store, authorizer)
-	return NewAuthService(uc, authz, biz.NewAvatarUsecase(store, store, testfake.NewAvatarStore())), uc, store, authorizer
+	files, _, _, err := testfake.NewFileUsecase(nil)
+	if err != nil {
+		t.Fatalf("testfake.NewFileUsecase() error = %v", err)
+	}
+	return NewAuthService(uc, authz, biz.NewAvatarUsecase(store, store, files, testfake.NewAvatarStore())), uc, store, authorizer
 }
 
 // seedAuthUser 预置可登录用户（真实 Argon2id 哈希）。
@@ -316,5 +320,47 @@ func TestResolveClientIP(t *testing.T) {
 		if got := resolveClientIP(tc.remote, tc.xff); got != tc.want {
 			t.Errorf("%s: resolveClientIP() = %q, want %q", tc.name, got, tc.want)
 		}
+	}
+}
+
+// 改用对象存储之前上传的头像（旧位置上的文件）：照常读到并在首次读取时导入；之后的上传以
+// 新文件为准。导入不会盖掉已有的新头像。
+func TestAvatarUsecase_LegacyAvatar(t *testing.T) {
+	t.Parallel()
+	store := testfake.NewStore()
+	files, _, _, err := testfake.NewFileUsecase(nil)
+	if err != nil {
+		t.Fatalf("testfake.NewFileUsecase() error = %v", err)
+	}
+	legacy := testfake.NewAvatarStore()
+	uc := biz.NewAvatarUsecase(store, store, files, legacy)
+	ctx := context.Background()
+	u := &biz.User{ID: "018f3e1a-0000-7000-8000-0000000000ab", Username: "legacy_avatar", Status: biz.StatusEnabled}
+	if err := store.CreateUser(ctx, u); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	if _, _, err := uc.Get(ctx, u.ID); !errors.Is(err, biz.ErrAvatarNotFound) {
+		t.Fatalf("Get(no avatar) error = %v, want ErrAvatarNotFound", err)
+	}
+	legacy.SetLegacyAvatar(u.ID, []byte("old-webp"), "image/webp")
+	for range 2 {
+		if data, mime, err := uc.Get(ctx, u.ID); err != nil || mime != "image/webp" || string(data) != "old-webp" {
+			t.Fatalf("Get(legacy) = %q, %q, %v", data, mime, err)
+		}
+	}
+	// 已导入：旧位置上的文件变了也不影响读取。
+	legacy.SetLegacyAvatar(u.ID, []byte("changed-on-disk"), "image/png")
+	if data, _, err := uc.Get(ctx, u.ID); err != nil || string(data) != "old-webp" {
+		t.Fatalf("Get(after import) = %q, %v; want the imported copy", data, err)
+	}
+	url, err := uc.Upload(ctx, u.ID, []byte("new-png"), "image/png")
+	if err != nil || url != biz.AvatarURL(u.ID, biz.LogoVersion([]byte("new-png"))) {
+		t.Fatalf("Upload() = %q, %v", url, err)
+	}
+	if data, mime, err := uc.Get(ctx, u.ID); err != nil || mime != "image/png" || string(data) != "new-png" {
+		t.Fatalf("Get(after upload) = %q, %q, %v", data, mime, err)
+	}
+	if got, err := store.GetUser(ctx, u.ID); err != nil || got.Avatar != url {
+		t.Fatalf("user avatar url = %q, %v; want %q", got.Avatar, err, url)
 	}
 }

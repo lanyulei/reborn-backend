@@ -12201,7 +12201,7 @@
           "items": {
             "type": "string"
           },
-          "title": "file_ids 附件（已上传的文件 ID），去重、≤20 个。"
+          "title": "file_ids 工单级附件（已上传的文件 ID），去重、≤20 个：不挂在任何表单字段上。新的做法是在模板里\n加 file 类型的字段、把文件 ID 放进 data；本字段为兼容保留。"
         },
         "requestId": {
           "type": "string",
@@ -12855,7 +12855,7 @@
         },
         "type": {
           "type": "string",
-          "title": "type 类型：string / text / int / float / bool / enum / datetime / date / user / dept。"
+          "title": "type 类型：string / text / int / float / bool / enum / datetime / date / user / dept / file。\nfile = 附件：取值为文件 ID 的列表（未开 multiple 至多 1 个，开了至多 10 个），一张表单至多 5 个附件字段。"
         },
         "required": {
           "type": "boolean",
@@ -12885,7 +12885,7 @@
         },
         "multiple": {
           "type": "boolean",
-          "title": "multiple 多选（仅 enum / user / dept）：取值为列表，至多 50 项。"
+          "title": "multiple 多选（仅 enum / user / dept / file）：取值为列表，至多 50 项；file 表示可带多个文件（至多 10 个）。"
         },
         "defaultValue": {
           "title": "default_value 提单表单的初始值（仅 string / text / int / float / bool / enum）。"
@@ -12914,6 +12914,10 @@
         "showWhen": {
           "$ref": "#/definitions/FormShowWhen",
           "title": "show_when 显示条件；不传 = 始终显示。"
+        },
+        "width": {
+          "type": "string",
+          "title": "width 双列布局下所占的宽度：full = 独占一行 / half = 占半行；空 = 缺省（多行文本独占一行，\n其余占半行）。单列布局下不起作用。"
         }
       },
       "title": "FormField 表单字段定义。"

@@ -52,11 +52,15 @@ func (s *SystemConfigService) UpdateSystemConfig(ctx context.Context, req *v1.Up
 }
 
 // UploadSystemLogo implements proto SystemConfigService/UploadSystemLogo：
-// 保存本地上传的 logo 文件（覆盖式单文件），返回带内容指纹的 URL；文件
+// 保存上传的 logo 文件（存入对象存储，替换原有的），返回带内容指纹的 URL；文件
 // 不直接落配置行，前端拿到 URL 随 UpdateSystemConfig 写入 logo 字段。
 // 接口经鉴权/授权中间件（仅 admin 或被授权角色可调）。
 func (s *SystemConfigService) UploadSystemLogo(ctx context.Context, req *v1.UploadSystemLogoRequest) (*v1.UploadSystemLogoResponse, error) {
-	url, err := s.uc.UploadLogo(ctx, req.GetData(), req.GetMime())
+	uploader, err := UserIDFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	url, err := s.uc.UploadLogo(ctx, uploader, req.GetData(), req.GetMime())
 	if err != nil {
 		return nil, err
 	}

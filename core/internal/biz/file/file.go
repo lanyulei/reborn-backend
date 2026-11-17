@@ -44,6 +44,9 @@ const (
 	purgeBatch = 100
 	// maxBindFiles 单次绑定的文件数上限。
 	maxBindFiles = 50
+	// maxListFiles 列出一个业务对象的附件时的条数上限：业务对象可以分多次绑定（如工单提单时
+	// 绑一批、处理人之后再补），总数由业务域自己约束，这里只是防御性的上限。
+	maxListFiles = 200
 	// MaxTempFiles 单个用户同时持有的未绑定临时文件数上限（上传配额：临时文件 24h 后
 	// 才清理，不设上限则任何登录用户都能持续占用存储）。
 	MaxTempFiles = 100
@@ -102,8 +105,17 @@ type BindRepo interface {
 	BindTx(ctx context.Context, tx txrun.Tx, uploader, bizType, bizID string, fileIDs []string) (int64, error)
 	// ReleaseTx 软删某业务对象的全部附件（业务对象删除时调用）。
 	ReleaseTx(ctx context.Context, tx txrun.Tx, bizType, bizID string) error
+	// ReleaseFilesTx 软删某业务对象的指定附件：只命中确实绑定在该对象上的文件（别的对象的
+	// 文件、临时文件都不命中）。
+	ReleaseFilesTx(ctx context.Context, tx txrun.Tx, bizType, bizID string, fileIDs []string) error
 	// ListByBiz 某业务对象的全部未删除附件，按上传顺序；至多 limit 个。
 	ListByBiz(ctx context.Context, bizType, bizID string, limit int) ([]*File, error)
+	// PromoteSingleton 把临时文件 id 立为某业务对象「唯一的那一份」：同一事务里（按业务对象
+	// 串行）软删它原有的文件、再把 id 绑定上去。ifAbsent 为真时该对象已有文件则什么都不做并
+	// 返回 false。id 不是未删除的临时文件返回 ErrFileNotFound。
+	PromoteSingleton(ctx context.Context, id, bizType, bizID string, ifAbsent bool) (bool, error)
+	// LatestByBiz 某业务对象最新的一个未删除文件（含驱动与对象键）；没有返回 ErrFileNotFound。
+	LatestByBiz(ctx context.Context, bizType, bizID string) (*File, error)
 }
 
 // PurgeRepo 是后台清理仓储接口。
@@ -117,8 +129,9 @@ type PurgeRepo interface {
 
 // AccessChecker 由持有附件的业务域实现：判定用户能否读取某业务对象的附件。
 type AccessChecker interface {
-	// CanReadFile 报告 userID 是否可读取 bizID 对应业务对象的附件。
-	CanReadFile(ctx context.Context, userID, bizID string) (bool, error)
+	// CanReadFile 报告 userID 是否可读取 bizID 对应业务对象的附件 fileID（业务域可以细到单个
+	// 文件：例如它挂在一个对该用户隐藏的表单字段上）。
+	CanReadFile(ctx context.Context, userID, bizID, fileID string) (bool, error)
 }
 
 // AccessCheckers 业务类型 → 访问检查器（装配期构造，只读）。未登记的业务类型一律拒绝读取。
@@ -262,7 +275,7 @@ func (uc *Usecase) Get(ctx context.Context, userID, id string) (*File, error) {
 	if !ok {
 		return nil, ErrFileForbidden
 	}
-	allowed, err := checker.CanReadFile(ctx, userID, f.BizID)
+	allowed, err := checker.CanReadFile(ctx, userID, f.BizID, f.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -318,12 +331,95 @@ func (uc *Usecase) Bind(ctx context.Context, tx txrun.Tx, uploader, bizType, biz
 
 // ListByBiz 某业务对象的附件（跨域窄接口：访问控制由持有附件的业务域在调用前完成）。
 func (uc *Usecase) ListByBiz(ctx context.Context, bizType, bizID string) ([]*File, error) {
-	return uc.binds.ListByBiz(ctx, bizType, bizID, maxBindFiles)
+	return uc.binds.ListByBiz(ctx, bizType, bizID, maxListFiles)
 }
 
 // Release 在调用方业务事务内软删某业务对象的全部附件（业务对象删除时调用）。
 func (uc *Usecase) Release(ctx context.Context, tx txrun.Tx, bizType, bizID string) error {
 	return uc.binds.ReleaseTx(ctx, tx, bizType, bizID)
+}
+
+// ReleaseFiles 在调用方业务事务内软删某业务对象的指定附件（业务对象不再引用它们时调用）。
+// 只作用于确实绑定在该对象上的文件；非法 ID 直接忽略（不会命中任何行）。
+func (uc *Usecase) ReleaseFiles(ctx context.Context, tx txrun.Tx, bizType, bizID string, fileIDs []string) error {
+	ids := slices.DeleteFunc(uniqueLower(fileIDs), func(id string) bool { return !uuidText.MatchString(id) })
+	if len(ids) == 0 || bizType == "" || bizID == "" {
+		return nil
+	}
+	return uc.binds.ReleaseFilesTx(ctx, tx, bizType, bizID, ids)
+}
+
+// PutSingleton 保存某业务对象「唯一的那一份」文件（如系统 logo、用户头像）：写入后它原有的
+// 文件作废（由清理任务连同对象删除）。内容类型由调用方给定——调用方已按自己的白名单校验，
+// 这里不再嗅探，也不计入上传配额。ifAbsent 为真时仅在该对象还没有文件时写入（导入旧数据用，
+// 不会盖掉并发的新上传）；返回是否写入。
+//
+// 步骤与 Upload 同一思路：先落临时元数据、再写对象、最后在一个事务里换上去。任何一步失败
+// 或进程中途崩溃，留下的只是一条临时文件，到期由清理任务删除；读方在换上去之前看到的始终
+// 是完整的旧文件。
+func (uc *Usecase) PutSingleton(ctx context.Context, uploader, bizType, bizID, filename, contentType string, data []byte, ifAbsent bool) (bool, error) {
+	if bizType == "" || bizID == "" || contentType == "" || len(data) == 0 || len(data) > MaxFileSize {
+		return false, ErrFileTypeNotAllowed
+	}
+	name, err := sanitizeFilename(filename)
+	if err != nil {
+		return false, err
+	}
+	id, err := idgen.NewID()
+	if err != nil {
+		return false, err
+	}
+	now := uc.now().UTC()
+	sum := sha256.Sum256(data)
+	f := &File{
+		ID: id, Driver: uc.stores.Default, ObjectKey: now.Format("2006/01/02") + "/" + id,
+		Filename: name, Size: int64(len(data)), Mime: contentType, SHA256: hex.EncodeToString(sum[:]),
+		Status: StatusTemp, CreateUser: uploader, CreateTime: now,
+	}
+	if err := uc.repo.Create(ctx, f, MaxTempFiles); err != nil {
+		return false, err
+	}
+	store := uc.stores.Drivers[f.Driver]
+	// 回退用不随请求取消的 ctx；回退失败也无妨（临时文件到期清理）。
+	discard := func() {
+		bg := context.WithoutCancel(ctx)
+		_ = store.Delete(bg, f.ObjectKey)
+		_ = uc.repo.Discard(bg, f.ID)
+	}
+	if err := store.Put(ctx, f.ObjectKey, data); err != nil {
+		discard()
+		return false, fmt.Errorf("store file: %w", err)
+	}
+	done, err := uc.binds.PromoteSingleton(ctx, f.ID, bizType, bizID, ifAbsent)
+	if err != nil || !done {
+		discard()
+		return false, err
+	}
+	return true, nil
+}
+
+// ReadSingleton 读取某业务对象「唯一的那一份」文件的内容与内容类型；没有（或对象已丢失）时
+// found 为 false。访问控制由调用方负责（logo、头像是公开可读的）。
+func (uc *Usecase) ReadSingleton(ctx context.Context, bizType, bizID string) (data []byte, contentType string, found bool, err error) {
+	f, err := uc.binds.LatestByBiz(ctx, bizType, bizID)
+	if err != nil {
+		if errors.Is(err, ErrFileNotFound) {
+			return nil, "", false, nil
+		}
+		return nil, "", false, err
+	}
+	store, ok := uc.stores.Drivers[f.Driver]
+	if !ok {
+		return nil, "", false, fmt.Errorf("file: storage driver %q is not registered", f.Driver)
+	}
+	data, err = store.Get(ctx, f.ObjectKey)
+	if err != nil {
+		if errors.Is(err, storage.ErrObjectNotFound) {
+			return nil, "", false, nil
+		}
+		return nil, "", false, fmt.Errorf("read file: %w", err)
+	}
+	return data, f.Mime, true, nil
 }
 
 // Purge 后台清理一批：过期临时文件与超过保留期的软删文件，连同对象物理删除；

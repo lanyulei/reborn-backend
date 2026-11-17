@@ -131,21 +131,21 @@ func (uc *Usecase) applyFormAccess(ctx context.Context, d *Detail, userID string
 			return p == permEditable || p == permRequired
 		})
 	}
-	if t.Creator == userID || !fa.Seated || (len(fa.Hidden) == 0 && !fa.HideAll) {
-		return nil
-	}
-	all, err := uc.access.supervisor.CanViewAll(ctx, userID)
-	if err != nil || all {
+	hidden, all, err := uc.access.concealedFields(ctx, t, userID, fa)
+	if err != nil {
 		return err
 	}
-	if fa.HideAll {
+	if all {
 		// 流程图已无法解析，判断不了哪些字段该对他隐藏：整张表单都不给（宁可少给）。
 		t.Form, t.Data = nil, map[string]any{}
 		return nil
 	}
-	t.Form = slices.DeleteFunc(slices.Clone(t.Form), func(f FormField) bool { return slices.Contains(fa.Hidden, f.Code) })
+	if len(hidden) == 0 {
+		return nil
+	}
+	t.Form = slices.DeleteFunc(slices.Clone(t.Form), func(f FormField) bool { return slices.Contains(hidden, f.Code) })
 	t.Data = maps.Clone(t.Data)
-	for _, code := range fa.Hidden {
+	for _, code := range hidden {
 		delete(t.Data, code)
 	}
 	return nil
@@ -218,6 +218,11 @@ func (uc *Usecase) UpdateForm(ctx context.Context, id, userID string, data map[s
 			}
 		}
 		if _, err := validateSize(merged); err != nil {
+			return nil, err
+		}
+		// 附件字段：新带上的文件绑定到工单（须是他本人刚上传的），拿掉的、以及随字段不再显示
+		// 而清掉的文件作废。
+		if err := uc.syncFieldFiles(ctx, tx, userID, id, form, current, merged); err != nil {
 			return nil, err
 		}
 		if err := uc.ext.Ops.SetDataTx(ctx, tx, id, merged); err != nil {

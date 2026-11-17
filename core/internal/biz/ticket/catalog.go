@@ -102,7 +102,7 @@ func (uc *CatalogUsecase) DeleteCategory(ctx context.Context, id string) error {
 var formTypes = map[string]struct{}{
 	formschema.TypeString: {}, formschema.TypeText: {}, formschema.TypeInt: {}, formschema.TypeFloat: {},
 	formschema.TypeBool: {}, formschema.TypeEnum: {}, formschema.TypeDatetime: {},
-	formschema.TypeUser: {}, formschema.TypeDept: {}, formschema.TypeDate: {},
+	formschema.TypeUser: {}, formschema.TypeDept: {}, formschema.TypeDate: {}, formschema.TypeFile: {},
 }
 
 // defaultTypes 可以设初始值的字段类型。
@@ -119,6 +119,7 @@ func validateForm(form []FormField) error {
 	}
 	seen := make(map[string]struct{}, len(form))
 	earlier := make(map[string]*FormField, len(form))
+	fileFields := 0
 	for i := range form {
 		f := &form[i]
 		bad := func(msg string) error {
@@ -136,6 +137,11 @@ func validateForm(form []FormField) error {
 		}
 		if f.Name == "" {
 			return bad("needs a name")
+		}
+		if f.Type == formschema.TypeFile {
+			if fileFields++; fileFields > maxFileFields {
+				return detail(ErrTemplateInvalid, fmt.Sprintf("a form may have at most %d attachment fields", maxFileFields))
+			}
 		}
 		if f.Type == formschema.TypeEnum && len(f.EnumValues) == 0 {
 			return bad("needs at least one enum value")
@@ -163,7 +169,8 @@ func validateForm(form []FormField) error {
 // validateFieldExtras 校验字段的扩展配置（展示值、多选、初始值、格式、小数位、显示条件）并归一化
 // 初始值。earlier 是排在它前面的字段。返回的错误只是说明文字，由调用方包成业务错误。
 func validateFieldExtras(f *FormField, earlier map[string]*FormField) error {
-	multi := f.Type == formschema.TypeEnum || f.Type == formschema.TypeUser || f.Type == formschema.TypeDept
+	multi := f.Type == formschema.TypeEnum || f.Type == formschema.TypeUser || f.Type == formschema.TypeDept ||
+		f.Type == formschema.TypeFile
 	if f.Multiple && !multi {
 		return fmt.Errorf("cannot be multiple for its type")
 	}
