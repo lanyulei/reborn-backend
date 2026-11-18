@@ -1,0 +1,95 @@
+# MySQL（mysqld_exporter）。
+groups:
+  - name: MySQL
+    interval: 1m
+    rules:
+      - alert: MySQL 实例不可用
+        expr: mysql_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "MySQL 实例 {{ $labels.instance }} 无法连接"
+      - alert: MySQL 近期重启
+        expr: mysql_global_status_uptime < 300
+        labels:
+          severity: info
+        annotations:
+          summary: "MySQL 实例 {{ $labels.instance }} 在最近 5 分钟内重启过"
+      - alert: MySQL 连接数过高
+        expr: 100 * mysql_global_status_threads_connected / mysql_global_variables_max_connections > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "MySQL 实例 {{ $labels.instance }} 连接数已用 {{ printf \"%.1f\" $value }}%"
+      - alert: MySQL 连接数即将耗尽
+        expr: 100 * mysql_global_status_threads_connected / mysql_global_variables_max_connections > 95
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "MySQL 实例 {{ $labels.instance }} 连接数已用 {{ printf \"%.1f\" $value }}%，新连接即将被拒绝"
+      - alert: MySQL 活跃线程过多
+        expr: mysql_global_status_threads_running > 50
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "MySQL 实例 {{ $labels.instance }} 正在执行的线程数 {{ $value }}"
+      - alert: MySQL 慢查询增多
+        expr: rate(mysql_global_status_slow_queries[5m]) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "MySQL 实例 {{ $labels.instance }} 每秒慢查询 {{ printf \"%.2f\" $value }} 条"
+      - alert: MySQL 连接被中断
+        expr: rate(mysql_global_status_aborted_connects[5m]) > 5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "MySQL 实例 {{ $labels.instance }} 每秒 {{ printf \"%.1f\" $value }} 次连接失败（认证失败、网络中断或连接数已满）"
+      - alert: MySQL 复制 IO 线程停止
+        expr: mysql_slave_status_slave_io_running == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "MySQL 从库 {{ $labels.instance }} 的复制 IO 线程未运行"
+      - alert: MySQL 复制 SQL 线程停止
+        expr: mysql_slave_status_slave_sql_running == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "MySQL 从库 {{ $labels.instance }} 的复制 SQL 线程未运行"
+      - alert: MySQL 复制延迟
+        expr: mysql_slave_status_seconds_behind_master > 60
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "MySQL 从库 {{ $labels.instance }} 落后主库 {{ $value }} 秒"
+      - alert: MySQL InnoDB 行锁等待过多
+        expr: mysql_global_status_innodb_row_lock_current_waits > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "MySQL 实例 {{ $labels.instance }} 当前有 {{ $value }} 个行锁等待"
+      - alert: MySQL InnoDB 缓冲池命中率低
+        expr: 100 * (1 - rate(mysql_global_status_innodb_buffer_pool_reads[10m]) / rate(mysql_global_status_innodb_buffer_pool_read_requests[10m])) < 95
+        for: 15m
+        labels:
+          severity: info
+        annotations:
+          summary: "MySQL 实例 {{ $labels.instance }} InnoDB 缓冲池命中率 {{ printf \"%.1f\" $value }}%"
+      - alert: MySQL 打开文件数过高
+        expr: 100 * mysql_global_status_innodb_num_open_files / mysql_global_variables_open_files_limit > 80
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "MySQL 实例 {{ $labels.instance }} 打开文件数已用 {{ printf \"%.1f\" $value }}%"

@@ -10,7 +10,7 @@ import (
 
 	v1 "github.com/lanyulei/reborn/backend/core/api/workflow/v1"
 	"github.com/lanyulei/reborn/backend/kit/idgen"
-	"github.com/lanyulei/reborn/backend/kit/notifycontract"
+	"github.com/lanyulei/reborn/backend/kit/netguard"
 
 	"github.com/go-kratos/kratos/v3/errors"
 )
@@ -259,37 +259,11 @@ func NewWebhookUsecase(repo WebhookRepo) *WebhookUsecase {
 	return &WebhookUsecase{repo: repo}
 }
 
-// blockedNets 除回环 / 私网 / 链路本地之外，同样不允许 Webhook 指向的地址段：经它们可以
-// 绕到内网（NAT64、6to4 把 IPv4 地址嵌在 IPv6 里），或本就不是可路由的公网地址。
-var blockedNets = func() []*net.IPNet {
-	cidrs := []string{"0.0.0.0/8", "100.64.0.0/10", "198.18.0.0/15", "240.0.0.0/4", "64:ff9b::/96", "2002::/16"}
-	out := make([]*net.IPNet, 0, len(cidrs))
-	for _, c := range cidrs {
-		_, n, err := net.ParseCIDR(c)
-		if err != nil {
-			panic(err) // 常量表写错即启动期暴露
-		}
-		out = append(out, n)
-	}
-	return out
-}()
-
-// BlockedIP 报告地址是否不允许作为 Webhook 的目标（保存端点时校验字面量地址，每次调用时
-// 对解析出的真实地址再校验）。
-func BlockedIP(ip net.IP) bool {
-	if notifycontract.PrivateIP(ip) || ip.IsUnspecified() || ip.IsMulticast() {
-		return true
-	}
-	for _, n := range blockedNets {
-		if n.Contains(ip) {
-			return true
-		}
-	}
-	return false
-}
+// BlockedIP 报告地址是否不允许作为 Webhook 的目标（规则在 kit/netguard，与通知渠道共用）。
+func BlockedIP(ip net.IP) bool { return netguard.BlockedIP(ip) }
 
 // checkWebhook 归一化并校验端点：地址须为 https、带主机名、不含账号口令，且不是指向
-// 回环 / 内网的 IP 字面量（域名解析结果在每次调用时再校验，免疫 DNS 重绑定）。
+// localhost 或回环 / 内网的 IP 字面量（域名解析结果在每次调用时再校验，免疫 DNS 重绑定）。
 func checkWebhook(w *Webhook) error {
 	w.Name, w.Description, w.URL = clean(strings.TrimSpace(w.Name)), clean(strings.TrimSpace(w.Description)), strings.TrimSpace(w.URL)
 	if w.Name == "" {
@@ -299,7 +273,7 @@ func checkWebhook(w *Webhook) error {
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
 		return invalid(ErrWebhookInvalid, "webhook url must be an https url without credentials")
 	}
-	if ip := net.ParseIP(u.Hostname()); ip != nil && BlockedIP(ip) {
+	if netguard.UnsafeHost(u.Hostname()) {
 		return invalid(ErrWebhookInvalid, "webhook url must not point to a private or local address")
 	}
 	if strings.ContainsAny(w.Secret, "\x00\r\n") {

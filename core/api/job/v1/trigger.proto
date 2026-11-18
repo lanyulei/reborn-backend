@@ -1,0 +1,302 @@
+syntax = "proto3";
+
+package job.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/job/v1;v1";
+
+// JobTriggerService 触发器：由外部事件执行作业模板。触发器以负责人（创建人，编辑后为编辑人）的身份
+// 提交执行，与手动执行走同一套校验与审批。
+//
+// 类型 1 开放接口：供流程的服务节点或外部系统（发布流水线等）调用——
+//   POST /api/v1/open/job/trigger/{触发器 ID}
+//   请求体（JSON，可为空对象）：{"requestId": "幂等键，可选", "params": {变量名: 值}, "instanceId": "流程实例 ID，可选"}
+//   流程服务节点（Webhook）的请求体原样可用：其 jobId 作为幂等键，instanceId 用于回发信号，
+//   variables 里与模板参数同名的项在触发器允许传参时作为参数取值。
+//   认证二选一：Authorization: Bearer <调用令牌>；或流程 Webhook 的签名头
+//   X-Workflow-Timestamp + X-Workflow-Signature（把调用令牌填为 Webhook 的签名密钥）。
+//   应答：{"executionId": "...", "status": 1, "variables": {"jobExecutionId": "..."}}。
+//   配置了信号名且请求带了流程实例 ID 时，作业结束后向该实例发送信号，变量为
+//   jobExecutionId、jobStatus（执行状态 3-10）、jobSuccess（是否成功）——流程在服务节点之后放一个
+//   「等待信号」节点即可在作业结束后继续。
+// 类型 2 告警：监控告警触发时执行（告警自愈）。只处理未被屏蔽的告警事件，每个事件对每个触发器只触发一次。
+service JobTriggerService {
+  // ListJobTriggers 分页查询触发器。
+  rpc ListJobTriggers(ListJobTriggersRequest) returns (ListJobTriggersResponse) {
+    option (google.api.http) = {get: "/api/v1/job/trigger"};
+    option (system.v1.title) = "查询触发器";
+  }
+  // CreateJobTrigger 新建触发器；接口触发器同时返回调用令牌（只返回这一次）。
+  rpc CreateJobTrigger(CreateJobTriggerRequest) returns (CreateJobTriggerResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/job/trigger"
+      body: "*"
+    };
+    option (system.v1.title) = "新建触发器";
+  }
+  // UpdateJobTrigger 编辑触发器（整体替换，类型不可改；启停也经此接口）。负责人变更为当前操作人。
+  rpc UpdateJobTrigger(UpdateJobTriggerRequest) returns (UpdateJobTriggerResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/job/trigger/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "编辑触发器";
+  }
+  // ResetJobTriggerToken 重置接口触发器的调用令牌：旧令牌立即失效，返回新令牌。
+  rpc ResetJobTriggerToken(ResetJobTriggerTokenRequest) returns (ResetJobTriggerTokenResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/job/trigger/{id}:reset-token"
+      body: "*"
+    };
+    option (system.v1.title) = "重置触发器令牌";
+  }
+  // DeleteJobTrigger 删除触发器：其调用令牌立即失效；已提交的执行不受影响。
+  rpc DeleteJobTrigger(DeleteJobTriggerRequest) returns (DeleteJobTriggerResponse) {
+    option (google.api.http) = {delete: "/api/v1/job/trigger/{id}"};
+    option (system.v1.title) = "删除触发器";
+  }
+  // ListJobTriggerFires 分页查询触发记录（含被跳过与失败的），按触发时间倒序。
+  rpc ListJobTriggerFires(ListJobTriggerFiresRequest) returns (ListJobTriggerFiresResponse) {
+    option (google.api.http) = {get: "/api/v1/job/trigger-fire"};
+    option (system.v1.title) = "查询触发记录";
+  }
+}
+
+// JobAlertMatch 告警触发器的匹配条件；各项之间是「并且」。
+message JobAlertMatch {
+  // rule_ids 告警规则 ID，至多 50 个；空表示任意规则（此时 labels 必填）。
+  repeated string rule_ids = 1 [(buf.validate.field).repeated = {
+    max_items: 50
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+  // severities 告警级别（1=提示 2=警告 3=严重 4=致命）；空表示任意级别。
+  repeated int32 severities = 2 [(buf.validate.field).repeated = {
+    max_items: 4
+    unique: true
+    items: {
+      int32: {
+        gte: 1
+        lte: 4
+      }
+    }
+  }];
+  // labels 告警标签的等值条件，至多 10 项。
+  map<string, string> labels = 3 [(buf.validate.field).map = {
+    max_pairs: 10
+    keys: {
+      string: {pattern: "^[a-zA-Z_][a-zA-Z0-9_]{0,127}$"}
+    }
+    values: {
+      string: {max_len: 256}
+    }
+  }];
+  // host_label 存放主机地址的告警标签名（如 instance），可选。给出时取该标签的值（去掉 :端口），
+  // 只在模板目标主机中连接地址与之相同的那台上执行，找不到则跳过；不给则在模板的全部目标主机上执行。
+  string host_label = 4 [(buf.validate.field).string = {pattern: "^([a-zA-Z_][a-zA-Z0-9_]{0,127})?$"}];
+}
+
+// JobTriggerSpec 触发器的可编辑内容（新建与编辑共用）。
+message JobTriggerSpec {
+  // name 名称，1-64 字符，全局唯一。
+  string name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // type 类型：1=开放接口 2=告警。创建后不可改。
+  int32 type = 2 [(buf.validate.field).int32 = {
+    in: [
+      1,
+      2
+    ]
+  }];
+  // template_id 作业模板。
+  string template_id = 3 [(buf.validate.field).string.uuid = true];
+  // params 固定的参数取值（变量名 → 值），保存时按模板的参数定义校验（不要求必填项齐全：
+  // 接口触发器允许调用方补齐）。
+  google.protobuf.Struct params = 4;
+  // pass_params 接口触发器：是否允许调用方传入参数取值（覆盖固定值，仍按模板的参数定义校验）。
+  bool pass_params = 5;
+  // signal 接口触发器：作业结束后发给发起调用的流程实例的信号名，可选；字母开头，
+  // 只含字母、数字与 _ . -，至多 64 字符。
+  string signal = 6 [(buf.validate.field).string = {pattern: "^([A-Za-z][A-Za-z0-9_.-]{0,63})?$"}];
+  // alert 告警触发器的匹配条件；type=2 时必填。
+  JobAlertMatch alert = 7;
+  // cooldown_s 冷却秒数，0-86400：上次触发后这段时间内的事件被跳过；0 表示不限。
+  int32 cooldown_s = 8 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 86400
+  }];
+  // enabled 是否启用。
+  bool enabled = 9;
+  // description 说明，可选。
+  string description = 10 [(buf.validate.field).string.max_len = 255];
+  // template_version 保存人确认过的模板版本。响应里是已保存的版本；请求里可选：传入页面展示时的
+  // 模板版本号，模板此后被改过则启用被拒（400），须打开表单核对后再保存；不传（0）取模板当前版本。
+  int32 template_version = 11;
+}
+
+// JobTrigger 触发器。
+message JobTrigger {
+  // id 触发器唯一标识。
+  string id = 1;
+  // spec 触发器内容。
+  JobTriggerSpec spec = 2;
+  // template_name 作业模板名称；模板已被删除时为空。
+  string template_name = 3;
+  // owner_id 负责人。
+  string owner_id = 4;
+  // owner_name 负责人显示名。
+  string owner_name = 5;
+  // last_fire_time 最近一次触发（已提交执行）的时间。
+  google.protobuf.Timestamp last_fire_time = 6;
+  // version 乐观锁版本号，编辑时原样传回。
+  int32 version = 7;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 8;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 9;
+  // rule_names 告警触发器所选规则的名称（与 spec.alert.rule_ids 一一对应；规则已不存在的为空串）。
+  repeated string rule_names = 10;
+}
+
+// ListJobTriggersRequest 分页查询触发器请求。
+message ListJobTriggersRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // keyword 名称 / 说明模糊匹配，可选。
+  optional string keyword = 3 [(buf.validate.field).string.max_len = 64];
+  // type 类型过滤，可选：1=开放接口 2=告警。
+  optional int32 type = 4 [(buf.validate.field).int32 = {
+    in: [
+      1,
+      2
+    ]
+  }];
+  // template_id 作业模板过滤，可选。
+  optional string template_id = 5 [(buf.validate.field).string.uuid = true];
+}
+
+// ListJobTriggersResponse 分页查询触发器响应。
+message ListJobTriggersResponse {
+  // items 当前页数据。
+  repeated JobTrigger items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// CreateJobTriggerRequest 新建触发器请求。
+message CreateJobTriggerRequest {
+  // spec 触发器内容。
+  JobTriggerSpec spec = 1 [(buf.validate.field).required = true];
+}
+
+// CreateJobTriggerResponse 新建触发器响应。
+message CreateJobTriggerResponse {
+  // trigger 新建的触发器。
+  JobTrigger trigger = 1;
+  // token 接口触发器的调用令牌明文，只返回这一次；告警触发器为空。
+  string token = 2;
+}
+
+// UpdateJobTriggerRequest 编辑触发器请求。
+message UpdateJobTriggerRequest {
+  // id 触发器唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // spec 触发器内容，整体替换（type 须与原值一致）。
+  JobTriggerSpec spec = 2 [(buf.validate.field).required = true];
+  // version 乐观锁版本号，须与当前一致。
+  int32 version = 3 [(buf.validate.field).int32.gte = 1];
+}
+
+// UpdateJobTriggerResponse 编辑触发器响应。
+message UpdateJobTriggerResponse {
+  // trigger 更新后的触发器。
+  JobTrigger trigger = 1;
+}
+
+// ResetJobTriggerTokenRequest 重置触发器令牌请求。
+message ResetJobTriggerTokenRequest {
+  // id 触发器唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// ResetJobTriggerTokenResponse 重置触发器令牌响应。
+message ResetJobTriggerTokenResponse {
+  // token 新的调用令牌明文，只返回这一次。
+  string token = 1;
+}
+
+// DeleteJobTriggerRequest 删除触发器请求。
+message DeleteJobTriggerRequest {
+  // id 触发器唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteJobTriggerResponse 删除触发器响应。
+message DeleteJobTriggerResponse {}
+
+// JobTriggerFire 一次触发记录。
+message JobTriggerFire {
+  // id 记录唯一标识。
+  string id = 1;
+  // trigger_id 触发器 ID。
+  string trigger_id = 2;
+  // trigger_name 触发器名称；触发器已被删除时为空。
+  string trigger_name = 3;
+  // result 结果：1=已提交执行 2=已跳过 3=失败。
+  int32 result = 4;
+  // reason 跳过或失败的原因。
+  string reason = 5;
+  // execution_id 提交的执行；未提交时为空。
+  string execution_id = 6;
+  // summary 触发来源的摘要（告警规则名与主机 / 调用方给出的标题）。
+  string summary = 7;
+  // workflow_instance_id 发起调用的流程实例；没有时为空。
+  string workflow_instance_id = 8;
+  // signal_state 流程信号状态：0=无需发送 1=待发送 2=已发送 3=已放弃。
+  int32 signal_state = 9;
+  // create_time 触发时间。
+  google.protobuf.Timestamp create_time = 10;
+}
+
+// ListJobTriggerFiresRequest 分页查询触发记录请求。
+message ListJobTriggerFiresRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // trigger_id 触发器过滤，可选。
+  optional string trigger_id = 3 [(buf.validate.field).string.uuid = true];
+  // result 结果过滤，可选：1=已提交执行 2=已跳过 3=失败。
+  optional int32 result = 4 [(buf.validate.field).int32 = {
+    in: [
+      1,
+      2,
+      3
+    ]
+  }];
+}
+
+// ListJobTriggerFiresResponse 分页查询触发记录响应。
+message ListJobTriggerFiresResponse {
+  // items 当前页数据。
+  repeated JobTriggerFire items = 1;
+  // total 总数。
+  int64 total = 2;
+}

@@ -1,0 +1,80 @@
+# golangci-lint v2 配置：默认规则集（errcheck/govet/ineffassign/staticcheck/unused）
+# 叠加安全与拼写检查；格式化统一走 gofumpt。
+# 分层契约（../notify/AGENTS.md §1）由 depguard 在构建期强制：评估引擎没有 service 层，
+# 依赖方向为 server → worker → biz ← data（biz 定义仓储接口，data 实现）。
+version: "2"
+
+formatters:
+  enable:
+    - gofumpt
+
+linters:
+  enable:
+    - gosec
+    - misspell
+    - copyloopvar
+    - nolintlint
+    - depguard
+  settings:
+    depguard:
+      rules:
+        # biz 是业务核心：禁止 import 任何外层与驱动（依赖倒置——biz 定义
+        # Repo 接口，data 实现）。出站查询经 kit/promclient（纯标准库）不受限。
+        biz:
+          files:
+            - "**/internal/biz/**"
+          deny:
+            - pkg: "github.com/lanyulei/reborn/backend/monitor/internal/data"
+              desc: "biz 禁止 import data：仓储接口在 biz 定义，实现在 data 绑定"
+            - pkg: "github.com/lanyulei/reborn/backend/monitor/internal/worker"
+              desc: "biz 禁止 import worker：依赖方向只允许 worker → biz"
+            - pkg: "github.com/lanyulei/reborn/backend/monitor/internal/server"
+              desc: "biz 禁止 import server：传输装配层在最外层"
+            - pkg: "github.com/go-kratos/kratos/v3/transport"
+              desc: "biz 禁止 import 传输层"
+            - pkg: "github.com/jackc/pgx"
+              desc: "biz 禁止 import 数据库驱动：data 是唯一允许驱动的层"
+            - pkg: "github.com/lanyulei/reborn/backend/kit/dbx"
+              desc: "biz 禁止 import kit/dbx（含 pgx）：仅 data 层可用"
+        # data 实现仓储：禁止反向依赖上层。
+        data:
+          files:
+            - "**/internal/data/**"
+          deny:
+            - pkg: "github.com/lanyulei/reborn/backend/monitor/internal/worker"
+              desc: "data 禁止 import worker：依赖方向只允许 worker → biz ← data"
+            - pkg: "github.com/lanyulei/reborn/backend/monitor/internal/server"
+              desc: "data 禁止 import server：传输层与仓储互不感知"
+        # worker 把 biz 用例包成后台循环：不触碰仓储实现与驱动。
+        worker:
+          files:
+            - "**/internal/worker/**"
+          deny:
+            - pkg: "github.com/lanyulei/reborn/backend/monitor/internal/data"
+              desc: "worker 禁止 import data：经 biz 接口间接消费"
+            - pkg: "github.com/lanyulei/reborn/backend/monitor/internal/server"
+              desc: "worker 禁止 import server：角色门控在 server 装配层"
+            - pkg: "github.com/jackc/pgx"
+              desc: "worker 禁止 import 数据库驱动：data 是唯一允许驱动的层"
+        # server 是传输装配层：不触碰仓储实现。
+        server:
+          files:
+            - "**/internal/server/**"
+          deny:
+            - pkg: "github.com/lanyulei/reborn/backend/monitor/internal/data"
+              desc: "server 禁止 import data：经 biz 接口间接消费"
+        # 引擎与 core 只共享 monitor_* 表与 kit 契约包，任何层都不得 import 其他服务模块。
+        isolation:
+          files:
+            - "$all"
+          deny:
+            - pkg: "github.com/lanyulei/reborn/backend/core"
+              desc: "评估引擎禁止 import core：共享的只有 monitor_* 表与 kit/monitorcontract"
+            - pkg: "github.com/lanyulei/reborn/backend/notify"
+              desc: "评估引擎禁止 import notify 管道：通知只写 monitor_notify_outbox"
+            - pkg: "github.com/lanyulei/reborn/backend/cmdb"
+              desc: "评估引擎禁止 import cmdb 数据面"
+
+issues:
+  # nolint 指令必须写明理由与豁免范围（../notify/AGENTS.md §9）。
+  exclusions: []

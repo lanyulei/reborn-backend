@@ -1,0 +1,291 @@
+syntax = "proto3";
+
+package monitor.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "monitor/v1/alert.proto";
+import "monitor/v1/common.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/monitor/v1;v1";
+
+// MonitorSubscriptionService 告警订阅规则：按规则分组 / 规则 / 数据源 / 级别 / 事件标签订阅告警，命中时
+// 另发一条订阅通知给接收方（与规则自身的通知对象互相独立，已是通知对象的人不会重复收到）。
+// 它解决「这条告警不归我管，但我想知道」；与通知管理里按事件类型的订阅是两回事。
+// 权限：只能订阅自己可访问（只读以上）分组内的告警；为他人或群建订阅需要对所选分组「可管理」。
+// 所有者之后失去某分组的访问权限时，该分组的告警不再发给这条订阅。
+service MonitorSubscriptionService {
+  // ListAlertSubscriptions 分页查询订阅规则：我的订阅，或数据范围内的全部订阅。
+  rpc ListAlertSubscriptions(ListAlertSubscriptionsRequest) returns (ListAlertSubscriptionsResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/subscription"};
+    option (system.v1.title) = "查询告警订阅";
+  }
+  // GetAlertSubscription 查询订阅规则详情。
+  rpc GetAlertSubscription(GetAlertSubscriptionRequest) returns (GetAlertSubscriptionResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/subscription/{id}"};
+    option (system.v1.title) = "查询告警订阅详情";
+  }
+  // CreateAlertSubscription 新建订阅规则；当前用户成为所有者。
+  rpc CreateAlertSubscription(CreateAlertSubscriptionRequest) returns (CreateAlertSubscriptionResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/subscription"
+      body: "*"
+    };
+    option (system.v1.title) = "新建告警订阅";
+  }
+  // UpdateAlertSubscription 编辑订阅规则（整体替换）；所有者本人，或对其全部订阅分组「可管理」的用户可编辑。
+  // version 不一致返回 409 MONITOR_VERSION_CONFLICT。
+  rpc UpdateAlertSubscription(UpdateAlertSubscriptionRequest) returns (UpdateAlertSubscriptionResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/monitor/subscription/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "编辑告警订阅";
+  }
+  // DeleteAlertSubscription 删除订阅规则。
+  rpc DeleteAlertSubscription(DeleteAlertSubscriptionRequest) returns (DeleteAlertSubscriptionResponse) {
+    option (google.api.http) = {delete: "/api/v1/monitor/subscription/{id}"};
+    option (system.v1.title) = "删除告警订阅";
+  }
+  // PreviewAlertSubscription 保存前预览：列出当前活跃告警与最近 24 小时历史告警中会被命中的事件（不落库）。
+  rpc PreviewAlertSubscription(PreviewAlertSubscriptionRequest) returns (PreviewAlertSubscriptionResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/subscription:preview"
+      body: "*"
+    };
+    option (system.v1.title) = "预览告警订阅命中";
+  }
+}
+
+// SubscriptionReceivers 订阅通知的接收方；各类取并集、去重，并减去该事件已由规则通知到的用户。
+message SubscriptionReceivers {
+  option (buf.validate.message).cel = {
+    id: "monitor.subscription.receivers.non_empty"
+    message: "at least one receiver is required"
+    expression: "this.self || size(this.user_ids) > 0 || size(this.schedule_ids) > 0 || size(this.groups) > 0"
+  };
+
+  // self 通知订阅的所有者本人。
+  bool self = 1;
+  // user_ids 指定用户，至多 50 个。
+  repeated string user_ids = 2 [(buf.validate.field).repeated = {
+    max_items: 50
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+  // schedule_ids 值班表，至多 20 个；通知时取各值班表当前的值班人。
+  repeated string schedule_ids = 3 [(buf.validate.field).repeated = {
+    max_items: 20
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+  // groups 通知群标识，至多 10 个：通知管理里群机器人渠道对应的群，以 $ 开头，如 $group:ops。
+  repeated string groups = 4 [(buf.validate.field).repeated = {
+    max_items: 10
+    unique: true
+    items: {
+      string: {pattern: "^\\$[A-Za-z0-9:_.-]{1,63}$"}
+    }
+  }];
+}
+
+// AlertSubscriptionSpec 订阅规则的可编辑内容（新建、编辑、预览共用）。筛选条件之间是「并且」。
+message AlertSubscriptionSpec {
+  option (buf.validate.message).cel = {
+    id: "monitor.subscription.event"
+    message: "at least one of on_firing or on_resolved must be true"
+    expression: "this.on_firing || this.on_resolved"
+  };
+
+  // name 名称，1-128 字符。
+  string name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+  // group_ids 订阅的规则分组（含其全部下级），1-50 个。
+  repeated string group_ids = 2 [(buf.validate.field).repeated = {
+    min_items: 1
+    max_items: 50
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+  // rule_ids 限定的规则，至多 200 个；为空表示不限。
+  repeated string rule_ids = 3 [(buf.validate.field).repeated = {
+    max_items: 200
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+  // datasource_ids 限定的数据源，至多 50 个；为空表示不限。
+  repeated string datasource_ids = 4 [(buf.validate.field).repeated = {
+    max_items: 50
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+  // severities 订阅的级别（1=提示 2=警告 3=严重 4=致命），至少一档。
+  repeated int32 severities = 5 [(buf.validate.field).repeated = {
+    min_items: 1
+    max_items: 4
+    unique: true
+    items: {
+      int32: {
+        gte: 1
+        lte: 4
+      }
+    }
+  }];
+  // on_firing 告警触发时通知。
+  bool on_firing = 6;
+  // on_resolved 告警恢复时通知。
+  bool on_resolved = 7;
+  // matchers 事件标签匹配条件，至多 20 行，行间是「并且」；为空表示不限。
+  repeated LabelMatcher matchers = 8 [(buf.validate.field).repeated.max_items = 20];
+  // receivers 接收方，至少一个。
+  SubscriptionReceivers receivers = 9 [(buf.validate.field).required = true];
+  // follow_repeat 是否跟随规则的重复通知（缺省不跟随：只在首次触发与恢复时各通知一次）。
+  bool follow_repeat = 10;
+  // enabled 是否启用。
+  bool enabled = 11;
+}
+
+// AlertSubscription 告警订阅规则。
+message AlertSubscription {
+  // id 订阅规则唯一标识。
+  string id = 1;
+  // spec 订阅规则内容。
+  AlertSubscriptionSpec spec = 2;
+  // owner_id 所有者（创建人）。
+  string owner_id = 3;
+  // owner_name 所有者显示名。
+  string owner_name = 4;
+  // groups 订阅分组的完整名称（与 spec.group_ids 对应）；missing=true 表示分组已删除。
+  repeated NamedRef groups = 5;
+  // rules 限定规则的名称（与 spec.rule_ids 对应）。
+  repeated NamedRef rules = 6;
+  // datasources 限定数据源的名称（与 spec.datasource_ids 对应）。
+  repeated NamedRef datasources = 7;
+  // receiver_users 指定用户的显示名（与 spec.receivers.user_ids 对应）。
+  repeated NamedRef receiver_users = 8;
+  // receiver_schedules 值班表的名称（与 spec.receivers.schedule_ids 对应）。
+  repeated NamedRef receiver_schedules = 9;
+  // out_of_scope_group_ids 所有者当前已无权访问的订阅分组；这些分组的告警不再发给本订阅。
+  repeated string out_of_scope_group_ids = 10;
+  // last_hit_time 最近一次命中（发出订阅通知）的时间，从未命中时为空。
+  google.protobuf.Timestamp last_hit_time = 11;
+  // hit_count_7d 近 7 天命中次数。
+  int32 hit_count_7d = 12;
+  // version 乐观锁版本号，编辑时原样传回。
+  int32 version = 13;
+  // can_manage 当前用户能否编辑、删除本订阅。
+  bool can_manage = 14;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 15;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 16;
+}
+
+// ListAlertSubscriptionsRequest 分页查询订阅规则请求。
+message ListAlertSubscriptionsRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // scope 范围：mine 我的订阅（我是所有者）/ all 数据范围内的全部订阅（订阅的分组在我的可访问范围内）。
+  string scope = 3 [(buf.validate.field).string = {
+    in: [
+      "mine",
+      "all"
+    ]
+  }];
+  // keyword 名称模糊匹配，可选。
+  optional string keyword = 4 [(buf.validate.field).string.max_len = 128];
+  // enabled 启用状态过滤，可选。
+  optional bool enabled = 5;
+  // group_id 订阅分组过滤（订阅了该分组或其上级），可选。
+  optional string group_id = 6 [(buf.validate.field).string.uuid = true];
+}
+
+// ListAlertSubscriptionsResponse 分页查询订阅规则响应。
+message ListAlertSubscriptionsResponse {
+  // items 当前页数据。
+  repeated AlertSubscription items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// GetAlertSubscriptionRequest 查询订阅规则详情请求。
+message GetAlertSubscriptionRequest {
+  // id 订阅规则唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetAlertSubscriptionResponse 查询订阅规则详情响应。
+message GetAlertSubscriptionResponse {
+  // subscription 订阅规则。
+  AlertSubscription subscription = 1;
+}
+
+// CreateAlertSubscriptionRequest 新建订阅规则请求。
+message CreateAlertSubscriptionRequest {
+  // spec 订阅规则内容。
+  AlertSubscriptionSpec spec = 1 [(buf.validate.field).required = true];
+}
+
+// CreateAlertSubscriptionResponse 新建订阅规则响应。
+message CreateAlertSubscriptionResponse {
+  // subscription 新建的订阅规则。
+  AlertSubscription subscription = 1;
+}
+
+// UpdateAlertSubscriptionRequest 编辑订阅规则请求。
+message UpdateAlertSubscriptionRequest {
+  // id 订阅规则唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // spec 订阅规则内容，整体替换。
+  AlertSubscriptionSpec spec = 2 [(buf.validate.field).required = true];
+  // version 乐观锁版本号，须与当前一致。
+  int32 version = 3 [(buf.validate.field).int32.gte = 1];
+}
+
+// UpdateAlertSubscriptionResponse 编辑订阅规则响应。
+message UpdateAlertSubscriptionResponse {
+  // subscription 更新后的订阅规则。
+  AlertSubscription subscription = 1;
+}
+
+// DeleteAlertSubscriptionRequest 删除订阅规则请求。
+message DeleteAlertSubscriptionRequest {
+  // id 订阅规则唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteAlertSubscriptionResponse 删除订阅规则响应。
+message DeleteAlertSubscriptionResponse {}
+
+// PreviewAlertSubscriptionRequest 预览订阅命中请求。
+message PreviewAlertSubscriptionRequest {
+  // spec 待预览的订阅规则内容。
+  AlertSubscriptionSpec spec = 1 [(buf.validate.field).required = true];
+}
+
+// PreviewAlertSubscriptionResponse 预览订阅命中响应。
+message PreviewAlertSubscriptionResponse {
+  // alerts 会被命中的事件（当前活跃告警 + 最近 24 小时内的历史告警），按最近触发时间倒序，至多 50 条。
+  repeated Alert alerts = 1;
+  // total 会被命中的事件总数。
+  int32 total = 2;
+}

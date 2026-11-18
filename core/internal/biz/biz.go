@@ -9,9 +9,11 @@ package biz
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	cmdbv1 "github.com/lanyulei/reborn/backend/core/api/cmdb/v1"
+	monitorv1 "github.com/lanyulei/reborn/backend/core/api/monitor/v1"
 
 	ticketv1 "github.com/lanyulei/reborn/backend/core/api/ticket/v1"
 
@@ -21,11 +23,16 @@ import (
 	bizassistant "github.com/lanyulei/reborn/backend/core/internal/biz/assistant"
 	bizcmdb "github.com/lanyulei/reborn/backend/core/internal/biz/cmdb"
 	bizfile "github.com/lanyulei/reborn/backend/core/internal/biz/file"
+	bizjob "github.com/lanyulei/reborn/backend/core/internal/biz/job"
+	bizk8s "github.com/lanyulei/reborn/backend/core/internal/biz/k8s"
+	bizmonitor "github.com/lanyulei/reborn/backend/core/internal/biz/monitor"
 	biznotify "github.com/lanyulei/reborn/backend/core/internal/biz/notify"
 	bizoncall "github.com/lanyulei/reborn/backend/core/internal/biz/oncall"
 	bizsystem "github.com/lanyulei/reborn/backend/core/internal/biz/system"
 	bizticket "github.com/lanyulei/reborn/backend/core/internal/biz/ticket"
 	bizworkflow "github.com/lanyulei/reborn/backend/core/internal/biz/workflow"
+	"github.com/lanyulei/reborn/backend/kit/jobcontract"
+	"github.com/lanyulei/reborn/backend/kit/paging"
 )
 
 // ProviderSet 聚合各业务域的 biz providers；跨域窄接口在聚合处绑定
@@ -75,6 +82,41 @@ var ProviderSet = wire.NewSet(
 	// NotificationWriter——实现固定为 NotificationUsecase（校验/补全收敛
 	// 在 notify，system 仅提供业务语义字段；单向依赖 system → notify）。
 	wire.Bind(new(biznotify.NotificationWriter), new(*biznotify.NotificationUsecase)),
+	// 监控告警域：角色 / 组织目录由 system 域提供，当前值班人与值班表名称由 oncall 域提供，通知事件经
+	// notify 的 NotificationWriter 写入（单向依赖 monitor → system / oncall / notify）。
+	bizmonitor.ProviderSet,
+	wire.Bind(new(bizmonitor.RoleSource), new(*bizsystem.AuthzUsecase)),
+	wire.Bind(new(bizmonitor.Directory), new(*bizsystem.DirectoryUsecase)),
+	wire.Bind(new(bizmonitor.DeptLeaders), new(*bizsystem.DirectoryUsecase)),
+	wire.Bind(new(bizmonitor.Duty), new(*bizoncall.DutyUsecase)),
+	NewMonitorRoles,
+	NewMonitorSchedules,
+	NewMonitorTargets,
+	NewMonitorPermissions,
+	// 监控告警域第二、三期：工单 / 流程 / CMDB / 值班 / 助手 / 通知路由的窄接口适配器（monitor_p2.go、monitor_route.go）。
+	MonitorP2ProviderSet,
+	NewMonitorRouteProbe,
+	// 作业中心域：用户显示名由 system 域提供，目标主机经适配器按 CMDB 数据范围解析
+	// （单向依赖 job → system / cmdb；适配器见 job_hosts.go）。
+	bizjob.ProviderSet,
+	wire.Bind(new(bizjob.Directory), new(*bizsystem.DirectoryUsecase)),
+	NewJobHostSource,
+	// 作业中心二期 / 三期：审批与信号经流程引擎，结束通知经通知域，待分发的文件经文件域，
+	// 告警自愈读监控域的告警事件（适配器见 job_integrations.go；单向依赖 job → 各域）。
+	NewJobApprovals, NewJobSignals, NewJobRunPermission, NewJobNotifier, NewJobSiteURL, NewJobFiles, NewJobAlertFeed, NewJobAlertRules,
+	// 容器平台域：启用角色与账号状态、用户显示名由 system 域提供，通知事件经 notify 的
+	// NotificationWriter 写入（单向依赖 k8s → system / notify）。
+	bizk8s.ProviderSet,
+	wire.Bind(new(bizk8s.RoleSource), new(*bizsystem.AuthzUsecase)),
+	wire.Bind(new(bizk8s.Accounts), new(*bizsystem.AuthzUsecase)),
+	wire.Bind(new(bizk8s.Directory), new(*bizsystem.DirectoryUsecase)),
+	// 可观测：指标面板经 monitor 域的数据源查询，节点与主机的关联经 cmdb 域按其数据范围查找
+	// （单向依赖 k8s → monitor / cmdb；适配器见 k8s_insight.go）。
+	NewK8sMetricsSource,
+	NewK8sHostFinder,
+	// 变更审批：审批就是一张工单（ticket / workflow 域），免审批权限与自助授权角色由 system 域提供
+	// （单向依赖 k8s → ticket / workflow / system；适配器见 k8s_change.go）。
+	NewK8sChangeTickets, NewK8sTicketViewers, NewK8sTicketNotes, NewK8sBypassChecker, NewK8sSelfRoles, NewK8sChangeSiteURL,
 )
 
 // NewFileAccessCheckers 装配附件访问检查器（业务类型 → 检查器）：持有附件的业务域
@@ -85,13 +127,21 @@ func NewFileAccessCheckers(tickets *bizticket.FileAccess) bizfile.AccessCheckers
 
 // NewWorkflowListeners 装配流程事件监听器（业务类型 → 监听器）：基于流程引擎的业务域
 // 在此登记，实例结束时在引擎的同一事务内收到回调。
-func NewWorkflowListeners(tickets *bizticket.StatusSyncer) bizworkflow.Listeners {
-	return bizworkflow.Listeners{bizticket.BusinessType: tickets}
+func NewWorkflowListeners(tickets *bizticket.StatusSyncer, jobs *bizjob.ApprovalSyncer, k8sChanges *bizk8s.ChangeSyncer) bizworkflow.Listeners {
+	return bizworkflow.Listeners{
+		// 工单流程结束时除了同步工单状态，再把审批结果落到容器平台的变更单上（见 k8s_change.go）。
+		bizticket.BusinessType: ticketWithK8sChange{StatusSyncer: tickets, changes: k8sChanges},
+		// 作业审批：流程结束时把结果落到执行上（通过 → 排队，否则 → 审批未通过）。
+		jobcontract.ApprovalBusinessType: jobApprovalListener{syncer: jobs},
+	}
 }
 
 // NewWorkflowViewers 装配流程实例的业务侧查看权限（业务类型 → 判定）。
-func NewWorkflowViewers(tickets *bizticket.Access) bizworkflow.Viewers {
-	return bizworkflow.Viewers{bizticket.BusinessType: tickets}
+func NewWorkflowViewers(tickets *bizticket.Access, authz *bizsystem.AuthzUsecase) bizworkflow.Viewers {
+	return bizworkflow.Viewers{
+		bizticket.BusinessType:           tickets,
+		jobcontract.ApprovalBusinessType: jobApprovalViewer{authz: authz},
+	}
 }
 
 // NewWorkflowDefinitionReferrers 装配「谁还在引用某个流程定义」的业务域：流程被停用 / 删除
@@ -214,4 +264,155 @@ func (w workflowUsers) Candidates(ctx context.Context, keyword string, limit int
 // PrimaryDept implements bizworkflow.Users.
 func (w workflowUsers) PrimaryDept(ctx context.Context, userID string) (string, []string, error) {
 	return w.dir.PrimaryDept(ctx, userID)
+}
+
+// monitorRoles 把 system 域的角色列表适配为监控域的角色目录（分组授权页展示角色名与启用状态）。
+type monitorRoles struct {
+	roles *bizsystem.RoleUsecase
+}
+
+// NewMonitorRoles 构造监控域的角色目录适配器。
+func NewMonitorRoles(roles *bizsystem.RoleUsecase) bizmonitor.RoleDirectory {
+	return monitorRoles{roles: roles}
+}
+
+// ListRoles implements bizmonitor.RoleDirectory（角色为小集合，按页上限循环取全）。
+func (m monitorRoles) ListRoles(ctx context.Context) ([]bizmonitor.RoleRef, error) {
+	var out []bizmonitor.RoleRef
+	for page := int64(1); ; page++ {
+		roles, total, err := m.roles.List(ctx, bizsystem.RoleFilter{}, page, paging.MaxPageSize)
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range roles {
+			out = append(out, bizmonitor.RoleRef{ID: r.ID, Name: r.Name, Enabled: r.Status == bizsystem.RoleStatusEnabled})
+		}
+		if int64(len(out)) >= total || len(roles) == 0 {
+			return out, nil
+		}
+	}
+}
+
+// monitorSchedules 把 oncall 域的值班表列表适配为监控域的值班表名称查询。
+type monitorSchedules struct {
+	schedules *bizoncall.ScheduleUsecase
+}
+
+// NewMonitorSchedules 构造监控域的值班表名称适配器。
+func NewMonitorSchedules(schedules *bizoncall.ScheduleUsecase) bizmonitor.Schedules {
+	return monitorSchedules{schedules: schedules}
+}
+
+// monitorScheduleLookups 逐个读取值班表的个数上限：超过它改为一次读全部。值班域没有按 ID 批量取名称的
+// 查询，而「全部值班表」会连同轮转名单一起读出来——保存规则、派发通知时通常只涉及一两张值班表，
+// 不值得为它们把所有值班表都读一遍。
+const monitorScheduleLookups = 4
+
+// ScheduleNames implements bizmonitor.Schedules：只返回启用的值班表（停用的不会有值班人）。
+func (m monitorSchedules) ScheduleNames(ctx context.Context, ids []string) (map[string]string, error) {
+	out := make(map[string]string, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	if len(ids) <= monitorScheduleLookups {
+		for _, id := range ids {
+			s, err := m.schedules.Get(ctx, id)
+			if errors.Is(err, bizoncall.ErrScheduleNotFound) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			if s.Status == bizoncall.StatusEnabled {
+				out[s.ID] = s.Name
+			}
+		}
+		return out, nil
+	}
+	all, err := m.schedules.List(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	for _, s := range all {
+		if s.Status == bizoncall.StatusEnabled && slices.Contains(ids, s.ID) {
+			out[s.ID] = s.Name
+		}
+	}
+	return out, nil
+}
+
+// monitorTargets 监控域通知对象选择器的候选项来源：值班表来自 oncall 域，部门与用户来自 system 域
+// （单向依赖 monitor → oncall / system 的只读查询）。
+type monitorTargets struct {
+	schedules *bizoncall.ScheduleUsecase
+	depts     *bizsystem.DeptUsecase
+	dir       *bizsystem.DirectoryUsecase
+}
+
+// NewMonitorTargets 构造监控域的通知对象候选项适配器。
+func NewMonitorTargets(schedules *bizoncall.ScheduleUsecase, depts *bizsystem.DeptUsecase, dir *bizsystem.DirectoryUsecase) bizmonitor.TargetSource {
+	return monitorTargets{schedules: schedules, depts: depts, dir: dir}
+}
+
+// Schedules implements bizmonitor.TargetSource：启用的值班表（oncall 的列表已按值班组、名称排序）。
+func (m monitorTargets) Schedules(ctx context.Context) ([]bizmonitor.TargetSchedule, error) {
+	all, err := m.schedules.List(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]bizmonitor.TargetSchedule, 0, len(all))
+	for _, s := range all {
+		if s.Status == bizoncall.StatusEnabled {
+			out = append(out, bizmonitor.TargetSchedule{ID: s.ID, Name: s.Name, GroupName: s.GroupName})
+		}
+	}
+	return out, nil
+}
+
+// Depts implements bizmonitor.TargetSource：全部部门（system 的列表已按层级排序，上级在前）。
+func (m monitorTargets) Depts(ctx context.Context) ([]bizmonitor.TargetDept, error) {
+	all, err := m.depts.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]bizmonitor.TargetDept, 0, len(all))
+	for _, d := range all {
+		out = append(out, bizmonitor.TargetDept{ID: d.ID, Name: d.Name, ParentID: d.ParentID})
+	}
+	return out, nil
+}
+
+// Users implements bizmonitor.TargetSource：可用用户的最小披露视图。
+func (m monitorTargets) Users(ctx context.Context, keyword string, limit int64) ([]bizmonitor.TargetUser, error) {
+	users, err := m.dir.CandidateUsers(ctx, keyword, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]bizmonitor.TargetUser, 0, len(users))
+	for _, u := range users {
+		out = append(out, bizmonitor.TargetUser{ID: u.ID, Username: u.Username, Nickname: u.Nickname})
+	}
+	return out, nil
+}
+
+// monitorPermissions 以接口授权回答监控域的两处权限判定（操作码与授权中间件同一口径；超管恒为 true，
+// 非可用用户恒为 false）。
+type monitorPermissions struct {
+	authz *bizsystem.AuthzUsecase
+}
+
+// NewMonitorPermissions 构造监控域的接口权限判定器。
+func NewMonitorPermissions(authz *bizsystem.AuthzUsecase) bizmonitor.Permissions {
+	return monitorPermissions{authz: authz}
+}
+
+// CanReadAlerts implements bizmonitor.Permissions：持有「查询告警事件」接口权限。告警详情免接口授权
+// （通知收件人要能打开），非收件人能否查看由它与数据范围共同决定。
+func (p monitorPermissions) CanReadAlerts(ctx context.Context, userID string) (bool, error) {
+	return p.authz.Allowed(ctx, userID, bizsystem.OperationCode(monitorv1.OperationMonitorAlertServiceListAlerts))
+}
+
+// CanEditDatasource implements bizmonitor.Permissions：持有「编辑监控数据源」接口权限。
+func (p monitorPermissions) CanEditDatasource(ctx context.Context, userID string) (bool, error) {
+	return p.authz.Allowed(ctx, userID, bizsystem.OperationCode(monitorv1.OperationMonitorDatasourceServiceUpdateDatasource))
 }

@@ -720,7 +720,10 @@ func TestChannelUsecase_WebhookURLRejectsLocal(t *testing.T) {
 	t.Parallel()
 	stub := newChannelRepoStub()
 	uc := NewChannelUsecase(stub, new(eventWriterStub), stub)
-	for _, u := range []string{"https://localhost/h", "https://127.0.0.1/h", "https://10.0.0.5/h", "https://[::1]/h", "https://169.254.169.254/latest", "https://100.64.1.1/x"} {
+	for _, u := range []string{"https://localhost/h", "https://127.0.0.1/h", "https://10.0.0.5/h", "https://[::1]/h", "https://169.254.169.254/latest", "https://100.64.1.1/x",
+		// NAT64 / 6to4 把内网地址嵌在 IPv6 里；非 https 发送时必然失败，保存时就拒绝。
+		"https://[64:ff9b::a00:1]/h", "https://[2002:a00:1::1]/h", "http://hooks.example.com/x",
+	} {
 		_, err := uc.Create(context.Background(), &Channel{Type: ChannelTypeWebhook, Name: "w" + u, Config: &ChannelConfig{Webhook: &WebhookConfig{URL: u, Method: "POST", TimeoutS: 3}}})
 		if !errors.Is(err, ErrChannelConfigInvalid) {
 			t.Errorf("%s: error = %v, want ErrChannelConfigInvalid", u, err)

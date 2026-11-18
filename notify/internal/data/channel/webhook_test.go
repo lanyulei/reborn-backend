@@ -108,7 +108,7 @@ func TestWebhookSender_SSRFBlockedAndRetryAfter(t *testing.T) {
 	}
 	// 解析后命中私网同样拒绝（DNS 重绑定场景）：用自定义解析器把公网域名指到回环。
 	s2 := NewWebhookSender()
-	s2.resolver = fakeResolver{"hooks.example.com": {net.ParseIP("127.0.0.1")}}
+	s2.dialer.Resolver = fakeResolver{"hooks.example.com": {net.ParseIP("127.0.0.1")}}
 	res, err := s2.Send(context.Background(), &biz.Channel{Type: biz.ChannelTypeWebhook, Webhook: &biz.WebhookConfig{URL: "https://hooks.example.com/h"}}, biz.RenderedMessage{})
 	if err == nil || res.Retryable || !errors.Is(err, errWebhookHostBlocked) {
 		t.Fatalf("resolved private address must be blocked: %+v %v", res, err)

@@ -11,6 +11,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/lanyulei/reborn/backend/kit/idgen"
 )
 
 // 节点类型。
@@ -122,9 +124,6 @@ const (
 	// maxSubProcessDepth 子流程嵌套深度上限（防止流程互相调用无限递归）。
 	maxSubProcessDepth = 5
 )
-
-// uuidPattern 小写 UUID（Webhook 端点 ID）。
-var uuidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 // definitionKeyPattern 流程标识格式（与 proto 校验一致）。
 var definitionKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{1,63}$`)
@@ -637,7 +636,7 @@ func (v *validator) waitNode(n *Node) {
 			v.node(n.ID, "TIMER_INVALID", "timer configuration is incomplete or invalid")
 		}
 	case NodeService:
-		if n.Service == nil || !uuidPattern.MatchString(n.Service.WebhookID) {
+		if n.Service == nil || !idgen.IsUUID(n.Service.WebhookID) {
 			v.node(n.ID, "SERVICE_INVALID", "an automatic task must reference a webhook endpoint")
 		}
 	case NodeSubProcess:

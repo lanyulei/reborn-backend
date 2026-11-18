@@ -1,0 +1,444 @@
+syntax = "proto3";
+
+package k8s.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/api/httpbody.proto";
+import "k8s/v1/resource.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/k8s/v1;v1";
+
+// K8sWorkloadService 工作负载、Pod 与节点的快捷操作。由 core 转发给数据面执行（说明见 resource.proto）；
+// 数据面把每个操作翻译成对应的集群调用，全部记入审计。
+service K8sWorkloadService {
+  // ScaleWorkload 调整副本数（Deployment / StatefulSet / ReplicaSet）。
+  rpc ScaleWorkload(ScaleWorkloadRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster/{cluster_id}/workload:scale"
+      body: "*"
+    };
+    option (system.v1.title) = "伸缩工作负载";
+  }
+  // RestartWorkload 滚动重启（Deployment / StatefulSet / DaemonSet）。
+  rpc RestartWorkload(RestartWorkloadRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster/{cluster_id}/workload:restart"
+      body: "*"
+    };
+    option (system.v1.title) = "重启工作负载";
+  }
+  // SetWorkloadImage 更新某个容器的镜像。
+  rpc SetWorkloadImage(SetWorkloadImageRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster/{cluster_id}/workload:set-image"
+      body: "*"
+    };
+    option (system.v1.title) = "更新工作负载镜像";
+  }
+  // ListWorkloadRevisions 历史版本。响应：k8scontract.RevisionsResponse。
+  rpc ListWorkloadRevisions(ListWorkloadRevisionsRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {get: "/api/v1/k8s/cluster/{cluster_id}/workload/revision"};
+    option (system.v1.title) = "查看工作负载历史版本";
+  }
+  // RollbackWorkload 回滚到指定的历史版本。
+  rpc RollbackWorkload(RollbackWorkloadRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster/{cluster_id}/workload:rollback"
+      body: "*"
+    };
+    option (system.v1.title) = "回滚工作负载";
+  }
+  // PauseWorkload 暂停 / 恢复 Deployment 的发布。
+  rpc PauseWorkload(PauseWorkloadRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster/{cluster_id}/workload:pause"
+      body: "*"
+    };
+    option (system.v1.title) = "暂停或恢复发布";
+  }
+  // TriggerCronJob 按 CronJob 的模板立即创建一个 Job。响应：k8scontract.ApplyResponse。
+  rpc TriggerCronJob(TriggerCronJobRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster/{cluster_id}/cronjob:trigger"
+      body: "*"
+    };
+    option (system.v1.title) = "手动触发 CronJob";
+  }
+  // SuspendCronJob 暂停 / 恢复 CronJob 的调度。
+  rpc SuspendCronJob(SuspendCronJobRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster/{cluster_id}/cronjob:suspend"
+      body: "*"
+    };
+    option (system.v1.title) = "暂停或恢复 CronJob";
+  }
+  // EvictPod 驱逐 Pod（遵守 PodDisruptionBudget）。
+  rpc EvictPod(EvictPodRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster/{cluster_id}/pod:evict"
+      body: "*"
+    };
+    option (system.v1.title) = "驱逐 Pod";
+  }
+  // CordonNode 停止 / 恢复节点调度。
+  rpc CordonNode(CordonNodeRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster/{cluster_id}/node:cordon"
+      body: "*"
+    };
+    option (system.v1.title) = "停止或恢复节点调度";
+  }
+  // PreviewDrainNode 排空预览：将被驱逐、跳过与阻止排空的 Pod。响应：k8scontract.DrainPreviewResponse。
+  rpc PreviewDrainNode(PreviewDrainNodeRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster/{cluster_id}/node/drain:preview"
+      body: "*"
+    };
+    option (system.v1.title) = "预览节点排空";
+  }
+  // OpenExecTicket 签发一次性的终端票据（30 秒有效），随后凭票据建立 WebSocket（GET /api/v1/k8s/exec?ticket=）。能否进入容器由集群判定。
+  rpc OpenExecTicket(OpenExecTicketRequest) returns (OpenExecTicketResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster/{cluster_id}/exec-ticket"
+      body: "*"
+    };
+    option (system.v1.title) = "打开 Web 终端";
+  }
+}
+
+// K8sStreamService 流式接口：响应为 SSE 事件流（事件见 kit/k8scontract 的 Stream* 说明），不走生成的
+// 处理函数，由 core 的转发层注册路由；这里的声明用于接口授权与文档。
+service K8sStreamService {
+  // WatchResources 订阅某类资源的变更通知（仅走缓存的资源）。
+  rpc WatchResources(WatchResourcesRequest) returns (WatchResourcesResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster/{cluster_id}/watch"
+      body: "*"
+    };
+    option (system.v1.title) = "订阅资源变更";
+  }
+  // StreamPodLog Pod 实时日志；断线后用 cursor 续接。
+  rpc StreamPodLog(StreamPodLogRequest) returns (StreamPodLogResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster/{cluster_id}/pod/log"
+      body: "*"
+    };
+    option (system.v1.title) = "查看 Pod 日志";
+  }
+  // StreamWorkloadLog 工作负载级日志：同时跟随其下的多个 Pod。
+  rpc StreamWorkloadLog(StreamWorkloadLogRequest) returns (StreamWorkloadLogResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster/{cluster_id}/workload/log"
+      body: "*"
+    };
+    option (system.v1.title) = "查看工作负载日志";
+  }
+  // DrainNode 排空节点：先停止调度，再逐个驱逐 Pod，流式返回进度。
+  rpc DrainNode(DrainNodeRequest) returns (DrainNodeResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster/{cluster_id}/node:drain"
+      body: "*"
+    };
+    option (system.v1.title) = "排空节点";
+  }
+}
+
+// ScaleWorkloadRequest 伸缩工作负载请求。
+message ScaleWorkloadRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // ref 目标对象。
+  ResourceRef ref = 2 [(buf.validate.field).required = true];
+  // replicas 目标副本数。
+  int32 replicas = 3 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 10000
+  }];
+}
+
+// RestartWorkloadRequest 重启工作负载请求。
+message RestartWorkloadRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // ref 目标对象。
+  ResourceRef ref = 2 [(buf.validate.field).required = true];
+}
+
+// SetWorkloadImageRequest 更新工作负载镜像请求。
+message SetWorkloadImageRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // ref 目标对象。
+  ResourceRef ref = 2 [(buf.validate.field).required = true];
+  // container 容器名称。
+  string container = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 253
+  }];
+  // image 新镜像。
+  string image = 4 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 1024
+  }];
+}
+
+// ListWorkloadRevisionsRequest 查看工作负载历史版本请求。
+message ListWorkloadRevisionsRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // group API 组；核心组为空。
+  string group = 2 [(buf.validate.field).string.max_len = 253];
+  // version API 版本。
+  string version = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 63
+  }];
+  // resource 资源类型（复数小写，如 deployments）。
+  string resource = 4 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 253
+  }];
+  // namespace 命名空间；集群级资源或全部命名空间时为空。
+  string namespace = 5 [(buf.validate.field).string.max_len = 63];
+  // name 对象名称。
+  string name = 6 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 253
+  }];
+}
+
+// RollbackWorkloadRequest 回滚工作负载请求。
+message RollbackWorkloadRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // ref 目标对象。
+  ResourceRef ref = 2 [(buf.validate.field).required = true];
+  // revision 目标版本号。
+  int64 revision = 3 [(buf.validate.field).int64.gte = 1];
+}
+
+// PauseWorkloadRequest 暂停或恢复发布请求。
+message PauseWorkloadRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // ref 目标对象。
+  ResourceRef ref = 2 [(buf.validate.field).required = true];
+  // paused true = 暂停，false = 恢复。
+  bool paused = 3;
+}
+
+// TriggerCronJobRequest 手动触发 CronJob 请求。
+message TriggerCronJobRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // ref 目标对象。
+  ResourceRef ref = 2 [(buf.validate.field).required = true];
+}
+
+// SuspendCronJobRequest 暂停或恢复 CronJob 请求。
+message SuspendCronJobRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // ref 目标对象。
+  ResourceRef ref = 2 [(buf.validate.field).required = true];
+  // suspend true = 暂停，false = 恢复。
+  bool suspend = 3;
+}
+
+// EvictPodRequest 驱逐 Pod 请求。
+message EvictPodRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // ref 目标对象。
+  ResourceRef ref = 2 [(buf.validate.field).required = true];
+}
+
+// CordonNodeRequest 停止或恢复节点调度请求。
+message CordonNodeRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // name 节点名称。
+  string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 253
+  }];
+  // unschedulable true = 停止调度，false = 恢复调度。
+  bool unschedulable = 3;
+}
+
+// PreviewDrainNodeRequest 预览节点排空请求。
+message PreviewDrainNodeRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // name 节点名称。
+  string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 253
+  }];
+  // delete_empty_dir 允许驱逐使用 emptyDir 的 Pod（其数据会丢失）。
+  bool delete_empty_dir = 3;
+  // force 允许驱逐没有控制器管理的 Pod（不会被重建）。
+  bool force = 4;
+  // grace_period_seconds 优雅终止秒数；-1 = 用 Pod 自己的设置。
+  int64 grace_period_seconds = 5 [(buf.validate.field).int64 = {
+    gte: -1
+    lte: 3600
+  }];
+}
+
+// DrainNodeRequest 排空节点请求。
+message DrainNodeRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // name 节点名称。
+  string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 253
+  }];
+  // delete_empty_dir 允许驱逐使用 emptyDir 的 Pod（其数据会丢失）。
+  bool delete_empty_dir = 3;
+  // force 允许驱逐没有控制器管理的 Pod（不会被重建）。
+  bool force = 4;
+  // grace_period_seconds 优雅终止秒数；-1 = 用 Pod 自己的设置。
+  int64 grace_period_seconds = 5 [(buf.validate.field).int64 = {
+    gte: -1
+    lte: 3600
+  }];
+}
+
+// DrainNodeResponse 占位：实际响应为 SSE 事件流。
+message DrainNodeResponse {}
+
+// OpenExecTicketRequest 打开 Web 终端请求。
+message OpenExecTicketRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // namespace 命名空间。
+  string namespace = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 63
+  }];
+  // pod Pod 名称。
+  string pod = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 253
+  }];
+  // container 容器名称；空 = 第一个容器。
+  string container = 4 [(buf.validate.field).string.max_len = 253];
+  // session_id 接回已有会话（断线续接）；空 = 新建会话。
+  string session_id = 5 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+  // cols 终端列数。
+  uint32 cols = 6 [(buf.validate.field).uint32.lte = 1000];
+  // rows 终端行数。
+  uint32 rows = 7 [(buf.validate.field).uint32.lte = 1000];
+  // kind 终端类型：0 / 1 = 容器终端；2 = 调试容器（在 Pod 里启动一个临时容器并进入，用于没有 shell 的镜像）。
+  int32 kind = 8 [(buf.validate.field).int32 = {
+    in: [
+      0,
+      1,
+      2
+    ]
+  }];
+  // debug_image 调试容器使用的镜像；须在数据面配置的允许清单内，空 = 清单里的第一个。
+  string debug_image = 9 [(buf.validate.field).string.max_len = 512];
+}
+
+// OpenExecTicketResponse 打开 Web 终端响应。
+message OpenExecTicketResponse {
+  // ticket 一次性票据，30 秒内有效。
+  string ticket = 1;
+}
+
+// WatchResourcesRequest 订阅资源变更请求。
+message WatchResourcesRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // group API 组；核心组为空。
+  string group = 2 [(buf.validate.field).string.max_len = 253];
+  // version API 版本。
+  string version = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 63
+  }];
+  // resource 资源类型（复数小写，如 deployments）。
+  string resource = 4 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 253
+  }];
+  // namespace 命名空间；集群级资源或全部命名空间时为空。
+  string namespace = 5 [(buf.validate.field).string.max_len = 63];
+}
+
+// WatchResourcesResponse 占位：实际响应为 SSE 事件流。
+message WatchResourcesResponse {}
+
+// StreamPodLogRequest 查看 Pod 日志请求。
+message StreamPodLogRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // namespace 命名空间。
+  string namespace = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 63
+  }];
+  // pod Pod 名称。
+  string pod = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 253
+  }];
+  // container 容器名称；空 = 第一个容器。
+  string container = 4 [(buf.validate.field).string.max_len = 253];
+  // previous 查看上一次（崩溃前）的容器日志。
+  bool previous = 5;
+  // tail_lines 起始回看行数，缺省 500，上限 5000。
+  int64 tail_lines = 6 [(buf.validate.field).int64 = {
+    gte: 0
+    lte: 5000
+  }];
+  // since_seconds 只看最近若干秒，可选。
+  int64 since_seconds = 7 [(buf.validate.field).int64 = {
+    gte: 0
+    lte: 31536000
+  }];
+  // keyword 关键字过滤（包含匹配），可选。
+  string keyword = 8 [(buf.validate.field).string.max_len = 256];
+  // follow 是否持续跟随；false = 读完现有内容即结束。
+  bool follow = 9;
+  // cursor 续接游标：上一次收到的最后一个 log 事件的 id。
+  string cursor = 10 [(buf.validate.field).string.max_len = 128];
+}
+
+// StreamPodLogResponse 占位：实际响应为 SSE 事件流。
+message StreamPodLogResponse {}
+
+// StreamWorkloadLogRequest 查看工作负载日志请求。
+message StreamWorkloadLogRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // ref 目标对象。
+  ResourceRef ref = 2 [(buf.validate.field).required = true];
+  // container 容器名称；空 = 各 Pod 的第一个容器。
+  string container = 3 [(buf.validate.field).string.max_len = 253];
+  // tail_lines 起始回看行数，缺省 500，上限 5000。
+  int64 tail_lines = 4 [(buf.validate.field).int64 = {
+    gte: 0
+    lte: 5000
+  }];
+  // since_seconds 只看最近若干秒，可选。
+  int64 since_seconds = 5 [(buf.validate.field).int64 = {
+    gte: 0
+    lte: 31536000
+  }];
+  // keyword 关键字过滤（包含匹配），可选。
+  string keyword = 6 [(buf.validate.field).string.max_len = 256];
+  // cursors 续接游标：Pod 名 → 该 Pod 上一次收到的最后一个 log 事件的 id。
+  map<string, string> cursors = 7 [(buf.validate.field).map.max_pairs = 50];
+}
+
+// StreamWorkloadLogResponse 占位：实际响应为 SSE 事件流。
+message StreamWorkloadLogResponse {}

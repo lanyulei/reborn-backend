@@ -70,6 +70,11 @@ func newTestHTTPServerWithServices(t *testing.T) (*httptest.Server, testServices
 		svc.file,
 		nil, nil, nil, nil, nil, // 流程引擎域服务：执行状态存取需要 PostgreSQL，由 data 集成测试覆盖
 		nil, nil, // 工单域服务：依赖流程引擎，同样由 data 集成测试覆盖
+		svc.monitor.datasource, svc.monitor.group, svc.monitor.rule, svc.monitor.alert, svc.monitor.mute, svc.monitor.subscription,
+		svc.monitor.p2,
+		svc.job.credential, svc.job.project, svc.job.template, svc.job.execution, svc.job.runner,
+		svc.job.script, svc.job.policy, nil, nil, // 定时作业 / 触发器：触发队列与去重依赖 PostgreSQL，由 data 集成测试覆盖
+		svc.k8s.cluster, svc.k8s.scope, svc.k8s.audit, svc.k8s.resource, svc.k8s.workload, svc.k8s.stream, nil, nil, svc.k8s.insight, nil, nil, svc.k8s.conf,
 		svc.signer,
 		svc.authz,
 		AllRoles(), nil, nil, // 全部角色；探活不接数据库、不带指标

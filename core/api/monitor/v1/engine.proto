@@ -1,0 +1,114 @@
+syntax = "proto3";
+
+package monitor.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/monitor/v1;v1";
+
+// MonitorEngineService 平台自监控：评估引擎的运行状态。引擎是独立部署的服务，可以有多个实例，规则的
+// 评估任务在实例间自动分配。持续的故障（数据源持续不可用、规则持续评估失败）另以 monitor.engine.* 通知
+// 事件发给有数据源管理权限的人。只读。
+service MonitorEngineService {
+  // GetEngineStatus 查询评估引擎状态：各实例、任务积压与评估延迟、当前存在问题的数据源与规则。
+  rpc GetEngineStatus(GetEngineStatusRequest) returns (GetEngineStatusResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/engine/status"};
+    option (system.v1.title) = "查询评估引擎状态";
+  }
+}
+
+// EngineInstance 评估引擎的一个实例。
+message EngineInstance {
+  // instance 实例标识。
+  string instance = 1;
+  // roles 承担的角色：planner 任务物化与探活 / evaluator 规则评估。
+  repeated string roles = 2;
+  // version 程序版本。
+  string version = 3;
+  // leader 此刻是否是选主实例（负责任务物化与数据源探活）。
+  bool leader = 4;
+  // alive 是否存活（最近 60 秒内有心跳）。
+  bool alive = 5;
+  // start_time 实例启动时间。
+  google.protobuf.Timestamp start_time = 6;
+  // last_seen 最近一次心跳时间。
+  google.protobuf.Timestamp last_seen = 7;
+  // task_count 最近一个心跳周期内评估的任务数。
+  int32 task_count = 8;
+  // eval_lag_ms 最近一个心跳周期内的最大评估延迟毫秒（实际开始评估的时刻 − 应评估的时刻）。
+  int64 eval_lag_ms = 9;
+  // eval_count 启动以来完成的评估次数。
+  int64 eval_count = 10;
+  // fail_count 启动以来查询错误的评估次数。
+  int64 fail_count = 11;
+}
+
+// EngineDatasourceIssue 一个当前不健康的数据源。
+message EngineDatasourceIssue {
+  // id 数据源唯一标识。
+  string id = 1;
+  // name 数据源名称。
+  string name = 2;
+  // error 最近一次探活失败原因。
+  string error = 3;
+  // since 不健康状态自何时开始。
+  google.protobuf.Timestamp since = 4;
+  // rule_count 受影响的规则数（在该数据源上有评估任务的规则）。
+  int32 rule_count = 5;
+}
+
+// EngineRuleIssue 一条当前持续评估失败的规则（在某个数据源上）。
+message EngineRuleIssue {
+  // rule_id 规则唯一标识。
+  string rule_id = 1;
+  // rule_name 规则名称。
+  string rule_name = 2;
+  // group_name 规则所在分组的完整名称。
+  string group_name = 3;
+  // datasource_id 数据源唯一标识。
+  string datasource_id = 4;
+  // datasource_name 数据源名称。
+  string datasource_name = 5;
+  // error 最近一次评估的错误信息。
+  string error = 6;
+  // since 连续失败自何时开始。
+  google.protobuf.Timestamp since = 7;
+  // failures 连续失败次数。
+  int32 failures = 8;
+}
+
+// GetEngineStatusRequest 查询评估引擎状态请求。
+message GetEngineStatusRequest {}
+
+// GetEngineStatusResponse 查询评估引擎状态响应。
+message GetEngineStatusResponse {
+  // instances 引擎实例，存活的在前，按实例标识排序；长时间没有心跳的实例不返回。
+  repeated EngineInstance instances = 1;
+  // healthy 引擎整体是否正常：至少一个存活的评估实例、有选主实例，且任务没有明显积压。
+  bool healthy = 2;
+  // task_total 评估任务总数（规则 × 数据源）。
+  int32 task_total = 3;
+  // task_overdue 逾期未评估的任务数（超过应评估时刻两个评估周期仍未开始）。
+  int32 task_overdue = 4;
+  // task_error 最近一次评估为查询错误的任务数。
+  int32 task_error = 5;
+  // max_lag_ms 当前最大的评估延迟毫秒（最久未被评估的到期任务已逾期多久）。
+  int64 max_lag_ms = 6;
+  // record_task_total 记录规则任务总数。
+  int32 record_task_total = 7;
+  // record_task_error 最近一次执行失败（查询失败或写回失败）的记录规则任务数。
+  int32 record_task_error = 8;
+  // datasources 当前不健康的数据源，至多 50 个。
+  repeated EngineDatasourceIssue datasources = 9;
+  // rules 当前持续评估失败的规则（连续失败 3 次以上），按开始时间升序，至多 50 条；只含调用方数据范围内的规则，
+  // 超级管理员不限。
+  repeated EngineRuleIssue rules = 10;
+  // notify_pending 等待派发的告警通知数（通知发件箱积压）。
+  int32 notify_pending = 11;
+  // ci_sync_time CMDB 资源索引最近一次同步时间；从未同步为空。
+  google.protobuf.Timestamp ci_sync_time = 12;
+  // ci_count CMDB 资源索引里的有效资源数。
+  int32 ci_count = 13;
+}

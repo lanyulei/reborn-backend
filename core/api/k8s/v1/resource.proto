@@ -1,0 +1,321 @@
+syntax = "proto3";
+
+package k8s.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/api/httpbody.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/k8s/v1;v1";
+
+// 本文件的接口由 core 完成登录与接口授权后转发给容器平台数据面执行；能否对具体资源操作成功由集群
+// 按当前用户的数据范围判定（403 K8S_FORBIDDEN）。响应体是数据面返回的 JSON，结构见
+// kit/k8scontract（各接口注释里标注了对应的类型）。
+
+// K8sResourceService 通用资源引擎：任意资源类型（含 CRD）的目录、列表、详情、事件与变更。
+service K8sResourceService {
+  // ListAPIResources 集群的资源类型目录（含 CRD）。响应：k8scontract.APIResourcesResponse。
+  rpc ListAPIResources(ListAPIResourcesRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {get: "/api/v1/k8s/cluster/{cluster_id}/api-resource"};
+    option (system.v1.title) = "查询资源类型目录";
+  }
+  // ListNamespaceOptions 当前用户在该集群可见的命名空间。响应：k8scontract.NamespacesResponse。
+  rpc ListNamespaceOptions(ListNamespaceOptionsRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {get: "/api/v1/k8s/cluster/{cluster_id}/namespace-option"};
+    option (system.v1.title) = "查询可用命名空间";
+  }
+  // ListResources 资源列表。走缓存的资源支持关键字、排序、分页与总数；其余资源用 continue 翻页。响应：k8scontract.ListResponse。
+  rpc ListResources(ListResourcesRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {get: "/api/v1/k8s/cluster/{cluster_id}/resource"};
+    option (system.v1.title) = "查询资源列表";
+  }
+  // GetObject 单个对象及其 YAML（Secret 的 data 已掩码）。响应：k8scontract.ObjectResponse。
+  rpc GetObject(GetObjectRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {get: "/api/v1/k8s/cluster/{cluster_id}/object"};
+    option (system.v1.title) = "查看资源对象";
+  }
+  // ListObjectEvents 对象的关联事件。响应：k8scontract.EventsResponse。
+  rpc ListObjectEvents(ListObjectEventsRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {get: "/api/v1/k8s/cluster/{cluster_id}/object/event"};
+    option (system.v1.title) = "查看资源事件";
+  }
+  // PreviewObject 预检创建或更新（服务端 dry-run），返回当前与变更后的 YAML。响应：k8scontract.PreviewResponse。
+  rpc PreviewObject(PreviewObjectRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster/{cluster_id}/object:preview"
+      body: "*"
+    };
+    option (system.v1.title) = "预检资源变更";
+  }
+  // ApplyObject 提交创建或更新。响应：k8scontract.ApplyResponse。
+  rpc ApplyObject(ApplyObjectRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster/{cluster_id}/object:apply"
+      body: "*"
+    };
+    option (system.v1.title) = "提交资源变更";
+  }
+  // DeleteObject 删除对象。响应：空对象。
+  rpc DeleteObject(DeleteObjectRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster/{cluster_id}/object:delete"
+      body: "*"
+    };
+    option (system.v1.title) = "删除资源对象";
+  }
+  // PreviewManifest 预检多文档 YAML（逐个对象 dry-run）。响应：k8scontract.ManifestResponse。
+  rpc PreviewManifest(PreviewManifestRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster/{cluster_id}/manifest:preview"
+      body: "*"
+    };
+    option (system.v1.title) = "预检 YAML 清单";
+  }
+  // ApplyManifest 提交多文档 YAML：顺序执行，遇错即停。响应：k8scontract.ManifestResponse。
+  rpc ApplyManifest(ApplyManifestRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster/{cluster_id}/manifest:apply"
+      body: "*"
+    };
+    option (system.v1.title) = "提交 YAML 清单";
+  }
+  // RevealSecret 查看 Secret 的明文，记入审计。响应：k8scontract.SecretRevealResponse。
+  rpc RevealSecret(RevealSecretRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster/{cluster_id}/secret:reveal"
+      body: "*"
+    };
+    option (system.v1.title) = "查看 Secret 明文";
+  }
+}
+
+// ResourceRef 定位一个资源对象。
+message ResourceRef {
+  // group API 组；核心组为空。
+  string group = 1 [(buf.validate.field).string.max_len = 253];
+  // version API 版本。
+  string version = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 63
+  }];
+  // resource 资源类型（复数小写，如 deployments）。
+  string resource = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 253
+  }];
+  // namespace 命名空间；集群级资源为空。
+  string namespace = 4 [(buf.validate.field).string.max_len = 63];
+  // name 对象名称；创建时可为空（取自 YAML）。
+  string name = 5 [(buf.validate.field).string.max_len = 253];
+}
+
+// ListAPIResourcesRequest 查询资源类型目录请求。
+message ListAPIResourcesRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // refresh 跳过 5 分钟的目录缓存。
+  bool refresh = 2;
+}
+
+// ListNamespaceOptionsRequest 查询可用命名空间请求。
+message ListNamespaceOptionsRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// ListResourcesRequest 查询资源列表请求。
+message ListResourcesRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // group API 组；核心组为空。
+  string group = 2 [(buf.validate.field).string.max_len = 253];
+  // version API 版本。
+  string version = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 63
+  }];
+  // resource 资源类型（复数小写，如 deployments）。
+  string resource = 4 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 253
+  }];
+  // namespace 命名空间；集群级资源或全部命名空间时为空。
+  string namespace = 5 [(buf.validate.field).string.max_len = 63];
+  // keyword 名称包含匹配（仅走缓存的资源）。
+  string keyword = 6 [(buf.validate.field).string.max_len = 253];
+  // label_selector 标签选择器（K8s 语法）。
+  string label_selector = 7 [(buf.validate.field).string.max_len = 1024];
+  // state 按状态筛选（仅走缓存的资源）：ok / pending / abnormal / unknown / done。
+  string state = 8 [(buf.validate.field).string = {
+    in: [
+      "",
+      "ok",
+      "pending",
+      "abnormal",
+      "unknown",
+      "done"
+    ]
+  }];
+  // node 按所在节点筛选（仅 Pod）。
+  string node = 9 [(buf.validate.field).string.max_len = 253];
+  // owner 按所有者对象的 UID 筛选（如某个工作负载下的 Pod）。
+  string owner = 10 [(buf.validate.field).string.max_len = 64];
+  // sort_by 排序列的键（仅走缓存的资源）。
+  string sort_by = 11 [(buf.validate.field).string.max_len = 64];
+  // sort_desc 是否降序。
+  bool sort_desc = 12;
+  // page 页码，从 1 开始（仅走缓存的资源）。
+  int32 page = 13 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 100000
+  }];
+  // page_size 每页数量，1-200；缺省 20。
+  int32 page_size = 14 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 200
+  }];
+  // continue 翻页游标（未走缓存的资源）。
+  string continue = 15 [(buf.validate.field).string.max_len = 4096];
+}
+
+// GetObjectRequest 查看资源对象请求。
+message GetObjectRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // group API 组；核心组为空。
+  string group = 2 [(buf.validate.field).string.max_len = 253];
+  // version API 版本。
+  string version = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 63
+  }];
+  // resource 资源类型（复数小写，如 deployments）。
+  string resource = 4 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 253
+  }];
+  // namespace 命名空间；集群级资源或全部命名空间时为空。
+  string namespace = 5 [(buf.validate.field).string.max_len = 63];
+  // name 对象名称。
+  string name = 6 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 253
+  }];
+}
+
+// ListObjectEventsRequest 查看资源事件请求。
+message ListObjectEventsRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // group API 组；核心组为空。
+  string group = 2 [(buf.validate.field).string.max_len = 253];
+  // version API 版本。
+  string version = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 63
+  }];
+  // resource 资源类型（复数小写，如 deployments）。
+  string resource = 4 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 253
+  }];
+  // namespace 命名空间；集群级资源或全部命名空间时为空。
+  string namespace = 5 [(buf.validate.field).string.max_len = 63];
+  // name 对象名称。
+  string name = 6 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 253
+  }];
+}
+
+// PreviewObjectRequest 预检资源变更请求。
+message PreviewObjectRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // ref 目标对象。
+  ResourceRef ref = 2 [(buf.validate.field).required = true];
+  // yaml 对象的 YAML。
+  string yaml = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 1048576
+  }];
+  // resource_version 预检时读到的资源版本，更新时用于乐观锁；空 = 不校验。
+  string resource_version = 4 [(buf.validate.field).string.max_len = 64];
+}
+
+// ApplyObjectRequest 提交资源变更请求。
+message ApplyObjectRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // ref 目标对象。
+  ResourceRef ref = 2 [(buf.validate.field).required = true];
+  // yaml 对象的 YAML。
+  string yaml = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 1048576
+  }];
+  // resource_version 预检时读到的资源版本，更新时用于乐观锁；空 = 不校验。
+  string resource_version = 4 [(buf.validate.field).string.max_len = 64];
+}
+
+// DeleteObjectRequest 删除资源对象请求。
+message DeleteObjectRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // ref 目标对象。
+  ResourceRef ref = 2 [(buf.validate.field).required = true];
+  // uid 对象 UID，可选；非空时作为前置条件，防止误删同名的重建对象。
+  string uid = 3 [(buf.validate.field).string.max_len = 64];
+  // propagation 级联策略，可选：Foreground / Background / Orphan；空 = Background。
+  string propagation = 4 [(buf.validate.field).string = {
+    in: [
+      "",
+      "Foreground",
+      "Background",
+      "Orphan"
+    ]
+  }];
+}
+
+// PreviewManifestRequest 预检 YAML 清单请求。
+message PreviewManifestRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // yaml 多文档 YAML，至多 50 个对象。
+  string yaml = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 2097152
+  }];
+  // namespace 未写命名空间的对象的缺省命名空间。
+  string namespace = 3 [(buf.validate.field).string.max_len = 63];
+}
+
+// ApplyManifestRequest 提交 YAML 清单请求。
+message ApplyManifestRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // yaml 多文档 YAML，至多 50 个对象。
+  string yaml = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 2097152
+  }];
+  // namespace 未写命名空间的对象的缺省命名空间。
+  string namespace = 3 [(buf.validate.field).string.max_len = 63];
+}
+
+// RevealSecretRequest 查看 Secret 明文请求。
+message RevealSecretRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // namespace 命名空间。
+  string namespace = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 63
+  }];
+  // name Secret 名称。
+  string name = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 253
+  }];
+}

@@ -1,0 +1,563 @@
+syntax = "proto3";
+
+package job.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "job/v1/policy.proto";
+import "job/v1/template.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/job/v1;v1";
+
+// JobExecutionService 作业执行：提交执行、查看执行记录与实时日志、取消。
+//
+// 执行状态：1=排队中 2=执行中 3=成功 4=失败 5=部分失败 6=已取消 7=超时 8=结果未知 9=待审批 10=审批未通过。
+// 作业类型：1=作业模板 2=执行命令 3=执行脚本 4=分发文件。触发来源：1=手动 2=定时作业 3=开放接口 4=告警。
+// 「结果未知」表示执行节点失联：作业可能仍在运行，也可能已中断；平台不会自动重跑，由人工确认后决定。
+// 主机结果：0=未执行 1=成功 2=成功且有变更 3=失败 4=不可达 5=已跳过。
+service JobExecutionService {
+  // SubmitJobExecution 按作业模板提交一次执行。提交时固化执行内容（模板版本、项目与分支、Playbook、
+  // 参数取值、目标主机快照），之后编辑模板不影响本次执行。目标主机按执行人的 CMDB 数据范围解析：
+  // 指定了数据范围外的主机返回 403 JOB_TARGET_FORBIDDEN。带相同 request_id 的重复提交返回同一条执行。
+  rpc SubmitJobExecution(SubmitJobExecutionRequest) returns (SubmitJobExecutionResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/job/execution"
+      body: "*"
+    };
+    option (system.v1.title) = "执行作业";
+  }
+  // SubmitJobAdhoc 快速执行：不经作业模板，直接在选中的主机上执行一条命令、一段脚本或分发一个文件。
+  // 提交即固化内容与主机快照。命令与脚本内容按高危命令规则检查：命中「拦截」返回 403 JOB_RISK_BLOCKED；
+  // 命中「须审批」、全局策略要求或目标含受保护环境时进入「待审批」。
+  rpc SubmitJobAdhoc(SubmitJobAdhocRequest) returns (SubmitJobAdhocResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/job/adhoc"
+      body: "*"
+    };
+    option (system.v1.title) = "快速执行";
+  }
+  // CheckJobAdhoc 提交前检查一次快速执行：解析目标主机、匹配高危命令规则、判定是否需要审批；不落库。
+  rpc CheckJobAdhoc(CheckJobAdhocRequest) returns (CheckJobAdhocResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/job/adhoc:check"
+      body: "*"
+    };
+    option (system.v1.title) = "检查快速执行";
+  }
+  // GetJobStats 执行统计：总数、成功率、平均耗时，按状态 / 类型 / 来源的分布，执行最多的模板，按天的趋势。
+  rpc GetJobStats(GetJobStatsRequest) returns (GetJobStatsResponse) {
+    option (google.api.http) = {get: "/api/v1/job/stats"};
+    option (system.v1.title) = "查询执行统计";
+  }
+  // ListJobExecutions 分页查询执行记录，按提交时间倒序。
+  rpc ListJobExecutions(ListJobExecutionsRequest) returns (ListJobExecutionsResponse) {
+    option (google.api.http) = {get: "/api/v1/job/execution"};
+    option (system.v1.title) = "查询执行记录";
+  }
+  // GetJobExecution 查询执行详情。
+  rpc GetJobExecution(GetJobExecutionRequest) returns (GetJobExecutionResponse) {
+    option (google.api.http) = {get: "/api/v1/job/execution/{id}"};
+    option (system.v1.title) = "查询执行详情";
+  }
+  // ListJobExecutionHosts 分页查询一次执行的主机及其结果。
+  rpc ListJobExecutionHosts(ListJobExecutionHostsRequest) returns (ListJobExecutionHostsResponse) {
+    option (google.api.http) = {get: "/api/v1/job/execution/{id}/host"};
+    option (system.v1.title) = "查询执行主机";
+  }
+  // GetJobExecutionLog 增量读取执行日志：返回序号大于 after_seq 的日志块。执行未结束时按 1-2 秒
+  // 的间隔带上次的 last_seq 轮询；响应的 status 进入终态且 last_seq 不再变化即读完。
+  rpc GetJobExecutionLog(GetJobExecutionLogRequest) returns (GetJobExecutionLogResponse) {
+    option (google.api.http) = {get: "/api/v1/job/execution/{id}/log"};
+    option (system.v1.title) = "查询执行日志";
+  }
+  // CancelJobExecution 取消执行：待审批的同时撤回审批流程；排队中的立即取消；执行中的通知执行节点终止（先发终止信号，
+  // 宽限期后强制结束），状态稍后变为「已取消」。「结果未知」的执行同样可以请求取消：状态不变，
+  // 执行节点恢复连接后即终止作业。其余已结束的执行返回 409 JOB_EXECUTION_FINISHED。
+  rpc CancelJobExecution(CancelJobExecutionRequest) returns (CancelJobExecutionResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/job/execution/{id}:cancel"
+      body: "*"
+    };
+    option (system.v1.title) = "取消执行";
+  }
+}
+
+// JobExecution 一次作业执行。
+message JobExecution {
+  // id 执行唯一标识。
+  string id = 1;
+  // template_id 作业模板 ID。
+  string template_id = 2;
+  // template_name 提交时的模板名称。
+  string template_name = 3;
+  // template_version 提交时的模板版本号。
+  int32 template_version = 4;
+  // trigger 触发来源：1=手动。
+  int32 trigger = 5;
+  // creator_id 执行人。
+  string creator_id = 6;
+  // creator_name 执行人显示名。
+  string creator_name = 7;
+  // status 执行状态，见服务说明。
+  int32 status = 8;
+  // error 失败原因；成功或未结束时为空。
+  string error = 9;
+  // host_total 目标主机数。
+  int32 host_total = 10;
+  // host_ok 成功的主机数（含有变更的）。
+  int32 host_ok = 11;
+  // host_failed 失败的主机数。
+  int32 host_failed = 12;
+  // host_unreachable 不可达的主机数。
+  int32 host_unreachable = 13;
+  // cancel_requested 是否已请求取消。
+  bool cancel_requested = 14;
+  // cancel_user_id 请求取消的用户。
+  string cancel_user_id = 15;
+  // cancel_user_name 请求取消的用户显示名。
+  string cancel_user_name = 16;
+  // runner_id 执行本次作业的节点；排队中为空。
+  string runner_id = 17;
+  // runner_name 执行节点名称。
+  string runner_name = 18;
+  // commit_id 实际执行的 Git 提交号；节点拉取代码后才有。
+  string commit_id = 19;
+  // create_time 提交时间。
+  google.protobuf.Timestamp create_time = 20;
+  // start_time 开始执行时间（被节点领取）。
+  google.protobuf.Timestamp start_time = 21;
+  // finish_time 结束时间。
+  google.protobuf.Timestamp finish_time = 22;
+  // detail 提交时固化的执行内容；仅详情接口返回。
+  JobExecutionDetail detail = 23;
+  // check 是否预检模式（列表与详情都返回）。
+  bool check = 24;
+  // kind 作业类型：1=作业模板 2=执行命令 3=执行脚本 4=分发文件。template_name 对快速执行是其显示名。
+  int32 kind = 25;
+  // trigger_ref 触发来源的对象 ID（定时作业 / 触发器）；手动为空。
+  string trigger_ref = 26;
+  // trigger_name 触发来源的对象名称；对象已被删除时为空。
+  string trigger_name = 27;
+  // group_id 作业切片的分组 ID；未切片为空。同组的执行可用列表的 group_id 过滤查到。
+  string group_id = 28;
+  // slice_no 切片序号，从 1 开始；未切片为 0。
+  int32 slice_no = 29;
+  // slice_total 切片总数；未切片为 0。
+  int32 slice_total = 30;
+  // approval_reason 需要审批的原因；无需审批为空。
+  string approval_reason = 31;
+  // approval_instance_id 审批流程实例 ID（流程中心的流程详情页可查看与处理）；无需审批为空。
+  string approval_instance_id = 32;
+  // risk_hits 提交时命中的高危命令规则。
+  repeated JobRiskHit risk_hits = 33;
+}
+
+// JobAdhoc 快速执行的内容。
+message JobAdhoc {
+  // command 要执行的 Shell 命令（kind=2），1-4096 字节。
+  string command = 1 [(buf.validate.field).string.max_bytes = 4096];
+  // script 脚本内容（kind=3），至多 256KB；与 script_id 二选一。
+  string script = 2 [(buf.validate.field).string.max_bytes = 262144];
+  // interpreter 脚本解释器（kind=3 且直接给出 script 时必填）：bash / sh / python3。
+  string interpreter = 3 [(buf.validate.field).string = {
+    in: [
+      "",
+      "bash",
+      "sh",
+      "python3"
+    ]
+  }];
+  // script_args 脚本参数（kind=3），单行，按 Shell 规则分词，至多 1024 字节。
+  string script_args = 4 [(buf.validate.field).string.max_bytes = 1024];
+  // script_id 取自脚本库的脚本（kind=3），可选；给出时内容与解释器取自该脚本的当前版本。
+  // 响应里是出处，脚本为临时输入时为空。
+  string script_id = 5 [(buf.validate.field).string = {pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})?$"}];
+  // script_name 脚本库里的脚本名称（只读）。
+  string script_name = 6;
+  // script_version 所用脚本的版本号（只读）。
+  int32 script_version = 7;
+  // file_id 要分发的文件（kind=4）：先经文件上传接口上传得到的文件 ID（须是本人上传的临时文件），至多 4MB。
+  // 提交时文件内容被固化进执行记录。响应里恒为空。
+  string file_id = 8 [(buf.validate.field).string = {pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})?$"}];
+  // file_name 文件在目标主机上的文件名（kind=4）：字母、数字与 . _ + -，不以点或连字符开头，至多 128 字符；
+  // 不填取上传时的文件名。
+  string file_name = 9 [(buf.validate.field).string.max_len = 128];
+  // dest 目标主机上的存放目录（kind=4），绝对路径，只含字母、数字与 . _ / + -，不含 .. 段；不存在时自动创建。
+  string dest = 10 [(buf.validate.field).string.max_len = 255];
+  // mode 文件权限（kind=4），0 开头的三位八进制，缺省 0644。
+  string mode = 11 [(buf.validate.field).string = {pattern: "^(0[0-7]{3})?$"}];
+  // file_size 文件字节数（只读）。
+  int64 file_size = 12;
+  // file_sha256 文件内容的 SHA-256（只读，十六进制）。
+  string file_sha256 = 13;
+}
+
+// SubmitJobAdhocRequest 快速执行请求。
+message SubmitJobAdhocRequest {
+  // kind 作业类型：2=执行命令 3=执行脚本 4=分发文件。
+  int32 kind = 1 [(buf.validate.field).int32 = {
+    in: [
+      2,
+      3,
+      4
+    ]
+  }];
+  // adhoc 执行内容，按 kind 填写对应的字段。
+  JobAdhoc adhoc = 2 [(buf.validate.field).required = true];
+  // target 目标主机。
+  JobTarget target = 3 [(buf.validate.field).required = true];
+  // credential_id 登录目标主机的凭据。
+  string credential_id = 4 [(buf.validate.field).string.uuid = true];
+  // options 执行选项（并发数、超时、端口、提权、滚动执行）；check / diff 对快速执行无意义，忽略。
+  JobOptions options = 5;
+  // runner_zone 执行节点区域，可选；空表示任意区域。
+  string runner_zone = 6 [(buf.validate.field).string = {pattern: "^([A-Za-z0-9][A-Za-z0-9._-]{0,63})?$"}];
+  // request_id 幂等键，可选：客户端每次打开表单生成一个，1-64 个字母、数字、连字符、下划线。
+  string request_id = 7 [(buf.validate.field).string = {pattern: "^[A-Za-z0-9_-]{0,64}$"}];
+}
+
+// SubmitJobAdhocResponse 快速执行响应。
+message SubmitJobAdhocResponse {
+  // execution 新建（或幂等命中）的执行；需要审批时状态为 9。
+  JobExecution execution = 1;
+}
+
+// CheckJobAdhocRequest 检查快速执行请求。
+message CheckJobAdhocRequest {
+  // kind 作业类型：2=执行命令 3=执行脚本 4=分发文件。
+  int32 kind = 1 [(buf.validate.field).int32 = {
+    in: [
+      2,
+      3,
+      4
+    ]
+  }];
+  // adhoc 执行内容；分发文件可不带 file_id（只检查目标与审批）。
+  JobAdhoc adhoc = 2;
+  // target 目标主机。
+  JobTarget target = 3 [(buf.validate.field).required = true];
+}
+
+// CheckJobAdhocResponse 检查快速执行响应。
+message CheckJobAdhocResponse {
+  // hosts 选中的主机，至多 500 台。
+  repeated JobTargetHost hosts = 1;
+  // truncated 匹配的主机超过上限（这样的目标不能提交）。
+  bool truncated = 2;
+  // risk_hits 命中的高危命令规则，拦截在前。
+  repeated JobRiskHit risk_hits = 3;
+  // blocked 是否命中了「拦截」规则（不允许提交）。
+  bool blocked = 4;
+  // approval_reasons 需要审批的原因；空表示无需审批。
+  repeated string approval_reasons = 5;
+  // approval_ready 审批流程当前是否可发起；需要审批而它为 false 时提交会被拒绝。
+  bool approval_ready = 6;
+  // max_hosts 单条执行的主机数上限。
+  int32 max_hosts = 7;
+}
+
+// JobStatCount 一项分组计数。
+message JobStatCount {
+  // key 分组键：状态 / 类型 / 来源的数值，或模板 ID。
+  string key = 1;
+  // name 显示名（仅模板分组有：模板名称）。
+  string name = 2;
+  // count 执行次数。
+  int64 count = 3;
+  // failed 其中失败（失败 / 部分失败 / 超时 / 结果未知）的次数（仅模板分组有）。
+  int64 failed = 4;
+}
+
+// JobStatTrendPoint 某一天的执行情况。
+message JobStatTrendPoint {
+  // day 日期，yyyy-mm-dd（按请求的时区）。
+  string day = 1;
+  // total 当天提交的执行数。
+  int64 total = 2;
+  // success 其中成功的次数。
+  int64 success = 3;
+  // failed 其中失败（失败 / 部分失败 / 超时 / 结果未知）的次数。
+  int64 failed = 4;
+}
+
+// GetJobStatsRequest 查询执行统计请求。
+message GetJobStatsRequest {
+  // days 统计最近多少天，1-366，缺省 30。
+  optional int32 days = 1 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 366
+  }];
+  // timezone 按天分组所用的 IANA 时区，缺省 Asia/Shanghai。
+  string timezone = 2 [(buf.validate.field).string.max_len = 64];
+}
+
+// GetJobStatsResponse 查询执行统计响应。
+message GetJobStatsResponse {
+  // total 时间范围内提交的执行总数。
+  int64 total = 1;
+  // finished 其中已结束的（不含待审批 / 排队中 / 执行中）。
+  int64 finished = 2;
+  // success 其中成功的。
+  int64 success = 3;
+  // avg_duration_seconds 已执行完的作业的平均耗时（开始到结束）秒数。
+  int64 avg_duration_seconds = 4;
+  // host_runs 涉及的主机执行次数（各执行的主机数之和）。
+  int64 host_runs = 5;
+  // by_status 按状态的分布。
+  repeated JobStatCount by_status = 6;
+  // by_kind 按作业类型的分布。
+  repeated JobStatCount by_kind = 7;
+  // by_trigger 按触发来源的分布。
+  repeated JobStatCount by_trigger = 8;
+  // top_templates 执行最多的 10 个作业模板。
+  repeated JobStatCount top_templates = 9;
+  // trend 按天的趋势，升序，只含有数据的日期。
+  repeated JobStatTrendPoint trend = 10;
+  // timezone 实际使用的时区。
+  string timezone = 11;
+  // active 当前未结束的执行数（待审批 + 排队中 + 执行中，不受时间范围限制）。
+  int64 active = 12;
+  // runners_online 当前在线的执行节点数。
+  int32 runners_online = 13;
+  // runners_total 已登记且启用的执行节点数。
+  int32 runners_total = 14;
+}
+
+// JobExecutionDetail 提交时固化的执行内容。
+message JobExecutionDetail {
+  // project_name 项目名称。
+  string project_name = 1;
+  // repo_url 仓库地址。
+  string repo_url = 2;
+  // ref 分支或标签名。
+  string ref = 3;
+  // playbook Playbook 路径。
+  string playbook = 4;
+  // credential_name 凭据名称。
+  string credential_name = 5;
+  // params 参数取值（变量名 → 值）。
+  google.protobuf.Struct params = 6;
+  // options 执行选项。
+  JobOptions options = 7;
+  // runner_zone 要求的执行节点区域；空表示任意。
+  string runner_zone = 8;
+  // log_truncated 日志是否因超出上限（32MB）被截断。
+  bool log_truncated = 9;
+  // adhoc 快速执行的内容（kind 为 2-4 时）；作业模板为空。
+  JobAdhoc adhoc = 10;
+  // target 快速执行提交时的目标主机配置（「再次执行」时回填用）；作业模板为空。
+  JobTarget target = 11;
+  // credential_id 所用凭据的 ID（「再次执行」时回填用）。
+  string credential_id = 12;
+}
+
+// SubmitJobExecutionRequest 执行作业请求。
+message SubmitJobExecutionRequest {
+  // template_id 作业模板。
+  string template_id = 1 [(buf.validate.field).string.uuid = true];
+  // params 参数取值（变量名 → 值），按模板的参数定义校验；未填且有缺省值的参数取缺省值。
+  google.protobuf.Struct params = 2;
+  // ci_ids 只在这些主机上执行，可选，至多 500 个；须是模板目标主机的子集（400 JOB_TARGET_INVALID）。
+  // 不传表示模板的全部目标主机。用于「仅重试失败主机」。
+  repeated string ci_ids = 3 [(buf.validate.field).repeated = {
+    max_items: 500
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+  // check 是否预检模式，可选；不传取模板的设置。
+  optional bool check = 4;
+  // request_id 幂等键，可选：客户端每次打开执行表单生成一个（如 UUID），1-64 个字母、数字、连字符、下划线。
+  string request_id = 5 [(buf.validate.field).string = {pattern: "^[A-Za-z0-9_-]{0,64}$"}];
+  // template_version 执行确认框展示的模板版本号，可选：模板此后被改过则拒绝（400 JOB_TEMPLATE_INVALID），
+  // 避免确认的是旧内容、执行的是新内容。不传（0）不检查。
+  int32 template_version = 6 [(buf.validate.field).int32.gte = 0];
+}
+
+// SubmitJobExecutionResponse 执行作业响应。
+message SubmitJobExecutionResponse {
+  // execution 新建（或幂等命中）的执行；需要审批时状态为 9；切片时是第一片（其余见 group_id）。
+  JobExecution execution = 1;
+}
+
+// ListJobExecutionsRequest 分页查询执行记录请求。
+message ListJobExecutionsRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // template_id 模板过滤，可选。
+  optional string template_id = 3 [(buf.validate.field).string.uuid = true];
+  // statuses 状态过滤，可选，可多个。
+  repeated int32 statuses = 4 [(buf.validate.field).repeated = {
+    max_items: 10
+    unique: true
+    items: {
+      int32: {
+        gte: 1
+        lte: 10
+      }
+    }
+  }];
+  // creator_id 执行人过滤，可选。
+  optional string creator_id = 5 [(buf.validate.field).string.uuid = true];
+  // mine 只看我提交的，可选；与 creator_id 同时给出时以 mine 为准。
+  bool mine = 6;
+  // keyword 模板名称模糊匹配，可选。
+  optional string keyword = 7 [(buf.validate.field).string.max_len = 64];
+  // start_time 提交时间下限（含），可选。
+  google.protobuf.Timestamp start_time = 8;
+  // end_time 提交时间上限（不含），可选。
+  google.protobuf.Timestamp end_time = 9;
+  // ci_id 只看在该 CMDB 资源上执行过的，可选。
+  optional string ci_id = 10 [(buf.validate.field).string.uuid = true];
+  // kinds 作业类型过滤，可选，可多个。
+  repeated int32 kinds = 11 [(buf.validate.field).repeated = {
+    max_items: 4
+    unique: true
+    items: {
+      int32: {
+        gte: 1
+        lte: 4
+      }
+    }
+  }];
+  // triggers 触发来源过滤，可选，可多个。
+  repeated int32 triggers = 12 [(buf.validate.field).repeated = {
+    max_items: 4
+    unique: true
+    items: {
+      int32: {
+        gte: 1
+        lte: 4
+      }
+    }
+  }];
+  // group_id 只看这一组切片，可选。
+  optional string group_id = 13 [(buf.validate.field).string.uuid = true];
+  // trigger_ref 只看由这个定时作业 / 触发器提交的，可选。
+  optional string trigger_ref = 14 [(buf.validate.field).string.uuid = true];
+}
+
+// ListJobExecutionsResponse 分页查询执行记录响应。
+message ListJobExecutionsResponse {
+  // items 当前页数据（不含 detail）。
+  repeated JobExecution items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// GetJobExecutionRequest 查询执行详情请求。
+message GetJobExecutionRequest {
+  // id 执行唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetJobExecutionResponse 查询执行详情响应。
+message GetJobExecutionResponse {
+  // execution 执行（含 detail）。
+  JobExecution execution = 1;
+}
+
+// JobExecutionHost 一次执行中的一台主机。
+message JobExecutionHost {
+  // seq 主机在本次执行中的序号，从 1 开始。
+  int32 seq = 1;
+  // ci_id CMDB 资源 ID。
+  string ci_id = 2;
+  // name 提交时的资源名称。
+  string name = 3;
+  // env 提交时的资源环境。
+  string env = 4;
+  // address 连接地址，也是日志里的主机名。
+  string address = 5;
+  // port SSH 端口。
+  int32 port = 6;
+  // status 主机结果，见服务说明。
+  int32 status = 7;
+  // ok 成功的任务数。
+  int32 ok = 8;
+  // changed 产生变更的任务数。
+  int32 changed = 9;
+  // failed 失败的任务数。
+  int32 failed = 10;
+  // unreachable 不可达次数。
+  int32 unreachable = 11;
+  // skipped 跳过的任务数。
+  int32 skipped = 12;
+}
+
+// ListJobExecutionHostsRequest 分页查询执行主机请求。
+message ListJobExecutionHostsRequest {
+  // id 执行唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // page 页码，从 1 开始。
+  int64 page = 2 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-500。
+  int32 page_size = 3 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 500
+  }];
+  // statuses 主机结果过滤，可选，可多个。
+  repeated int32 statuses = 4 [(buf.validate.field).repeated = {
+    max_items: 6
+    unique: true
+    items: {
+      int32: {
+        gte: 0
+        lte: 5
+      }
+    }
+  }];
+  // keyword 名称 / 地址模糊匹配，可选。
+  optional string keyword = 5 [(buf.validate.field).string.max_len = 64];
+}
+
+// ListJobExecutionHostsResponse 分页查询执行主机响应。
+message ListJobExecutionHostsResponse {
+  // items 当前页数据，按序号排序。
+  repeated JobExecutionHost items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// GetJobExecutionLogRequest 查询执行日志请求。
+message GetJobExecutionLogRequest {
+  // id 执行唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // after_seq 只返回序号大于它的日志块；首次传 0。
+  int64 after_seq = 2 [(buf.validate.field).int64.gte = 0];
+}
+
+// GetJobExecutionLogResponse 查询执行日志响应。
+message GetJobExecutionLogResponse {
+  // content 本次返回的日志内容（各块按序号拼接），一次至多约 1MB。
+  string content = 1;
+  // last_seq 本次返回的最后一块的序号；没有新日志时等于请求的 after_seq。下次轮询原样传回。
+  int64 last_seq = 2;
+  // more 是否还有未返回的日志块（内容超过单次上限）：为 true 时应立即再取，不必等待。
+  bool more = 3;
+  // status 执行当前的状态。
+  int32 status = 4;
+  // truncated 日志是否因超出上限被截断。
+  bool truncated = 5;
+}
+
+// CancelJobExecutionRequest 取消执行请求。
+message CancelJobExecutionRequest {
+  // id 执行唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// CancelJobExecutionResponse 取消执行响应。
+message CancelJobExecutionResponse {
+  // execution 取消后的执行（执行中 / 结果未知的作业状态不变，cancel_requested 为 true）。
+  JobExecution execution = 1;
+}

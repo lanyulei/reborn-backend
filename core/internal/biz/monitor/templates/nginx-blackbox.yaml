@@ -1,0 +1,78 @@
+# Nginx（nginx-prometheus-exporter，stub_status）与拨测（blackbox_exporter）。
+groups:
+  - name: Nginx
+    interval: 1m
+    rules:
+      - alert: Nginx 不可用
+        expr: nginx_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Nginx 实例 {{ $labels.instance }} 的 stub_status 无法访问"
+      - alert: Nginx 丢弃连接
+        expr: rate(nginx_connections_accepted[5m]) - rate(nginx_connections_handled[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Nginx 实例 {{ $labels.instance }} 每秒丢弃 {{ printf \"%.1f\" $value }} 个连接（worker_connections 不足）"
+      - alert: Nginx 活跃连接数过高
+        expr: nginx_connections_active > 10000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Nginx 实例 {{ $labels.instance }} 活跃连接数 {{ $value }}"
+      - alert: Nginx 等待连接堆积
+        expr: nginx_connections_waiting > 5000
+        for: 10m
+        labels:
+          severity: info
+        annotations:
+          summary: "Nginx 实例 {{ $labels.instance }} 有 {{ $value }} 个 keep-alive 连接在等待"
+  - name: 拨测
+    interval: 1m
+    rules:
+      - alert: 拨测失败
+        expr: probe_success == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "拨测目标 {{ $labels.instance }} 探测失败"
+      - alert: 拨测响应慢
+        expr: probe_duration_seconds > 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "拨测目标 {{ $labels.instance }} 响应耗时 {{ printf \"%.2f\" $value }} 秒"
+      - alert: HTTP 状态码异常
+        expr: probe_http_status_code >= 400
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "拨测目标 {{ $labels.instance }} 返回 HTTP {{ $value }}"
+      - alert: TLS 证书 30 天内到期
+        expr: (probe_ssl_earliest_cert_expiry - time()) / 86400 < 30
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.instance }} 的 TLS 证书将在 {{ printf \"%.0f\" $value }} 天后到期"
+      - alert: TLS 证书 7 天内到期
+        expr: (probe_ssl_earliest_cert_expiry - time()) / 86400 < 7
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.instance }} 的 TLS 证书将在 {{ printf \"%.0f\" $value }} 天后到期"
+      - alert: DNS 解析慢
+        expr: probe_dns_lookup_time_seconds > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "拨测目标 {{ $labels.instance }} DNS 解析耗时 {{ printf \"%.2f\" $value }} 秒"

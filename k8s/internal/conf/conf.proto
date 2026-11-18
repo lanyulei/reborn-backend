@@ -1,0 +1,98 @@
+syntax = "proto3";
+
+package conf;
+
+import "google/protobuf/duration.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/k8s/internal/conf;conf";
+
+// Bootstrap 容器平台数据面配置根。
+message Bootstrap {
+  Server server = 1;
+  Data data = 2;
+  Plane plane = 3;
+  Notify notify = 4;
+}
+
+// Server 监听配置。
+message Server {
+  // HTTP 内部接口监听（仅 core 可达）：/internal/v1/*、/healthz、/metrics。
+  message HTTP {
+    string network = 1;
+    // addr 监听地址，缺省 0.0.0.0:8060（8010 core / 8020 通知 / 8030 CMDB / 8040 监控 / 8050 作业）。
+    string addr = 2;
+    // timeout 普通请求的处理超时，缺省 30s；流式接口不受它限制。
+    google.protobuf.Duration timeout = 3;
+    // advertise_addr core 访问本实例内部接口的地址（http://host:port）；空 = 由主机名与监听端口推出。
+    string advertise_addr = 4;
+  }
+  // Tunnel Agent 隧道入口监听（所有集群可达）：只有注册与连接两个路径。
+  message Tunnel {
+    string network = 1;
+    // addr 监听地址，缺省 0.0.0.0:8061。
+    string addr = 2;
+    // cert_file / key_file TLS 证书；都为空 = 明文（仅限开发或已有外层 TLS 终结）。
+    string cert_file = 3;
+    string key_file = 4;
+    // trusted_proxies 可信的前置代理网段（CIDR）。隧道入口前面有负载均衡 / TLS 终结时必须设置：
+    // 对端地址落在其中时，按来源限速取 X-Forwarded-For 的最后一跳；否则所有 Agent 共用代理的限额。
+    repeated string trusted_proxies = 5;
+  }
+  HTTP http = 1;
+  Tunnel tunnel = 2;
+}
+
+// Data 数据源配置。
+message Data {
+  message Database {
+    // source PostgreSQL DSN（与 core 同库，账号属于 k8s_plane_role）。
+    string source = 1;
+    int32 max_conns = 2;
+    int32 min_conns = 3;
+    google.protobuf.Duration max_conn_idle_time = 4;
+  }
+  Database database = 1;
+}
+
+// Plane 数据面参数；未设置或 ≤0 取注明的缺省值。
+message Plane {
+  // internal_key core 与数据面之间的身份头签名密钥，至少 32 字节；两边必须一致。
+  string internal_key = 1;
+  // lease 集群归属租约，缺省 30s。
+  google.protobuf.Duration lease = 2;
+  // probe_interval 集群探活间隔，缺省 30s。
+  google.protobuf.Duration probe_interval = 3;
+  // max_clusters 本实例最多负责的集群数，缺省 0 = 不限。
+  int32 max_clusters = 4;
+  // memory_limit_mb 进程堆内存上限（MiB）：超过后拒绝新建资源缓存并返回 K8S_CACHE_SYNCING，缺省 0 = 不限。
+  int32 memory_limit_mb = 5;
+  // cache_idle 资源缓存无人访问多久后释放，缺省 15m。
+  google.protobuf.Duration cache_idle = 6;
+  // cache_sync_timeout 首次建立缓存时请求最多等待多久，缺省 30s。
+  google.protobuf.Duration cache_sync_timeout = 7;
+  // audit_retention 审计与终端会话记录的保留期，缺省 180d；显式 0s = 永久保留。
+  google.protobuf.Duration audit_retention = 8;
+  // qps / burst 对单个集群 API Server 的客户端限速，缺省 50 / 100。
+  float qps = 9;
+  int32 burst = 10;
+  // debug_images 调试容器的镜像允许清单，第一个为缺省；空 = 只允许 docker.io/library/busybox:1.36。
+  repeated string debug_images = 11;
+  // max_file_mb 容器文件传输的单次大小上限（MiB），缺省 100。
+  int32 max_file_mb = 12;
+  // exec_record_disabled 关闭终端录制（缺省录制：只录输出，不录输入）。
+  bool exec_record_disabled = 13;
+  // exec_record_max_mb 单个终端会话录制的输出上限（MiB），缺省 8；超过后停止录制并标记不完整。
+  int32 exec_record_max_mb = 14;
+  // inspection_interval 定时巡检的间隔，缺省 24h。
+  google.protobuf.Duration inspection_interval = 15;
+  // inspection_disabled 关闭定时巡检（手动触发仍可用）。
+  bool inspection_disabled = 16;
+}
+
+// Notify 与通知管道共享的加密主密钥（解密集群凭据）。
+message Notify {
+  message Master {
+    string key = 1;
+  }
+  Master master = 1;
+}

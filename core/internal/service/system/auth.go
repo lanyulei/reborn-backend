@@ -208,7 +208,7 @@ func (s *AuthService) UploadMyAvatar(ctx context.Context, req *v1.UploadMyAvatar
 	if err != nil {
 		return nil, err
 	}
-	url, err := s.avatar.Upload(ctx, userID, req.GetData(), req.GetMime())
+	url, err := s.avatar.Upload(ctx, userID, req.GetData())
 	if err != nil {
 		return nil, err
 	}

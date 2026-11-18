@@ -1,0 +1,168 @@
+syntax = "proto3";
+
+package job.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/job/v1;v1";
+
+// JobScriptService 脚本库：可复用的脚本，快速执行时引用。执行时脚本内容固化进执行记录，
+// 之后修改脚本不影响已提交的执行。
+service JobScriptService {
+  // ListJobScripts 分页查询脚本（不含脚本内容）。
+  rpc ListJobScripts(ListJobScriptsRequest) returns (ListJobScriptsResponse) {
+    option (google.api.http) = {get: "/api/v1/job/script"};
+    option (system.v1.title) = "查询脚本库";
+  }
+  // GetJobScript 查询脚本详情（含脚本内容）。
+  rpc GetJobScript(GetJobScriptRequest) returns (GetJobScriptResponse) {
+    option (google.api.http) = {get: "/api/v1/job/script/{id}"};
+    option (system.v1.title) = "查询脚本详情";
+  }
+  // CreateJobScript 新建脚本；名称重复返回 409 JOB_SCRIPT_NAME_EXISTS。
+  rpc CreateJobScript(CreateJobScriptRequest) returns (CreateJobScriptResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/job/script"
+      body: "*"
+    };
+    option (system.v1.title) = "新建脚本";
+  }
+  // UpdateJobScript 编辑脚本（整体替换）。version 不一致返回 409 JOB_VERSION_CONFLICT。
+  rpc UpdateJobScript(UpdateJobScriptRequest) returns (UpdateJobScriptResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/job/script/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "编辑脚本";
+  }
+  // DeleteJobScript 删除脚本；已有的执行记录不受影响。
+  rpc DeleteJobScript(DeleteJobScriptRequest) returns (DeleteJobScriptResponse) {
+    option (google.api.http) = {delete: "/api/v1/job/script/{id}"};
+    option (system.v1.title) = "删除脚本";
+  }
+}
+
+// JobScriptSpec 脚本的可编辑内容（新建与编辑共用）。
+message JobScriptSpec {
+  // name 名称，1-64 字符，全局唯一。
+  string name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // interpreter 解释器：bash / sh / python3。
+  string interpreter = 2 [(buf.validate.field).string = {
+    in: [
+      "bash",
+      "sh",
+      "python3"
+    ]
+  }];
+  // content 脚本内容，至多 256KB。列表接口不返回。
+  string content = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_bytes: 262144
+  }];
+  // description 说明，可选。
+  string description = 4 [(buf.validate.field).string.max_len = 255];
+}
+
+// JobScript 脚本。
+message JobScript {
+  // id 脚本唯一标识。
+  string id = 1;
+  // spec 脚本内容；列表接口里 content 为空。
+  JobScriptSpec spec = 2;
+  // size 脚本内容的字节数。
+  int32 size = 3;
+  // version 版本号：每次编辑 +1，编辑时原样传回。
+  int32 version = 4;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 5;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 6;
+  // update_user_id 最近更新人。
+  string update_user_id = 7;
+  // update_user_name 最近更新人显示名。
+  string update_user_name = 8;
+}
+
+// ListJobScriptsRequest 分页查询脚本请求。
+message ListJobScriptsRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // keyword 名称 / 说明模糊匹配，可选。
+  optional string keyword = 3 [(buf.validate.field).string.max_len = 64];
+  // interpreter 解释器过滤，可选。
+  optional string interpreter = 4 [(buf.validate.field).string = {
+    in: [
+      "bash",
+      "sh",
+      "python3"
+    ]
+  }];
+}
+
+// ListJobScriptsResponse 分页查询脚本响应。
+message ListJobScriptsResponse {
+  // items 当前页数据（不含脚本内容）。
+  repeated JobScript items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// GetJobScriptRequest 查询脚本详情请求。
+message GetJobScriptRequest {
+  // id 脚本唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetJobScriptResponse 查询脚本详情响应。
+message GetJobScriptResponse {
+  // script 脚本（含内容）。
+  JobScript script = 1;
+}
+
+// CreateJobScriptRequest 新建脚本请求。
+message CreateJobScriptRequest {
+  // spec 脚本内容。
+  JobScriptSpec spec = 1 [(buf.validate.field).required = true];
+}
+
+// CreateJobScriptResponse 新建脚本响应。
+message CreateJobScriptResponse {
+  // script 新建的脚本。
+  JobScript script = 1;
+}
+
+// UpdateJobScriptRequest 编辑脚本请求。
+message UpdateJobScriptRequest {
+  // id 脚本唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // spec 脚本内容，整体替换。
+  JobScriptSpec spec = 2 [(buf.validate.field).required = true];
+  // version 乐观锁版本号，须与当前一致。
+  int32 version = 3 [(buf.validate.field).int32.gte = 1];
+}
+
+// UpdateJobScriptResponse 编辑脚本响应。
+message UpdateJobScriptResponse {
+  // script 更新后的脚本。
+  JobScript script = 1;
+}
+
+// DeleteJobScriptRequest 删除脚本请求。
+message DeleteJobScriptRequest {
+  // id 脚本唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteJobScriptResponse 删除脚本响应。
+message DeleteJobScriptResponse {}

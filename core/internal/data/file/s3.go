@@ -3,7 +3,6 @@ package data
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -17,6 +16,7 @@ import (
 	"time"
 
 	"github.com/lanyulei/reborn/backend/core/internal/pkg/storage"
+	"github.com/lanyulei/reborn/backend/kit/sigv4"
 )
 
 // DriverS3 S3 兼容对象存储驱动名（file_object.driver）：AWS S3 / MinIO / 阿里云 OSS 的
@@ -31,8 +31,6 @@ const (
 	// s3DrainLimit 关闭响应体前最多排空的字节数（让连接可复用，又不被超大响应拖住）。
 	s3DrainLimit = 64 << 10
 	s3Service    = "s3"
-	s3Algorithm  = "AWS4-HMAC-SHA256"
-	s3DateFormat = "20060102T150405Z"
 )
 
 var (
@@ -127,40 +125,16 @@ func (s *S3Store) objectPath(key string) (string, error) {
 	return s.base + "/" + key, nil
 }
 
-func hmacSHA256(key []byte, data string) []byte {
-	h := hmac.New(sha256.New, key)
-	h.Write([]byte(data))
-	return h.Sum(nil)
-}
-
-// sign 按 AWS Signature Version 4 给请求加签：签 host、x-amz-content-sha256、x-amz-date
-// 三个头与请求体哈希。
+// sign 按 AWS Signature Version 4 给请求加签（kit/sigv4）：签 host、x-amz-content-sha256、
+// x-amz-date 三个头与请求体哈希；无查询串。
 func (s *S3Store) sign(req *http.Request, payloadHash string) {
 	now := s.now().UTC()
-	amzDate, day := now.Format(s3DateFormat), now.Format("20060102")
+	amzDate := now.Format(sigv4.DateFormat)
 	req.Header.Set("X-Amz-Date", amzDate)
 	req.Header.Set("X-Amz-Content-Sha256", payloadHash)
-	const signedHeaders = "host;x-amz-content-sha256;x-amz-date"
-	canonical := strings.Join([]string{
-		req.Method,
-		req.URL.EscapedPath(),
-		"", // 无查询串
-		"host:" + req.Host,
-		"x-amz-content-sha256:" + payloadHash,
-		"x-amz-date:" + amzDate,
-		"",
-		signedHeaders,
-		payloadHash,
-	}, "\n")
-	scope := day + "/" + s.cfg.Region + "/" + s3Service + "/aws4_request"
-	digest := sha256.Sum256([]byte(canonical))
-	toSign := strings.Join([]string{s3Algorithm, amzDate, scope, hex.EncodeToString(digest[:])}, "\n")
-	key := hmacSHA256([]byte("AWS4"+s.cfg.SecretKey), day)
-	key = hmacSHA256(key, s.cfg.Region)
-	key = hmacSHA256(key, s3Service)
-	key = hmacSHA256(key, "aws4_request")
-	req.Header.Set("Authorization", s3Algorithm+" Credential="+s.cfg.AccessKey+"/"+scope+
-		", SignedHeaders="+signedHeaders+", Signature="+hex.EncodeToString(hmacSHA256(key, toSign)))
+	req.Header.Set("Authorization", sigv4.Authorization(req.Method, req.URL.EscapedPath(), "",
+		map[string]string{"host": req.Host, "x-amz-content-sha256": payloadHash, "x-amz-date": amzDate},
+		payloadHash, now, s.cfg.Region, s3Service, s.cfg.AccessKey, s.cfg.SecretKey))
 }
 
 // do 发出一次已签名的请求。调用方负责 closeBody。

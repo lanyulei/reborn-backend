@@ -75,4 +75,6 @@ enum ErrorReason {
   DEPT_DEPTH_EXCEEDED = 27 [(errors.code) = 400];
   // DEPT_LIMIT_EXCEEDED 部门总数或单个用户所属部门数超过上限，映射 HTTP 400。
   DEPT_LIMIT_EXCEEDED = 28 [(errors.code) = 400];
+  // IMAGE_TYPE_INVALID 上传的 logo / 头像不是允许的图片格式（按文件内容判定，不看声明的类型），映射 HTTP 400。
+  IMAGE_TYPE_INVALID = 29 [(errors.code) = 400];
 }

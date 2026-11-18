@@ -1,0 +1,177 @@
+syntax = "proto3";
+
+package job.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/job/v1;v1";
+
+// JobRunnerService 执行节点：部署在各网络区域、实际运行 Ansible 的进程。节点用接入令牌主动连接
+// 执行引擎领取任务；令牌明文只在创建 / 重置时返回一次，之后无法再查看。
+service JobRunnerService {
+  // ListJobRunners 分页查询执行节点。
+  rpc ListJobRunners(ListJobRunnersRequest) returns (ListJobRunnersResponse) {
+    option (google.api.http) = {get: "/api/v1/job/runner"};
+    option (system.v1.title) = "查询执行节点";
+  }
+  // CreateJobRunner 登记执行节点并返回接入令牌；名称重复返回 409 JOB_RUNNER_NAME_EXISTS。
+  rpc CreateJobRunner(CreateJobRunnerRequest) returns (CreateJobRunnerResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/job/runner"
+      body: "*"
+    };
+    option (system.v1.title) = "登记执行节点";
+  }
+  // UpdateJobRunner 编辑执行节点（整体替换）。version 不一致返回 409 JOB_VERSION_CONFLICT。
+  rpc UpdateJobRunner(UpdateJobRunnerRequest) returns (UpdateJobRunnerResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/job/runner/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "编辑执行节点";
+  }
+  // ResetJobRunnerToken 重置接入令牌：旧令牌立即失效，返回新令牌。
+  rpc ResetJobRunnerToken(ResetJobRunnerTokenRequest) returns (ResetJobRunnerTokenResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/job/runner/{id}:reset-token"
+      body: "*"
+    };
+    option (system.v1.title) = "重置执行节点令牌";
+  }
+  // DeleteJobRunner 删除执行节点：其令牌立即失效；正在该节点上执行的作业将在租约到期后标记为「结果未知」。
+  rpc DeleteJobRunner(DeleteJobRunnerRequest) returns (DeleteJobRunnerResponse) {
+    option (google.api.http) = {delete: "/api/v1/job/runner/{id}"};
+    option (system.v1.title) = "删除执行节点";
+  }
+  // ListJobRunnerZones 已登记的区域名（去重）；供编辑作业模板与执行节点时选择。
+  rpc ListJobRunnerZones(ListJobRunnerZonesRequest) returns (ListJobRunnerZonesResponse) {
+    option (google.api.http) = {get: "/api/v1/job/runner-zone"};
+    option (system.v1.title) = "查询执行节点区域";
+  }
+}
+
+// JobRunnerSpec 执行节点的可编辑内容（新建与编辑共用）。
+message JobRunnerSpec {
+  // name 名称，1-64 字符，全局唯一。
+  string name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // zone 所在区域，可选：字母、数字、点、下划线、连字符，至多 64 字符。作业模板指定了区域时
+  // 只派发给同区域的节点；未指定区域的模板可派发给任意节点。
+  string zone = 2 [(buf.validate.field).string = {pattern: "^([A-Za-z0-9][A-Za-z0-9._-]{0,63})?$"}];
+  // enabled 是否启用；停用后不再领取新任务，正在执行的作业不受影响。
+  bool enabled = 3;
+  // description 说明，可选。
+  string description = 4 [(buf.validate.field).string.max_len = 255];
+}
+
+// JobRunner 执行节点。
+message JobRunner {
+  // id 节点唯一标识。
+  string id = 1;
+  // spec 节点内容。
+  JobRunnerSpec spec = 2;
+  // online 是否在线：最近 45 秒内有心跳。
+  bool online = 3;
+  // last_seen 最近一次心跳时间；从未接入时为空。
+  google.protobuf.Timestamp last_seen = 4;
+  // agent_version 节点程序版本。
+  string agent_version = 5;
+  // hostname 节点主机名。
+  string hostname = 6;
+  // capacity 可同时执行的作业数。
+  int32 capacity = 7;
+  // running 正在执行的作业数。
+  int32 running = 8;
+  // version 乐观锁版本号，编辑时原样传回。
+  int32 version = 9;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 10;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 11;
+}
+
+// ListJobRunnersRequest 分页查询执行节点请求。
+message ListJobRunnersRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // keyword 名称 / 区域 / 主机名模糊匹配，可选。
+  optional string keyword = 3 [(buf.validate.field).string.max_len = 64];
+}
+
+// ListJobRunnersResponse 分页查询执行节点响应。
+message ListJobRunnersResponse {
+  // items 当前页数据。
+  repeated JobRunner items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// CreateJobRunnerRequest 登记执行节点请求。
+message CreateJobRunnerRequest {
+  // spec 节点内容。
+  JobRunnerSpec spec = 1 [(buf.validate.field).required = true];
+}
+
+// CreateJobRunnerResponse 登记执行节点响应。
+message CreateJobRunnerResponse {
+  // runner 新登记的节点。
+  JobRunner runner = 1;
+  // token 接入令牌明文，只返回这一次；写入节点的配置（环境变量 KRATOS_RUNNER_TOKEN）。
+  string token = 2;
+}
+
+// UpdateJobRunnerRequest 编辑执行节点请求。
+message UpdateJobRunnerRequest {
+  // id 节点唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // spec 节点内容，整体替换。
+  JobRunnerSpec spec = 2 [(buf.validate.field).required = true];
+  // version 乐观锁版本号，须与当前一致。
+  int32 version = 3 [(buf.validate.field).int32.gte = 1];
+}
+
+// UpdateJobRunnerResponse 编辑执行节点响应。
+message UpdateJobRunnerResponse {
+  // runner 更新后的节点。
+  JobRunner runner = 1;
+}
+
+// ResetJobRunnerTokenRequest 重置接入令牌请求。
+message ResetJobRunnerTokenRequest {
+  // id 节点唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// ResetJobRunnerTokenResponse 重置接入令牌响应。
+message ResetJobRunnerTokenResponse {
+  // token 新的接入令牌明文，只返回这一次。
+  string token = 1;
+}
+
+// DeleteJobRunnerRequest 删除执行节点请求。
+message DeleteJobRunnerRequest {
+  // id 节点唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteJobRunnerResponse 删除执行节点响应。
+message DeleteJobRunnerResponse {}
+
+// ListJobRunnerZonesRequest 查询执行节点区域请求。
+message ListJobRunnerZonesRequest {}
+
+// ListJobRunnerZonesResponse 查询执行节点区域响应。
+message ListJobRunnerZonesResponse {
+  // zones 未删除节点的区域名，去重并排序（不含空区域）。
+  repeated string zones = 1;
+}

@@ -1,0 +1,200 @@
+syntax = "proto3";
+
+package job.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/job/v1;v1";
+
+// JobProjectService 作业项目：存放 Playbook 的 Git 仓库。执行节点在每次执行时按分支 / 标签拉取，
+// 实际执行的提交号记录在执行记录上。仓库凭据只写不读。
+service JobProjectService {
+  // ListJobProjects 分页查询项目。
+  rpc ListJobProjects(ListJobProjectsRequest) returns (ListJobProjectsResponse) {
+    option (google.api.http) = {get: "/api/v1/job/project"};
+    option (system.v1.title) = "查询作业项目";
+  }
+  // GetJobProject 查询项目详情。
+  rpc GetJobProject(GetJobProjectRequest) returns (GetJobProjectResponse) {
+    option (google.api.http) = {get: "/api/v1/job/project/{id}"};
+    option (system.v1.title) = "查询作业项目详情";
+  }
+  // CreateJobProject 新建项目；名称重复返回 409 JOB_PROJECT_NAME_EXISTS。
+  rpc CreateJobProject(CreateJobProjectRequest) returns (CreateJobProjectResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/job/project"
+      body: "*"
+    };
+    option (system.v1.title) = "新建作业项目";
+  }
+  // UpdateJobProject 编辑项目（整体替换；secret 不传则保留原值）。version 不一致返回 409 JOB_VERSION_CONFLICT。
+  rpc UpdateJobProject(UpdateJobProjectRequest) returns (UpdateJobProjectResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/job/project/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "编辑作业项目";
+  }
+  // DeleteJobProject 删除项目；仍被作业模板使用时拒绝（409 JOB_PROJECT_IN_USE）。
+  rpc DeleteJobProject(DeleteJobProjectRequest) returns (DeleteJobProjectResponse) {
+    option (google.api.http) = {delete: "/api/v1/job/project/{id}"};
+    option (system.v1.title) = "删除作业项目";
+  }
+  // ListJobProjectOptions 项目下拉选项（仅 ID、名称、分支）；供编辑作业模板时选择。
+  rpc ListJobProjectOptions(ListJobProjectOptionsRequest) returns (ListJobProjectOptionsResponse) {
+    option (google.api.http) = {get: "/api/v1/job/project-option"};
+    option (system.v1.title) = "查询作业项目选项";
+  }
+}
+
+// JobProjectSpec 项目的可编辑内容（新建与编辑共用）。
+message JobProjectSpec {
+  // name 名称，1-64 字符，全局唯一。
+  string name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // repo_url 仓库地址：http(s)://host/path、ssh://user@host/path 或 user@host:path；
+  // 不得内嵌账号密码（凭据填在 secret）。
+  string repo_url = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 512
+  }];
+  // ref 分支或标签名，如 main、release/1.2、v1.0.0。
+  string ref = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+  // auth_type 认证方式：1=无 2=用户名 + 令牌（仅 http(s) 地址） 3=SSH 私钥（仅 ssh 地址）。
+  int32 auth_type = 4 [(buf.validate.field).int32 = {
+    in: [
+      1,
+      2,
+      3
+    ]
+  }];
+  // username auth_type=2 时的用户名（GitLab 令牌可填任意非空值，如 oauth2）。
+  string username = 5 [(buf.validate.field).string.max_len = 128];
+  // secret 访问令牌或 SSH 私钥，只写不读。新建时按认证方式必填；编辑时不传表示保留原值
+  // （更换认证方式时必须重新填写）。
+  optional string secret = 6 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 16384
+  }];
+  // description 说明，可选。
+  string description = 7 [(buf.validate.field).string.max_len = 255];
+}
+
+// JobProject 作业项目。
+message JobProject {
+  // id 项目唯一标识。
+  string id = 1;
+  // spec 项目内容；其中 secret 恒不返回，是否已配置见 has_secret。
+  JobProjectSpec spec = 2;
+  // has_secret 是否已保存仓库凭据。
+  bool has_secret = 3;
+  // template_count 使用本项目的作业模板数；大于 0 时不可删除。
+  int32 template_count = 4;
+  // version 乐观锁版本号，编辑时原样传回。
+  int32 version = 5;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 6;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 7;
+  // update_user_id 最近更新人。
+  string update_user_id = 8;
+  // update_user_name 最近更新人显示名。
+  string update_user_name = 9;
+}
+
+// ListJobProjectsRequest 分页查询项目请求。
+message ListJobProjectsRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // keyword 名称 / 仓库地址 / 说明模糊匹配，可选。
+  optional string keyword = 3 [(buf.validate.field).string.max_len = 64];
+}
+
+// ListJobProjectsResponse 分页查询项目响应。
+message ListJobProjectsResponse {
+  // items 当前页数据。
+  repeated JobProject items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// GetJobProjectRequest 查询项目详情请求。
+message GetJobProjectRequest {
+  // id 项目唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetJobProjectResponse 查询项目详情响应。
+message GetJobProjectResponse {
+  // project 项目。
+  JobProject project = 1;
+}
+
+// CreateJobProjectRequest 新建项目请求。
+message CreateJobProjectRequest {
+  // spec 项目内容。
+  JobProjectSpec spec = 1 [(buf.validate.field).required = true];
+}
+
+// CreateJobProjectResponse 新建项目响应。
+message CreateJobProjectResponse {
+  // project 新建的项目。
+  JobProject project = 1;
+}
+
+// UpdateJobProjectRequest 编辑项目请求。
+message UpdateJobProjectRequest {
+  // id 项目唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // spec 项目内容，整体替换；secret 不传表示保留原值。
+  JobProjectSpec spec = 2 [(buf.validate.field).required = true];
+  // version 乐观锁版本号，须与当前一致。
+  int32 version = 3 [(buf.validate.field).int32.gte = 1];
+}
+
+// UpdateJobProjectResponse 编辑项目响应。
+message UpdateJobProjectResponse {
+  // project 更新后的项目。
+  JobProject project = 1;
+}
+
+// DeleteJobProjectRequest 删除项目请求。
+message DeleteJobProjectRequest {
+  // id 项目唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteJobProjectResponse 删除项目响应。
+message DeleteJobProjectResponse {}
+
+// ListJobProjectOptionsRequest 查询项目选项请求。
+message ListJobProjectOptionsRequest {}
+
+// JobProjectOption 项目选项。
+message JobProjectOption {
+  // id 项目唯一标识。
+  string id = 1;
+  // name 名称。
+  string name = 2;
+  // ref 分支或标签名。
+  string ref = 3;
+}
+
+// ListJobProjectOptionsResponse 查询项目选项响应。
+message ListJobProjectOptionsResponse {
+  // items 全部项目，按名称排序，至多 500 个。
+  repeated JobProjectOption items = 1;
+}

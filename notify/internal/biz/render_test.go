@@ -90,16 +90,16 @@ func TestRendererDefaultsAndFuncs(t *testing.T) {
 	ev := testEvent("e1", "monitor.alert.firing", 3)
 	ev.Payload = []byte(`{"host":"web-1"}`)
 	_, email, _, err := r.Render(context.Background(), nil, ChannelTypeEmail, RenderContextFor(ev, nil))
-	if err != nil || !strings.Contains(email, "级别：error") || !strings.Contains(email, `载荷：{"host":"web-1"}`) {
+	if err != nil || !strings.Contains(email, "级别：critical") || !strings.Contains(email, `载荷：{"host":"web-1"}`) {
 		t.Fatalf("email default = %q, %v", email, err)
 	}
 	_, robot, _, err := r.Render(context.Background(), nil, ChannelTypeDingtalk, RenderContextFor(ev, nil))
-	if err != nil || strings.Contains(robot, "级别：") || !strings.Contains(robot, "error ·") || !strings.Contains(robot, `{"host":"web-1"}`) {
+	if err != nil || strings.Contains(robot, "级别：") || !strings.Contains(robot, "critical ·") || !strings.Contains(robot, `{"host":"web-1"}`) {
 		t.Fatalf("robot default = %q, %v", robot, err)
 	}
 	tpl := &Template{ID: "f", Version: 1, Subject: "{{severity .Severity}}/{{upper .Title}}", Body: "{{trunc (json .Payload) 8}}|{{fmtTime .EventTime \"2006\"}}"}
 	subject, body, _, err := r.Render(context.Background(), tpl, ChannelTypeEmail, RenderContextFor(ev, nil))
-	if err != nil || subject != "error/T-E1" || !strings.HasPrefix(body, `{"host":…|`) {
+	if err != nil || subject != "critical/T-E1" || !strings.HasPrefix(body, `{"host":…|`) {
 		t.Fatalf("funcs render = %q / %q, %v", subject, body, err)
 	}
 	ev.Payload = []byte(`[1,2]`)

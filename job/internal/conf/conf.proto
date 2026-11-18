@@ -1,0 +1,131 @@
+syntax = "proto3";
+
+package conf;
+
+import "google/protobuf/duration.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/job/internal/conf;conf";
+
+// Bootstrap 是作业执行引擎 / 执行节点启动配置的根结构，对应 configs/*.yaml。
+message Bootstrap {
+  // server HTTP 监听与角色（engine / runner）。
+  Server server = 1;
+  // data 数据层资源配置（仅 engine 角色使用：与 core 同库，job_engine_role 成员账号）。
+  Data data = 2;
+  // engine 执行引擎参数（仅 engine 角色）。
+  Engine engine = 3;
+  // runner 执行节点参数（仅 runner 角色）。
+  Runner runner = 4;
+  // notify 凭据解密主密钥（仅 engine 角色；与 core notify.master.key 同一密钥）。
+  Notify notify = 5;
+}
+
+// Server 是监听与角色配置。
+message Server {
+  // HTTP 是健康检查 / 指标监听（/healthz /metrics），两种角色都启动。
+  message HTTP {
+    // network 监听网络类型，如 tcp；留空使用默认值。
+    string network = 1;
+    // addr 监听地址，缺省端口 8050（8010 core / 8020 通知管道 / 8030 CMDB 数据面 / 8040 评估引擎）。
+    string addr = 2;
+    // timeout 请求处理超时。
+    google.protobuf.Duration timeout = 3;
+  }
+  // RunnerAPI 是引擎面向执行节点的协议监听（kit/jobcontract 的四个 POST 接口），仅 engine 角色启动。
+  message RunnerAPI {
+    // network 监听网络类型，如 tcp；留空使用默认值。
+    string network = 1;
+    // addr 监听地址，缺省 0.0.0.0:8051。
+    string addr = 2;
+    // timeout 单个请求的处理超时，缺省 15s。
+    google.protobuf.Duration timeout = 3;
+    // cert_file / key_file TLS 证书与私钥文件（PEM）；两者皆空 = 明文 HTTP（仅限开发或已有外层 TLS 终结）。
+    string cert_file = 4;
+    string key_file = 5;
+  }
+  // http 健康检查 / 指标监听。
+  HTTP http = 1;
+  // runner 执行节点协议监听。
+  RunnerAPI runner = 2;
+  // roles 启用的角色：engine / runner；环境变量 SERVER_ROLES（逗号分隔）优先；两者皆空 = 全部角色。
+  repeated string roles = 3;
+}
+
+// Data 是数据层资源配置；密钥类字段一律从环境变量注入。
+message Data {
+  // Database 是 PostgreSQL 连接池配置（pgx）。
+  message Database {
+    // source 数据源 DSN；一律经环境变量 KRATOS_DATA_DATABASE_SOURCE 注入，
+    // 配置文件里只写占位符 ${DATA_DATABASE_SOURCE}。engine 角色下为空时启动失败；runner 角色不使用。
+    string source = 1;
+    // max_conns 最大连接数；0 使用驱动默认值。
+    int32 max_conns = 2;
+    // min_conns 最小空闲连接数；0 使用驱动默认值。
+    int32 min_conns = 3;
+    // max_conn_idle_time 连接最大空闲时长；未设置使用驱动默认值。
+    google.protobuf.Duration max_conn_idle_time = 4;
+  }
+  // database 数据库配置。
+  Database database = 1;
+}
+
+// Engine 是执行引擎参数。全部 Duration 采用 protojson 秒格式（如 5s）；
+// 未设置或 ≤0 的时长取各字段注明的缺省值（log_retention 的 0 另有含义）。
+message Engine {
+  // lease 执行租约：节点须在此间隔内至少上报一次，到期未续即判定节点失联（状态置为结果未知）。
+  // 缺省 60s，下限 10s。
+  google.protobuf.Duration lease = 1;
+  // sweep_interval 租约清扫周期。缺省 5s。
+  google.protobuf.Duration sweep_interval = 2;
+  // log_retention 执行日志保留期：已结束的执行超过保留期的日志块分批删除。
+  // 未设置缺省 90d（7776000s）；显式设为 0s = 永久保留。
+  google.protobuf.Duration log_retention = 3;
+  // log_purge_interval 日志清理周期（启动即先跑一轮）。缺省 1h。
+  google.protobuf.Duration log_purge_interval = 4;
+}
+
+// Runner 是执行节点参数。执行节点不连接数据库、不持有主密钥；接入令牌经环境变量注入。
+message Runner {
+  // engine_url 引擎的执行节点协议地址，如 https://job-engine.internal:8051。runner 角色必填。
+  string engine_url = 1;
+  // token 接入令牌（<节点 ID>.<密钥>，在管理面创建 / 重置节点时得到）；经 KRATOS_RUNNER_TOKEN 注入。
+  string token = 2;
+  // capacity 可同时执行的作业数。缺省 2。
+  int32 capacity = 3;
+  // work_dir 工作目录：每次执行在其下建一个私有子目录，结束即删。建议挂载为 tmpfs；
+  // 路径不得含空白与引号，且不宜过长（其下要建 UNIX 套接字）。runner 角色必填。
+  string work_dir = 4;
+  // ansible_playbook / git / ssh_agent / ssh_add 可执行文件路径；留空 = 按名称在 PATH 中查找。
+  string ansible_playbook = 5;
+  string git = 6;
+  string ssh_agent = 7;
+  string ssh_add = 8;
+  // known_hosts 持久化的主机公钥文件（首次连接自动记录，之后公钥变化即拒绝连接）。缺省 <work_dir>/known_hosts。
+  string known_hosts = 9;
+  // ca_file 校验引擎 TLS 证书的 CA 文件（PEM）；留空使用系统根证书。
+  string ca_file = 10;
+  // insecure_skip_verify 跳过引擎 TLS 证书校验（仅限开发）。
+  bool insecure_skip_verify = 11;
+  // poll_interval 没有任务时的领取轮询周期。缺省 2s。
+  google.protobuf.Duration poll_interval = 12;
+  // heartbeat_interval 心跳周期。缺省 10s。
+  google.protobuf.Duration heartbeat_interval = 13;
+  // cancel_grace 终止作业时 SIGTERM 与 SIGKILL 之间的宽限期。缺省 30s。
+  google.protobuf.Duration cancel_grace = 14;
+  // drain_timeout 进程停止时等待在途作业自行结束的时长，超过后取消它们。缺省 10min（600s）。
+  google.protobuf.Duration drain_timeout = 15;
+  // git_allow_protocols 允许 git 使用的传输协议（GIT_ALLOW_PROTOCOL）。缺省 http:https:ssh，不建议放宽。
+  string git_allow_protocols = 16;
+}
+
+// Notify 是凭据解密配置（复用通知域主密钥：作业凭据与仓库令牌由 core 用同一密钥加密）。
+message Notify {
+  // Master 是主密钥配置。
+  message Master {
+    // key AES-256-GCM 主密钥；经 KRATOS_NOTIFY_MASTER_KEY 环境变量注入。
+    // 为空（或与 core 不一致）时：被领取的执行因凭据无法解密而记为失败。
+    string key = 1;
+  }
+  // master 主密钥。
+  Master master = 1;
+}

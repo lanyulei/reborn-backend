@@ -84,3 +84,36 @@ assistant:
   tool_timeout: 5s
   max_steps: 20
   max_concurrent_runs: 8
+monitor:
+  # 前端站点地址（如 https://ops.example.com）。非空时告警通知里的详情链接为
+  # <site_url>/monitor/alert/<id>；留空则是站内相对路径（通知渠道里点不开，只适合站内消息）。
+  site_url: ""
+  # 测试连接 / 即时查询是否拒绝指向回环地址（127.0.0.0/8、::1、localhost）的数据源。缺省 false：
+  # 时序库与本服务同机部署时需要访问回环地址。链路本地与云元数据地址（169.254.0.0/16 等）恒拒绝。
+  block_loopback: false
+  # 可用于「告警关联资源」的 CMDB 属性（字段编码）。只有列在这里的属性会被物化给评估引擎匹配；缺省只有 ip。
+  ci_match_attrs: ["ip"]
+  # 拓扑抑制与影响面所用的 CMDB 关系类型，"<关系类型编码>:<上游一侧 src|dst>"（上游影响下游）。
+  topology_relations: ["host_runs_vm:src", "uplink:dst"]
+  # 平台自监控通知（数据源持续不可用、规则持续评估失败）的收件角色编码；留空 = 交由通知路由的固定收件人与订阅者。
+  engine_notify_roles: []
+  # 生成一条 AI 摘要的时间上限（智能助手未配置模型密钥时不生成摘要）。
+  ai_summary_timeout: 30s
+k8s:
+  # core 与容器平台数据面（backend/k8s）之间的身份头签名密钥，至少 32 字节，两边必须一致：
+  #   export KRATOS_K8S_INTERNAL_KEY='<openssl rand -hex 32>'
+  # 为空时集群登记仍可用，资源类接口返回 503。
+  internal_key: ${K8S_INTERNAL_KEY:}
+  agent:
+    # 数据面 Agent 隧道入口的对外地址（所有集群都要能访问到），如 https://k8s-tunnel.example.com
+    server_url: ""
+    # Agent 镜像
+    image: ""
+  # Web 终端 WebSocket 额外允许的 Origin 主机（同源恒允许）；本地开发时加上前端开发服务器。
+  allowed_origins: []
+  plane_timeout: 30s
+  kubeconfig:
+    # 平台的对外地址（kubectl 须能访问到），写进签发的限时 kubeconfig；留空由前端按当前站点地址拼接。
+    server_url: ""
+    # 限时 kubeconfig 的最长有效期（上限 7 天）
+    max_ttl: 604800s

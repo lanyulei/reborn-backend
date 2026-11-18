@@ -1,0 +1,128 @@
+syntax = "proto3";
+
+package monitor.v1;
+
+import "errors/errors.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/monitor/v1;v1";
+
+// ErrorReason 是监控告警域的业务错误码枚举，由 protoc-gen-go-errors 生成带 code 的
+// 错误构造器。枚举值沿用 Kratos 错误码惯例（域前缀），豁免 ENUM_VALUE_PREFIX。
+enum ErrorReason {
+  option (errors.default_code) = 500;
+  // MONITOR_UNSPECIFIED 未指定的监控告警错误。
+  MONITOR_UNSPECIFIED = 0;
+  // MONITOR_FORBIDDEN 超出数据范围或需要「可管理」级别（或超级管理员），映射 HTTP 403。
+  MONITOR_FORBIDDEN = 1 [(errors.code) = 403];
+  // MONITOR_VERSION_CONFLICT 数据已被他人修改（version 不一致），请刷新后重试，映射 HTTP 409。
+  MONITOR_VERSION_CONFLICT = 2 [(errors.code) = 409];
+  // MONITOR_TIME_RANGE_INVALID 查询时间范围不合法或超过上限，映射 HTTP 400。
+  MONITOR_TIME_RANGE_INVALID = 3 [(errors.code) = 400];
+  // MONITOR_SECRET_UNAVAILABLE 加密主密钥未配置，无法保存或使用数据源凭据，映射 HTTP 503。
+  MONITOR_SECRET_UNAVAILABLE = 4 [(errors.code) = 503];
+  // MONITOR_NOT_IMPLEMENTED 接口已定义但服务端尚未实现（第二、三期功能逐步交付期间），映射 HTTP 501。
+  MONITOR_NOT_IMPLEMENTED = 5 [(errors.code) = 501];
+
+  // MONITOR_DATASOURCE_NOT_FOUND 数据源不存在，映射 HTTP 404。
+  MONITOR_DATASOURCE_NOT_FOUND = 10 [(errors.code) = 404];
+  // MONITOR_DATASOURCE_NAME_EXISTS 数据源名称已被占用，映射 HTTP 409。
+  MONITOR_DATASOURCE_NAME_EXISTS = 11 [(errors.code) = 409];
+  // MONITOR_DATASOURCE_INVALID 数据源配置不合法（地址、认证、请求头等），映射 HTTP 400。
+  MONITOR_DATASOURCE_INVALID = 12 [(errors.code) = 400];
+  // MONITOR_DATASOURCE_IN_USE 数据源仍被规则指定使用，不可删除，映射 HTTP 409。
+  MONITOR_DATASOURCE_IN_USE = 13 [(errors.code) = 409];
+  // MONITOR_DATASOURCE_DISABLED 数据源已停用，不能查询，映射 HTTP 409。
+  MONITOR_DATASOURCE_DISABLED = 14 [(errors.code) = 409];
+  // MONITOR_DATASOURCE_UNREACHABLE 数据源不可达或返回了非预期的响应（超时、连接失败、5xx 等），映射 HTTP 502。
+  MONITOR_DATASOURCE_UNREACHABLE = 15 [(errors.code) = 502];
+  // MONITOR_QUERY_INVALID 查询不合法（PromQL 语法错误、时间范围或步长不合法、点数过多），映射 HTTP 400。
+  MONITOR_QUERY_INVALID = 16 [(errors.code) = 400];
+  // MONITOR_QUERY_BUSY 即时查询并发已达上限，请稍后重试，映射 HTTP 429。
+  MONITOR_QUERY_BUSY = 17 [(errors.code) = 429];
+  // MONITOR_DATASOURCE_SECRET_REQUIRED 不能沿用已保存的凭据或请求头值，须重新填写：查询地址的协议 /
+  // 主机 / 端口与已保存的不一致、调用方没有编辑数据源的权限，或掩码对应的键没有保存过的值。映射 HTTP 400。
+  MONITOR_DATASOURCE_SECRET_REQUIRED = 18 [(errors.code) = 400];
+  // MONITOR_DATASOURCE_ADDRESS_BLOCKED 数据源地址指向不允许访问的地址（链路本地 / 云元数据地址；
+  // 部署配置 monitor.block_loopback 开启时还包括回环地址），映射 HTTP 400。
+  MONITOR_DATASOURCE_ADDRESS_BLOCKED = 19 [(errors.code) = 400];
+
+  // MONITOR_GROUP_NOT_FOUND 规则分组不存在，映射 HTTP 404。
+  MONITOR_GROUP_NOT_FOUND = 20 [(errors.code) = 404];
+  // MONITOR_GROUP_NAME_EXISTS 同一上级下分组名称已被占用，映射 HTTP 409。
+  MONITOR_GROUP_NAME_EXISTS = 21 [(errors.code) = 409];
+  // MONITOR_GROUP_IN_USE 分组下仍有下级分组或规则，或仍被屏蔽规则 / 订阅规则引用，不可删除，映射
+  // HTTP 409。被屏蔽规则 / 订阅引用时错误的 metadata 带 mute_count、subscription_count（十进制数字串）。
+  MONITOR_GROUP_IN_USE = 22 [(errors.code) = 409];
+  // MONITOR_GROUP_INVALID 分组参数不合法（名称为空白、超过 5 层、总数超过 500 等），映射 HTTP 400。
+  MONITOR_GROUP_INVALID = 23 [(errors.code) = 400];
+  // MONITOR_ROLE_SCOPE_INVALID 角色授权不合法（角色不存在或重复等），映射 HTTP 400。
+  MONITOR_ROLE_SCOPE_INVALID = 24 [(errors.code) = 400];
+
+  // MONITOR_RULE_NOT_FOUND 告警规则不存在，映射 HTTP 404。
+  MONITOR_RULE_NOT_FOUND = 30 [(errors.code) = 404];
+  // MONITOR_RULE_NAME_EXISTS 同一分组内规则名称已被占用，映射 HTTP 409。
+  MONITOR_RULE_NAME_EXISTS = 31 [(errors.code) = 409];
+  // MONITOR_RULE_INVALID 规则配置不合法（查询、标签、时间参数、生效时间、通知对象等），映射 HTTP 400。
+  MONITOR_RULE_INVALID = 32 [(errors.code) = 400];
+  // MONITOR_RULE_VERSION_NOT_FOUND 规则的该历史版本不存在，映射 HTTP 404。
+  MONITOR_RULE_VERSION_NOT_FOUND = 33 [(errors.code) = 404];
+  // MONITOR_RULE_BATCH_INVALID 批量操作参数不合法（操作与参数不匹配等），映射 HTTP 400。
+  MONITOR_RULE_BATCH_INVALID = 34 [(errors.code) = 400];
+  // MONITOR_RULE_IMPORT_INVALID 导入内容无法解析（不是合法的 Prometheus / vmalert 规则 YAML），映射 HTTP 400。
+  MONITOR_RULE_IMPORT_INVALID = 35 [(errors.code) = 400];
+  // MONITOR_RULE_TEMPLATE_NOT_FOUND 内置规则模板包不存在，映射 HTTP 404。
+  MONITOR_RULE_TEMPLATE_NOT_FOUND = 36 [(errors.code) = 404];
+  // MONITOR_SIMULATE_INVALID 模拟触发的参数不合法（数据源不在规则的数据源范围内、规则内容不合法等），映射 HTTP 400。
+  MONITOR_SIMULATE_INVALID = 37 [(errors.code) = 400];
+
+  // MONITOR_ALERT_NOT_FOUND 告警事件不存在或无权查看，映射 HTTP 404。
+  MONITOR_ALERT_NOT_FOUND = 40 [(errors.code) = 404];
+  // MONITOR_ALERT_NOT_FIRING 事件已恢复或已关闭，不能再认领 / 转交 / 关闭，映射 HTTP 409。
+  MONITOR_ALERT_NOT_FIRING = 41 [(errors.code) = 409];
+  // MONITOR_ALERT_ALREADY_ACKED 事件已被他人认领（需要接手时用转交），映射 HTTP 409。错误的 metadata 带
+  // ack_user_id、ack_user_name。
+  MONITOR_ALERT_ALREADY_ACKED = 42 [(errors.code) = 409];
+  // MONITOR_ALERT_ACTION_INVALID 事件操作的参数不合法（转交对象不存在或已停用、备注为空白等），映射 HTTP 400。
+  MONITOR_ALERT_ACTION_INVALID = 43 [(errors.code) = 400];
+  // MONITOR_ALERT_TICKET_EXISTS 事件已关联工单，不能重复转工单，映射 HTTP 409。错误的 metadata 带 ticket_id。
+  MONITOR_ALERT_TICKET_EXISTS = 44 [(errors.code) = 409];
+  // MONITOR_ALERT_VIEW_NOT_FOUND 聚合视图不存在或无权操作，映射 HTTP 404。
+  MONITOR_ALERT_VIEW_NOT_FOUND = 45 [(errors.code) = 404];
+  // MONITOR_ALERT_VIEW_NAME_EXISTS 本人已有同名的聚合视图，映射 HTTP 409。
+  MONITOR_ALERT_VIEW_NAME_EXISTS = 46 [(errors.code) = 409];
+  // MONITOR_ALERT_VIEW_INVALID 聚合视图不合法（名称为空白、过滤条件引用的分组不存在、个人视图数超过上限等），映射 HTTP 400。
+  MONITOR_ALERT_VIEW_INVALID = 47 [(errors.code) = 400];
+
+  // MONITOR_MUTE_NOT_FOUND 屏蔽规则不存在，映射 HTTP 404。
+  MONITOR_MUTE_NOT_FOUND = 50 [(errors.code) = 404];
+  // MONITOR_MUTE_INVALID 屏蔽规则不合法（匹配条件、时间范围、引用的规则或数据源等），映射 HTTP 400。
+  MONITOR_MUTE_INVALID = 51 [(errors.code) = 400];
+
+  // MONITOR_SUBSCRIPTION_NOT_FOUND 订阅规则不存在，映射 HTTP 404。
+  MONITOR_SUBSCRIPTION_NOT_FOUND = 60 [(errors.code) = 404];
+  // MONITOR_SUBSCRIPTION_INVALID 订阅规则不合法（匹配条件、接收方、引用的分组或规则等），映射 HTTP 400。
+  MONITOR_SUBSCRIPTION_INVALID = 61 [(errors.code) = 400];
+
+  // MONITOR_ESCALATION_NOT_FOUND 升级策略不存在，映射 HTTP 404。
+  MONITOR_ESCALATION_NOT_FOUND = 70 [(errors.code) = 404];
+  // MONITOR_ESCALATION_NAME_EXISTS 同一归属（同一分组，或同为全局）下升级策略名称已被占用，映射 HTTP 409。
+  MONITOR_ESCALATION_NAME_EXISTS = 71 [(errors.code) = 409];
+  // MONITOR_ESCALATION_INVALID 升级策略不合法（各级的触发时间未递增、通知对象为空或不可用等），映射 HTTP 400。
+  MONITOR_ESCALATION_INVALID = 72 [(errors.code) = 400];
+  // MONITOR_ESCALATION_IN_USE 升级策略仍被规则引用，不可删除，映射 HTTP 409。错误的 metadata 带 rule_count（十进制数字串）。
+  MONITOR_ESCALATION_IN_USE = 73 [(errors.code) = 409];
+
+  // MONITOR_INHIBIT_NOT_FOUND 抑制规则不存在，映射 HTTP 404。
+  MONITOR_INHIBIT_NOT_FOUND = 80 [(errors.code) = 404];
+  // MONITOR_INHIBIT_INVALID 抑制规则不合法（源条件为空、目标条件与相等标签同时为空、匹配条件或引用的规则不合法等），映射 HTTP 400。
+  MONITOR_INHIBIT_INVALID = 81 [(errors.code) = 400];
+
+  // MONITOR_RECORD_RULE_NOT_FOUND 记录规则不存在，映射 HTTP 404。
+  MONITOR_RECORD_RULE_NOT_FOUND = 90 [(errors.code) = 404];
+  // MONITOR_RECORD_RULE_NAME_EXISTS 同一分组、同一数据源下已有同名（同一指标名）的记录规则，映射 HTTP 409。
+  MONITOR_RECORD_RULE_NAME_EXISTS = 91 [(errors.code) = 409];
+  // MONITOR_RECORD_RULE_INVALID 记录规则不合法（表达式、指标名、附加标签、数据源不存在或已停用等），映射 HTTP 400。
+  MONITOR_RECORD_RULE_INVALID = 92 [(errors.code) = 400];
+  // MONITOR_RECORD_RULE_NO_WRITE_URL 所选数据源没有配置 Remote Write 地址，不能用于记录规则，映射 HTTP 400。
+  MONITOR_RECORD_RULE_NO_WRITE_URL = 93 [(errors.code) = 400];
+}

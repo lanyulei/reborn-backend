@@ -43,11 +43,11 @@ func init() {
 // newApp 组装 kratos.App；只做装配（HTTP 服务器 + 值班 / 文件清理 / 流程作业 / 工单 SLA 后台循环）。
 // 后台循环只在 worker 角色下启动；HTTP 服务器恒有（非 api 角色时只剩探活与指标端点）。
 func newApp(logger *slog.Logger, roles server.Roles, hs *http.Server, oncall *worker.OncallLoops, files *worker.FileLoops,
-	workflows *worker.WorkflowLoops, tickets *worker.TicketLoops,
+	workflows *worker.WorkflowLoops, tickets *worker.TicketLoops, monitors *worker.MonitorLoops, k8s *worker.K8sLoops, jobs *worker.JobLoops,
 ) *kratos.App {
 	servers := []transport.Server{hs}
 	if roles.Has(server.RoleWorker) {
-		servers = slices.Concat(servers, oncall.Servers(), files.Servers(), workflows.Servers(), tickets.Servers())
+		servers = slices.Concat(servers, oncall.Servers(), files.Servers(), workflows.Servers(), tickets.Servers(), monitors.Servers(), k8s.Servers(), jobs.Servers())
 	}
 	return kratos.New(
 		kratos.ID(id),
@@ -89,7 +89,7 @@ func main() {
 		panic(err)
 	}
 
-	app, cleanup, err := wireApp(bc.Server, bc.Data, bc.Security, bc.Notify, bc.Assistant, logger)
+	app, cleanup, err := wireApp(bc.Server, bc.Data, bc.Security, bc.Notify, bc.Assistant, bc.Monitor, bc.K8S, logger)
 	if err != nil {
 		panic(err)
 	}

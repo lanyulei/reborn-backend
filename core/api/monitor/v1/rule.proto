@@ -1,0 +1,1618 @@
+syntax = "proto3";
+
+package monitor.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "monitor/v1/common.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/monitor/v1;v1";
+
+// MonitorRuleService 告警规则：一条规则 = 一组 PromQL 查询（每条对应一个级别，查询有结果即异常）
+// + 判定时间参数 + 生效时间 + 事件内容（附加标签 / 附加信息）+ 通知配置。评估引擎按评估周期在规则的
+// 每个数据源上执行查询并驱动状态机产生告警事件。
+// 权限：查看类接口要求对规则所在分组「只读」以上；新建 / 编辑 / 删除 / 启停 / 克隆 / 批量 / 导入 / 回滚
+// 要求「可管理」（403 MONITOR_FORBIDDEN）。每次保存都会记一个版本，可查看历史并回滚。
+service MonitorRuleService {
+  // ListRules 分页查询告警规则（只返回当前用户数据范围内的规则），带每条规则的当前评估状态。
+  rpc ListRules(ListRulesRequest) returns (ListRulesResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/rule"};
+    option (system.v1.title) = "查询告警规则";
+  }
+  // GetRule 查询规则详情（含在各数据源上的评估状态）。
+  rpc GetRule(GetRuleRequest) returns (GetRuleResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/rule/{id}"};
+    option (system.v1.title) = "查询告警规则详情";
+  }
+  // CreateRule 新建规则；同分组内名称重复返回 409 MONITOR_RULE_NAME_EXISTS。
+  rpc CreateRule(CreateRuleRequest) returns (CreateRuleResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/rule"
+      body: "*"
+    };
+    option (system.v1.title) = "新建告警规则";
+  }
+  // UpdateRule 编辑规则（整体替换）。version 不一致返回 409 MONITOR_VERSION_CONFLICT。
+  // 更换分组要求对原分组与目标分组都「可管理」。
+  rpc UpdateRule(UpdateRuleRequest) returns (UpdateRuleResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/monitor/rule/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "编辑告警规则";
+  }
+  // DeleteRule 删除规则；其活跃告警随之关闭（不发恢复通知），历史告警保留。
+  rpc DeleteRule(DeleteRuleRequest) returns (DeleteRuleResponse) {
+    option (google.api.http) = {delete: "/api/v1/monitor/rule/{id}"};
+    option (system.v1.title) = "删除告警规则";
+  }
+  // ToggleRule 启用或停用规则；停用后其活跃告警随之关闭（不发恢复通知）。
+  rpc ToggleRule(ToggleRuleRequest) returns (ToggleRuleResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/rule/{id}:toggle"
+      body: "*"
+    };
+    option (system.v1.title) = "启停告警规则";
+  }
+  // CloneRule 克隆规则：复制全部配置生成一条新规则，新规则缺省停用。
+  rpc CloneRule(CloneRuleRequest) returns (CloneRuleResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/rule/{id}:clone"
+      body: "*"
+    };
+    option (system.v1.title) = "克隆告警规则";
+  }
+  // BatchRules 批量操作规则（至多 200 条）：启用 / 停用 / 移动分组 / 改级别 / 改时间参数 / 增删附加标签 /
+  // 改通知配置 / 删除。逐条独立执行，部分失败不影响其余，结果逐条返回。
+  rpc BatchRules(BatchRulesRequest) returns (BatchRulesResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/rule:batch"
+      body: "*"
+    };
+    option (system.v1.title) = "批量操作告警规则";
+  }
+  // ListRuleVersions 分页查询规则的变更历史（按版本号倒序，不含快照内容）。
+  rpc ListRuleVersions(ListRuleVersionsRequest) returns (ListRuleVersionsResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/rule/{id}/version"};
+    option (system.v1.title) = "查询规则变更历史";
+  }
+  // GetRuleVersion 查询规则某个历史版本的完整内容（用于对比与回滚前确认）。
+  rpc GetRuleVersion(GetRuleVersionRequest) returns (GetRuleVersionResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/rule/{id}/version/{version}"};
+    option (system.v1.title) = "查询规则历史版本";
+  }
+  // RollbackRule 把规则回滚到某个历史版本的内容（生成一个新版本，不改写历史）。
+  rpc RollbackRule(RollbackRuleRequest) returns (RollbackRuleResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/rule/{id}:rollback"
+      body: "*"
+    };
+    option (system.v1.title) = "回滚告警规则";
+  }
+  // ValidateRuleExprs 校验 PromQL 语法（不保存）：逐条返回是否合法与错误原因。
+  rpc ValidateRuleExprs(ValidateRuleExprsRequest) returns (ValidateRuleExprsResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/rule:validate"
+      body: "*"
+    };
+    option (system.v1.title) = "校验规则表达式";
+  }
+  // PreviewImportRules 导入预览：解析 Prometheus / vmalert 告警规则 YAML 或本系统导出的 JSON
+  // （自动识别，见 ImportRulesOptions.content），逐条给出转换结果、
+  // 与现有规则的重名情况和无法转换的原因，不落库。
+  rpc PreviewImportRules(PreviewImportRulesRequest) returns (PreviewImportRulesResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/rule:import-preview"
+      body: "*"
+    };
+    option (system.v1.title) = "预览导入告警规则";
+  }
+  // ImportRules 导入 Prometheus / vmalert 告警规则 YAML 或本系统导出的 JSON 到指定分组；逐条独立执行并返回结果。
+  rpc ImportRules(ImportRulesRequest) returns (ImportRulesResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/rule:import"
+      body: "*"
+    };
+    option (system.v1.title) = "导入告警规则";
+  }
+  // ExportRules 导出规则：format=yaml（缺省）为 Prometheus / vmalert 告警规则 YAML（按分组成组，只含两者
+  // 共有的字段）；format=json 为本系统的完整格式（规则全部字段，可原样再导入）。
+  rpc ExportRules(ExportRulesRequest) returns (ExportRulesResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/rule:export"
+      body: "*"
+    };
+    option (system.v1.title) = "导出告警规则";
+  }
+  // ListRuleEvalRecords 分页查询规则的判定记录（每次评估一条，保留 7 天，按评估时间倒序），
+  // 用于排查「为什么告警 / 为什么没告警」。
+  rpc ListRuleEvalRecords(ListRuleEvalRecordsRequest) returns (ListRuleEvalRecordsResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/rule/{id}/eval-record"};
+    option (system.v1.title) = "查询规则判定记录";
+  }
+  // ListMonitorTargetOptions 通知对象的候选项（规则的通知对象、订阅的接收方选择器用）：启用的值班表、
+  // 全部部门，以及按关键字匹配的可用用户（最小披露：只有 ID、登录名、昵称）。只读；随规则与订阅的
+  // 新建 / 编辑权限开放，不要求值班管理或组织架构的权限。
+  rpc ListMonitorTargetOptions(ListMonitorTargetOptionsRequest) returns (ListMonitorTargetOptionsResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/target-option"};
+    option (system.v1.title) = "查询通知对象候选项";
+  }
+  // ListRuleTemplatePacks 列出内置的规则模板包（主机 node_exporter、常见中间件、本平台自监控等）。
+  rpc ListRuleTemplatePacks(ListRuleTemplatePacksRequest) returns (ListRuleTemplatePacksResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/rule-template"};
+    option (system.v1.title) = "查询内置规则模板";
+  }
+  // GetRuleTemplatePack 查看一个模板包的内容：逐条规则的摘要，以及可直接用于导入的规则 YAML 原文。
+  // 一键导入 = 把返回的 content 作为 ImportRulesOptions.content，走 PreviewImportRules / ImportRules。
+  rpc GetRuleTemplatePack(GetRuleTemplatePackRequest) returns (GetRuleTemplatePackResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/rule-template/{code}"};
+    option (system.v1.title) = "查询内置规则模板详情";
+  }
+  // SimulateRule 模拟触发（不保存规则、不产生告警事件、不写时间线）：按给出的规则内容在指定数据源上执行查询，
+  // 查询没有结果时用给出的样例标签合成一个事件，然后走与评估引擎相同的处理流程——生效时间 → 标签改写 →
+  // 关联资源与富化 → 条件丢弃 → 资源范围 → 级别抑制 → 规则间抑制 / 拓扑抑制 → 屏蔽 → 通知对象与订阅解析，
+  // 逐阶段返回结果。send=true 时另外真实发送一条标题带 [TEST] 的通知给解析出的通知对象。
+  // 要求对规则所在分组「可管理」。
+  rpc SimulateRule(SimulateRuleRequest) returns (SimulateRuleResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/rule:simulate"
+      body: "*"
+    };
+    option (system.v1.title) = "模拟触发告警规则";
+  }
+  // ListMonitorRuleOptions 规则表单里第二、三期配置项的候选项：可用的工单模板、已发布的流程定义、CMDB 模型、
+  // 环境与可用于关联的属性。只读、最小披露；随规则的新建 / 编辑权限开放，不要求工单、流程或资源管理的权限。
+  rpc ListMonitorRuleOptions(ListMonitorRuleOptionsRequest) returns (ListMonitorRuleOptionsResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/rule-option"};
+    option (system.v1.title) = "查询规则配置候选项";
+  }
+}
+
+// RuleQuery 规则的一条查询：PromQL 查询有结果即为异常，产生对应级别的告警。
+message RuleQuery {
+  // expr PromQL 表达式（需自带比较条件，如 cpu_usage > 90），至多 8192 字节、括号嵌套至多 64 层。
+  // 兼容 MetricsQL 的函数与写法，但不支持在解析期展开的 WITH 模板（`WITH (...) expr`，
+  // 请写出展开后的完整表达式）；ru() / ttf() 在一条表达式里合计至多调用 4 次。
+  string expr = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 8192
+  }];
+  // severity 该查询对应的级别：1=提示 2=警告 3=严重 4=致命。
+  int32 severity = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 4
+  }];
+}
+
+// RuleNotify 规则的通知对象；三类取并集、去重后通知。全部为空时事件不带收件人，
+// 交由通知管理里的路由与订阅决定发给谁。
+message RuleNotify {
+  // user_ids 直接通知的用户，至多 50 个。
+  repeated string user_ids = 1 [(buf.validate.field).repeated = {
+    max_items: 50
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+  // schedule_ids 值班表，至多 20 个；通知时取各值班表当前的值班人。
+  repeated string schedule_ids = 2 [(buf.validate.field).repeated = {
+    max_items: 20
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+  // dept_ids 部门，至多 20 个；通知各部门的负责人。
+  repeated string dept_ids = 3 [(buf.validate.field).repeated = {
+    max_items: 20
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+  // ci_owner 通知事件关联的 CMDB 资源的负责人（负责人是可用的系统用户时才有收件人）。
+  bool ci_owner = 4;
+}
+
+// RuleCIMatch 事件如何关联 CMDB 资源。全部留空 = 全局缺省：先用 ident 标签对资源名称，找不到再用 instance
+// 标签对资源的 ip 属性。标签值形如 host:port 时自动去掉端口；比较不区分大小写。对应到多个资源时不关联。
+message RuleCIMatch {
+  option (buf.validate.message).cel = {
+    id: "monitor.rule.ci_match.label"
+    message: "by is required when label is set; by and attr must be empty when label is empty; attr is only used when by is attr"
+    expression: "this.label == '' ? (this.by == '' && this.attr == '') : (this.by == 'name' ? this.attr == '' : this.by == 'attr')"
+  };
+
+  // disabled 不关联资源（富化、维护态屏蔽、拓扑抑制、通知资源负责人随之不起作用）。
+  bool disabled = 1;
+  // label 用哪个事件标签去找资源；留空用全局缺省。
+  string label = 2 [(buf.validate.field).string = {
+    max_len: 128
+    pattern: "^([a-zA-Z_][a-zA-Z0-9_]*)?$"
+  }];
+  // by 标签值对应资源的什么：name 资源名称 / attr 资源的某个属性；label 非空时必填。
+  string by = 3 [(buf.validate.field).string = {
+    in: [
+      "",
+      "name",
+      "attr"
+    ]
+  }];
+  // attr by=attr 时比对的属性，留空为 ip；须是 ListMonitorRuleOptions 返回的可关联属性之一。
+  string attr = 4 [(buf.validate.field).string.pattern = "^([a-z][a-z0-9_]{0,63})?$"];
+  // model_codes 只在这些模型的资源里找，至多 20 个；留空不限。
+  repeated string model_codes = 5 [(buf.validate.field).repeated = {
+    max_items: 20
+    unique: true
+    items: {
+      string: {
+        min_len: 1
+        max_bytes: 64
+      }
+    }
+  }];
+  // enrich_tags 富化时写入事件的资源标签，至多 10 个：资源带有该标签时事件多一个 ci_tag_<标签>="true" 的标签
+  // （标签里字母、数字、下划线以外的字符逐个写成 _x<十六进制码点>_，如「dmz zone」→ ci_tag_dmz_x20_zone）。
+  // 资源的环境、负责人、模型恒以 ci_env / ci_owner / ci_model 写入事件标签。
+  repeated string enrich_tags = 6 [(buf.validate.field).repeated = {
+    max_items: 10
+    unique: true
+    items: {
+      string: {
+        min_len: 1
+        max_bytes: 64
+      }
+    }
+  }];
+}
+
+// RuleResourceScope 规则仅对指定资源生效：启用后事件必须关联到 CMDB 资源，且资源满足下面各项条件
+// （各项之间是「并且」，留空 = 不限），否则不产生事件。
+message RuleResourceScope {
+  option (buf.validate.message).cel = {
+    id: "monitor.rule.resource_scope.enabled"
+    message: "model_codes, envs and tags must be empty when enabled is false"
+    expression: "this.enabled || (size(this.model_codes) == 0 && size(this.envs) == 0 && size(this.tags) == 0)"
+  };
+
+  // enabled 是否启用。
+  bool enabled = 1;
+  // model_codes 资源的模型须是其中之一，至多 20 个。
+  repeated string model_codes = 2 [(buf.validate.field).repeated = {
+    max_items: 20
+    unique: true
+    items: {
+      string: {
+        min_len: 1
+        max_bytes: 64
+      }
+    }
+  }];
+  // envs 资源的环境须是其中之一，至多 20 个。
+  repeated string envs = 3 [(buf.validate.field).repeated = {
+    max_items: 20
+    unique: true
+    items: {
+      string: {
+        min_len: 1
+        max_bytes: 64
+      }
+    }
+  }];
+  // tags 资源须带有其中任意一个标签，至多 20 个。
+  repeated string tags = 4 [(buf.validate.field).repeated = {
+    max_items: 20
+    unique: true
+    items: {
+      string: {
+        min_len: 1
+        max_bytes: 64
+      }
+    }
+  }];
+}
+
+// RuleRelabelStep 一步事件标签改写（语义同 Prometheus relabel_config 的同名动作），在计算事件指纹之前执行。
+// 正则按 RE2 语法、整体匹配（等价于首尾加 ^ $）。
+message RuleRelabelStep {
+  // action 动作：
+  //   - replace：把 source_labels 的取值用 separator 拼接，整体匹配 regex 时把 replacement（可用 $1、${name}
+  //     引用捕获组）写入 target_label；结果为空则删除该标签；不匹配则不动。不给 source_labels 即写入常量。
+  //   - labelmap：把名称匹配 regex 的标签，按 replacement 生成新名称后复制一份。
+  //   - labeldrop：删除名称匹配 regex 的标签。
+  //   - labelkeep：只保留名称匹配 regex 的标签。
+  string action = 1 [(buf.validate.field).string = {
+    in: [
+      "replace",
+      "labelmap",
+      "labeldrop",
+      "labelkeep"
+    ]
+  }];
+  // source_labels 源标签，仅 replace 使用，至多 5 个。
+  repeated string source_labels = 2 [(buf.validate.field).repeated = {
+    max_items: 5
+    items: {
+      string: {
+        max_len: 128
+        pattern: "^[a-zA-Z_][a-zA-Z0-9_]*$"
+      }
+    }
+  }];
+  // separator 拼接源标签取值的分隔符，仅 replace 使用；留空为 ";"。
+  string separator = 3 [(buf.validate.field).string.max_bytes = 256];
+  // regex 正则，至多 256 字节；replace 留空为 "(.*)"，其余动作必填。
+  string regex = 4 [(buf.validate.field).string.max_bytes = 256];
+  // target_label 写入的标签名，仅 replace 使用且必填；不得以 __ 开头。
+  string target_label = 5 [(buf.validate.field).string = {
+    max_len: 128
+    pattern: "^([a-zA-Z_][a-zA-Z0-9_]*)?$"
+  }];
+  // replacement 替换内容，replace / labelmap 使用，至多 256 字节；留空为 "$1"。
+  string replacement = 6 [(buf.validate.field).string.max_bytes = 256];
+}
+
+// RuleTicketAction 触发时自动建单：同一事件只建一张工单，告警恢复时在工单上追加一条记录。
+message RuleTicketAction {
+  // enabled 是否启用；启用时 template_id 与 agent_user_id 必填。
+  bool enabled = 1;
+  // template_id 工单模板。
+  string template_id = 2 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+  // agent_user_id 代理提单人：工单以他的名义创建，能否提单、能否关联资源按他的权限判定；须是可用用户。
+  // 该用户之后被停用时自动建单失败，并记入事件时间线。
+  string agent_user_id = 3 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+}
+
+// RuleWorkflowAction 触发时发起一个流程（业务类型 monitor_alert，业务 ID 为事件 ID），事件内容作为流程变量：
+// alert_id、alert_url、rule_id、rule_name、group_name、datasource_name、severity、value、labels、annotations、
+// first_fire_time、ci_id、ci_name。
+message RuleWorkflowAction {
+  // enabled 是否启用；启用时 definition_key 与 agent_user_id 必填。
+  bool enabled = 1;
+  // definition_key 流程标识（须有已发布的版本）。
+  string definition_key = 2 [(buf.validate.field).string.max_len = 64];
+  // agent_user_id 流程的发起人；须是可用用户。
+  string agent_user_id = 3 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+}
+
+// RuleActions 规则触发后的事件动作；每个事件每种动作至多执行一次。
+message RuleActions {
+  option (buf.validate.message).cel = {
+    id: "monitor.rule.actions.ticket"
+    message: "ticket.template_id and ticket.agent_user_id are required when ticket.enabled is true"
+    expression: "!has(this.ticket) || !this.ticket.enabled || (this.ticket.template_id != '' && this.ticket.agent_user_id != '')"
+  };
+  option (buf.validate.message).cel = {
+    id: "monitor.rule.actions.workflow"
+    message: "workflow.definition_key and workflow.agent_user_id are required when workflow.enabled is true"
+    expression: "!has(this.workflow) || !this.workflow.enabled || (this.workflow.definition_key != '' && this.workflow.agent_user_id != '')"
+  };
+
+  // ticket 自动建单，可选。
+  RuleTicketAction ticket = 1;
+  // workflow 触发流程，可选。
+  RuleWorkflowAction workflow = 2;
+  // ai_summary 触发后由 AI 生成事件摘要与排查建议（写入事件的 ai_summary）；智能助手未配置模型密钥时不生成。
+  bool ai_summary = 3;
+}
+
+// RuleSpec 规则的可编辑内容（新建、编辑、历史版本、导入预览共用）。
+message RuleSpec {
+  option (buf.validate.message).cel = {
+    id: "monitor.rule.datasource_scope"
+    message: "datasource_ids must have 1-20 items when datasource_scope is 1 and be empty when it is 2"
+    expression: "this.datasource_scope == 1 ? size(this.datasource_ids) >= 1 : size(this.datasource_ids) == 0"
+  };
+  option (buf.validate.message).cel = {
+    id: "monitor.rule.query_severity_unique"
+    message: "each query must have a distinct severity"
+    expression: "this.queries.map(q, q.severity).unique()"
+  };
+
+  // group_id 所属规则分组。
+  string group_id = 1 [(buf.validate.field).string.uuid = true];
+  // name 名称，1-128 字符，同一分组内唯一。
+  string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+  // description 说明，可选。
+  string description = 3 [(buf.validate.field).string.max_len = 512];
+  // enabled 是否启用。
+  bool enabled = 4;
+  // labels 附加标签，至多 20 个：与查询返回的序列标签合并（同名时附加标签优先）后成为事件标签，
+  // 可用于屏蔽、订阅与通知路由。名称不得以 __ 开头，值 1-256 字符。
+  map<string, string> labels = 5 [(buf.validate.field).map = {
+    max_pairs: 20
+    keys: {
+      string: {
+        max_len: 128
+        pattern: "^[a-zA-Z_][a-zA-Z0-9_]*$"
+      }
+    }
+    values: {
+      string: {
+        min_len: 1
+        max_len: 256
+      }
+    }
+  }];
+  // datasource_scope 数据源范围：1=指定数据源 2=全部启用的数据源（之后新增的数据源自动纳入）。
+  int32 datasource_scope = 6 [(buf.validate.field).int32 = {
+    in: [
+      1,
+      2
+    ]
+  }];
+  // datasource_ids 指定的数据源，范围为 1 时 1-20 个，范围为 2 时须为空。
+  repeated string datasource_ids = 7 [(buf.validate.field).repeated = {
+    max_items: 20
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+  // queries 查询与级别，1-4 条，级别互不相同（多档阈值：每个级别一条查询）。
+  repeated RuleQuery queries = 8 [(buf.validate.field).repeated = {
+    min_items: 1
+    max_items: 4
+  }];
+  // level_inhibit 级别抑制：同一序列同时命中多档时只保留最高级别的告警；关闭时各级别各自产生事件。
+  bool level_inhibit = 9;
+  // eval_interval_s 评估周期秒，15-3600，建议 60。
+  int32 eval_interval_s = 10 [(buf.validate.field).int32 = {
+    gte: 15
+    lte: 3600
+  }];
+  // for_s 持续时长秒，0-86400：异常持续达到该时长才触发告警，0 表示立即触发。
+  int32 for_s = 11 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 86400
+  }];
+  // recover_s 恢复留观时长秒，0-86400：不再异常并持续该时长才判为恢复，0 表示立即恢复。
+  int32 recover_s = 12 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 86400
+  }];
+  // nodata_keep_s 序列消失（查询不再返回该序列）后保持告警的秒数，0-86400；实际留观时长取它与
+  // recover_s 的较大者。
+  int32 nodata_keep_s = 13 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 86400
+  }];
+  // effective 生效时间，可选；不传或时间窗为空表示全时段生效。不在生效时间内不评估，已有告警保持原状。
+  EffectiveTime effective = 14;
+  // annotations 附加信息，至多 10 个：值是 Go 模板，触发时渲染后写入事件并带进通知。可用
+  // {{ $labels.<标签名> }} 与 {{ $value }}，函数有 printf / humanize / humanizePercentage /
+  // humanizeDuration / toUpper / toLower / title。值至多 2048 字符。
+  map<string, string> annotations = 15 [(buf.validate.field).map = {
+    max_pairs: 10
+    keys: {
+      string: {
+        max_len: 128
+        pattern: "^[a-zA-Z_][a-zA-Z0-9_]*$"
+      }
+    }
+    values: {
+      string: {
+        min_len: 1
+        max_len: 2048
+      }
+    }
+  }];
+  // recovery_expr 恢复取值 PromQL，可选：告警恢复时执行，把结果记为事件的恢复值。可用
+  // {{ $labels.<标签名> }} 限定到当前序列。
+  string recovery_expr = 16 [(buf.validate.field).string.max_len = 8192];
+  // notify 通知对象，可选。
+  RuleNotify notify = 17;
+  // notify_recovery 告警恢复时是否通知。
+  bool notify_recovery = 18;
+  // repeat_interval_m 重复通知间隔分钟：0 表示不重复，否则 5-10080（告警持续期间每隔该时长再通知一次）。
+  int32 repeat_interval_m = 19 [(buf.validate.field).cel = {
+    id: "monitor.rule.repeat_interval"
+    message: "repeat_interval_m must be 0 or between 5 and 10080"
+    expression: "this == 0 || (this >= 5 && this <= 10080)"
+  }];
+  // max_notify 单个事件的通知次数上限（含首次，不含恢复通知），0-1000，0 表示不限。
+  int32 max_notify = 20 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 1000
+  }];
+  // group_key_labels 通知聚合键的标签名，至多 10 个；为空表示同一规则的事件聚合在一起。
+  repeated string group_key_labels = 21 [(buf.validate.field).repeated = {
+    max_items: 10
+    unique: true
+    items: {
+      string: {
+        max_len: 128
+        pattern: "^[a-zA-Z_][a-zA-Z0-9_]*$"
+      }
+    }
+  }];
+  // ci_match 关联 CMDB 资源的方式，可选；不传为全局缺省。
+  RuleCIMatch ci_match = 22;
+  // resource_scope 仅对指定资源生效，可选；不传为不限。
+  RuleResourceScope resource_scope = 23;
+  // relabel 事件标签改写步骤，至多 10 步，按顺序执行，可选。改写在计算事件指纹之前：改写规则变了，
+  // 已有的活跃告警会按新标签重新产生。
+  repeated RuleRelabelStep relabel = 24 [(buf.validate.field).repeated.max_items = 10];
+  // drop_expr 条件丢弃表达式，可选，至多 2048 字节：与附加信息同一套模板语法（可用 $labels、$value，
+  // 含 ci_ 开头的富化标签），渲染结果去掉首尾空白后恰为 true 时丢弃该事件。
+  // 例：{{ if eq $labels.env "dev" }}true{{ end }}。
+  string drop_expr = 25 [(buf.validate.field).string.max_bytes = 2048];
+  // topology_inhibit 拓扑抑制：事件关联的资源有上游资源（宿主机、上联交换机等）正在告警时，本事件不通知。
+  bool topology_inhibit = 26;
+  // escalation_id 升级策略，可选；留空不升级。须是全局策略，或归属于规则所在分组（或其上级分组）的策略。
+  string escalation_id = 27 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+  // actions 事件动作（自动建单 / 触发流程 / AI 摘要），可选。
+  RuleActions actions = 28;
+}
+
+// RuleEvalTask 规则在一个数据源上的评估状态。
+message RuleEvalTask {
+  // datasource_id 数据源唯一标识。
+  string datasource_id = 1;
+  // datasource_name 数据源名称。
+  string datasource_name = 2;
+  // last_status 最近一次评估结果：0=未评估 1=正常 2=告警中 3=无数据 4=查询错误 5=不在生效时间。
+  int32 last_status = 3;
+  // last_eval_time 最近一次评估时间。
+  google.protobuf.Timestamp last_eval_time = 4;
+  // last_error 最近一次评估的错误信息。
+  string last_error = 5;
+  // last_duration_ms 最近一次评估耗时毫秒。
+  int32 last_duration_ms = 6;
+  // firing_count 当前告警中的序列数。
+  int32 firing_count = 7;
+  // next_eval_time 下次评估时间。
+  google.protobuf.Timestamp next_eval_time = 8;
+}
+
+// Rule 告警规则。
+message Rule {
+  // id 规则唯一标识。
+  string id = 1;
+  // spec 规则内容。
+  RuleSpec spec = 2;
+  // group_name 所属分组的完整名称（含上级，以 " / " 分隔）。
+  string group_name = 3;
+  // datasources 指定数据源的名称（与 spec.datasource_ids 对应）；范围为全部数据源时为空。
+  repeated NamedRef datasources = 4;
+  // notify_users 通知用户的显示名（与 spec.notify.user_ids 对应）。
+  repeated NamedRef notify_users = 5;
+  // notify_schedules 通知值班表的名称（与 spec.notify.schedule_ids 对应）。
+  repeated NamedRef notify_schedules = 6;
+  // notify_depts 通知部门的名称（与 spec.notify.dept_ids 对应）。
+  repeated NamedRef notify_depts = 7;
+  // max_severity 各查询中的最高级别（列表展示用）。
+  int32 max_severity = 8;
+  // version 版本号：每次保存 +1；编辑时原样传回用作乐观锁。
+  int32 version = 9;
+  // status 评估状态汇总（各数据源中取最需要关注的一个）：0=未评估 1=正常 2=告警中 3=无数据
+  // 4=查询错误 5=不在生效时间；规则停用时为 0。优先级：告警中 > 查询错误 > 无数据 > 正常 > 不在生效时间。
+  int32 status = 10;
+  // firing_count 当前告警中的序列数（各数据源合计）。
+  int32 firing_count = 11;
+  // last_eval_time 最近一次评估时间（各数据源中最新的）。
+  google.protobuf.Timestamp last_eval_time = 12;
+  // last_error 最近一次评估的错误信息（任一数据源出错时）。
+  string last_error = 13;
+  // eval_tasks 在各数据源上的评估状态；仅详情接口返回。
+  repeated RuleEvalTask eval_tasks = 14;
+  // can_manage 当前用户能否管理本规则（对所在分组「可管理」）。
+  bool can_manage = 15;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 16;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 17;
+  // update_user_id 最近更新人。
+  string update_user_id = 18;
+  // update_user_name 最近更新人显示名。
+  string update_user_name = 19;
+  // escalation 引用的升级策略的名称（与 spec.escalation_id 对应）；未引用时为空。
+  NamedRef escalation = 20;
+  // ticket_template 自动建单的工单模板名称（与 spec.actions.ticket.template_id 对应）。
+  NamedRef ticket_template = 21;
+  // ticket_agent 自动建单的代理提单人显示名。
+  NamedRef ticket_agent = 22;
+  // workflow_definition 触发的流程名称（id 为流程标识 definition_key）。
+  NamedRef workflow_definition = 23;
+  // workflow_agent 流程发起人显示名。
+  NamedRef workflow_agent = 24;
+}
+
+// ListRulesRequest 分页查询告警规则请求。
+message ListRulesRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // group_id 规则分组过滤（含其全部下级分组），可选。
+  optional string group_id = 3 [(buf.validate.field).string.uuid = true];
+  // keyword 名称 / 说明 / PromQL 模糊匹配，可选。
+  optional string keyword = 4 [(buf.validate.field).string.max_len = 128];
+  // severity 级别过滤（任一查询为该级别），可选：1=提示 2=警告 3=严重 4=致命。
+  optional int32 severity = 5 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 4
+  }];
+  // datasource_id 数据源过滤（指定了该数据源，或范围为全部数据源的规则），可选。
+  optional string datasource_id = 6 [(buf.validate.field).string.uuid = true];
+  // enabled 启用状态过滤，可选。
+  optional bool enabled = 7;
+  // firing 是否正在告警（存在活跃告警事件），可选。
+  optional bool firing = 8;
+  // last_status 最近一次评估结果过滤（任一数据源为该结果），可选：0=未评估 1=正常 2=告警中
+  // 3=无数据 4=查询错误 5=不在生效时间。
+  optional int32 last_status = 9 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 5
+  }];
+  // labels 附加标签过滤，每项形如 name=value，至多 5 项，各项之间是「并且」，可选。
+  repeated string labels = 10 [(buf.validate.field).repeated = {
+    max_items: 5
+    items: {
+      string: {
+        max_len: 400
+        pattern: "^[a-zA-Z_][a-zA-Z0-9_]*=.+$"
+      }
+    }
+  }];
+  // escalation_id 升级策略过滤（引用了该策略的规则），可选。
+  optional string escalation_id = 11 [(buf.validate.field).string.uuid = true];
+}
+
+// ListRulesResponse 分页查询告警规则响应。
+message ListRulesResponse {
+  // items 当前页数据。
+  repeated Rule items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// GetRuleRequest 查询规则详情请求。
+message GetRuleRequest {
+  // id 规则唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetRuleResponse 查询规则详情响应。
+message GetRuleResponse {
+  // rule 规则。
+  Rule rule = 1;
+}
+
+// CreateRuleRequest 新建规则请求。
+message CreateRuleRequest {
+  // spec 规则内容。
+  RuleSpec spec = 1 [(buf.validate.field).required = true];
+}
+
+// CreateRuleResponse 新建规则响应。
+message CreateRuleResponse {
+  // rule 新建的规则。
+  Rule rule = 1;
+}
+
+// UpdateRuleRequest 编辑规则请求。
+message UpdateRuleRequest {
+  // id 规则唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // spec 规则内容，整体替换。
+  RuleSpec spec = 2 [(buf.validate.field).required = true];
+  // version 乐观锁版本号，须与当前一致。
+  int32 version = 3 [(buf.validate.field).int32.gte = 1];
+  // summary 变更说明，可选；记入变更历史。
+  string summary = 4 [(buf.validate.field).string.max_len = 255];
+}
+
+// UpdateRuleResponse 编辑规则响应。
+message UpdateRuleResponse {
+  // rule 更新后的规则。
+  Rule rule = 1;
+}
+
+// DeleteRuleRequest 删除规则请求。
+message DeleteRuleRequest {
+  // id 规则唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteRuleResponse 删除规则响应。
+message DeleteRuleResponse {}
+
+// ToggleRuleRequest 启停规则请求。
+message ToggleRuleRequest {
+  // id 规则唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // enabled 目标状态：true 启用，false 停用；已是该状态时不产生新版本。
+  bool enabled = 2;
+}
+
+// ToggleRuleResponse 启停规则响应。
+message ToggleRuleResponse {
+  // rule 更新后的规则。
+  Rule rule = 1;
+}
+
+// CloneRuleRequest 克隆规则请求。
+message CloneRuleRequest {
+  // id 被克隆的规则。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // name 新规则名称，可选；不传为「原名称 - 副本」（重名时自动加序号）。
+  optional string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+  // group_id 新规则所属分组，可选；不传与原规则相同。须对该分组「可管理」。
+  optional string group_id = 3 [(buf.validate.field).string.uuid = true];
+}
+
+// CloneRuleResponse 克隆规则响应。
+message CloneRuleResponse {
+  // rule 新建的规则（停用状态）。
+  Rule rule = 1;
+}
+
+// BatchRulesRequest 批量操作规则请求。action 决定使用哪些参数字段，其余字段须留空
+// （400 MONITOR_RULE_BATCH_INVALID）。
+message BatchRulesRequest {
+  // ids 规则 ID，1-200 个。
+  repeated string ids = 1 [(buf.validate.field).repeated = {
+    min_items: 1
+    max_items: 200
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+  // action 操作：enable 启用 / disable 停用 / move 移动到 group_id / set_severity 把级别改为 severity
+  // （仅适用于只有一条查询的规则）/ set_timing 修改 eval_interval_s、for_s、recover_s 中给出的项 /
+  // add_labels 添加或覆盖附加标签 labels / remove_labels 移除附加标签 label_names /
+  // set_notify 修改通知配置（notify、notify_recovery、repeat_interval_m、max_notify 中给出的项）/ delete 删除 /
+  // set_escalation 把升级策略改为 escalation_id（不传 = 取消升级策略）。
+  string action = 2 [(buf.validate.field).string = {
+    in: [
+      "enable",
+      "disable",
+      "move",
+      "set_severity",
+      "set_timing",
+      "add_labels",
+      "remove_labels",
+      "set_notify",
+      "delete",
+      "set_escalation"
+    ]
+  }];
+  // group_id 目标分组，action=move 时必填；须对该分组「可管理」。
+  optional string group_id = 3 [(buf.validate.field).string.uuid = true];
+  // severity 目标级别，action=set_severity 时必填：1=提示 2=警告 3=严重 4=致命。
+  optional int32 severity = 4 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 4
+  }];
+  // eval_interval_s 评估周期秒，15-3600；action=set_timing 时可选。
+  optional int32 eval_interval_s = 5 [(buf.validate.field).int32 = {
+    gte: 15
+    lte: 3600
+  }];
+  // for_s 持续时长秒，0-86400；action=set_timing 时可选。
+  optional int32 for_s = 6 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 86400
+  }];
+  // recover_s 恢复留观时长秒，0-86400；action=set_timing 时可选。
+  optional int32 recover_s = 7 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 86400
+  }];
+  // labels 要添加或覆盖的附加标签，action=add_labels 时必填，至多 20 个；合并后每条规则仍不得超过 20 个。
+  map<string, string> labels = 8 [(buf.validate.field).map = {
+    max_pairs: 20
+    keys: {
+      string: {
+        max_len: 128
+        pattern: "^[a-zA-Z_][a-zA-Z0-9_]*$"
+      }
+    }
+    values: {
+      string: {
+        min_len: 1
+        max_len: 256
+      }
+    }
+  }];
+  // label_names 要移除的附加标签名，action=remove_labels 时必填，至多 20 个。
+  repeated string label_names = 9 [(buf.validate.field).repeated = {
+    max_items: 20
+    unique: true
+    items: {
+      string: {
+        max_len: 128
+        pattern: "^[a-zA-Z_][a-zA-Z0-9_]*$"
+      }
+    }
+  }];
+  // notify 通知对象（整体替换），action=set_notify 时可选。
+  optional RuleNotify notify = 10;
+  // notify_recovery 恢复时是否通知，action=set_notify 时可选。
+  optional bool notify_recovery = 11;
+  // repeat_interval_m 重复通知间隔分钟（0 或 5-10080），action=set_notify 时可选。
+  optional int32 repeat_interval_m = 12 [(buf.validate.field).cel = {
+    id: "monitor.rule.batch.repeat_interval"
+    message: "repeat_interval_m must be 0 or between 5 and 10080"
+    expression: "this == 0 || (this >= 5 && this <= 10080)"
+  }];
+  // max_notify 通知次数上限（0-1000，0 不限），action=set_notify 时可选。
+  optional int32 max_notify = 13 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 1000
+  }];
+  // escalation_id 升级策略，action=set_escalation 时使用：不传表示取消升级策略；策略须能被每条规则所在的分组引用。
+  optional string escalation_id = 14 [(buf.validate.field).string.uuid = true];
+}
+
+// BatchRuleResult 批量操作中一条规则的结果。
+message BatchRuleResult {
+  // id 规则唯一标识。
+  string id = 1;
+  // name 规则名称（规则不存在时为空）。
+  string name = 2;
+  // ok 是否成功。
+  bool ok = 3;
+  // reason 失败的错误码（如 MONITOR_FORBIDDEN、MONITOR_RULE_NOT_FOUND）；成功时为空。
+  string reason = 4;
+  // message 失败原因说明；成功时为空。
+  string message = 5;
+}
+
+// BatchRulesResponse 批量操作规则响应。
+message BatchRulesResponse {
+  // results 逐条结果，顺序与请求的 ids 一致。
+  repeated BatchRuleResult results = 1;
+  // succeeded 成功条数。
+  int32 succeeded = 2;
+  // failed 失败条数。
+  int32 failed = 3;
+}
+
+// RuleVersion 规则的一个历史版本。
+message RuleVersion {
+  // rule_id 规则唯一标识。
+  string rule_id = 1;
+  // version 版本号。
+  int32 version = 2;
+  // action 产生该版本的操作：create 新建 / update 编辑 / enable 启用 / disable 停用 / move 移动分组 /
+  // rollback 回滚 / import 导入 / delete 删除 / batch 批量操作。
+  string action = 3;
+  // summary 变更说明。
+  string summary = 4;
+  // operator_id 操作人。
+  string operator_id = 5;
+  // operator_name 操作人显示名。
+  string operator_name = 6;
+  // create_time 操作时间。
+  google.protobuf.Timestamp create_time = 7;
+  // spec 该版本保存后的规则内容；仅 GetRuleVersion 返回。
+  RuleSpec spec = 8;
+  // group_name 该版本所属分组当前的完整名称；仅 GetRuleVersion 返回。
+  string group_name = 9;
+}
+
+// ListRuleVersionsRequest 查询规则变更历史请求。
+message ListRuleVersionsRequest {
+  // id 规则唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // page 页码，从 1 开始。
+  int64 page = 2 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 3 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+}
+
+// ListRuleVersionsResponse 查询规则变更历史响应。
+message ListRuleVersionsResponse {
+  // items 当前页数据（不含 spec）。
+  repeated RuleVersion items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// GetRuleVersionRequest 查询规则历史版本请求。
+message GetRuleVersionRequest {
+  // id 规则唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // version 版本号。
+  int32 version = 2 [(buf.validate.field).int32.gte = 1];
+}
+
+// GetRuleVersionResponse 查询规则历史版本响应。
+message GetRuleVersionResponse {
+  // version 该版本（含 spec）。
+  RuleVersion version = 1;
+}
+
+// RollbackRuleRequest 回滚规则请求。
+message RollbackRuleRequest {
+  // id 规则唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // version 要回滚到的历史版本号。
+  int32 version = 2 [(buf.validate.field).int32.gte = 1];
+  // current_version 规则当前的版本号（乐观锁），须与当前一致。
+  int32 current_version = 3 [(buf.validate.field).int32.gte = 1];
+}
+
+// RollbackRuleResponse 回滚规则响应。
+message RollbackRuleResponse {
+  // rule 回滚后的规则（版本号为新版本）。
+  Rule rule = 1;
+}
+
+// ValidateRuleExprsRequest 校验规则表达式请求。
+message ValidateRuleExprsRequest {
+  // exprs 待校验的 PromQL，1-8 条，每条至多 8192 字符。
+  repeated string exprs = 1 [(buf.validate.field).repeated = {
+    min_items: 1
+    max_items: 8
+    items: {
+      string: {
+        min_len: 1
+        max_len: 8192
+      }
+    }
+  }];
+  // datasource_id 用于校验的数据源，可选；不传使用缺省数据源。
+  optional string datasource_id = 2 [(buf.validate.field).string.uuid = true];
+}
+
+// RuleExprResult 一条表达式的校验结果。
+message RuleExprResult {
+  // expr 表达式原文。
+  string expr = 1;
+  // valid 语法是否合法。
+  bool valid = 2;
+  // error 不合法的原因；合法时为空。
+  string error = 3;
+}
+
+// ValidateRuleExprsResponse 校验规则表达式响应。
+message ValidateRuleExprsResponse {
+  // results 逐条结果，顺序与请求一致。
+  repeated RuleExprResult results = 1;
+}
+
+// ImportRulesOptions 导入规则的公共选项（预览与导入共用，两次请求须一致）。
+message ImportRulesOptions {
+  option (buf.validate.message).cel = {
+    id: "monitor.rule.import.datasource_scope"
+    message: "datasource_ids must have 1-20 items when datasource_scope is 1 and be empty when it is 2"
+    expression: "this.datasource_scope == 1 ? size(this.datasource_ids) >= 1 : size(this.datasource_ids) == 0"
+  };
+
+  // content 导入内容原文，至多 1 MiB、500 条规则。两种格式自动识别（内容是带 `format` 键的 JSON 对象时按
+  // 本系统的 JSON 格式处理，其余按 YAML）：
+  //   - Prometheus / vmalert 告警规则 YAML（groups[].rules[]）：只导入告警规则（alert），记录规则
+  //     （record）跳过并在结果中说明；数据源范围、通知对象、默认级别取自本消息的其余字段。
+  //   - 本系统导出的 JSON（ExportRules format=json，`"format": "reborn.monitor.rules/v1"`）：规则的
+  //     全部字段取自文件。文件里引用的数据源、通知用户、值班表、部门按 ID 判断：存在且可用（数据源、
+  //     值班表须启用，用户须可用）则保留，否则丢弃并在预览的 warnings 里说明；指定的数据源全部被丢弃时改用
+  //     本消息的 datasource_scope / datasource_ids。本消息的 notify 非空时覆盖文件里的通知对象。
+  //     default_severity / severity_map 对 JSON 不起作用。目标分组恒为 group_id，是否启用由
+  //     ImportRulesRequest.enabled 决定。
+  string content = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_bytes: 1048576
+  }];
+  // group_id 导入到的规则分组；须对该分组「可管理」。
+  string group_id = 2 [(buf.validate.field).string.uuid = true];
+  // datasource_scope 导入规则的数据源范围：1=指定数据源 2=全部启用的数据源。
+  int32 datasource_scope = 3 [(buf.validate.field).int32 = {
+    in: [
+      1,
+      2
+    ]
+  }];
+  // datasource_ids 指定的数据源，范围为 1 时 1-20 个。
+  repeated string datasource_ids = 4 [(buf.validate.field).repeated = {
+    max_items: 20
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+  // default_severity 规则没有可识别的 severity 标签时采用的级别：1=提示 2=警告 3=严重 4=致命。
+  int32 default_severity = 5 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 4
+  }];
+  // notify 导入规则统一采用的通知对象，可选。
+  RuleNotify notify = 6;
+  // severity_map severity 标签取值 → 级别的对照表（仅 YAML），可选，至多 50 项：键为标签取值
+  // （不区分大小写，1-64 字符），值为级别 1-4。未命中时退回内置对照（critical / warning / info / P1 等
+  // 常见写法），再退回 default_severity。
+  map<string, int32> severity_map = 7 [(buf.validate.field).map = {
+    max_pairs: 50
+    keys: {
+      string: {
+        min_len: 1
+        max_len: 64
+      }
+    }
+    values: {
+      int32: {
+        gte: 1
+        lte: 4
+      }
+    }
+  }];
+}
+
+// ImportRuleItem 导入内容中的一条规则。
+message ImportRuleItem {
+  // index 在导入内容中的序号（从 0 起；YAML 跨组连续）。
+  int32 index = 1;
+  // source_group YAML 中所在的组名；JSON 为导出时所在分组的完整名称。
+  string source_group = 2;
+  // name 规则名称（YAML 的 alert 字段 / JSON 的 name）。
+  string name = 3;
+  // status 预览结论：new 可新建 / conflict 与分组内现有规则重名 / invalid 无法转换 / skipped 跳过（记录规则）。
+  string status = 4;
+  // spec 转换后的规则内容；status 为 invalid / skipped 时为空。
+  RuleSpec spec = 5;
+  // existing_rule_id 重名的现有规则；仅 status=conflict 时有值。
+  string existing_rule_id = 6;
+  // error 无法转换或跳过的原因。
+  string error = 7;
+  // warnings 转换时的提示（如无法识别的字段被忽略、级别取了缺省值）。
+  repeated string warnings = 8;
+}
+
+// PreviewImportRulesRequest 预览导入告警规则请求。
+message PreviewImportRulesRequest {
+  // options 导入选项。
+  ImportRulesOptions options = 1 [(buf.validate.field).required = true];
+}
+
+// PreviewImportRulesResponse 预览导入告警规则响应。
+message PreviewImportRulesResponse {
+  // items 逐条预览结果，至多 500 条（超出时请拆分文件）。
+  repeated ImportRuleItem items = 1;
+  // total 解析出的规则总数。
+  int32 total = 2;
+  // new_count 可新建的条数。
+  int32 new_count = 3;
+  // conflict_count 与现有规则重名的条数。
+  int32 conflict_count = 4;
+  // invalid_count 无法转换的条数。
+  int32 invalid_count = 5;
+  // skipped_count 跳过的条数。
+  int32 skipped_count = 6;
+}
+
+// ImportRulesRequest 导入告警规则请求。
+message ImportRulesRequest {
+  // options 导入选项。
+  ImportRulesOptions options = 1 [(buf.validate.field).required = true];
+  // on_conflict 与分组内现有规则重名时的处理：skip 跳过 / overwrite 覆盖现有规则（生成新版本）/
+  // rename 改名后新建（名称加序号）。
+  string on_conflict = 2 [(buf.validate.field).string = {
+    in: [
+      "skip",
+      "overwrite",
+      "rename"
+    ]
+  }];
+  // enabled 导入的规则是否立即启用；建议先停用导入、核对后再启用。
+  bool enabled = 3;
+}
+
+// ImportRuleResult 一条规则的导入结果。
+message ImportRuleResult {
+  // index 在 YAML 中的序号（与预览一致）。
+  int32 index = 1;
+  // name 规则名称（改名时为新名称）。
+  string name = 2;
+  // action 处理结果：created 已新建 / updated 已覆盖 / skipped 已跳过 / failed 失败。
+  string action = 3;
+  // rule_id 新建或被覆盖的规则；跳过与失败时为空。
+  string rule_id = 4;
+  // error 跳过或失败的原因。
+  string error = 5;
+}
+
+// ImportRulesResponse 导入告警规则响应。
+message ImportRulesResponse {
+  // results 逐条结果。
+  repeated ImportRuleResult results = 1;
+  // created 新建条数。
+  int32 created = 2;
+  // updated 覆盖条数。
+  int32 updated = 3;
+  // skipped 跳过条数。
+  int32 skipped = 4;
+  // failed 失败条数。
+  int32 failed = 5;
+}
+
+// ExportRulesRequest 导出告警规则请求：ids 与 group_id 至少给一个；都给时取交集。
+message ExportRulesRequest {
+  option (buf.validate.message).cel = {
+    id: "monitor.rule.export.non_empty"
+    message: "at least one of ids or group_id must be provided"
+    expression: "size(this.ids) > 0 || has(this.group_id)"
+  };
+
+  // ids 要导出的规则，至多 200 个，可选。
+  repeated string ids = 1 [(buf.validate.field).repeated = {
+    max_items: 200
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+  // group_id 导出该分组（含其全部下级）的规则，可选；至多导出 2000 条。
+  optional string group_id = 2 [(buf.validate.field).string.uuid = true];
+  // format 导出格式：yaml（缺省，留空同）= Prometheus / vmalert 告警规则 YAML；json = 本系统完整格式
+  // （见 ExportRulesResponse.content）。
+  string format = 3 [(buf.validate.field).string = {
+    in: [
+      "",
+      "yaml",
+      "json"
+    ]
+  }];
+}
+
+// ExportRulesResponse 导出告警规则响应。
+message ExportRulesResponse {
+  // content 导出内容。
+  //   - yaml：Prometheus / vmalert 告警规则 YAML，每个分组一个 group，级别写入 severity 标签，多档阈值的
+  //     规则按级别拆成多条；本系统特有的配置（生效时间、通知对象等）不在其中。
+  //   - json：`{"format": "reborn.monitor.rules/v1", "export_time": "<RFC 3339>", "rules": [...]}`。
+  //     rules 的每一项是一条规则的全部字段（字段名同 RuleSpec 的 proto 名，下划线风格），其中引用以
+  //     ID + 名称表示：`group: {id, name}`、`datasources: [{id, name}]`、
+  //     `notify: {users: [{id, name}], schedules: [{id, name}], depts: [{id, name}]}`。名称只供阅读，
+  //     导入时按 ID 识别。
+  string content = 1;
+  // filename 建议的文件名（随格式为 .yaml / .json）。
+  string filename = 2;
+  // count 导出的规则数。
+  int32 count = 3;
+}
+
+// EvalQueryDetail 一次评估中一条查询的执行情况。
+message EvalQueryDetail {
+  // index 查询在规则 queries 中的下标（从 0 起）。
+  int32 index = 1;
+  // severity 该查询的级别。
+  int32 severity = 2;
+  // series 查询返回的序列数。
+  int32 series = 3;
+  // truncated 序列数是否超过单次查询上限而被截断。
+  bool truncated = 4;
+  // error 查询错误；成功时为空。
+  string error = 5;
+}
+
+// EvalPoint 一次评估中的一个异常点及其判定结论。
+message EvalPoint {
+  // fingerprint 序列指纹。
+  string fingerprint = 1;
+  // labels 事件标签。
+  map<string, string> labels = 2;
+  // severity 级别。
+  int32 severity = 3;
+  // value 查询到的值（文本形式，可能为 NaN / +Inf / -Inf）。
+  string value = 4;
+  // step 判定结论：pending 异常但未满持续时长 / fired 本次触发 / firing 持续告警中 /
+  // muted_event 被屏蔽规则屏蔽，未产生事件 / muted_notify 已产生事件但通知被屏蔽 /
+  // inhibited 被同序列更高级别抑制 / recovering 已不异常，留观中 / resolved 本次判为恢复 /
+  // dropped 被条件丢弃，未产生事件 / out_of_scope 不在规则限定的资源范围内，未产生事件 /
+  // inhibited_rule 已产生事件但被抑制规则抑制 / inhibited_topology 已产生事件但上游资源正在告警 /
+  // muted_maintenance 已产生事件但关联资源处于维护态，通知被屏蔽。
+  string step = 5;
+  // alert_id 对应的告警事件，可空。
+  string alert_id = 6;
+  // mute_id 命中的屏蔽规则，可空。
+  string mute_id = 7;
+  // inhibit_alert_id 造成抑制的源告警事件（step 为 inhibited_rule / inhibited_topology 时），可空。
+  string inhibit_alert_id = 8;
+  // ci_id 关联到的 CMDB 资源，可空。
+  string ci_id = 9;
+}
+
+// RuleEvalRecord 一次评估的判定记录。
+message RuleEvalRecord {
+  // id 记录唯一标识。
+  string id = 1;
+  // rule_id 规则唯一标识。
+  string rule_id = 2;
+  // datasource_id 数据源唯一标识。
+  string datasource_id = 3;
+  // datasource_name 数据源名称。
+  string datasource_name = 4;
+  // eval_time 评估时间。
+  google.protobuf.Timestamp eval_time = 5;
+  // duration_ms 评估耗时毫秒。
+  int32 duration_ms = 6;
+  // status 评估结果：1=正常 2=告警中 3=无数据 4=查询错误 5=不在生效时间。
+  int32 status = 7;
+  // error 错误信息；无错误时为空。
+  string error = 8;
+  // series 查询返回的序列总数。
+  int32 series = 9;
+  // anomalies 判为异常的序列数。
+  int32 anomalies = 10;
+  // recovered 判为恢复的序列数。
+  int32 recovered = 11;
+  // queries 每条查询的执行情况。
+  repeated EvalQueryDetail queries = 12;
+  // points 异常点明细，至多 50 条。
+  repeated EvalPoint points = 13;
+  // points_truncated 异常点是否超过 50 条而被截断。
+  bool points_truncated = 14;
+}
+
+// ListRuleEvalRecordsRequest 查询规则判定记录请求。
+message ListRuleEvalRecordsRequest {
+  option (buf.validate.message).cel = {
+    id: "monitor.rule.eval_record.time_range"
+    message: "eval_time_start must be <= eval_time_end"
+    expression: "!has(this.eval_time_start) || !has(this.eval_time_end) || this.eval_time_start <= this.eval_time_end"
+  };
+
+  // id 规则唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // page 页码，从 1 开始。
+  int64 page = 2 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 3 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // datasource_id 数据源过滤，可选。
+  optional string datasource_id = 4 [(buf.validate.field).string.uuid = true];
+  // status 评估结果过滤，可选：1=正常 2=告警中 3=无数据 4=查询错误 5=不在生效时间。
+  optional int32 status = 5 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 5
+  }];
+  // eval_time_start 评估时间下界（含），可选；记录只保留 7 天。
+  optional google.protobuf.Timestamp eval_time_start = 6;
+  // eval_time_end 评估时间上界（含），可选。
+  optional google.protobuf.Timestamp eval_time_end = 7;
+}
+
+// ListRuleEvalRecordsResponse 查询规则判定记录响应。
+message ListRuleEvalRecordsResponse {
+  // items 当前页数据。
+  repeated RuleEvalRecord items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// MonitorTargetSchedule 可选的值班表。
+message MonitorTargetSchedule {
+  // id 值班表唯一标识。
+  string id = 1;
+  // name 值班表名称。
+  string name = 2;
+  // group_name 所属值班组名称。
+  string group_name = 3;
+}
+
+// MonitorTargetDept 可选的部门。
+message MonitorTargetDept {
+  // id 部门唯一标识。
+  string id = 1;
+  // name 部门名称。
+  string name = 2;
+  // parent_id 上级部门；顶级部门为空。按它组装成树。
+  string parent_id = 3;
+}
+
+// MonitorTargetUser 可选的用户（最小披露：不含手机号、邮箱）。
+message MonitorTargetUser {
+  // id 用户唯一标识。
+  string id = 1;
+  // username 登录名。
+  string username = 2;
+  // nickname 昵称，可能为空。
+  string nickname = 3;
+}
+
+// ListMonitorTargetOptionsRequest 查询通知对象候选项请求。
+message ListMonitorTargetOptionsRequest {
+  // keyword 用户的登录名 / 昵称模糊匹配，可选；只影响 users。
+  optional string keyword = 1 [(buf.validate.field).string.max_len = 64];
+  // kinds 要返回的候选项种类：schedule / dept / user，可选；不传返回全部三种。输入框逐字搜索用户时
+  // 只传 user，避免重复加载值班表与部门。
+  repeated string kinds = 2 [(buf.validate.field).repeated = {
+    max_items: 3
+    unique: true
+    items: {
+      string: {
+        in: [
+          "schedule",
+          "dept",
+          "user"
+        ]
+      }
+    }
+  }];
+}
+
+// ListMonitorTargetOptionsResponse 查询通知对象候选项响应。未请求的种类为空数组。
+message ListMonitorTargetOptionsResponse {
+  // schedules 启用的值班表，按值班组、名称排序。
+  repeated MonitorTargetSchedule schedules = 1;
+  // depts 全部部门（平铺，上级在前）。
+  repeated MonitorTargetDept depts = 2;
+  // users 可用用户，至多 50 个；更多请用 keyword 缩小范围。
+  repeated MonitorTargetUser users = 3;
+}
+
+// RuleTemplatePack 一个内置规则模板包。
+message RuleTemplatePack {
+  // code 模板包编码（如 node-exporter、mysql、redis、reborn-self）。
+  string code = 1;
+  // name 名称。
+  string name = 2;
+  // description 说明：适用对象、依赖的采集器（exporter）与指标。
+  string description = 3;
+  // category 类别：host 主机 / middleware 中间件 / database 数据库 / platform 本平台自监控。
+  string category = 4;
+  // rule_count 包内的规则条数。
+  int32 rule_count = 5;
+}
+
+// ListRuleTemplatePacksRequest 查询内置规则模板请求。
+message ListRuleTemplatePacksRequest {}
+
+// ListRuleTemplatePacksResponse 查询内置规则模板响应。
+message ListRuleTemplatePacksResponse {
+  // items 全部模板包，按类别、名称排序。
+  repeated RuleTemplatePack items = 1;
+}
+
+// RuleTemplateItem 模板包里的一条规则（摘要）。
+message RuleTemplateItem {
+  // name 规则名称。
+  string name = 1;
+  // expr PromQL 表达式。
+  string expr = 2;
+  // severity 级别：1=提示 2=警告 3=严重 4=致命。
+  int32 severity = 3;
+  // for_s 持续时长秒。
+  int32 for_s = 4;
+  // summary 规则说明（取自 annotations.summary / description）。
+  string summary = 5;
+}
+
+// GetRuleTemplatePackRequest 查询内置规则模板详情请求。
+message GetRuleTemplatePackRequest {
+  // code 模板包编码。
+  string code = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+    pattern: "^[a-z0-9][a-z0-9-]*$"
+  }];
+}
+
+// GetRuleTemplatePackResponse 查询内置规则模板详情响应。
+message GetRuleTemplatePackResponse {
+  // pack 模板包。
+  RuleTemplatePack pack = 1;
+  // rules 包内的规则，顺序与 content 一致。
+  repeated RuleTemplateItem rules = 2;
+  // content 规则 YAML 原文（Prometheus / vmalert 告警规则格式），可原样作为 ImportRulesOptions.content 导入。
+  string content = 3;
+}
+
+// SimulateRuleRequest 模拟触发告警规则请求。
+message SimulateRuleRequest {
+  // spec 规则内容（表单当前的内容，不要求已保存）。
+  RuleSpec spec = 1 [(buf.validate.field).required = true];
+  // datasource_id 在哪个数据源上执行查询；须在规则的数据源范围内（范围为全部数据源时任选一个已启用的）。
+  string datasource_id = 2 [(buf.validate.field).string.uuid = true];
+  // sample_labels 查询没有返回任何序列时用来合成事件的序列标签，可选，至多 30 个；规则的附加标签会自动合并进来。
+  map<string, string> sample_labels = 3 [(buf.validate.field).map = {
+    max_pairs: 30
+    keys: {
+      string: {
+        max_len: 128
+        pattern: "^[a-zA-Z_][a-zA-Z0-9_]*$"
+      }
+    }
+    values: {
+      string: {max_len: 256}
+    }
+  }];
+  // sample_value 合成事件的取值，可选，缺省 0。
+  double sample_value = 4;
+  // send 是否真实发送一条带 [TEST] 标记的通知（发给解析出的通知对象；不发给订阅者，不触发升级与事件动作）。
+  // false = 干跑，只返回各阶段的结果。
+  bool send = 5;
+  // rule_id 正在编辑的规则，可选：判断抑制时把它自己的活跃告警排除在外。
+  optional string rule_id = 6 [(buf.validate.field).string.uuid = true];
+}
+
+// SimulateStage 模拟触发的一个阶段的结论。
+message SimulateStage {
+  // stage 阶段，按处理顺序：query 查询 / effective 生效时间 / relabel 标签改写 / ci 关联资源与富化 /
+  // drop 条件丢弃 / scope 资源范围 / level_inhibit 级别抑制 / inhibit 规则间抑制与拓扑抑制 / mute 屏蔽 /
+  // notify 通知对象与订阅 / send 发送测试通知。
+  string stage = 1;
+  // status 结论：pass 通过 / warn 通过但有需要注意的情况 / block 事件在这一步被拦下（不会通知）/
+  // error 这一步出错 / skip 未执行（前面已被拦下，或未配置）。
+  string status = 2;
+  // message 说明（中文，直接展示）。
+  string message = 3;
+}
+
+// SimulateQueryResult 模拟触发中一条查询的执行结果。
+message SimulateQueryResult {
+  // index 查询在 spec.queries 中的下标（从 0 起）。
+  int32 index = 1;
+  // severity 该查询对应的级别。
+  int32 severity = 2;
+  // series 返回的序列数。
+  int32 series = 3;
+  // truncated 序列数超过上限被截断。
+  bool truncated = 4;
+  // error 查询出错的原文；成功为空。
+  string error = 5;
+  // duration_ms 查询耗时毫秒。
+  int32 duration_ms = 6;
+}
+
+// SimulateEvent 模拟触发得到的一个事件及其在各阶段的去向。
+message SimulateEvent {
+  // labels 事件标签的最终内容（改写与富化之后）。
+  map<string, string> labels = 1;
+  // source_labels 改写之前的标签（序列标签 + 规则附加标签）。
+  map<string, string> source_labels = 2;
+  // severity 级别。
+  int32 severity = 3;
+  // value 取值；NaN、正负无穷按 JSON 字符串返回。
+  double value = 4;
+  // fingerprint 事件指纹。
+  string fingerprint = 5;
+  // annotations 渲染后的附加信息。
+  map<string, string> annotations = 6;
+  // outcome 去向：notify 会通知 / dropped 被条件丢弃 / out_of_scope 不在资源范围内 / level_inhibited 被同序列更高级别抑制 /
+  // inhibited 被抑制规则或上游资源抑制 / muted_event 被屏蔽（不产生事件）/ muted_notify 被屏蔽（只屏蔽通知）/
+  // maintenance 关联资源处于维护态（只屏蔽通知）。
+  string outcome = 7;
+  // reason 去向的说明（命中的抑制规则 / 屏蔽规则名称、丢弃表达式出错的原因等）。
+  string reason = 8;
+  // ci_status 关联资源的结论：matched 已关联 / disabled 规则关闭了关联 / no_label 事件没有用于关联的标签 /
+  // not_found 没有对应的资源 / ambiguous 对应到多个资源 / unavailable 资源索引尚未就绪。
+  string ci_status = 9;
+  // ci 关联到的资源；未关联为空。
+  NamedRef ci = 10;
+  // inhibit_id 命中的抑制规则；拓扑抑制或未被抑制时为空。
+  string inhibit_id = 11;
+  // inhibit_alert_id 造成抑制的源告警事件。
+  string inhibit_alert_id = 12;
+  // mute_id 命中的屏蔽规则。
+  string mute_id = 13;
+}
+
+// SimulateSubscription 模拟触发中命中的一条订阅。
+message SimulateSubscription {
+  // id 订阅规则唯一标识。
+  string id = 1;
+  // name 订阅规则名称。
+  string name = 2;
+  // recipients 这条订阅会通知到的接收方（已去掉规则通知对象里已有的人）。
+  repeated NamedRef recipients = 3;
+}
+
+// SimulateEscalationLevel 模拟触发中升级策略一级的解析结果。
+message SimulateEscalationLevel {
+  // level 第几级。
+  int32 level = 1;
+  // after_m 告警持续多少分钟后升级到这一级。
+  int32 after_m = 2;
+  // trigger 触发条件：1=未认领 2=未恢复。
+  int32 trigger = 3;
+  // recipients 此刻解析出的通知对象。
+  repeated NamedRef recipients = 4;
+}
+
+// SimulateRuleResponse 模拟触发告警规则响应。
+message SimulateRuleResponse {
+  // stages 各阶段的结论，按处理顺序；针对 events 里的第一个事件给出。
+  repeated SimulateStage stages = 1;
+  // queries 各查询的执行结果。
+  repeated SimulateQueryResult queries = 2;
+  // synthetic 查询没有结果，事件是用 sample_labels 合成的。
+  bool synthetic = 3;
+  // in_effect 此刻是否在规则的生效时间内（不在时评估引擎不会评估，后续阶段仍照常模拟）。
+  bool in_effect = 4;
+  // events 事件及其去向，至多 20 个（查询结果多于 20 条序列时只取前 20 条）。
+  repeated SimulateEvent events = 5;
+  // event_total 查询得到的事件总数。
+  int32 event_total = 6;
+  // recipients 规则通知对象解析出的用户；为空表示事件不带收件人，交由通知管理的路由与订阅决定。
+  repeated NamedRef recipients = 7;
+  // recipient_notes 解析通知对象时的说明（如「值班表 X 当前无人值班」「资源负责人不是系统用户」）。
+  repeated string recipient_notes = 8;
+  // subscriptions 命中的订阅规则，至多 50 条。
+  repeated SimulateSubscription subscriptions = 9;
+  // escalation 规则引用的升级策略各级此刻解析出的通知对象；未引用为空。
+  repeated SimulateEscalationLevel escalation = 10;
+  // route_matched 通知管理里是否有路由能匹配这条规则的告警事件（没有时通知不会被投递）。
+  bool route_matched = 11;
+  // sent 测试通知是否已写入通知管道（send=true 且事件的去向是 notify 时）。
+  bool sent = 12;
+  // notify_event_ids 测试通知写入通知管道的事件 ID，可据此到「通知管理 → 事件」查看投递情况。
+  repeated string notify_event_ids = 13;
+}
+
+// MonitorTicketTemplateOption 可选的工单模板。
+message MonitorTicketTemplateOption {
+  // id 工单模板唯一标识。
+  string id = 1;
+  // name 模板名称。
+  string name = 2;
+  // category_name 所属服务目录名称。
+  string category_name = 3;
+}
+
+// MonitorWorkflowOption 可选的流程定义。
+message MonitorWorkflowOption {
+  // key 流程标识。
+  string key = 1;
+  // name 流程名称。
+  string name = 2;
+}
+
+// MonitorCIModelOption 可选的 CMDB 模型。
+message MonitorCIModelOption {
+  // code 模型编码。
+  string code = 1;
+  // name 模型名称。
+  string name = 2;
+}
+
+// ListMonitorRuleOptionsRequest 查询规则配置候选项请求。
+message ListMonitorRuleOptionsRequest {}
+
+// ListMonitorRuleOptionsResponse 查询规则配置候选项响应。
+message ListMonitorRuleOptionsResponse {
+  // ticket_templates 启用的工单模板。
+  repeated MonitorTicketTemplateOption ticket_templates = 1;
+  // workflows 有已发布版本的流程定义。
+  repeated MonitorWorkflowOption workflows = 2;
+  // ci_models 启用的 CMDB 模型。
+  repeated MonitorCIModelOption ci_models = 3;
+  // ci_envs 资源上出现过的环境取值。
+  repeated string ci_envs = 4;
+  // ci_match_attrs 可用于关联的资源属性（部署配置里登记的，缺省只有 ip）。
+  repeated string ci_match_attrs = 5;
+  // ai_available 智能助手是否已配置模型密钥（未配置时 AI 摘要不会生成）。
+  bool ai_available = 6;
+}

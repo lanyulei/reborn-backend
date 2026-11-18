@@ -1,0 +1,64 @@
+# 监控告警评估引擎启动配置；密钥类字段（数据库口令、主密钥）一律从环境变量注入，
+# 禁止在本文件写入明文。
+#
+# 本地运行（在 backend/monitor 目录）：
+#   1. 数据库先迁移到 0076 及以后（backend/core: make migrate）；发布顺序：迁移 → core → 引擎。
+#   2. export KRATOS_DATA_DATABASE_SOURCE='<DSN>'
+#      本地开发的 DSN 与 core 相同，取 backend/core/configs/config.yaml 的
+#      data.database.source 的值（本文件不重复该值）。未设置时启动即失败：
+#      "database source is required"。
+#   3. 可选：export KRATOS_NOTIFY_MASTER_KEY=<与 core 相同的主密钥>（数据源带 Basic / Bearer 凭据时需要）。
+#   4. make run（kratos run），或 go run ./cmd/monitor -conf configs
+#   5. curl http://127.0.0.1:8040/healthz
+server:
+  http:
+    # 8010 为 core、8020 为通知管道、8030 为 CMDB 数据面；评估引擎走 8040，只暴露 /healthz 与 /metrics。
+    addr: 0.0.0.0:8040
+    timeout: 5s
+data:
+  database:
+    # 与 core 同库。占位符由环境变量 KRATOS_DATA_DATABASE_SOURCE 填充（kratos env 源去掉
+    # KRATOS_ 前缀后注入为 DATA_DATABASE_SOURCE 键）；生产环境使用 monitor_engine_role
+    # 成员账号（见 core/migrations/0069）。
+    source: ${DATA_DATABASE_SOURCE}
+    # 须大于 evaluator.concurrency + 3（选主锁各占一个专用连接）。
+    max_conns: 16
+    min_conns: 2
+    max_conn_idle_time: 1800s
+engine:
+  # roles 为空 = 全部角色（planner / evaluator）；部署时用 SERVER_ROLES=evaluator 等覆盖。
+  roles: []
+  planner:
+    materialize_interval: 5s
+    probe_interval: 30s
+    probe_timeout: 5s
+    watch_interval: 30s            # 自监控检测周期
+    datasource_down_after: 300s    # 探活连续失败这么久 → monitor.engine.datasource_down
+    rule_failing_after: 600s       # 连续查询错误这么久（且 ≥ rule_failing_min_failures 次）→ monitor.engine.rule_failing
+    rule_failing_min_failures: 3
+    instance_stale_after: 3600s    # 心跳行多久没更新即清理
+  evaluator:
+    poll_interval: 1s
+    concurrency: 4
+    batch: 10
+    lease: 60s
+    max_series: 2000
+    query_timeout_max: 30s
+    inhibit_refresh_interval: 5s   # 抑制快照（活跃告警）的刷新周期
+    inhibit_max_alerts: 20000
+    max_ci: 100000                 # 资源索引最多加载的资源数
+    command_interval: 2s           # 事件指令（手动关闭）的轮询周期
+    command_batch: 100
+  recorder:
+    concurrency: 1
+    batch: 10
+  heartbeat_interval: 10s
+  maintenance:
+    interval: 3600s
+    partitions_ahead: 2
+    eval_record_retention: 604800s  # 7d
+    alert_retention: 15552000s      # 180d；0s = 不删除
+notify:
+  master:
+    # 与 core 同一主密钥：export KRATOS_NOTIFY_MASTER_KEY=...
+    key: ${NOTIFY_MASTER_KEY}

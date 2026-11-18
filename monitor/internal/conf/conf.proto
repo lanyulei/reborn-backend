@@ -1,0 +1,152 @@
+syntax = "proto3";
+
+package conf;
+
+import "google/protobuf/duration.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/monitor/internal/conf;conf";
+
+// Bootstrap 是监控告警评估引擎启动配置的根结构，对应 configs/*.yaml。
+message Bootstrap {
+  // server HTTP 服务器（仅 /healthz /metrics；引擎不暴露业务接口）。
+  Server server = 1;
+  // data 数据层资源配置（与 core 同库，monitor_engine_role 成员账号）。
+  Data data = 2;
+  // engine 评估引擎参数（角色、任务物化与探活、评估、维护）。
+  Engine engine = 3;
+  // notify 数据源凭据解密主密钥（与 core notify.master.key 同一密钥）。
+  Notify notify = 4;
+}
+
+// Server 是 HTTP 服务器配置。
+message Server {
+  // HTTP 是 HTTP 服务器配置。
+  message HTTP {
+    // network 监听网络类型，如 tcp；留空使用默认值。
+    string network = 1;
+    // addr 监听地址，缺省端口 8040（8010 core / 8020 通知管道 / 8030 CMDB 数据面）。
+    string addr = 2;
+    // timeout 请求处理超时。
+    google.protobuf.Duration timeout = 3;
+  }
+  // http HTTP 配置。
+  HTTP http = 1;
+}
+
+// Data 是数据层资源配置；密钥类字段一律从环境变量注入。
+message Data {
+  // Database 是 PostgreSQL 连接池配置（pgx）。
+  message Database {
+    // source 数据源 DSN；一律经环境变量 KRATOS_DATA_DATABASE_SOURCE 注入，
+    // 配置文件里只写占位符 ${DATA_DATABASE_SOURCE}。为空时启动失败。
+    string source = 1;
+    // max_conns 最大连接数；0 使用驱动默认值。须大于 evaluator.concurrency + 3
+    // （每条评估循环一个连接，另有选主锁各占一个专用连接）。
+    int32 max_conns = 2;
+    // min_conns 最小空闲连接数；0 使用驱动默认值。
+    int32 min_conns = 3;
+    // max_conn_idle_time 连接最大空闲时长；未设置使用驱动默认值。
+    google.protobuf.Duration max_conn_idle_time = 4;
+  }
+  // database 数据库配置。
+  Database database = 1;
+}
+
+// Engine 是评估引擎参数。全部 Duration 采用 protojson 秒格式（如 0.2s）；
+// 未设置或 ≤0 的数值与时长取各字段注明的缺省值（alert_retention 的 0 另有含义）。
+message Engine {
+  // Planner 规划器（选主单实例，PG advisory lock）参数：任务物化与数据源探活。
+  message Planner {
+    // materialize_interval 任务物化周期：为「启用规则 × 其生效的启用数据源」补评估任务、
+    // 删除不再成立的任务并关闭其活跃告警。缺省 5s。
+    google.protobuf.Duration materialize_interval = 1;
+    // probe_interval 数据源探活周期：对启用数据源执行一次 query=1 并写健康状态。缺省 30s。
+    google.protobuf.Duration probe_interval = 2;
+    // probe_timeout 单次探活请求超时。缺省 5s。
+    google.protobuf.Duration probe_timeout = 3;
+    // watch_interval 自监控检测周期：数据源持续不可用、规则持续评估失败的检测，以及过期心跳行的清理。缺省 30s。
+    google.protobuf.Duration watch_interval = 4;
+    // datasource_down_after 数据源探活连续失败多久后写一条 monitor.engine.datasource_down 事件。缺省 5m（300s）。
+    google.protobuf.Duration datasource_down_after = 5;
+    // rule_failing_after 评估任务连续查询错误多久后写一条 monitor.engine.rule_failing 事件
+    // （其数据源须同样长时间保持可用：数据源不可用期间只报数据源）。缺省 10m（600s）。
+    google.protobuf.Duration rule_failing_after = 6;
+    // rule_failing_min_failures 写 rule_failing 事件所需的最少连续失败次数。缺省 3。
+    int32 rule_failing_min_failures = 7;
+    // instance_stale_after 心跳行（monitor_engine_instance）多久没有更新即被清理。缺省 1h（3600s）。
+    google.protobuf.Duration instance_stale_after = 8;
+  }
+  // Evaluator 评估器参数：领取评估任务、查询数据源、推进状态机。
+  message Evaluator {
+    // poll_interval 无到期任务时的轮询周期（有任务时连续领取）。缺省 1s。
+    google.protobuf.Duration poll_interval = 1;
+    // concurrency 单实例评估循环数（每条循环独立领取并处理一批任务）。缺省 4。
+    int32 concurrency = 2;
+    // batch 每条循环单次领取的任务数上限。缺省 10。
+    int32 batch = 3;
+    // lease 任务租约下限；实际租约 = max(lease, 3 × 该任务数据源的查询超时 + 10s)，
+    // 过期的任务可被其他实例重领。缺省 60s。
+    google.protobuf.Duration lease = 4;
+    // max_series 单条查询返回的序列数上限，超出截断并在判定记录中标记。缺省 2000。
+    int32 max_series = 5;
+    // query_timeout_max 单次查询超时的上限（数据源自身的 timeout_ms 超过它时按它截断）。缺省 30s。
+    google.protobuf.Duration query_timeout_max = 6;
+    // inhibit_refresh_interval 抑制判定所用的活跃告警快照的刷新周期（抑制的生效 / 解除最多滞后
+    // 该周期 + 规则自身的评估周期）。缺省 5s。
+    google.protobuf.Duration inhibit_refresh_interval = 7;
+    // inhibit_max_alerts 抑制快照最多装入的活跃告警数（按事件 ID 升序即先触发的优先）；超出的告警
+    // 仍可被抑制，但不能作为抑制源。缺省 20000。
+    int32 inhibit_max_alerts = 8;
+    // max_ci 资源索引（monitor_ci_index）最多加载的有效资源数（按资源 ID 升序）；超出的资源不参与
+    // 关联 / 富化 / 维护态屏蔽 / 拓扑抑制。缺省 100000。
+    int32 max_ci = 9;
+    // command_interval 事件指令（monitor_alert_cmd：手动关闭）的轮询周期。缺省 2s。
+    google.protobuf.Duration command_interval = 10;
+    // command_batch 每轮至多处理的事件指令数。缺省 100。
+    int32 command_batch = 11;
+  }
+  // Recorder 记录规则执行器参数（随 evaluator 角色运行；任务物化随 planner 角色）。
+  message Recorder {
+    // concurrency 单实例记录规则循环数。缺省 1。
+    int32 concurrency = 1;
+    // batch 每条循环单次领取的任务数上限（也是循环内并发执行的任务数）。缺省 10。
+    int32 batch = 2;
+  }
+  // Maintenance 维护任务（选主单实例，独立的 advisory lock）参数。
+  message Maintenance {
+    // interval 执行周期（启动即先跑一轮）。缺省 1h。
+    google.protobuf.Duration interval = 1;
+    // partitions_ahead 判定记录表预建的未来分区天数。缺省 2。
+    int32 partitions_ahead = 2;
+    // eval_record_retention 判定记录保留期，到期整分区删除。缺省 7d（604800s）。
+    google.protobuf.Duration eval_record_retention = 3;
+    // alert_retention 非活跃告警及其通知记录、已派发发件箱行的保留期。
+    // 未设置缺省 180d（15552000s）；显式设为 0s = 不删除。
+    google.protobuf.Duration alert_retention = 4;
+  }
+  // roles 启用的组件角色：planner / evaluator；环境变量 SERVER_ROLES（逗号分隔）优先；
+  // 两者皆空 = 全部角色。
+  repeated string roles = 1;
+  // planner 规划器参数。
+  Planner planner = 2;
+  // evaluator 评估器参数。
+  Evaluator evaluator = 3;
+  // maintenance 维护参数（随 planner 角色运行）。
+  Maintenance maintenance = 4;
+  // recorder 记录规则执行器参数。
+  Recorder recorder = 5;
+  // heartbeat_interval 实例心跳（monitor_engine_instance）的写入周期，所有角色都写。缺省 10s。
+  google.protobuf.Duration heartbeat_interval = 6;
+}
+
+// Notify 是凭据解密配置（复用通知域主密钥：数据源的 Basic 密码 / Bearer 令牌由 core 用同一密钥加密）。
+message Notify {
+  // Master 是主密钥配置。
+  message Master {
+    // key AES-256-GCM 主密钥；经 KRATOS_NOTIFY_MASTER_KEY 环境变量注入。
+    // 为空时：带凭据的数据源无法解密，对它的探活与评估记为失败；无凭据的数据源不受影响。
+    string key = 1;
+  }
+  // master 主密钥。
+  Master master = 1;
+}

@@ -158,7 +158,7 @@ JSON 体 `{event_id, biz_id, event_type, severity, title, subject, body, payload
   对真实地址再校验（任一地址私网即拒绝，免疫 DNS 重绑定），429/503/408 的 `Retry-After` 透传给退避（上限 2h），
   幂等键同时放 `Idempotency-Key`；接收端校验请 import `backend/notify/pkg/webhooksig`（`VerifyWithin` 含时间窗）。
 - **模板函数白名单**（core 校验与管道渲染同一集合 `kit/notifycontract.TemplateFuncs`）：`fmtTime t [layout]`、
-  `severity n`（info/warning/error/critical）、`json v`、`trunc s n`、`upper`、`lower`；缺省正文群机器人紧凑版、
+  `severity n`（info/warning/critical/fatal）、`json v`、`trunc s n`、`upper`、`lower`；缺省正文群机器人紧凑版、
   邮件/webhook 多行版，载荷以 JSON 打印；非对象载荷注入为 `{"_raw": …}`。
 - 控制面按 biz 隔离只约束 notify 域接口；system 域（用户/角色）权限模型不变。
 

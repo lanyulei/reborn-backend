@@ -1,0 +1,101 @@
+syntax = "proto3";
+
+package monitor.v1;
+
+import "buf/validate/validate.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/monitor/v1;v1";
+
+// 监控告警域各接口共用的消息。取值约定（各处通用，不再逐字段重复）：
+//   - 级别 severity：1=提示 2=警告 3=严重 4=致命。
+//   - 数据范围级别 level：0=无权限 1=只读 2=可管理。
+//   - 标签名须符合 Prometheus 标签名规则：字母或下划线开头，只含字母、数字、下划线。
+
+// NamedRef 被引用对象的 ID 与显示名（用户、值班表、部门、规则分组、规则、数据源），
+// 列表与详情随主体一并返回，前端无需再按 ID 查询名称。
+message NamedRef {
+  // id 对象唯一标识。
+  string id = 1;
+  // name 显示名：用户为昵称（无昵称时为登录名），其余为对象名称；对象已不存在时为空。
+  string name = 2;
+  // missing 对象已被删除或不可用（用户停用、值班表停用等）；这类引用不再生效。
+  bool missing = 3;
+}
+
+// LabelMatcher 一行事件标签匹配条件；多行之间是「并且」。事件标签 = 查询返回的序列标签
+// （去掉 __name__）+ 规则的附加标签。事件上不存在的标签按空字符串参与比较。
+message LabelMatcher {
+  // label 标签名。
+  string label = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+    pattern: "^[a-zA-Z_][a-zA-Z0-9_]*$"
+  }];
+  // op 操作符：== 等于 / != 不等于 / =~ 正则匹配 / !~ 正则不匹配 / in 属于 / not in 不属于。
+  // 正则按 RE2 语法、匹配完整标签值（等价于首尾加 ^ $）。
+  string op = 2 [(buf.validate.field).string = {
+    in: [
+      "==",
+      "!=",
+      "=~",
+      "!~",
+      "in",
+      "not in"
+    ]
+  }];
+  // value 比较值或正则，op 为 == / != / =~ / !~ 时使用，至多 256 字节；op 为 in / not in 时须为空。
+  string value = 3 [(buf.validate.field).string.max_bytes = 256];
+  // values 取值集合，op 为 in / not in 时使用，1-50 个，每个至多 256 字节；其余操作符须为空。
+  repeated string values = 4 [(buf.validate.field).repeated = {
+    max_items: 50
+    unique: true
+    items: {
+      string: {max_bytes: 256}
+    }
+  }];
+}
+
+// TimeWindow 一个按周重复的时间窗。
+message TimeWindow {
+  // days 星期几，1-7 表示周一至周日，至少一天；跨午夜的时间窗以开始那一天为准。
+  repeated int32 days = 1 [(buf.validate.field).repeated = {
+    min_items: 1
+    max_items: 7
+    unique: true
+    items: {
+      int32: {
+        gte: 1
+        lte: 7
+      }
+    }
+  }];
+  // start 开始时刻（含），24 小时制 HH:MM。
+  string start = 2 [(buf.validate.field).string.pattern = "^([01][0-9]|2[0-3]):[0-5][0-9]$"];
+  // end 结束时刻（不含），24 小时制 HH:MM；早于 start 表示跨午夜到次日，等于 start 表示全天。
+  string end = 3 [(buf.validate.field).string.pattern = "^([01][0-9]|2[0-3]):[0-5][0-9]$"];
+}
+
+// EffectiveTime 按周重复的生效时间：用于规则的生效时间与屏蔽规则的周期时间。
+message EffectiveTime {
+  option (buf.validate.message).cel = {
+    id: "monitor.effective.mode_windows"
+    message: "windows must be empty when mode is work_time or off_time"
+    expression: "(this.mode != 'work_time' && this.mode != 'off_time') || size(this.windows) == 0"
+  };
+
+  // timezone IANA 时区名，如 Asia/Shanghai；时间窗按该时区的本地时间判定，空按 UTC。
+  string timezone = 1 [(buf.validate.field).string.max_len = 64];
+  // windows 时间窗，至多 10 个，命中任意一个即生效；为空表示全时段生效。
+  repeated TimeWindow windows = 2 [(buf.validate.field).repeated.max_items = 10];
+  // mode 生效方式，仅规则的生效时间使用（屏蔽规则的周期时间须留空）：留空或 windows 按 windows 判定；
+  // work_time 仅工作时间、off_time 仅非工作时间——按流程中心的工作日历（工作日、每日工作时段、节假日与
+  // 调休）判定，此时 windows 须为空、timezone 不起作用（以日历的时区为准）。工作日历尚未配置时两者都视为生效。
+  string mode = 3 [(buf.validate.field).string = {
+    in: [
+      "",
+      "windows",
+      "work_time",
+      "off_time"
+    ]
+  }];
+}

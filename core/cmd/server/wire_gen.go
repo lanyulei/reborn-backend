@@ -9,28 +9,38 @@ package main
 import (
 	"github.com/go-kratos/kratos/v3"
 	biz3 "github.com/lanyulei/reborn/backend/core/internal/biz"
-	biz8 "github.com/lanyulei/reborn/backend/core/internal/biz/assistant"
-	biz9 "github.com/lanyulei/reborn/backend/core/internal/biz/cmdb"
-	biz7 "github.com/lanyulei/reborn/backend/core/internal/biz/file"
+	biz10 "github.com/lanyulei/reborn/backend/core/internal/biz/assistant"
+	biz11 "github.com/lanyulei/reborn/backend/core/internal/biz/cmdb"
+	biz9 "github.com/lanyulei/reborn/backend/core/internal/biz/file"
+	biz6 "github.com/lanyulei/reborn/backend/core/internal/biz/job"
+	biz7 "github.com/lanyulei/reborn/backend/core/internal/biz/k8s"
+	biz12 "github.com/lanyulei/reborn/backend/core/internal/biz/monitor"
 	biz2 "github.com/lanyulei/reborn/backend/core/internal/biz/notify"
-	biz6 "github.com/lanyulei/reborn/backend/core/internal/biz/oncall"
+	biz8 "github.com/lanyulei/reborn/backend/core/internal/biz/oncall"
 	"github.com/lanyulei/reborn/backend/core/internal/biz/system"
 	biz4 "github.com/lanyulei/reborn/backend/core/internal/biz/ticket"
 	biz5 "github.com/lanyulei/reborn/backend/core/internal/biz/workflow"
 	"github.com/lanyulei/reborn/backend/core/internal/conf"
 	"github.com/lanyulei/reborn/backend/core/internal/data"
-	data8 "github.com/lanyulei/reborn/backend/core/internal/data/assistant"
-	data9 "github.com/lanyulei/reborn/backend/core/internal/data/cmdb"
+	data10 "github.com/lanyulei/reborn/backend/core/internal/data/assistant"
+	data11 "github.com/lanyulei/reborn/backend/core/internal/data/cmdb"
 	data4 "github.com/lanyulei/reborn/backend/core/internal/data/file"
+	data7 "github.com/lanyulei/reborn/backend/core/internal/data/job"
+	data8 "github.com/lanyulei/reborn/backend/core/internal/data/k8s"
+	data12 "github.com/lanyulei/reborn/backend/core/internal/data/monitor"
 	data3 "github.com/lanyulei/reborn/backend/core/internal/data/notify"
-	data7 "github.com/lanyulei/reborn/backend/core/internal/data/oncall"
+	data9 "github.com/lanyulei/reborn/backend/core/internal/data/oncall"
 	data2 "github.com/lanyulei/reborn/backend/core/internal/data/system"
 	data5 "github.com/lanyulei/reborn/backend/core/internal/data/ticket"
 	data6 "github.com/lanyulei/reborn/backend/core/internal/data/workflow"
+	"github.com/lanyulei/reborn/backend/core/internal/pkg/k8splane"
 	"github.com/lanyulei/reborn/backend/core/internal/server"
 	service3 "github.com/lanyulei/reborn/backend/core/internal/service/assistant"
 	service4 "github.com/lanyulei/reborn/backend/core/internal/service/cmdb"
 	service6 "github.com/lanyulei/reborn/backend/core/internal/service/file"
+	service10 "github.com/lanyulei/reborn/backend/core/internal/service/job"
+	service11 "github.com/lanyulei/reborn/backend/core/internal/service/k8s"
+	service9 "github.com/lanyulei/reborn/backend/core/internal/service/monitor"
 	service2 "github.com/lanyulei/reborn/backend/core/internal/service/notify"
 	service5 "github.com/lanyulei/reborn/backend/core/internal/service/oncall"
 	"github.com/lanyulei/reborn/backend/core/internal/service/system"
@@ -50,7 +60,7 @@ import (
 // data 层因共享 Data 类型不能在顶层聚合各域（避免 import 环），
 // 各域 data ProviderSet 在此显式列出；biz/service 顶层已聚合。
 // service 层消费的 biz 窄接口（AdminResolver ← UserUsecase）在组合根绑定，避免 biz 反向依赖 service。
-func wireApp(confServer *conf.Server, confData *conf.Data, security *conf.Security, notify *conf.Notify, assistant *conf.Assistant, logger *slog.Logger) (*kratos.App, func(), error) {
+func wireApp(confServer *conf.Server, confData *conf.Data, security *conf.Security, notify *conf.Notify, assistant *conf.Assistant, monitor *conf.Monitor, k8S *conf.K8S, logger *slog.Logger) (*kratos.App, func(), error) {
 	roles, err := server.NewRoles(confServer, logger)
 	if err != nil {
 		return nil, nil, err
@@ -121,15 +131,19 @@ func wireApp(confServer *conf.Server, confData *conf.Data, security *conf.Securi
 	users := biz3.NewWorkflowUsers(directoryUsecase)
 	calendarUsecase := biz5.NewCalendarUsecase(configRepo)
 	statusSyncer := biz4.NewStatusSyncer(ticketRepo, ticketRepo)
-	listeners := biz3.NewWorkflowListeners(statusSyncer)
-	viewers := biz3.NewWorkflowViewers(access)
-	scheduleRepo := data7.NewScheduleRepo(dataData)
-	shiftRepo := data7.NewShiftRepo(dataData)
-	dutyUsecase := biz6.NewDutyUsecase(scheduleRepo, shiftRepo)
+	executionRepo := data7.NewExecutionRepo(dataData)
+	approvalSyncer := biz6.NewApprovalSyncer(executionRepo)
+	changeRepo := data8.NewChangeRepo(dataData)
+	changeSyncer := biz7.NewChangeSyncer(changeRepo, authzUsecase)
+	listeners := biz3.NewWorkflowListeners(statusSyncer, approvalSyncer, changeSyncer)
+	viewers := biz3.NewWorkflowViewers(access, authzUsecase)
+	scheduleRepo := data9.NewScheduleRepo(dataData)
+	shiftRepo := data9.NewShiftRepo(dataData)
+	dutyUsecase := biz8.NewDutyUsecase(scheduleRepo, shiftRepo)
 	runtimeUsecase := biz5.NewRuntimeUsecase(definitionUsecase, instanceRepo, instanceRepo, instanceRepo, directoryUsecase, users, configRepo, calendarUsecase, txManager, notificationUsecase, listeners, viewers, dutyUsecase)
 	fileAccess := biz4.NewFileAccess(access, runtimeUsecase)
 	accessCheckers := biz3.NewFileAccessCheckers(fileAccess)
-	usecase, err := biz7.NewUsecase(fileRepo, fileRepo, fileRepo, stores, accessCheckers)
+	usecase, err := biz9.NewUsecase(fileRepo, fileRepo, fileRepo, stores, accessCheckers)
 	if err != nil {
 		cleanup()
 		return nil, nil, err
@@ -179,70 +193,70 @@ func wireApp(confServer *conf.Server, confData *conf.Data, security *conf.Securi
 	deadLetterRepo := data3.NewDeadLetterRepo(dataData)
 	deadLetterUsecase := biz2.NewDeadLetterUsecase(deadLetterRepo)
 	notifyDeadLetterService := service2.NewNotifyDeadLetterService(deadLetterUsecase, channelUsecase, authzUsecase)
-	conversationRepo := data8.NewConversationRepo(dataData)
-	messageRepo := data8.NewMessageRepo(dataData)
-	toolCallRepo := data8.NewToolCallRepo(dataData)
-	conversationUsecase := biz8.NewConversationUsecase(conversationRepo, messageRepo, toolCallRepo)
+	conversationRepo := data10.NewConversationRepo(dataData)
+	messageRepo := data10.NewMessageRepo(dataData)
+	toolCallRepo := data10.NewToolCallRepo(dataData)
+	conversationUsecase := biz10.NewConversationUsecase(conversationRepo, messageRepo, toolCallRepo)
 	assistantService := service3.NewAssistantService(conversationUsecase)
-	chatModelClient := data8.NewChatModel(assistant)
-	loopbackInvoker := data8.NewLoopbackInvoker(assistant)
+	chatModelClient := data10.NewChatModel(assistant)
+	loopbackInvoker := data10.NewLoopbackInvoker(assistant)
 	toolCatalog, err := service3.NewToolCatalog()
 	if err != nil {
 		cleanup()
 		return nil, nil, err
 	}
-	agentConfig := biz8.NewAgentConfig(assistant)
-	agentUsecase := biz8.NewAgentUsecase(conversationRepo, messageRepo, toolCallRepo, chatModelClient, loopbackInvoker, authzUsecase, userUsecase, toolCatalog, agentConfig, logger)
+	agentConfig := biz10.NewAgentConfig(assistant)
+	agentUsecase := biz10.NewAgentUsecase(conversationRepo, messageRepo, toolCallRepo, chatModelClient, loopbackInvoker, authzUsecase, userUsecase, toolCatalog, agentConfig, logger)
 	assistantChatService := service3.NewAssistantChatService(agentUsecase)
-	modelRepo := data9.NewModelRepo(dataData)
-	fieldRepo := data9.NewFieldRepo(dataData)
-	relationTypeRepo := data9.NewRelationTypeRepo(dataData)
-	relationRepo := data9.NewRelationRepo(dataData)
-	viewRepo := data9.NewViewRepo(dataData)
-	attrIndexer := data9.NewAttrIndexer(dataData)
-	groupRepo := data9.NewGroupRepo(dataData)
-	schemaAuditRepo := data9.NewSchemaAuditRepo(dataData)
-	uniqueRuleRepo := data9.NewUniqueRuleRepo(fieldRepo)
-	modelUsecase := biz9.NewModelUsecase(modelRepo, fieldRepo, relationTypeRepo, relationRepo, viewRepo, attrIndexer, groupRepo, schemaAuditRepo, uniqueRuleRepo)
-	scopeRepo := data9.NewScopeRepo(dataData)
-	scopeUsecase := biz9.NewScopeUsecase(scopeRepo, authzUsecase, roleUsecase, modelRepo)
+	modelRepo := data11.NewModelRepo(dataData)
+	fieldRepo := data11.NewFieldRepo(dataData)
+	relationTypeRepo := data11.NewRelationTypeRepo(dataData)
+	relationRepo := data11.NewRelationRepo(dataData)
+	viewRepo := data11.NewViewRepo(dataData)
+	attrIndexer := data11.NewAttrIndexer(dataData)
+	groupRepo := data11.NewGroupRepo(dataData)
+	schemaAuditRepo := data11.NewSchemaAuditRepo(dataData)
+	uniqueRuleRepo := data11.NewUniqueRuleRepo(fieldRepo)
+	modelUsecase := biz11.NewModelUsecase(modelRepo, fieldRepo, relationTypeRepo, relationRepo, viewRepo, attrIndexer, groupRepo, schemaAuditRepo, uniqueRuleRepo)
+	scopeRepo := data11.NewScopeRepo(dataData)
+	scopeUsecase := biz11.NewScopeUsecase(scopeRepo, authzUsecase, roleUsecase, modelRepo)
 	cmdbModelService := service4.NewCmdbModelService(modelUsecase, scopeUsecase)
-	ciRepo := data9.NewCIRepo(dataData)
-	historyRepo := data9.NewHistoryRepo(dataData)
-	relationUsecase := biz9.NewRelationUsecase(relationTypeRepo, ciRepo, relationRepo, fieldRepo)
-	ciUsecase := biz9.NewCIUsecase(modelRepo, fieldRepo, relationTypeRepo, ciRepo, relationRepo, historyRepo, relationUsecase, ciRepo)
+	ciRepo := data11.NewCIRepo(dataData)
+	historyRepo := data11.NewHistoryRepo(dataData)
+	relationUsecase := biz11.NewRelationUsecase(relationTypeRepo, ciRepo, relationRepo, fieldRepo)
+	ciUsecase := biz11.NewCIUsecase(modelRepo, fieldRepo, relationTypeRepo, ciRepo, relationRepo, historyRepo, relationUsecase, ciRepo)
 	cmdbCIService := service4.NewCmdbCIService(ciUsecase, scopeUsecase)
 	cmdbRelationService := service4.NewCmdbRelationService(relationUsecase, ciUsecase, scopeUsecase)
 	cmdbScopeService := service4.NewCmdbScopeService(scopeUsecase)
-	syncSourceRepo := data9.NewSyncSourceRepo(dataData)
-	syncTaskRepo := data9.NewSyncTaskRepo(dataData)
-	syncRunRepo := data9.NewSyncRunRepo(dataData)
-	syncSecretBox, err := data9.NewSyncSecretBox(notify)
+	syncSourceRepo := data11.NewSyncSourceRepo(dataData)
+	syncTaskRepo := data11.NewSyncTaskRepo(dataData)
+	syncRunRepo := data11.NewSyncRunRepo(dataData)
+	syncSecretBox, err := data11.NewSyncSecretBox(notify)
 	if err != nil {
 		cleanup()
 		return nil, nil, err
 	}
-	syncUsecase := biz9.NewSyncUsecase(syncSourceRepo, syncTaskRepo, syncRunRepo, syncSecretBox)
+	syncUsecase := biz11.NewSyncUsecase(syncSourceRepo, syncTaskRepo, syncRunRepo, syncSecretBox)
 	cmdbSyncService := service4.NewCmdbSyncService(syncUsecase, ciUsecase, scopeUsecase)
-	favoriteRepo := data9.NewFavoriteRepo(dataData)
-	overviewRepo := data9.NewOverviewRepo(dataData)
-	ciViewRepo := data9.NewCIViewRepo(dataData)
-	insightUsecase := biz9.NewInsightUsecase(groupRepo, favoriteRepo, overviewRepo, schemaAuditRepo, modelRepo, ciViewRepo)
+	favoriteRepo := data11.NewFavoriteRepo(dataData)
+	overviewRepo := data11.NewOverviewRepo(dataData)
+	ciViewRepo := data11.NewCIViewRepo(dataData)
+	insightUsecase := biz11.NewInsightUsecase(groupRepo, favoriteRepo, overviewRepo, schemaAuditRepo, modelRepo, ciViewRepo)
 	cmdbInsightService := service4.NewCmdbInsightService(insightUsecase, scopeUsecase)
-	store := data7.NewStore(dataData)
-	dataGroupRepo := data7.NewGroupRepo(dataData)
-	groupUsecase := biz6.NewGroupUsecase(store, dataGroupRepo, dataGroupRepo)
+	store := data9.NewStore(dataData)
+	dataGroupRepo := data9.NewGroupRepo(dataData)
+	groupUsecase := biz8.NewGroupUsecase(store, dataGroupRepo, dataGroupRepo)
 	oncallGroupService := service5.NewOncallGroupService(groupUsecase, userUsecase)
-	notifier := biz6.NewNotifier(notificationUsecase)
-	scheduleUsecase := biz6.NewScheduleUsecase(store, dataGroupRepo, scheduleRepo, shiftRepo, notifier)
+	notifier := biz8.NewNotifier(notificationUsecase)
+	scheduleUsecase := biz8.NewScheduleUsecase(store, dataGroupRepo, scheduleRepo, shiftRepo, notifier)
 	oncallScheduleService := service5.NewOncallScheduleService(scheduleUsecase, groupUsecase, userUsecase)
-	shareRepo := data7.NewShareRepo(dataData)
-	tokenBox, err := data7.NewTokenBox(notify)
+	shareRepo := data9.NewShareRepo(dataData)
+	tokenBox, err := data9.NewTokenBox(notify)
 	if err != nil {
 		cleanup()
 		return nil, nil, err
 	}
-	shareUsecase := biz6.NewShareUsecase(store, dataGroupRepo, scheduleRepo, shiftRepo, shareRepo, dataGroupRepo, tokenBox)
+	shareUsecase := biz8.NewShareUsecase(store, dataGroupRepo, scheduleRepo, shiftRepo, shareRepo, dataGroupRepo, tokenBox)
 	oncallShareService := service5.NewOncallShareService(shareUsecase, userUsecase)
 	fileService := service6.NewFileService(usecase)
 	definitionService := service7.NewDefinitionService(definitionUsecase, directoryUsecase, users, dutyUsecase)
@@ -264,20 +278,282 @@ func wireApp(confServer *conf.Server, confData *conf.Data, security *conf.Securi
 	extensions := biz4.NewExtensions(ticketRepo, ticketRepo, runtimeUsecase, deadlines, resources, notificationUsecase, logger)
 	bizUsecase := biz4.NewUsecase(catalogRepo, ticketRepo, ticketRepo, commentRepo, runtimeUsecase, usecase, directoryUsecase, access, txManager, extensions)
 	ticketService := service8.NewTicketService(bizUsecase)
+	datasourceRepo := data12.NewDatasourceRepo(dataData)
+	dataSecretBox, err := data12.NewSecretBox(notify)
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	queryClient := data12.NewQueryClient(monitor)
+	permissions := biz3.NewMonitorPermissions(authzUsecase)
+	datasourceUsecase := biz12.ProvideDatasourceUsecase(datasourceRepo, datasourceRepo, datasourceRepo, dataSecretBox, queryClient, directoryUsecase, permissions, queryClient)
+	datasourceService := service9.NewDatasourceService(datasourceUsecase)
+	roleScopeRepo := data12.NewRoleScopeRepo(dataData)
+	groupRepo2 := data12.NewGroupRepo(dataData)
+	bizScopeUsecase := biz12.NewScopeUsecase(authzUsecase, roleScopeRepo, groupRepo2)
+	roleDirectory := biz3.NewMonitorRoles(roleUsecase)
+	bizGroupUsecase := biz12.NewGroupUsecase(bizScopeUsecase, groupRepo2, groupRepo2, roleScopeRepo, roleDirectory, directoryUsecase)
+	ruleGroupService := service9.NewRuleGroupService(bizGroupUsecase)
+	ruleRepo := data12.NewRuleRepo(dataData)
+	ruleVersionRepo := data12.NewRuleVersionRepo(dataData)
+	evalRepo := data12.NewEvalRepo(dataData)
+	schedules := biz3.NewMonitorSchedules(scheduleUsecase)
+	escalationRepo := data12.NewEscalationRepo(dataData)
+	ticketCatalog := biz3.NewMonitorTicketCatalog(catalogUsecase)
+	workflows := biz3.NewMonitorWorkflows(definitionUsecase, runtimeUsecase)
+	ruleUsecase := biz12.ProvideRuleUsecase(bizScopeUsecase, ruleRepo, ruleRepo, ruleRepo, ruleVersionRepo, evalRepo, datasourceRepo, directoryUsecase, schedules, escalationRepo, ticketCatalog, workflows, monitor)
+	targetSource := biz3.NewMonitorTargets(scheduleUsecase, deptUsecase, directoryUsecase)
+	targetUsecase := biz12.NewTargetUsecase(targetSource)
+	cmdbCatalog := biz3.NewMonitorCMDBCatalog(modelUsecase)
+	ciEnvRepo := data12.NewCIEnvRepo(dataData)
+	summarizer := biz3.NewMonitorSummarizer(agentUsecase, chatModelClient)
+	ruleOptionUsecase := biz12.NewRuleOptionUsecase(ticketCatalog, workflows, cmdbCatalog, ciEnvRepo, summarizer, monitor)
+	muteRepo := data12.NewMuteRepo(dataData)
+	alertRepo := data12.NewAlertRepo(dataData)
+	inhibitRepo := data12.NewInhibitRepo(dataData)
+	ciIndexRepo := data12.NewCIIndexRepo(dataData)
+	calendarRepo := data12.NewCalendarRepo(dataData)
+	dataSubscriptionRepo := data12.NewSubscriptionRepo(dataData)
+	dutyRoster := biz3.NewMonitorDutyRoster(scheduleUsecase)
+	oncallGroups := biz3.NewMonitorOncallGroups(groupUsecase)
+	routeProbe := biz3.NewMonitorRouteProbe(previewUsecase)
+	simulateDeps := biz12.SimulateDeps{
+		Scopes:      bizScopeUsecase,
+		Rules:       ruleUsecase,
+		Sources:     datasourceUsecase,
+		Mutes:       muteRepo,
+		Alerts:      alertRepo,
+		Inhibits:    inhibitRepo,
+		CIs:         ciIndexRepo,
+		Cfg:         ciIndexRepo,
+		Calendar:    calendarRepo,
+		Escalations: escalationRepo,
+		Subs:        dataSubscriptionRepo,
+		Dir:         directoryUsecase,
+		Leaders:     directoryUsecase,
+		Duty:        dutyUsecase,
+		Roster:      dutyRoster,
+		Groups:      oncallGroups,
+		Schedules:   schedules,
+		Routes:      routeProbe,
+		Events:      notificationUsecase,
+		Txm:         txManager,
+	}
+	simulateUsecase, err := biz12.NewSimulateUsecase(simulateDeps, logger, monitor)
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	ruleService := service9.ProvideRuleService(ruleUsecase, targetUsecase, ruleOptionUsecase, simulateUsecase)
+	notifyLogRepo := data12.NewNotifyLogRepo(dataData)
+	alertOpsRepo := data12.NewAlertOpsRepo(dataData)
+	alertDecorator := biz12.NewAlertDecorator(directoryUsecase, inhibitRepo, ciIndexRepo, alertOpsRepo, alertOpsRepo)
+	cmdbViewer, err := biz3.NewMonitorCMDBViewer(scopeUsecase, ciUsecase, relationUsecase, monitor)
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	ticketDesk := biz3.NewMonitorTicketDesk(bizUsecase)
+	alertDetailUsecase := biz12.NewAlertDetailUsecase(alertOpsRepo, alertOpsRepo, alertOpsRepo, ciIndexRepo, cmdbViewer, ticketDesk, directoryUsecase, muteRepo, inhibitRepo)
+	alertUsecase := biz12.ProvideAlertUsecase(bizScopeUsecase, alertRepo, alertRepo, notifyLogRepo, ruleRepo, muteRepo, directoryUsecase, permissions, alertDecorator, alertDetailUsecase)
+	alertActionUsecase := biz12.NewAlertActionUsecase(alertUsecase, alertDetailUsecase, txManager, alertOpsRepo, alertOpsRepo, alertOpsRepo, alertOpsRepo, alertOpsRepo, ticketDesk, cmdbViewer)
+	oncallAccess := biz3.NewMonitorOncallAccess(authzUsecase)
+	shifts := biz3.NewMonitorShifts(scheduleUsecase)
+	shiftCountRepo := data12.NewShiftCountRepo(dataData)
+	shiftCountUsecase := biz12.NewShiftCountUsecase(permissions, oncallAccess, directoryUsecase, shifts, shiftCountRepo)
+	alertService := service9.ProvideAlertService(alertUsecase, alertActionUsecase, shiftCountUsecase)
+	muteUsecase := biz12.NewMuteUsecase(bizScopeUsecase, muteRepo, muteRepo, alertRepo, alertRepo, ruleRepo, ruleRepo, datasourceRepo, directoryUsecase, schedules)
+	muteService := service9.NewMuteService(muteUsecase)
+	bizSubscriptionUsecase := biz12.NewSubscriptionUsecase(bizScopeUsecase, dataSubscriptionRepo, dataSubscriptionRepo, notifyLogRepo, alertRepo, muteRepo, ruleRepo, ruleRepo, datasourceRepo, directoryUsecase, schedules)
+	subscriptionService := service9.NewSubscriptionService(bizSubscriptionUsecase)
+	escalationUsecase := biz12.NewEscalationUsecase(bizScopeUsecase, escalationRepo, escalationRepo, escalationRepo, oncallGroups, directoryUsecase, schedules)
+	escalationService := service9.NewEscalationService(escalationUsecase)
+	inhibitUsecase := biz12.ProvideInhibitUsecase(bizScopeUsecase, inhibitRepo, inhibitRepo, inhibitRepo, alertRepo, ruleRepo, ruleRepo, muteRepo, directoryUsecase, alertDecorator)
+	inhibitService := service9.NewInhibitService(inhibitUsecase)
+	recordRuleRepo := data12.NewRecordRuleRepo(dataData)
+	recordRuleUsecase := biz12.NewRecordRuleUsecase(bizScopeUsecase, recordRuleRepo, recordRuleRepo, datasourceRepo, directoryUsecase)
+	recordRuleService := service9.NewRecordRuleService(recordRuleUsecase)
+	alertViewRepo := data12.NewAlertViewRepo(dataData)
+	alertViewUsecase := biz12.NewAlertViewUsecase(bizScopeUsecase, alertViewRepo, alertViewRepo, directoryUsecase)
+	alertViewService := service9.NewAlertViewService(alertViewUsecase)
+	statsRepo := data12.NewStatsRepo(dataData)
+	statsUsecase := biz12.NewStatsUsecase(bizScopeUsecase, statsRepo, statsRepo, ruleRepo, ciIndexRepo)
+	statsService := service9.NewStatsService(statsUsecase)
+	engineRepo := data12.NewEngineRepo(dataData)
+	engineUsecase := biz12.NewEngineUsecase(bizScopeUsecase, engineRepo, engineRepo, ciIndexRepo)
+	engineService := service9.NewEngineService(engineUsecase)
+	p2Services := service9.P2Services{
+		Escalation: escalationService,
+		Inhibit:    inhibitService,
+		RecordRule: recordRuleService,
+		AlertView:  alertViewService,
+		Stats:      statsService,
+		Engine:     engineService,
+	}
+	credentialRepo := data7.NewCredentialRepo(dataData)
+	secretSealer, err := data7.NewSecretSealer(notify)
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	credentialUsecase := biz6.NewCredentialUsecase(credentialRepo, credentialRepo, secretSealer, directoryUsecase)
+	credentialService := service10.NewCredentialService(credentialUsecase)
+	projectRepo := data7.NewProjectRepo(dataData)
+	projectUsecase := biz6.NewProjectUsecase(projectRepo, projectRepo, secretSealer, directoryUsecase)
+	projectService := service10.NewProjectService(projectUsecase)
+	dataTemplateRepo := data7.NewTemplateRepo(dataData)
+	hostSource := biz3.NewJobHostSource(scopeUsecase, modelUsecase, ciUsecase)
+	bizTargetUsecase := biz6.NewTargetUsecase(hostSource)
+	bizTemplateUsecase := biz6.NewTemplateUsecase(dataTemplateRepo, dataTemplateRepo, bizTargetUsecase, hostSource, directoryUsecase)
+	runnerRepo := data7.NewRunnerRepo(dataData)
+	policyRepo := data7.NewPolicyRepo(dataData)
+	riskRuleRepo := data7.NewRiskRuleRepo(dataData)
+	scriptRepo := data7.NewScriptRepo(dataData)
+	files := biz3.NewJobFiles(usecase)
+	approvals := biz3.NewJobApprovals(runtimeUsecase, definitionUsecase)
+	triggerRepo := data7.NewTriggerRepo(dataData)
+	dataStatsRepo := data7.NewStatsRepo(dataData)
+	runPermission := biz3.NewJobRunPermission(authzUsecase)
+	executionDeps := biz6.NewExecutionDeps(txManager, policyRepo, riskRuleRepo, scriptRepo, files, approvals, triggerRepo, dataStatsRepo, runPermission)
+	executionUsecase := biz6.NewExecutionUsecase(executionRepo, executionRepo, executionRepo, dataTemplateRepo, projectRepo, credentialRepo, runnerRepo, bizTargetUsecase, directoryUsecase, executionDeps)
+	templateService := service10.NewTemplateService(bizTemplateUsecase, executionUsecase)
+	executionService := service10.NewExecutionService(executionUsecase)
+	runnerUsecase := biz6.NewRunnerUsecase(runnerRepo, runnerRepo, runnerRepo)
+	runnerService := service10.NewRunnerService(runnerUsecase)
+	scriptUsecase := biz6.NewScriptUsecase(scriptRepo, directoryUsecase)
+	scriptService := service10.NewScriptService(scriptUsecase)
+	policyUsecase := biz6.NewPolicyUsecase(riskRuleRepo, policyRepo, approvals, directoryUsecase)
+	policyService := service10.NewPolicyService(policyUsecase)
+	dataScheduleRepo := data7.NewScheduleRepo(dataData)
+	bizScheduleUsecase := biz6.NewScheduleUsecase(dataScheduleRepo, dataScheduleRepo, dataTemplateRepo, executionUsecase, directoryUsecase)
+	scheduleService := service10.NewScheduleService(bizScheduleUsecase)
+	fireRepo := data7.NewFireRepo(dataData)
+	alertFeed := biz3.NewJobAlertFeed(alertRepo, ruleRepo)
+	alertRules := biz3.NewJobAlertRules(alertRepo, ruleRepo)
+	tokenOpener, err := data7.NewTokenOpener(notify)
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	signals := biz3.NewJobSignals(runtimeUsecase)
+	triggerDeps := biz6.NewTriggerDeps(triggerRepo, triggerRepo, fireRepo, fireRepo, alertFeed, alertRules, secretSealer, tokenOpener, signals)
+	triggerUsecase := biz6.NewTriggerUsecase(triggerDeps, dataTemplateRepo, bizTargetUsecase, executionUsecase, directoryUsecase)
+	triggerService := service10.NewTriggerService(triggerUsecase)
+	clusterRepo := data8.NewClusterRepo(dataData)
+	dataSecretSealer, err := data8.NewSecretSealer(notify)
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	instanceResolver := data8.NewInstanceResolver(dataData)
+	client := k8splane.New(instanceResolver, k8S, logger)
+	dataTicketRepo := data8.NewTicketRepo(dataData)
+	planeUsecase := biz7.NewPlaneUsecase(client, authzUsecase, authzUsecase, directoryUsecase, clusterRepo, dataTicketRepo)
+	clusterUsecase := biz7.NewClusterUsecase(clusterRepo, clusterRepo, clusterRepo, dataSecretSealer, authzUsecase, directoryUsecase, planeUsecase, k8S)
+	clusterService := service11.NewClusterService(clusterUsecase)
+	dataScopeRepo := data8.NewScopeRepo(dataData)
+	scopeUsecase2 := biz7.NewScopeUsecase(dataScopeRepo, directoryUsecase)
+	scopeService := service11.NewScopeService(scopeUsecase2)
+	auditRepo := data8.NewAuditRepo(dataData)
+	insightRepo := data8.NewInsightRepo(dataData)
+	accessResolver := biz7.NewAccessResolver(authzUsecase, insightRepo, planeUsecase)
+	auditUsecase := biz7.NewAuditUsecase(auditRepo, accessResolver)
+	auditService := service11.NewAuditService(auditUsecase)
+	resourceService := service11.NewResourceService(planeUsecase)
+	workloadService := service11.NewWorkloadService(planeUsecase)
+	streamService := service11.NewStreamService(planeUsecase)
+	helmRepo := data8.NewHelmRepo(dataData)
+	helmUsecase := biz7.NewHelmUsecase(helmRepo, helmRepo, dataSecretSealer, directoryUsecase, planeUsecase)
+	helmRepoService := service11.NewHelmRepoService(helmUsecase)
+	helmReleaseService := service11.NewHelmReleaseService(planeUsecase)
+	metricsSource := biz3.NewK8sMetricsSource(datasourceUsecase)
+	hostFinder := biz3.NewK8sHostFinder(scopeUsecase, ciUsecase)
+	bizInsightUsecase := biz7.NewInsightUsecase(insightRepo, insightRepo, clusterRepo, authzUsecase, metricsSource, hostFinder, planeUsecase, clusterUsecase)
+	insightService := service11.NewInsightService(bizInsightUsecase, planeUsecase)
+	govRepo := data8.NewGovRepo(dataData)
+	inspectionRepo := data8.NewInspectionRepo(dataData)
+	execRecordRepo := data8.NewExecRecordRepo(dataData)
+	govOptions := data8.NewGovOptions(k8S)
+	governanceUsecase := biz7.NewGovernanceUsecase(govRepo, govRepo, inspectionRepo, execRecordRepo, insightRepo, clusterRepo, authzUsecase, authzUsecase, directoryUsecase, planeUsecase, client, govOptions)
+	governanceService := service11.NewGovernanceService(governanceUsecase)
+	settingRepo := data8.NewSettingRepo(dataData)
+	changeTickets := biz3.NewK8sChangeTickets(catalogRepo, bizUsecase, runtimeUsecase)
+	bypassChecker := biz3.NewK8sBypassChecker(authzUsecase)
+	ticketViewers := biz3.NewK8sTicketViewers(access, bizUsecase)
+	changeDeps := biz7.NewChangeDeps(changeRepo, changeRepo, changeRepo, settingRepo, clusterRepo, client, dataSecretSealer, changeTickets, bypassChecker, authzUsecase, ticketViewers, txManager)
+	changeSiteURL := biz3.NewK8sChangeSiteURL(monitor)
+	changeUsecase := biz7.NewChangeUsecase(changeDeps, planeUsecase, clusterUsecase, changeSyncer, changeSiteURL, logger)
+	changeService := service11.NewChangeService(changeUsecase)
 	metrics, cleanup2, err := server.NewMetrics(jobRepo)
 	if err != nil {
 		cleanup()
 		return nil, nil, err
 	}
-	httpServer := server.NewHTTPServer(confServer, logger, userService, roleService, deptService, authService, systemConfigService, loginLogService, notifyChannelService, notifyTemplateService, notifyRouteService, notifySilenceService, notifySubscriptionService, notifyProducerService, notifyEventService, notifyDispatchService, notifyDeliveryLogService, notifyDeadLetterService, assistantService, assistantChatService, cmdbModelService, cmdbCIService, cmdbRelationService, cmdbScopeService, cmdbSyncService, cmdbInsightService, oncallGroupService, oncallScheduleService, oncallShareService, fileService, definitionService, instanceService, taskService, configService, openService, catalogService, ticketService, tokenSigner, authzUsecase, roles, dataData, metrics)
-	workerUsecase := biz6.NewWorkerUsecase(store, dataGroupRepo, scheduleRepo, shiftRepo, notifier)
+	httpServer := server.NewHTTPServer(confServer, logger, userService, roleService, deptService, authService, systemConfigService, loginLogService, notifyChannelService, notifyTemplateService, notifyRouteService, notifySilenceService, notifySubscriptionService, notifyProducerService, notifyEventService, notifyDispatchService, notifyDeliveryLogService, notifyDeadLetterService, assistantService, assistantChatService, cmdbModelService, cmdbCIService, cmdbRelationService, cmdbScopeService, cmdbSyncService, cmdbInsightService, oncallGroupService, oncallScheduleService, oncallShareService, fileService, definitionService, instanceService, taskService, configService, openService, catalogService, ticketService, datasourceService, ruleGroupService, ruleService, alertService, muteService, subscriptionService, p2Services, credentialService, projectService, templateService, executionService, runnerService, scriptService, policyService, scheduleService, triggerService, clusterService, scopeService, auditService, resourceService, workloadService, streamService, helmRepoService, helmReleaseService, insightService, governanceService, changeService, k8S, tokenSigner, authzUsecase, roles, dataData, metrics)
+	workerUsecase := biz8.NewWorkerUsecase(store, dataGroupRepo, scheduleRepo, shiftRepo, notifier)
 	oncallLoops := worker.NewOncallLoops(workerUsecase, logger, metrics)
 	fileLoops := worker.NewFileLoops(usecase, logger, metrics)
 	webhookCaller := data6.NewWebhookCaller()
 	jobUsecase := biz5.NewJobUsecase(runtimeUsecase, jobRepo, jobRepo, configRepo, webhookCaller, logger)
 	workflowLoops := worker.NewWorkflowLoops(jobUsecase, logger, metrics)
 	ticketLoops := worker.NewTicketLoops(bizUsecase, logger, metrics)
-	app := newApp(logger, roles, httpServer, oncallLoops, fileLoops, workflowLoops, ticketLoops)
+	outboxRepo := data12.NewOutboxRepo(dataData)
+	dispatchExt := biz12.NewDispatchExt(escalationRepo, escalationRepo, ciIndexRepo, dutyRoster, oncallGroups)
+	bizDispatchUsecase, err := biz12.ProvideDispatchUsecase(txManager, outboxRepo, outboxRepo, alertRepo, ruleRepo, dataSubscriptionRepo, bizScopeUsecase, directoryUsecase, directoryUsecase, dutyUsecase, notificationUsecase, logger, monitor, dispatchExt)
+	if err != nil {
+		cleanup2()
+		cleanup()
+		return nil, nil, err
+	}
+	engineEventRepo := data12.NewEngineEventRepo(dataData)
+	engineAudience := biz3.NewMonitorEngineAudience(directoryUsecase, monitor)
+	engineEventUsecase, err := biz12.NewEngineEventUsecase(txManager, engineEventRepo, engineAudience, notificationUsecase, logger, monitor)
+	if err != nil {
+		cleanup2()
+		cleanup()
+		return nil, nil, err
+	}
+	ciSource, err := biz3.NewMonitorCISource(ciUsecase, relationUsecase, monitor)
+	if err != nil {
+		cleanup2()
+		cleanup()
+		return nil, nil, err
+	}
+	ciSyncUsecase, err := biz12.NewCISyncUsecase(ciSource, ciIndexRepo, logger, monitor)
+	if err != nil {
+		cleanup2()
+		cleanup()
+		return nil, nil, err
+	}
+	calendarSource := biz3.NewMonitorCalendarSource(calendarUsecase)
+	calendarSyncUsecase := biz12.NewCalendarSyncUsecase(calendarSource, calendarRepo, logger)
+	actionRepo := data12.NewActionRepo(dataData)
+	actionDeps := biz12.NewActionDeps(txManager, actionRepo, alertRepo, alertOpsRepo, alertOpsRepo, alertOpsRepo, ciIndexRepo, bizScopeUsecase, directoryUsecase, ticketCatalog, ticketDesk, workflows, cmdbViewer, summarizer, logger, monitor)
+	actionUsecase, err := biz12.NewActionUsecase(actionDeps)
+	if err != nil {
+		cleanup2()
+		cleanup()
+		return nil, nil, err
+	}
+	monitorP2Usecases := worker.MonitorP2Usecases{
+		Engine:   engineEventUsecase,
+		CISync:   ciSyncUsecase,
+		Calendar: calendarSyncUsecase,
+		Actions:  actionUsecase,
+	}
+	monitorLoops := worker.NewMonitorLoops(bizDispatchUsecase, monitorP2Usecases, logger, metrics)
+	dataOutboxRepo := data8.NewOutboxRepo(dataData)
+	dispatchUsecase2 := biz7.NewDispatchUsecase(txManager, dataOutboxRepo, notificationUsecase, logger)
+	selfRoles := biz3.NewK8sSelfRoles(roleUsecase, userUsecase)
+	ticketNotes := biz3.NewK8sTicketNotes(bizUsecase)
+	changeWorker := biz7.NewChangeWorker(changeRepo, changeRepo, dataScopeRepo, selfRoles, ticketNotes, notificationUsecase, changeRepo, authzUsecase, authzUsecase, txManager, changeSiteURL, logger)
+	k8sLoops := worker.NewK8sLoops(dispatchUsecase2, changeWorker, logger, metrics)
+	bizNotifier := biz3.NewJobNotifier(notificationUsecase)
+	siteURL := biz3.NewJobSiteURL(monitor)
+	notifyUsecase := biz6.NewNotifyUsecase(txManager, dataStatsRepo, bizNotifier, siteURL)
+	housekeepUsecase := biz6.NewHousekeepUsecase(dataStatsRepo)
+	jobLoops := worker.NewJobLoops(bizScheduleUsecase, triggerUsecase, notifyUsecase, housekeepUsecase, logger, metrics)
+	app := newApp(logger, roles, httpServer, oncallLoops, fileLoops, workflowLoops, ticketLoops, monitorLoops, k8sLoops, jobLoops)
 	return app, func() {
 		cleanup2()
 		cleanup()

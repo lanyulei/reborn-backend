@@ -1,0 +1,150 @@
+# 主机（node_exporter）。指标来自 node_exporter 的 cpu / meminfo / filesystem / diskstats / netdev / loadavg / time / systemd 等采集器。
+groups:
+  - name: 主机
+    interval: 1m
+    rules:
+      - alert: 主机失联
+        expr: up{job=~".*node.*"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.instance }} 的 node_exporter 抓取失败，主机可能已宕机或网络不通"
+      - alert: 主机 CPU 使用率过高
+        expr: 100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m]))) > 85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.instance }} CPU 使用率 {{ printf \"%.1f\" $value }}%，已持续 10 分钟"
+      - alert: 主机 CPU iowait 过高
+        expr: 100 * avg by (instance) (rate(node_cpu_seconds_total{mode="iowait"}[5m])) > 30
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.instance }} CPU iowait {{ printf \"%.1f\" $value }}%，磁盘可能存在瓶颈"
+      - alert: 主机负载过高
+        expr: node_load5 / on (instance) count by (instance) (node_cpu_seconds_total{mode="idle"}) > 2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.instance }} 5 分钟负载是 CPU 核数的 {{ printf \"%.1f\" $value }} 倍"
+      - alert: 主机内存使用率过高
+        expr: 100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 90
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.instance }} 内存使用率 {{ printf \"%.1f\" $value }}%"
+      - alert: 主机内存即将耗尽
+        expr: 100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 97
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.instance }} 内存使用率 {{ printf \"%.1f\" $value }}%，可能触发 OOM"
+      - alert: 主机 Swap 使用率过高
+        expr: 100 * (1 - node_memory_SwapFree_bytes / node_memory_SwapTotal_bytes) > 80 and node_memory_SwapTotal_bytes > 0
+        for: 15m
+        labels:
+          severity: info
+        annotations:
+          summary: "{{ $labels.instance }} Swap 使用率 {{ printf \"%.1f\" $value }}%"
+      - alert: 主机磁盘空间不足
+        expr: 100 * (1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs|devtmpfs"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs|devtmpfs"}) > 85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.instance }} 挂载点 {{ $labels.mountpoint }} 使用率 {{ printf \"%.1f\" $value }}%"
+      - alert: 主机磁盘空间即将耗尽
+        expr: 100 * (1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs|devtmpfs"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs|devtmpfs"}) > 95
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.instance }} 挂载点 {{ $labels.mountpoint }} 使用率 {{ printf \"%.1f\" $value }}%"
+      - alert: 主机磁盘将在 24 小时内写满
+        expr: predict_linear(node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs|devtmpfs"}[6h], 86400) < 0 and node_filesystem_readonly == 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "按最近 6 小时的趋势，{{ $labels.instance }} 挂载点 {{ $labels.mountpoint }} 将在 24 小时内写满"
+      - alert: 主机 inode 不足
+        expr: 100 * (1 - node_filesystem_files_free{fstype!~"tmpfs|overlay|squashfs|ramfs|devtmpfs"} / node_filesystem_files{fstype!~"tmpfs|overlay|squashfs|ramfs|devtmpfs"}) > 90
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.instance }} 挂载点 {{ $labels.mountpoint }} inode 使用率 {{ printf \"%.1f\" $value }}%"
+      - alert: 主机文件系统只读
+        expr: node_filesystem_readonly{fstype!~"tmpfs|overlay|squashfs|ramfs|devtmpfs|iso9660"} == 1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.instance }} 挂载点 {{ $labels.mountpoint }} 变为只读，磁盘可能故障"
+      - alert: 主机磁盘 IO 繁忙
+        expr: 100 * rate(node_disk_io_time_seconds_total[5m]) > 90
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.instance }} 磁盘 {{ $labels.device }} IO 使用率 {{ printf \"%.1f\" $value }}%"
+      - alert: 主机网卡收包错误
+        expr: rate(node_network_receive_errs_total{device!~"lo|veth.*|docker.*|cni.*|flannel.*|cali.*"}[5m]) > 10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.instance }} 网卡 {{ $labels.device }} 每秒收包错误 {{ printf \"%.1f\" $value }} 个"
+      - alert: 主机网卡发包错误
+        expr: rate(node_network_transmit_errs_total{device!~"lo|veth.*|docker.*|cni.*|flannel.*|cali.*"}[5m]) > 10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.instance }} 网卡 {{ $labels.device }} 每秒发包错误 {{ printf \"%.1f\" $value }} 个"
+      - alert: 主机文件描述符即将耗尽
+        expr: 100 * node_filefd_allocated / node_filefd_maximum > 85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.instance }} 文件描述符使用率 {{ printf \"%.1f\" $value }}%"
+      - alert: 主机连接跟踪表即将写满
+        expr: 100 * node_nf_conntrack_entries / node_nf_conntrack_entries_limit > 85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.instance }} conntrack 表使用率 {{ printf \"%.1f\" $value }}%，写满后新连接会被丢弃"
+      - alert: 主机时钟偏移
+        expr: abs(node_timex_offset_seconds) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.instance }} 时钟偏移 {{ printf \"%.3f\" $value }} 秒，请检查 NTP / chrony"
+      - alert: 主机发生 OOM Kill
+        expr: increase(node_vmstat_oom_kill[10m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.instance }} 最近 10 分钟发生了 OOM Kill"
+      - alert: 主机近期重启
+        expr: time() - node_boot_time_seconds < 600
+        labels:
+          severity: info
+        annotations:
+          summary: "{{ $labels.instance }} 在最近 10 分钟内重启过"
+      - alert: 主机 systemd 服务失败
+        expr: node_systemd_unit_state{state="failed"} == 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.instance }} 的 systemd 服务 {{ $labels.name }} 处于 failed 状态"

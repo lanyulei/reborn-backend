@@ -1,0 +1,353 @@
+syntax = "proto3";
+
+package k8s.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/k8s/v1;v1";
+
+// K8sChangeService 变更审批。集群配置了审批用的工单模板后，写操作不立即执行：接口返回
+// 428 K8S_CHANGE_SUBMITTED（metadata 带 change_id / ticket_id / ticket_number），并生成一张变更单与工单；
+// 工单审批通过后由数据面以发起人的身份执行（执行前按「本次变更涉及的字段」与现状比对），结果写回工单并通知发起人。
+// 另提供两种自助申请：申请命名空间与配额、申请集群权限，同样经工单审批。
+service K8sChangeService {
+  // ListChanges 分页查询变更单。scope = mine 只看自己提交的；all 看数据范围内集群上的全部（超管看全部集群）。
+  rpc ListChanges(ListChangesRequest) returns (ListChangesResponse) {
+    option (google.api.http) = {get: "/api/v1/k8s/change"};
+    option (system.v1.title) = "查询变更单";
+  }
+  // GetChange 变更单详情：提交时与预检后的对象、涉及的字段、执行结果。发起人本人或对该集群有数据范围的用户可见。
+  rpc GetChange(GetChangeRequest) returns (GetChangeResponse) {
+    option (google.api.http) = {get: "/api/v1/k8s/change/{id}"};
+    option (system.v1.title) = "查看变更单";
+  }
+  // CancelChange 撤回待审批的变更单（仅发起人本人或超管）：变更单置为已撤回，审批流程一并撤销。
+  rpc CancelChange(CancelChangeRequest) returns (CancelChangeResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/change/{id}:cancel"
+      body: "*"
+    };
+    option (system.v1.title) = "撤回变更单";
+  }
+  // CheckChangeBypass 持有本接口权限即可在需审批的集群上免审批直接执行（紧急变更，请求头 X-K8s-Emergency: 1），
+  // 审计中标记为紧急变更。接口本身只返回空对象。
+  rpc CheckChangeBypass(CheckChangeBypassRequest) returns (CheckChangeBypassResponse) {
+    option (google.api.http) = {get: "/api/v1/k8s/change-bypass"};
+    option (system.v1.title) = "免审批执行变更（紧急变更）";
+  }
+  // GetChangeSettings 自助申请所用的工单模板（空 = 未开放）。
+  rpc GetChangeSettings(GetChangeSettingsRequest) returns (GetChangeSettingsResponse) {
+    option (google.api.http) = {get: "/api/v1/k8s/change-setting"};
+    option (system.v1.title) = "查看变更审批设置";
+  }
+  // UpdateChangeSettings 设置自助申请所用的工单模板；须为已启用的模板，空 = 关闭该申请入口。
+  rpc UpdateChangeSettings(UpdateChangeSettingsRequest) returns (UpdateChangeSettingsResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/k8s/change-setting"
+      body: "*"
+    };
+    option (system.v1.title) = "配置变更审批设置";
+  }
+  // ListRequestClusters 可申请权限的集群（全部已启用的集群的名称与环境，不含连接信息）；未开放权限申请时为空。
+  rpc ListRequestClusters(ListRequestClustersRequest) returns (ListRequestClustersResponse) {
+    option (google.api.http) = {get: "/api/v1/k8s/request-cluster"};
+    option (system.v1.title) = "查询可申请权限的集群";
+  }
+  // RequestNamespace 申请命名空间与配额：生成变更单与工单；审批通过后由系统创建 Namespace 及可选的
+  // ResourceQuota / LimitRange（只会创建这三种对象）。
+  rpc RequestNamespace(RequestNamespaceRequest) returns (RequestNamespaceResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster/{cluster_id}/namespace-request"
+      body: "*"
+    };
+    option (system.v1.title) = "申请命名空间";
+  }
+  // RequestPermission 申请集群权限：生成变更单与工单；审批通过后授予申请人（记在平台为其维护的专属角色上）。
+  rpc RequestPermission(RequestPermissionRequest) returns (RequestPermissionResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster/{cluster_id}/permission-request"
+      body: "*"
+    };
+    option (system.v1.title) = "申请集群权限";
+  }
+}
+
+// ChangeField 本次变更涉及的一个字段。
+message ChangeField {
+  // path 字段路径。
+  string path = 1;
+  // before 提交时的值（JSON 文本；Secret 的值已掩码）。
+  string before = 2;
+  // after 变更后的值。
+  string after = 3;
+}
+
+// ChangeItem 变更涉及的一个对象。
+message ChangeItem {
+  // api_group 资源所属 API 组。
+  string api_group = 1;
+  // api_version 资源 API 版本。
+  string api_version = 2;
+  // resource 资源类型。
+  string resource = 3;
+  // namespace 命名空间。
+  string namespace = 4;
+  // name 对象名称。
+  string name = 5;
+  // kind 资源 Kind。
+  string kind = 6;
+  // action 动作：create / update / delete，或快捷操作的动作名。
+  string action = 7;
+  // before_yaml 提交时的对象（Secret 已掩码）；仅详情返回。
+  string before_yaml = 8;
+  // after_yaml 预检后的对象；仅详情返回。
+  string after_yaml = 9;
+  // fields 涉及的字段：执行时逐个与现状比对，被他人改动即不执行。
+  repeated ChangeField fields = 10;
+}
+
+// Change 一张变更单。
+message Change {
+  // id 变更单唯一标识。
+  string id = 1;
+  // kind 类型：1=写操作 2=申请命名空间 3=申请权限。
+  int32 kind = 2;
+  // cluster_id 集群。
+  string cluster_id = 3;
+  // cluster_name 集群名称。
+  string cluster_name = 4;
+  // namespace 目标命名空间。
+  string namespace = 5;
+  // api_group 目标资源的 API 组。
+  string api_group = 6;
+  // api_version 目标资源的 API 版本。
+  string api_version = 7;
+  // resource 目标资源类型。
+  string resource = 8;
+  // res_kind 目标资源 Kind。
+  string res_kind = 9;
+  // name 目标对象名称。
+  string name = 10;
+  // action 动作。
+  string action = 11;
+  // summary 一句话说明。
+  string summary = 12;
+  // status 状态：1=待审批 2=已批准 3=执行中 4=成功 5=失败 6=审批未通过 7=已撤回 8=已过期。
+  int32 status = 13;
+  // requester_id 发起人。
+  string requester_id = 14;
+  // requester_name 发起人用户名。
+  string requester_name = 15;
+  // ticket_id 审批工单。
+  string ticket_id = 16;
+  // ticket_number 工单编号。
+  string ticket_number = 17;
+  // message 结果说明：失败原因、审批未通过的原因等。
+  string message = 18;
+  // create_time 提交时间。
+  google.protobuf.Timestamp create_time = 19;
+  // approve_time 批准时间。
+  google.protobuf.Timestamp approve_time = 20;
+  // expire_time 批准后的失效时间。
+  google.protobuf.Timestamp expire_time = 21;
+  // finish_time 进入终态的时间。
+  google.protobuf.Timestamp finish_time = 22;
+  // items 涉及的对象；仅详情返回。
+  repeated ChangeItem items = 23;
+  // applied 已执行的对象（多对象变更中途失败时）；仅详情返回，形如 Deployment a/web。
+  repeated string applied = 24;
+  // params 自助申请的参数（JSON 文本）；仅详情返回。
+  string params = 25;
+}
+
+// ListChangesRequest 分页查询变更单请求。
+message ListChangesRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // scope 范围：mine（缺省）= 我提交的；all = 数据范围内集群上的全部。
+  string scope = 3 [(buf.validate.field).string = {
+    in: [
+      "",
+      "mine",
+      "all"
+    ]
+  }];
+  // status 按状态筛选，可选。
+  optional int32 status = 4 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 8
+  }];
+  // cluster_id 按集群筛选，可选。
+  optional string cluster_id = 5 [(buf.validate.field).string.uuid = true];
+  // keyword 对象名称 / 说明 / 发起人模糊匹配，可选。
+  optional string keyword = 6 [(buf.validate.field).string.max_len = 64];
+}
+
+// ListChangesResponse 分页查询变更单响应。
+message ListChangesResponse {
+  // items 当前页数据（不含对象内容）。
+  repeated Change items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// GetChangeRequest 变更单详情请求。
+message GetChangeRequest {
+  // id 变更单唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetChangeResponse 变更单详情响应。
+message GetChangeResponse {
+  // change 变更单。
+  Change change = 1;
+}
+
+// CancelChangeRequest 撤回变更单请求。
+message CancelChangeRequest {
+  // id 变更单唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// CancelChangeResponse 撤回变更单响应。
+message CancelChangeResponse {}
+
+// CheckChangeBypassRequest 免审批权限检查请求。
+message CheckChangeBypassRequest {}
+
+// CheckChangeBypassResponse 免审批权限检查响应。
+message CheckChangeBypassResponse {}
+
+// ChangeSettings 变更审批的平台级设置。
+message ChangeSettings {
+  // namespace_request_template_id 「申请命名空间」所用的工单模板；空 = 未开放。
+  string namespace_request_template_id = 1 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+  // permission_request_template_id 「申请集群权限」所用的工单模板；空 = 未开放。
+  string permission_request_template_id = 2 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+}
+
+// GetChangeSettingsRequest 查看变更审批设置请求。
+message GetChangeSettingsRequest {}
+
+// GetChangeSettingsResponse 查看变更审批设置响应。
+message GetChangeSettingsResponse {
+  // settings 设置。
+  ChangeSettings settings = 1;
+}
+
+// UpdateChangeSettingsRequest 配置变更审批设置请求。
+message UpdateChangeSettingsRequest {
+  // settings 设置，整体替换。
+  ChangeSettings settings = 1 [(buf.validate.field).required = true];
+}
+
+// UpdateChangeSettingsResponse 配置变更审批设置响应。
+message UpdateChangeSettingsResponse {
+  // settings 保存后的设置。
+  ChangeSettings settings = 1;
+}
+
+// ListRequestClustersRequest 查询可申请权限的集群请求。
+message ListRequestClustersRequest {}
+
+// RequestCluster 可申请权限的集群。
+message RequestCluster {
+  // id 集群唯一标识。
+  string id = 1;
+  // name 名称。
+  string name = 2;
+  // display_name 显示名。
+  string display_name = 3;
+  // env 环境。
+  string env = 4;
+}
+
+// ListRequestClustersResponse 查询可申请权限的集群响应。
+message ListRequestClustersResponse {
+  // items 已启用的集群，按环境、名称排序。
+  repeated RequestCluster items = 1;
+}
+
+// RequestNamespaceRequest 申请命名空间请求。
+message RequestNamespaceRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // name 命名空间名称：小写字母、数字、连字符，1-63 字符；不得以 kube- 开头。
+  string name = 2 [(buf.validate.field).string.pattern = "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"];
+  // quota 资源配额（ResourceQuota 的 hard），可选。允许的键：requests.cpu / requests.memory / limits.cpu /
+  // limits.memory / pods / requests.storage / persistentvolumeclaims / services / configmaps / secrets；值为 K8s 数量。
+  map<string, string> quota = 3 [(buf.validate.field).map = {
+    max_pairs: 10
+    values: {
+      string: {max_len: 32}
+    }
+  }];
+  // limit_default 容器的缺省 limits（LimitRange），可选；仅 cpu / memory。
+  map<string, string> limit_default = 4 [(buf.validate.field).map = {
+    max_pairs: 2
+    values: {
+      string: {max_len: 32}
+    }
+  }];
+  // limit_default_request 容器的缺省 requests（LimitRange），可选；仅 cpu / memory。
+  map<string, string> limit_default_request = 5 [(buf.validate.field).map = {
+    max_pairs: 2
+    values: {
+      string: {max_len: 32}
+    }
+  }];
+  // reason 申请理由，可选。
+  string reason = 6 [(buf.validate.field).string.max_len = 500];
+}
+
+// RequestPermissionRequest 申请集群权限请求。
+message RequestPermissionRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // namespace 命名空间；* 表示全部命名空间。
+  string namespace = 2 [(buf.validate.field).string.pattern = "^(\\*|[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)$"];
+  // level 档位：1=只读 2=开发 3=命名空间管理员（集群管理员不可自助申请）。
+  int32 level = 3 [(buf.validate.field).int32 = {
+    in: [
+      1,
+      2,
+      3
+    ]
+  }];
+  // reason 申请理由，可选。
+  string reason = 4 [(buf.validate.field).string.max_len = 500];
+}
+
+// RequestNamespaceResponse 申请命名空间响应。
+message RequestNamespaceResponse {
+  // change_id 变更单。
+  string change_id = 1;
+  // ticket_id 审批工单。
+  string ticket_id = 2;
+  // ticket_number 工单编号。
+  string ticket_number = 3;
+}
+
+// RequestPermissionResponse 申请集群权限响应。
+message RequestPermissionResponse {
+  // change_id 变更单。
+  string change_id = 1;
+  // ticket_id 审批工单。
+  string ticket_id = 2;
+  // ticket_number 工单编号。
+  string ticket_number = 3;
+}

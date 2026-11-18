@@ -1,0 +1,74 @@
+# Kafka（kafka_exporter，danielqsj/kafka_exporter）。
+groups:
+  - name: Kafka
+    interval: 1m
+    rules:
+      - alert: Kafka Broker 数量减少
+        expr: delta(kafka_brokers[10m]) < 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kafka 集群（{{ $labels.instance }}）的 Broker 数量在最近 10 分钟内减少"
+      - alert: Kafka 无可用 Broker
+        expr: kafka_brokers == 0
+        for: 1m
+        labels:
+          severity: fatal
+        annotations:
+          summary: "Kafka 集群（{{ $labels.instance }}）没有可用的 Broker"
+      - alert: Kafka 分区副本不同步
+        expr: kafka_topic_partition_under_replicated_partition > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Kafka 主题 {{ $labels.topic }} 分区 {{ $labels.partition }} 的副本未同步"
+      - alert: Kafka 分区 ISR 不足
+        expr: kafka_topic_partition_in_sync_replica < kafka_topic_partition_replicas
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Kafka 主题 {{ $labels.topic }} 分区 {{ $labels.partition }} 的同步副本只有 {{ $value }} 个"
+      - alert: Kafka 分区没有 Leader
+        expr: kafka_topic_partition_leader < 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kafka 主题 {{ $labels.topic }} 分区 {{ $labels.partition }} 没有 Leader，无法读写"
+      - alert: Kafka 分区 Leader 不是首选副本
+        expr: kafka_topic_partition_leader_is_preferred == 0
+        for: 30m
+        labels:
+          severity: info
+        annotations:
+          summary: "Kafka 主题 {{ $labels.topic }} 分区 {{ $labels.partition }} 的 Leader 不是首选副本，负载可能不均"
+      - alert: Kafka 消费组积压
+        expr: sum by (consumergroup, topic) (kafka_consumergroup_lag) > 10000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "消费组 {{ $labels.consumergroup }} 在主题 {{ $labels.topic }} 上积压 {{ printf \"%.0f\" $value }} 条"
+      - alert: Kafka 消费组积压严重
+        expr: sum by (consumergroup, topic) (kafka_consumergroup_lag) > 100000
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "消费组 {{ $labels.consumergroup }} 在主题 {{ $labels.topic }} 上积压 {{ printf \"%.0f\" $value }} 条"
+      - alert: Kafka 消费组停止消费
+        expr: sum by (consumergroup, topic) (rate(kafka_consumergroup_current_offset[10m])) == 0 and sum by (consumergroup, topic) (kafka_consumergroup_lag) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "消费组 {{ $labels.consumergroup }} 在主题 {{ $labels.topic }} 上有积压但 10 分钟内没有消费"
+      - alert: Kafka 消费组没有成员
+        expr: kafka_consumergroup_members == 0
+        for: 10m
+        labels:
+          severity: info
+        annotations:
+          summary: "消费组 {{ $labels.consumergroup }} 当前没有在线成员"

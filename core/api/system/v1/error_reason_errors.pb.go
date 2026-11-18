@@ -422,3 +422,17 @@ func IsDeptLimitExceeded(err error) bool {
 func ErrorDeptLimitExceeded(format string, args ...interface{}) *errors.Error {
 	return errors.New(400, ErrorReason_DEPT_LIMIT_EXCEEDED.String(), fmt.Sprintf(format, args...))
 }
+
+// IMAGE_TYPE_INVALID 上传的 logo / 头像不是允许的图片格式（按文件内容判定，不看声明的类型），映射 HTTP 400。
+func IsImageTypeInvalid(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := errors.FromError(err)
+	return e.Reason == ErrorReason_IMAGE_TYPE_INVALID.String() && e.Code == 400
+}
+
+// IMAGE_TYPE_INVALID 上传的 logo / 头像不是允许的图片格式（按文件内容判定，不看声明的类型），映射 HTTP 400。
+func ErrorImageTypeInvalid(format string, args ...interface{}) *errors.Error {
+	return errors.New(400, ErrorReason_IMAGE_TYPE_INVALID.String(), fmt.Sprintf(format, args...))
+}

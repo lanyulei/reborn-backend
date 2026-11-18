@@ -1,0 +1,120 @@
+# golangci-lint v2 配置：默认规则集（errcheck/govet/ineffassign/staticcheck/unused）
+# 叠加安全与拼写检查；格式化统一走 gofumpt。
+# 分层契约（../notify/AGENTS.md §1）由 depguard 在构建期强制：依赖方向为
+# server → service / worker → biz ← data（biz 定义仓储接口，data 实现）；service 只做执行节点
+# 协议的 HTTP 编排；runner（执行节点）不连接数据库，禁止 import biz / data 与驱动。
+version: "2"
+
+formatters:
+  enable:
+    - gofumpt
+
+linters:
+  enable:
+    - gosec
+    - misspell
+    - copyloopvar
+    - nolintlint
+    - depguard
+  settings:
+    depguard:
+      rules:
+        # biz 是业务核心：禁止 import 任何外层与驱动（依赖倒置——biz 定义
+        # Repo 接口，data 实现）。
+        biz:
+          files:
+            - "**/internal/biz/**"
+          deny:
+            - pkg: "github.com/lanyulei/reborn/backend/job/internal/data"
+              desc: "biz 禁止 import data：仓储接口在 biz 定义，实现在 data 绑定"
+            - pkg: "github.com/lanyulei/reborn/backend/job/internal/worker"
+              desc: "biz 禁止 import worker：依赖方向只允许 worker → biz"
+            - pkg: "github.com/lanyulei/reborn/backend/job/internal/server"
+              desc: "biz 禁止 import server：传输装配层在最外层"
+            - pkg: "github.com/lanyulei/reborn/backend/job/internal/service"
+              desc: "biz 禁止 import service：依赖方向只允许 service → biz"
+            - pkg: "github.com/lanyulei/reborn/backend/job/internal/runner"
+              desc: "biz 禁止 import runner：引擎与执行节点只共享 kit/jobcontract"
+            - pkg: "github.com/go-kratos/kratos/v3/transport"
+              desc: "biz 禁止 import 传输层"
+            - pkg: "github.com/jackc/pgx"
+              desc: "biz 禁止 import 数据库驱动：data 是唯一允许驱动的层"
+            - pkg: "github.com/lanyulei/reborn/backend/kit/dbx"
+              desc: "biz 禁止 import kit/dbx（含 pgx）：仅 data 层可用"
+        # data 实现仓储：禁止反向依赖上层。
+        data:
+          files:
+            - "**/internal/data/**"
+          deny:
+            - pkg: "github.com/lanyulei/reborn/backend/job/internal/worker"
+              desc: "data 禁止 import worker：依赖方向只允许 worker → biz ← data"
+            - pkg: "github.com/lanyulei/reborn/backend/job/internal/server"
+              desc: "data 禁止 import server：传输层与仓储互不感知"
+        # worker 把 biz 用例包成后台循环：不触碰仓储实现与驱动。
+        worker:
+          files:
+            - "**/internal/worker/**"
+          deny:
+            - pkg: "github.com/lanyulei/reborn/backend/job/internal/data"
+              desc: "worker 禁止 import data：经 biz 接口间接消费"
+            - pkg: "github.com/lanyulei/reborn/backend/job/internal/server"
+              desc: "worker 禁止 import server：角色门控在 server 装配层"
+            - pkg: "github.com/jackc/pgx"
+              desc: "worker 禁止 import 数据库驱动：data 是唯一允许驱动的层"
+        # service 是执行节点协议的 HTTP 编排层：不触碰仓储实现与驱动。
+        service:
+          files:
+            - "**/internal/service/**"
+          deny:
+            - pkg: "github.com/lanyulei/reborn/backend/job/internal/data"
+              desc: "service 禁止 import data：经 biz 用例间接消费"
+            - pkg: "github.com/jackc/pgx"
+              desc: "service 禁止 import 数据库驱动：data 是唯一允许驱动的层"
+            - pkg: "github.com/lanyulei/reborn/backend/kit/dbx"
+              desc: "service 禁止 import kit/dbx（含 pgx）：仅 data 层可用"
+        # runner 是执行节点：不连接数据库、不持有主密钥，与引擎之间只有 kit/jobcontract 的 HTTP 协议。
+        runner:
+          files:
+            - "**/internal/runner/**"
+            # 测试除外：端到端测试要把真实的引擎处理器（service + biz + 内存仓储）接到执行节点上。
+            - "!$test"
+          deny:
+            - pkg: "github.com/lanyulei/reborn/backend/job/internal/data"
+              desc: "runner 禁止 import data：执行节点不连接数据库"
+            - pkg: "github.com/lanyulei/reborn/backend/job/internal/biz"
+              desc: "runner 禁止 import biz：执行节点与引擎只共享 kit/jobcontract"
+            - pkg: "github.com/jackc/pgx"
+              desc: "runner 禁止 import 数据库驱动"
+            - pkg: "github.com/lanyulei/reborn/backend/kit/dbx"
+              desc: "runner 禁止 import kit/dbx（含 pgx）"
+            - pkg: "github.com/lanyulei/reborn/backend/kit/secretbox"
+              desc: "runner 禁止 import kit/secretbox：执行节点不持有主密钥"
+        # server 是传输装配层：不触碰仓储实现。
+        server:
+          files:
+            - "**/internal/server/**"
+          deny:
+            - pkg: "github.com/lanyulei/reborn/backend/job/internal/data"
+              desc: "server 禁止 import data：经 biz 接口间接消费"
+        # 引擎与 core 只共享 job_* 表与 kit 契约包，任何层都不得 import 其他服务模块。
+        isolation:
+          files:
+            - "$all"
+          deny:
+            - pkg: "github.com/lanyulei/reborn/backend/core"
+              desc: "作业引擎禁止 import core：共享的只有 job_* 表与 kit/jobcontract"
+            - pkg: "github.com/lanyulei/reborn/backend/notify"
+              desc: "作业引擎禁止 import notify 管道"
+            - pkg: "github.com/lanyulei/reborn/backend/cmdb"
+              desc: "作业引擎禁止 import cmdb 数据面"
+            - pkg: "github.com/lanyulei/reborn/backend/monitor"
+              desc: "作业引擎禁止 import 监控评估引擎"
+  exclusions:
+    rules:
+      # 测试要真的起子进程（git、ssh-keygen、假的 ansible-playbook、pgrep、python3）、用 CGI 包一层
+      # git-http-backend 充当测试仓库、并使用写死的假凭据来断言掩码——这几条 gosec 规则在测试文件里
+      # 只会误报。生产代码不豁免：那里的每一处 nolint 都单独写明理由（../notify/AGENTS.md §9）。
+      - path: _test\.go
+        linters:
+          - gosec
+        text: "G101|G204|G304|G504|G702|G703"

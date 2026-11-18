@@ -1,0 +1,161 @@
+syntax = "proto3";
+
+package monitor.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/monitor/v1;v1";
+
+// MonitorAlertViewService 活跃告警的聚合视图：把「按什么聚合 + 过滤条件」保存下来，下次一键切换。
+// 个人视图只有本人可见、可改；公共视图所有人可见，只有超级管理员可以创建、修改与删除。
+// 视图只保存展示方式，不改变数据范围：打开公共视图时看到的仍是各自数据范围内的告警。
+service MonitorAlertViewService {
+  // ListAlertViews 查询我能看到的聚合视图：我的个人视图 + 全部公共视图。
+  rpc ListAlertViews(ListAlertViewsRequest) returns (ListAlertViewsResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/alert-view"};
+    option (system.v1.title) = "查询告警聚合视图";
+  }
+  // CreateAlertView 保存一个聚合视图；本人已有同名视图返回 409 MONITOR_ALERT_VIEW_NAME_EXISTS。
+  // 每人至多 50 个个人视图。
+  rpc CreateAlertView(CreateAlertViewRequest) returns (CreateAlertViewResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/alert-view"
+      body: "*"
+    };
+    option (system.v1.title) = "保存告警聚合视图";
+  }
+  // UpdateAlertView 修改聚合视图（整体替换）：个人视图仅本人可改，公共视图仅超级管理员可改；
+  // 否则与视图不存在同样返回 404 MONITOR_ALERT_VIEW_NOT_FOUND。
+  rpc UpdateAlertView(UpdateAlertViewRequest) returns (UpdateAlertViewResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/monitor/alert-view/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "修改告警聚合视图";
+  }
+  // DeleteAlertView 删除聚合视图：权限同修改。
+  rpc DeleteAlertView(DeleteAlertViewRequest) returns (DeleteAlertViewResponse) {
+    option (google.api.http) = {delete: "/api/v1/monitor/alert-view/{id}"};
+    option (system.v1.title) = "删除告警聚合视图";
+  }
+}
+
+// AlertViewFilter 聚合视图保存的过滤条件；含义同 AggregateAlertsRequest 的同名参数，全部可选。
+message AlertViewFilter {
+  // group_id 规则分组过滤（含其全部下级分组）。
+  optional string group_id = 1 [(buf.validate.field).string.uuid = true];
+  // datasource_id 数据源过滤。
+  optional string datasource_id = 2 [(buf.validate.field).string.uuid = true];
+  // severities 级别过滤，可多选。
+  repeated int32 severities = 3 [(buf.validate.field).repeated = {
+    max_items: 4
+    unique: true
+    items: {
+      int32: {
+        gte: 1
+        lte: 4
+      }
+    }
+  }];
+  // muted 是否已屏蔽过滤。
+  optional bool muted = 4;
+  // acked 是否已认领过滤。
+  optional bool acked = 5;
+  // inhibited 是否被抑制过滤。
+  optional bool inhibited = 6;
+  // labels 事件标签过滤，每项形如 name=value，至多 5 项。
+  repeated string labels = 7 [(buf.validate.field).repeated = {
+    max_items: 5
+    items: {
+      string: {
+        max_len: 400
+        pattern: "^[a-zA-Z_][a-zA-Z0-9_]*=.+$"
+      }
+    }
+  }];
+}
+
+// AlertViewSpec 聚合视图的可编辑内容。
+message AlertViewSpec {
+  // name 名称，1-64 字符；同一所有者下唯一。
+  string name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // by 聚合维度：rule 按规则 / severity 按级别 / group 按规则分组 / label:<标签名> 按某个事件标签的取值。
+  string by = 2 [(buf.validate.field).string = {
+    max_len: 140
+    pattern: "^(rule|severity|group|label:[a-zA-Z_][a-zA-Z0-9_]*)$"
+  }];
+  // filters 过滤条件，可选。
+  AlertViewFilter filters = 3;
+  // is_public 是否公共视图（所有人可见）；仅超级管理员可设为 true（否则 403 MONITOR_FORBIDDEN）。
+  bool is_public = 4;
+}
+
+// AlertView 聚合视图。
+message AlertView {
+  // id 视图唯一标识。
+  string id = 1;
+  // spec 视图内容。
+  AlertViewSpec spec = 2;
+  // owner_id 所有者（创建人）。
+  string owner_id = 3;
+  // owner_name 所有者显示名。
+  string owner_name = 4;
+  // mine 是否是我创建的。
+  bool mine = 5;
+  // can_edit 当前用户能否修改 / 删除。
+  bool can_edit = 6;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 7;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 8;
+}
+
+// ListAlertViewsRequest 查询告警聚合视图请求。
+message ListAlertViewsRequest {}
+
+// ListAlertViewsResponse 查询告警聚合视图响应。
+message ListAlertViewsResponse {
+  // items 公共视图在前，其后是我的个人视图，各自按名称排序；至多 200 个。
+  repeated AlertView items = 1;
+}
+
+// CreateAlertViewRequest 保存告警聚合视图请求。
+message CreateAlertViewRequest {
+  // spec 视图内容。
+  AlertViewSpec spec = 1 [(buf.validate.field).required = true];
+}
+
+// CreateAlertViewResponse 保存告警聚合视图响应。
+message CreateAlertViewResponse {
+  // view 新建的视图。
+  AlertView view = 1;
+}
+
+// UpdateAlertViewRequest 修改告警聚合视图请求。
+message UpdateAlertViewRequest {
+  // id 视图唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // spec 视图内容，整体替换。
+  AlertViewSpec spec = 2 [(buf.validate.field).required = true];
+}
+
+// UpdateAlertViewResponse 修改告警聚合视图响应。
+message UpdateAlertViewResponse {
+  // view 更新后的视图。
+  AlertView view = 1;
+}
+
+// DeleteAlertViewRequest 删除告警聚合视图请求。
+message DeleteAlertViewRequest {
+  // id 视图唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteAlertViewResponse 删除告警聚合视图响应。
+message DeleteAlertViewResponse {}

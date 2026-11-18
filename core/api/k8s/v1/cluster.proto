@@ -1,0 +1,410 @@
+syntax = "proto3";
+
+package k8s.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/k8s/v1;v1";
+
+// K8sClusterService 集群登记：接入已有集群（Agent 反向隧道或直连）、连通性、Agent 安装与吊销。
+// 直连凭据只写不读：任何响应都不返回，编辑时不传即沿用已保存的。
+service K8sClusterService {
+  // ListClusters 分页查询集群（含运行状态）。
+  rpc ListClusters(ListClustersRequest) returns (ListClustersResponse) {
+    option (google.api.http) = {get: "/api/v1/k8s/cluster"};
+    option (system.v1.title) = "查询集群";
+  }
+  // GetCluster 集群详情。
+  rpc GetCluster(GetClusterRequest) returns (GetClusterResponse) {
+    option (google.api.http) = {get: "/api/v1/k8s/cluster/{id}"};
+    option (system.v1.title) = "查看集群";
+  }
+  // CreateCluster 登记集群。名称重复返回 409 K8S_CLUSTER_NAME_EXISTS。
+  rpc CreateCluster(CreateClusterRequest) returns (CreateClusterResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster"
+      body: "*"
+    };
+    option (system.v1.title) = "接入集群";
+  }
+  // UpdateCluster 编辑集群（整体替换；名称与接入方式不可改）。version 不一致返回 409 K8S_VERSION_CONFLICT。
+  rpc UpdateCluster(UpdateClusterRequest) returns (UpdateClusterResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/k8s/cluster/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "编辑集群";
+  }
+  // DeleteCluster 移除集群：只删除平台侧的登记、授权与令牌，不动集群内的任何资源；审计记录保留。
+  rpc DeleteCluster(DeleteClusterRequest) returns (DeleteClusterResponse) {
+    option (google.api.http) = {delete: "/api/v1/k8s/cluster/{id}"};
+    option (system.v1.title) = "移除集群";
+  }
+  // ParseKubeconfig 解析 kubeconfig，返回可填入表单的连接信息；依赖外部命令取凭据的 kubeconfig 不支持。
+  rpc ParseKubeconfig(ParseKubeconfigRequest) returns (ParseKubeconfigResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster:parse-kubeconfig"
+      body: "*"
+    };
+    option (system.v1.title) = "解析 kubeconfig";
+  }
+  // TestCluster 测试直连配置：实际连接一次并执行接入自检，返回版本、耗时与错误原文。
+  rpc TestCluster(TestClusterRequest) returns (TestClusterResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster:test"
+      body: "*"
+    };
+    option (system.v1.title) = "测试集群连接";
+  }
+  // InstallAgent 签发一次性的注册令牌并返回安装清单或命令；重复调用会作废之前未使用的注册令牌。
+  rpc InstallAgent(InstallAgentRequest) returns (InstallAgentResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster/{id}:agent-install"
+      body: "*"
+    };
+    option (system.v1.title) = "生成 Agent 安装命令";
+  }
+  // RevokeAgent 吊销该集群的全部 Agent 令牌：已连接的 Agent 立即断开，需重新安装才能接入。
+  rpc RevokeAgent(RevokeAgentRequest) returns (RevokeAgentResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster/{id}:agent-revoke"
+      body: "*"
+    };
+    option (system.v1.title) = "吊销 Agent 令牌";
+  }
+  // ListClusterOptions 当前用户数据范围内的已启用集群（集群切换器用）；超管返回全部。
+  rpc ListClusterOptions(ListClusterOptionsRequest) returns (ListClusterOptionsResponse) {
+    option (google.api.http) = {get: "/api/v1/k8s/cluster-option"};
+    option (system.v1.title) = "查询可用集群";
+  }
+}
+
+// ClusterSpec 集群的可编辑内容（新建与编辑共用）。
+message ClusterSpec {
+  // name 名称：小写字母、数字、连字符，1-63 字符，全局唯一；创建后不可改（也是指标标签 cluster 的取值）。
+  string name = 1 [(buf.validate.field).string.pattern = "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"];
+  // display_name 显示名，可选。
+  string display_name = 2 [(buf.validate.field).string.max_len = 64];
+  // env 环境，可选；取值与 CMDB 的环境一致，prod 视为生产。
+  string env = 3 [(buf.validate.field).string.pattern = "^[a-z0-9_-]{0,32}$"];
+  // access_mode 接入方式：1=Agent 反向隧道 2=直连；创建后不可改。
+  int32 access_mode = 4 [(buf.validate.field).int32 = {
+    in: [
+      1,
+      2
+    ]
+  }];
+  // agent_location Agent 部署位置：1=集群内 2=转发节点；直连时为 0。
+  int32 agent_location = 5 [(buf.validate.field).int32 = {
+    in: [
+      0,
+      1,
+      2
+    ]
+  }];
+  // api_server 直连：API Server 地址，仅 https。
+  string api_server = 6 [(buf.validate.field).string.max_len = 512];
+  // proxy_url 直连：可选的 HTTP(S) 代理地址。
+  string proxy_url = 7 [(buf.validate.field).string.max_len = 512];
+  // ca_cert 直连：CA 证书（PEM），可选；空 = 使用系统根证书。
+  string ca_cert = 8 [(buf.validate.field).string.max_len = 65536];
+  // exec_disabled 禁止 Web 终端。
+  bool exec_disabled = 9;
+  // description 说明，可选。
+  string description = 10 [(buf.validate.field).string.max_len = 255];
+  // enabled 是否启用；停用后数据面断开与该集群的连接。
+  bool enabled = 11;
+  // datasource_id 关联的监控数据源（指标面板用），可选；须为已启用的数据源。集群名即指标标签 cluster 的取值。
+  string datasource_id = 12 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+  // event_reasons 上报到通知的 Warning 事件原因（如 FailedScheduling），至多 50 个；空 = 使用缺省清单。
+  repeated string event_reasons = 13 [(buf.validate.field).repeated = {
+    max_items: 50
+    unique: true
+    items: {
+      string: {pattern: "^[A-Za-z][A-Za-z0-9]{0,63}$"}
+    }
+  }];
+  // approval_template_id 变更审批所用的工单模板，可选；须为已启用的模板。设置后该集群上的写操作不立即执行：
+  // 生成变更单与工单，审批通过后由系统以发起人身份执行。空 = 变更不需审批。
+  string approval_template_id = 14 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+}
+
+// ClusterCredential 直连集群的凭据（只写）：令牌，或客户端证书与私钥。
+message ClusterCredential {
+  // token Bearer 令牌（ServiceAccount 令牌等）。
+  string token = 1 [(buf.validate.field).string.max_len = 16384];
+  // client_cert 客户端证书（PEM）。
+  string client_cert = 2 [(buf.validate.field).string.max_len = 65536];
+  // client_key 客户端私钥（PEM）。
+  string client_key = 3 [(buf.validate.field).string.max_len = 65536];
+}
+
+// ClusterRuntime 集群运行状态（数据面维护）。
+message ClusterRuntime {
+  // status 状态：0=未知 1=在线 2=不可达。
+  int32 status = 1;
+  // status_since 进入当前状态的时间。
+  google.protobuf.Timestamp status_since = 2;
+  // k8s_version K8s 版本。
+  string k8s_version = 3;
+  // node_total 节点总数。
+  int32 node_total = 4;
+  // node_ready 就绪节点数。
+  int32 node_ready = 5;
+  // agent_version Agent 版本。
+  string agent_version = 6;
+  // agent_last_seen Agent 最近一次在线时间。
+  google.protobuf.Timestamp agent_last_seen = 7;
+  // last_error 最近一次失败原因（探活或接入自检）。
+  string last_error = 8;
+  // probe_time 最近一次探活时间。
+  google.protobuf.Timestamp probe_time = 9;
+  // scope_error 最近一次授权同步的错误。
+  string scope_error = 10;
+  // scope_synced 当前的数据范围配置是否已同步到集群。
+  bool scope_synced = 11;
+}
+
+// Cluster 集群。
+message Cluster {
+  // id 集群唯一标识。
+  string id = 1;
+  // spec 集群内容。
+  ClusterSpec spec = 2;
+  // has_credential 是否已保存直连凭据。
+  bool has_credential = 3;
+  // runtime 运行状态。
+  ClusterRuntime runtime = 4;
+  // agent_tokens 已签发的长期 Agent 令牌数。
+  int32 agent_tokens = 5;
+  // version 乐观锁版本号，编辑时原样传回。
+  int32 version = 6;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 7;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 8;
+}
+
+// ListClustersRequest 分页查询集群请求。
+message ListClustersRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // keyword 名称 / 显示名模糊匹配，可选。
+  optional string keyword = 3 [(buf.validate.field).string.max_len = 64];
+  // env 按环境筛选，可选。
+  optional string env = 4 [(buf.validate.field).string.max_len = 32];
+  // status 按状态筛选，可选：0=未知 1=在线 2=不可达。
+  optional int32 status = 5 [(buf.validate.field).int32 = {
+    in: [
+      0,
+      1,
+      2
+    ]
+  }];
+}
+
+// ListClustersResponse 分页查询集群响应。
+message ListClustersResponse {
+  // items 当前页数据。
+  repeated Cluster items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// GetClusterRequest 集群详情请求。
+message GetClusterRequest {
+  // id 集群唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetClusterResponse 集群详情响应。
+message GetClusterResponse {
+  // cluster 集群。
+  Cluster cluster = 1;
+}
+
+// CreateClusterRequest 登记集群请求。
+message CreateClusterRequest {
+  // spec 集群内容。
+  ClusterSpec spec = 1 [(buf.validate.field).required = true];
+  // credential 直连凭据；直连时必填。
+  ClusterCredential credential = 2;
+}
+
+// CreateClusterResponse 登记集群响应。
+message CreateClusterResponse {
+  // cluster 新登记的集群。
+  Cluster cluster = 1;
+}
+
+// UpdateClusterRequest 编辑集群请求。
+message UpdateClusterRequest {
+  // id 集群唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // spec 集群内容，整体替换（name 与 access_mode 须与现值一致）。
+  ClusterSpec spec = 2 [(buf.validate.field).required = true];
+  // credential 直连凭据；不传 = 沿用已保存的。
+  ClusterCredential credential = 3;
+  // version 乐观锁版本号，须与当前一致。
+  int32 version = 4 [(buf.validate.field).int32.gte = 1];
+}
+
+// UpdateClusterResponse 编辑集群响应。
+message UpdateClusterResponse {
+  // cluster 更新后的集群。
+  Cluster cluster = 1;
+}
+
+// DeleteClusterRequest 移除集群请求。
+message DeleteClusterRequest {
+  // id 集群唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteClusterResponse 移除集群响应。
+message DeleteClusterResponse {}
+
+// ParseKubeconfigRequest 解析 kubeconfig 请求。
+message ParseKubeconfigRequest {
+  // kubeconfig 文件内容。
+  string kubeconfig = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 262144
+  }];
+  // context 要使用的 context 名；空 = current-context。
+  string context = 2 [(buf.validate.field).string.max_len = 253];
+}
+
+// ParseKubeconfigResponse 解析 kubeconfig 响应。
+message ParseKubeconfigResponse {
+  // contexts 文件中的全部 context 名。
+  repeated string contexts = 1;
+  // context 实际使用的 context。
+  string context = 2;
+  // api_server API Server 地址。
+  string api_server = 3;
+  // ca_cert CA 证书（PEM）。
+  string ca_cert = 4;
+  // credential 解析出的凭据（即请求里已有的内容，回填表单用）。
+  ClusterCredential credential = 5;
+  // proxy_url kubeconfig 里配置的代理地址。
+  string proxy_url = 6;
+}
+
+// TestClusterRequest 测试集群连接请求。
+message TestClusterRequest {
+  // id 已保存的集群；非空且未传 credential 时沿用已保存的凭据。
+  string id = 1 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+  // api_server API Server 地址，仅 https。
+  string api_server = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 512
+  }];
+  // proxy_url 代理地址，可选。
+  string proxy_url = 3 [(buf.validate.field).string.max_len = 512];
+  // ca_cert CA 证书（PEM），可选。
+  string ca_cert = 4 [(buf.validate.field).string.max_len = 65536];
+  // credential 凭据。
+  ClusterCredential credential = 5;
+}
+
+// SelfCheckItem 接入自检的一项。
+message SelfCheckItem {
+  // name 检查项。
+  string name = 1;
+  // ok 是否通过。
+  bool ok = 2;
+  // message 未通过的原因。
+  string message = 3;
+}
+
+// TestClusterResponse 测试集群连接响应。
+message TestClusterResponse {
+  // ok 连接与自检是否全部通过。
+  bool ok = 1;
+  // version K8s 版本。
+  string version = 2;
+  // duration_ms 耗时毫秒。
+  int64 duration_ms = 3;
+  // error 失败时集群或网络返回的原文。
+  string error = 4;
+  // checks 接入自检明细。
+  repeated SelfCheckItem checks = 5;
+}
+
+// InstallAgentRequest 生成 Agent 安装命令请求。
+message InstallAgentRequest {
+  // id 集群唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// InstallAgentResponse 生成 Agent 安装命令响应。
+message InstallAgentResponse {
+  // location Agent 部署位置：1=集群内（manifest 为 kubectl apply 的清单） 2=转发节点（command 为启动命令）。
+  int32 location = 1;
+  // manifest 集群内部署的清单（YAML）。
+  string manifest = 2;
+  // command 转发节点上的启动命令。
+  string command = 3;
+  // expire_time 注册令牌的过期时间；过期前未安装需重新生成。
+  google.protobuf.Timestamp expire_time = 4;
+}
+
+// RevokeAgentRequest 吊销 Agent 令牌请求。
+message RevokeAgentRequest {
+  // id 集群唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// RevokeAgentResponse 吊销 Agent 令牌响应。
+message RevokeAgentResponse {}
+
+// ListClusterOptionsRequest 查询可用集群请求。
+message ListClusterOptionsRequest {}
+
+// ClusterOption 集群切换器的一项。
+message ClusterOption {
+  // id 集群唯一标识。
+  string id = 1;
+  // name 名称。
+  string name = 2;
+  // display_name 显示名。
+  string display_name = 3;
+  // env 环境。
+  string env = 4;
+  // status 状态：0=未知 1=在线 2=不可达。
+  int32 status = 5;
+  // last_error 不可达时的原因。
+  string last_error = 6;
+  // exec_disabled 禁止 Web 终端。
+  bool exec_disabled = 7;
+  // k8s_version K8s 版本。
+  string k8s_version = 8;
+  // level 当前用户在该集群上的最高档位（1-4）。
+  int32 level = 9;
+  // approval_required 该集群的变更需审批（提交后生成工单）。
+  bool approval_required = 10;
+}
+
+// ListClusterOptionsResponse 查询可用集群响应。
+message ListClusterOptionsResponse {
+  // items 可用集群，按环境、名称排序。
+  repeated ClusterOption items = 1;
+}

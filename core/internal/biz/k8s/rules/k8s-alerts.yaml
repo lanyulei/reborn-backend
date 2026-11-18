@@ -1,0 +1,194 @@
+# 容器平台内置的 K8s 告警规则模板（Prometheus 规则格式），经「监控告警 → 告警规则 → 导入」使用。
+# 依赖 kube-state-metrics、cAdvisor（kubelet）与 node-exporter 的标准指标；多集群共用时序库时，
+# 各集群的采集端须写入 cluster 标签（取值 = 平台里的集群名称），规则按它分组，告警事件据此跳转到资源页。
+groups:
+  - name: k8s-node
+    interval: 60s
+    rules:
+      - alert: K8sNodeNotReady
+        expr: kube_node_status_condition{condition="Ready",status="true"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "集群 {{ $labels.cluster }} 节点 {{ $labels.node }} NotReady"
+      - alert: K8sNodePressure
+        expr: kube_node_status_condition{condition=~"MemoryPressure|DiskPressure|PIDPressure",status="true"} == 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "集群 {{ $labels.cluster }} 节点 {{ $labels.node }} 出现 {{ $labels.condition }}"
+      - alert: K8sNodeUnschedulable
+        expr: kube_node_spec_unschedulable == 1
+        for: 1h
+        labels:
+          severity: info
+        annotations:
+          summary: "集群 {{ $labels.cluster }} 节点 {{ $labels.node }} 已停止调度超过 1 小时"
+      - alert: K8sNodeCPUHigh
+        expr: (1 - avg by (cluster, instance) (rate(node_cpu_seconds_total{mode="idle"}[5m]))) * 100 > 90
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "集群 {{ $labels.cluster }} 节点 {{ $labels.instance }} CPU 使用率 {{ $value }}%"
+      - alert: K8sNodeMemoryHigh
+        expr: (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100 > 90
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "集群 {{ $labels.cluster }} 节点 {{ $labels.instance }} 内存使用率 {{ $value }}%"
+      - alert: K8sNodeDiskHigh
+        expr: (1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs"}) * 100 > 85
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "集群 {{ $labels.cluster }} 节点 {{ $labels.instance }} 磁盘 {{ $labels.mountpoint }} 使用率 {{ $value }}%"
+  - name: k8s-workload
+    interval: 60s
+    rules:
+      - alert: K8sDeploymentReplicasMismatch
+        expr: kube_deployment_spec_replicas != kube_deployment_status_replicas_available
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "集群 {{ $labels.cluster }} Deployment {{ $labels.namespace }}/{{ $labels.deployment }} 可用副本数与期望不一致"
+      - alert: K8sDeploymentUnavailable
+        expr: kube_deployment_spec_replicas > 0 and kube_deployment_status_replicas_available == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "集群 {{ $labels.cluster }} Deployment {{ $labels.namespace }}/{{ $labels.deployment }} 没有可用副本"
+      - alert: K8sStatefulSetReplicasMismatch
+        expr: kube_statefulset_replicas != kube_statefulset_status_replicas_ready
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "集群 {{ $labels.cluster }} StatefulSet {{ $labels.namespace }}/{{ $labels.statefulset }} 就绪副本数与期望不一致"
+      - alert: K8sDaemonSetNotScheduled
+        expr: kube_daemonset_status_desired_number_scheduled - kube_daemonset_status_number_ready > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "集群 {{ $labels.cluster }} DaemonSet {{ $labels.namespace }}/{{ $labels.daemonset }} 有 {{ $value }} 个节点未就绪"
+      - alert: K8sJobFailed
+        expr: kube_job_status_failed > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "集群 {{ $labels.cluster }} Job {{ $labels.namespace }}/{{ $labels.job_name }} 执行失败"
+      - alert: K8sHPAMaxedOut
+        expr: kube_horizontalpodautoscaler_status_current_replicas == kube_horizontalpodautoscaler_spec_max_replicas
+        for: 30m
+        labels:
+          severity: info
+        annotations:
+          summary: "集群 {{ $labels.cluster }} HPA {{ $labels.namespace }}/{{ $labels.horizontalpodautoscaler }} 已达最大副本数"
+  - name: k8s-pod
+    interval: 60s
+    rules:
+      - alert: K8sPodCrashLooping
+        expr: increase(kube_pod_container_status_restarts_total[15m]) > 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "集群 {{ $labels.cluster }} Pod {{ $labels.namespace }}/{{ $labels.pod }} 容器 {{ $labels.container }} 15 分钟内重启 {{ $value }} 次"
+      - alert: K8sPodNotReady
+        expr: sum by (cluster, namespace, pod) (kube_pod_status_phase{phase=~"Pending|Unknown"}) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "集群 {{ $labels.cluster }} Pod {{ $labels.namespace }}/{{ $labels.pod }} 超过 15 分钟未进入运行状态"
+      - alert: K8sContainerWaiting
+        expr: sum by (cluster, namespace, pod, container, reason) (kube_pod_container_status_waiting_reason{reason=~"ImagePullBackOff|ErrImagePull|CrashLoopBackOff|CreateContainerConfigError"}) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "集群 {{ $labels.cluster }} Pod {{ $labels.namespace }}/{{ $labels.pod }} 容器 {{ $labels.container }} 处于 {{ $labels.reason }}"
+      - alert: K8sContainerOOMKilled
+        expr: (kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1) and on (cluster, namespace, pod, container) (increase(kube_pod_container_status_restarts_total[10m]) > 0)
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "集群 {{ $labels.cluster }} Pod {{ $labels.namespace }}/{{ $labels.pod }} 容器 {{ $labels.container }} 因内存超限被终止"
+      - alert: K8sContainerMemoryNearLimit
+        expr: (container_memory_working_set_bytes{container!="",container!="POD"} / on (cluster, namespace, pod, container) group_left kube_pod_container_resource_limits{resource="memory"}) * 100 > 90
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "集群 {{ $labels.cluster }} Pod {{ $labels.namespace }}/{{ $labels.pod }} 容器 {{ $labels.container }} 内存使用达到限制的 {{ $value }}%"
+      - alert: K8sContainerCPUThrottled
+        expr: (rate(container_cpu_cfs_throttled_periods_total{container!=""}[5m]) / rate(container_cpu_cfs_periods_total{container!=""}[5m])) * 100 > 50
+        for: 15m
+        labels:
+          severity: info
+        annotations:
+          summary: "集群 {{ $labels.cluster }} Pod {{ $labels.namespace }}/{{ $labels.pod }} 容器 {{ $labels.container }} CPU 被限流 {{ $value }}%"
+  - name: k8s-storage
+    interval: 60s
+    rules:
+      - alert: K8sPVCPending
+        expr: kube_persistentvolumeclaim_status_phase{phase="Pending"} == 1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "集群 {{ $labels.cluster }} PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} 长时间 Pending"
+      - alert: K8sVolumeUsageHigh
+        expr: (kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes) * 100 > 85
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "集群 {{ $labels.cluster }} PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} 使用率 {{ $value }}%"
+      - alert: K8sPVFailed
+        expr: kube_persistentvolume_status_phase{phase=~"Failed|Pending"} == 1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "集群 {{ $labels.cluster }} PV {{ $labels.persistentvolume }} 处于 {{ $labels.phase }}"
+  - name: k8s-control-plane
+    interval: 60s
+    rules:
+      - alert: K8sAPIServerDown
+        expr: absent(up{job=~".*apiserver.*"} == 1)
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "采集不到 API Server 的指标（API Server 不可用或采集中断）"
+      - alert: K8sAPIServerErrorRate
+        expr: sum by (cluster) (rate(apiserver_request_total{code=~"5.."}[5m])) / sum by (cluster) (rate(apiserver_request_total[5m])) * 100 > 5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "集群 {{ $labels.cluster }} API Server 5xx 比例 {{ $value }}%"
+      - alert: K8sCertificateExpiring
+        expr: apiserver_client_certificate_expiration_seconds_count > 0 and on (cluster, job) histogram_quantile(0.01, sum by (cluster, job, le) (rate(apiserver_client_certificate_expiration_seconds_bucket[5m]))) < 7 * 24 * 3600
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "集群 {{ $labels.cluster }} 有访问 API Server 的客户端证书将在 7 天内到期"
+      - alert: K8sResourceQuotaNearLimit
+        expr: (kube_resourcequota{type="used"} / ignoring (type) (kube_resourcequota{type="hard"} > 0)) * 100 > 90
+        for: 15m
+        labels:
+          severity: info
+        annotations:
+          summary: "集群 {{ $labels.cluster }} 命名空间 {{ $labels.namespace }} 配额 {{ $labels.resource }} 已使用 {{ $value }}%"

@@ -21,6 +21,20 @@ lint:
       - api/assistant/v1/error_reason.proto
       - api/cmdb/v1/error_reason.proto
       - api/oncall/v1/error_reason.proto
+      - api/monitor/v1/error_reason.proto
+      - api/job/v1/error_reason.proto
+      - api/k8s/v1/error_reason.proto
+    # 由 core 转发给容器平台数据面的接口：响应体是数据面返回的 JSON，原样透传（google.api.HttpBody）。
+    RPC_RESPONSE_STANDARD_NAME:
+      - api/k8s/v1/resource.proto
+      - api/k8s/v1/helm.proto
+      - api/k8s/v1/workload.proto
+      - api/k8s/v1/insight.proto
+    RPC_REQUEST_RESPONSE_UNIQUE:
+      - api/k8s/v1/resource.proto
+      - api/k8s/v1/helm.proto
+      - api/k8s/v1/workload.proto
+      - api/k8s/v1/insight.proto
     # 内部配置结构非对外 API，不携带版本后缀。
     PACKAGE_VERSION_SUFFIX:
       - internal/conf/conf.proto

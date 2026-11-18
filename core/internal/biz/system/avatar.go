@@ -4,6 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
+	v1 "github.com/lanyulei/reborn/backend/core/api/system/v1"
+	"github.com/lanyulei/reborn/backend/core/internal/pkg/imagesniff"
+
+	kerrors "github.com/go-kratos/kratos/v3/errors"
 )
 
 // SingletonFiles 「每个归属只有一份」的文件的存取端口（由 file 域实现，内容落在对象存储
@@ -38,6 +43,20 @@ type AvatarStore interface {
 // ErrAvatarNotFound 用户未设置头像（未配置语义，service 层映射 404）。
 var ErrAvatarNotFound = errors.New("avatar not found")
 
+// ErrImageTypeInvalid 上传的 logo / 头像不是允许的图片格式。
+var ErrImageTypeInvalid = kerrors.BadRequest(v1.ErrorReason_IMAGE_TYPE_INVALID.String(), "the file is not an allowed image format")
+
+// imageType 按内容判定上传图片的类型并核对白名单（类型 → 扩展名）：客户端声明的类型只是
+// 提示，不作数——声明成 PNG 的 HTML 不会被当成图片存下来，声明错了的真图片按实际类型保存。
+func imageType(data []byte, allowed map[string]string) (mime, ext string, err error) {
+	mime = imagesniff.Detect(data)
+	ext, ok := allowed[mime]
+	if !ok {
+		return "", "", ErrImageTypeInvalid
+	}
+	return mime, ext, nil
+}
+
 // AvatarMimeExts 是允许的头像 MIME 类型到扩展名的映射（与 proto 校验白名单一致；
 // 不含 SVG：用户上传内容不允许可执行脚本的格式）。
 var AvatarMimeExts = map[string]string{
@@ -64,11 +83,11 @@ func NewAvatarUsecase(reader UserReader, writer UserWriter, files SingletonFiles
 	return &AvatarUsecase{reader: reader, writer: writer, files: files, legacy: legacy}
 }
 
-// Upload 保存头像并把带指纹的访问地址写入用户 avatar 字段，返回该地址。
-func (uc *AvatarUsecase) Upload(ctx context.Context, userID string, data []byte, mime string) (string, error) {
-	ext, ok := AvatarMimeExts[mime]
-	if !ok {
-		return "", fmt.Errorf("unsupported avatar mime: %s", mime)
+// Upload 保存头像并把带指纹的访问地址写入用户 avatar 字段，返回该地址。类型按内容判定。
+func (uc *AvatarUsecase) Upload(ctx context.Context, userID string, data []byte) (string, error) {
+	mime, ext, err := imageType(data, AvatarMimeExts)
+	if err != nil {
+		return "", err
 	}
 	if _, err := uc.reader.GetUser(ctx, userID); err != nil {
 		return "", err

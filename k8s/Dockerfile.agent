@@ -1,0 +1,22 @@
+# reborn k8s agent 镜像。构建上下文是 backend/（需要同仓的 kit 模块）：
+#   docker build -f k8s/Dockerfile.agent -t reborn-k8s-agent:<版本> --build-arg VERSION=<版本> backend/
+FROM golang:1.27 AS build
+ARG VERSION=dev
+ARG GOPROXY=https://goproxy.cn,direct
+ENV GOPROXY=${GOPROXY} CGO_ENABLED=0 GOFLAGS=-mod=mod GOWORK=off
+WORKDIR /src
+COPY kit/ kit/
+COPY k8s/go.mod k8s/go.sum k8s/
+RUN cd k8s && go mod download
+COPY k8s/ k8s/
+RUN cd k8s && go build -trimpath -ldflags "-s -w -X main.Version=${VERSION}" -o /out/reborn-agent ./cmd/agent
+# 预建状态目录：docker 新建的命名卷会继承镜像里该路径的属主，否则卷为 root 所有、令牌写不进去。
+RUN mkdir -p /out/state
+
+# 静态二进制 + distroless nonroot（uid 65532）：没有 shell，可在只读根文件系统下运行。
+# 转发节点模式的令牌写在挂载的数据卷（REBORN_STATE_DIR）里，卷的属主须为 65532。
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=build /out/reborn-agent /reborn-agent
+COPY --from=build --chown=65532:65532 /out/state /var/lib/reborn-agent
+USER 65532:65532
+ENTRYPOINT ["/reborn-agent"]

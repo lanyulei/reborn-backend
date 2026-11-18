@@ -41,6 +41,23 @@ var excludedOperations = map[string]struct{}{
 	"/workflow.v1.WorkflowConfigService/UpdateWebhook":     {},
 	"/workflow.v1.WorkflowConfigService/CreateClient":      {},
 	"/workflow.v1.WorkflowConfigService/RotateClientToken": {},
+	// 监控数据源的凭据（Basic 密码 / Bearer 令牌）明文不经过模型。
+	"/monitor.v1.MonitorDatasourceService/CreateDatasource":     {},
+	"/monitor.v1.MonitorDatasourceService/UpdateDatasource":     {},
+	"/monitor.v1.MonitorDatasourceService/TestDatasourceConfig": {},
+	// 作业中心：凭据 / 仓库令牌的明文、执行节点接入令牌的明文不经过模型。
+	"/job.v1.JobCredentialService/CreateJobCredential": {},
+	"/job.v1.JobCredentialService/UpdateJobCredential": {},
+	"/job.v1.JobProjectService/CreateJobProject":       {},
+	"/job.v1.JobProjectService/UpdateJobProject":       {},
+	"/job.v1.JobRunnerService/CreateJobRunner":         {},
+	"/job.v1.JobRunnerService/ResetJobRunnerToken":     {},
+	// 提交执行会直接改动目标主机：只允许人在界面上看过主机清单后发起，不作为对话工具。
+	"/job.v1.JobExecutionService/SubmitJobExecution": {},
+	"/job.v1.JobExecutionService/SubmitJobAdhoc":     {},
+	// 触发器的调用令牌明文不经过模型。
+	"/job.v1.JobTriggerService/CreateJobTrigger":     {},
+	"/job.v1.JobTriggerService/ResetJobTriggerToken": {},
 }
 
 // readOnlyOperations 用 POST 承载但不写任何数据的 RPC（预览 / 预检）：按读操作处理，
@@ -51,6 +68,32 @@ var readOnlyOperations = map[string]struct{}{
 	"/cmdb.v1.CmdbModelService/CheckUniqueRule":        {},
 	// 模拟运行只在内存里把流程图走一遍，不落库、不发通知、不调用外部系统。
 	"/workflow.v1.WorkflowDefinitionService/SimulateDefinition": {},
+	// 预览目标主机只解析 CMDB 资源，不落库。
+	"/job.v1.JobTemplateService/PreviewJobTarget": {},
+	// 快速执行的提交前检查、规则试匹配、Cron 预览：只计算，不落库。
+	"/job.v1.JobExecutionService/CheckJobAdhoc":     {},
+	"/job.v1.JobPolicyService/TestJobRiskRules":     {},
+	"/job.v1.JobScheduleService/PreviewJobSchedule": {},
+	// 指标面板查询：POST 只为承载目标参数，服务端固定模板查询监控数据源，无副作用。
+	"/k8s.v1.K8sInsightService/QueryMetrics": {},
+}
+
+// k8sToolOperations 容器平台域允许作为对话工具的接口：全部只读。助手只诊断、不动手——新增的容器平台
+// 接口默认不是工具，确认只读且不返回凭据 / Secret 明文后才登记到这里。GetObject 返回的 Secret 已掩码。
+var k8sToolOperations = map[string]struct{}{
+	"/k8s.v1.K8sClusterService/ListClusterOptions":     {},
+	"/k8s.v1.K8sResourceService/ListNamespaceOptions":  {},
+	"/k8s.v1.K8sResourceService/ListAPIResources":      {},
+	"/k8s.v1.K8sResourceService/ListResources":         {},
+	"/k8s.v1.K8sResourceService/GetObject":             {},
+	"/k8s.v1.K8sResourceService/ListObjectEvents":      {},
+	"/k8s.v1.K8sWorkloadService/ListWorkloadRevisions": {},
+	"/k8s.v1.K8sInsightService/GetOverview":            {},
+	"/k8s.v1.K8sInsightService/ListEvents":             {},
+	"/k8s.v1.K8sInsightService/QueryMetrics":           {},
+	"/k8s.v1.K8sInsightService/GetRelations":           {},
+	"/k8s.v1.K8sInsightService/DiagnosePod":            {},
+	"/k8s.v1.K8sInsightService/DiagnoseWorkload":       {},
 }
 
 // NewToolCatalog 从可授权 RPC 枚举生成模型工具目录（启动期一次性反射；运行
@@ -62,6 +105,13 @@ func NewToolCatalog() (biz.ToolCatalog, error) {
 	for _, m := range methods {
 		if _, skip := excludedOperations[m.Name]; skip {
 			continue
+		}
+		// 容器平台接口只把确认过的只读接口作为对话工具（k8sToolOperations）：写接口会直接改动集群
+		// （必须由人在界面上看过 Diff 后提交），集群凭据、Agent 注册令牌与 Secret 明文不经过模型，终端不可用。
+		if strings.HasPrefix(m.Name, "/k8s.v1.") {
+			if _, ok := k8sToolOperations[m.Name]; !ok {
+				continue
+			}
 		}
 		if m.HTTPMethod == "" || m.Path == "" {
 			return nil, fmt.Errorf("assistant tool %s: missing http route", m.Name)

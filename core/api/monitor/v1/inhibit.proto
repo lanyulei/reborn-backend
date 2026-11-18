@@ -1,0 +1,253 @@
+syntax = "proto3";
+
+package monitor.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "monitor/v1/alert.proto";
+import "monitor/v1/common.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/monitor/v1;v1";
+
+// MonitorInhibitService 抑制规则（规则间抑制）：当存在匹配「源条件」的活跃告警时，抑制匹配「目标条件」且
+// 相等标签取值相同的告警的通知，语义同 Alertmanager 的 inhibit_rules。例：存在「主机失联」时，抑制同一
+// ident 的其他告警。被抑制的事件照常产生并留档（标记被谁抑制），只是不通知、不升级；抑制解除后若仍在告警，
+// 按一次新通知处理。抑制规则须指定作用的规则分组（源告警与目标告警都须在其中，含下级分组）；
+// 作用于全部分组的规则仅超级管理员可建。
+// 权限：查看要求对作用分组「只读」以上；新建 / 编辑 / 删除要求「可管理」。
+service MonitorInhibitService {
+  // ListInhibits 分页查询抑制规则（只返回当前用户数据范围内的）。
+  rpc ListInhibits(ListInhibitsRequest) returns (ListInhibitsResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/inhibit"};
+    option (system.v1.title) = "查询抑制规则";
+  }
+  // GetInhibit 查询抑制规则详情。
+  rpc GetInhibit(GetInhibitRequest) returns (GetInhibitResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/inhibit/{id}"};
+    option (system.v1.title) = "查询抑制规则详情";
+  }
+  // CreateInhibit 新建抑制规则。
+  rpc CreateInhibit(CreateInhibitRequest) returns (CreateInhibitResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/inhibit"
+      body: "*"
+    };
+    option (system.v1.title) = "新建抑制规则";
+  }
+  // UpdateInhibit 编辑抑制规则（整体替换）。version 不一致返回 409 MONITOR_VERSION_CONFLICT。
+  rpc UpdateInhibit(UpdateInhibitRequest) returns (UpdateInhibitResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/monitor/inhibit/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "编辑抑制规则";
+  }
+  // DeleteInhibit 删除抑制规则；正被它抑制的告警在下一轮评估时解除抑制。
+  rpc DeleteInhibit(DeleteInhibitRequest) returns (DeleteInhibitResponse) {
+    option (google.api.http) = {delete: "/api/v1/monitor/inhibit/{id}"};
+    option (system.v1.title) = "删除抑制规则";
+  }
+  // PreviewInhibit 预览（不保存）：按给出的规则内容，列出当前活跃告警里哪些是源、哪些会被抑制。
+  rpc PreviewInhibit(PreviewInhibitRequest) returns (PreviewInhibitResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/inhibit:preview"
+      body: "*"
+    };
+    option (system.v1.title) = "预览抑制规则";
+  }
+}
+
+// InhibitSelector 抑制规则一侧的匹配条件；各项之间是「并且」，全部留空表示不限。
+message InhibitSelector {
+  // rule_ids 限定产生告警的规则，至多 200 条；须位于作用分组内。
+  repeated string rule_ids = 1 [(buf.validate.field).repeated = {
+    max_items: 200
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+  // severities 限定级别，可多选：1=提示 2=警告 3=严重 4=致命。
+  repeated int32 severities = 2 [(buf.validate.field).repeated = {
+    max_items: 4
+    unique: true
+    items: {
+      int32: {
+        gte: 1
+        lte: 4
+      }
+    }
+  }];
+  // matchers 事件标签匹配条件，至多 20 行。
+  repeated LabelMatcher matchers = 3 [(buf.validate.field).repeated.max_items = 20];
+}
+
+// InhibitSpec 抑制规则的可编辑内容。
+message InhibitSpec {
+  option (buf.validate.message).cel = {
+    id: "monitor.inhibit.source_required"
+    message: "source must have at least one condition"
+    expression: "has(this.source) && (size(this.source.rule_ids) + size(this.source.severities) + size(this.source.matchers) > 0)"
+  };
+  option (buf.validate.message).cel = {
+    id: "monitor.inhibit.target_or_equal"
+    message: "target conditions and equal_labels must not both be empty"
+    expression: "size(this.equal_labels) > 0 || (has(this.target) && (size(this.target.rule_ids) + size(this.target.severities) + size(this.target.matchers) > 0))"
+  };
+
+  // group_id 作用的规则分组（含其全部下级），可选；留空为全部分组（仅超级管理员可建）。
+  string group_id = 1 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+  // name 名称，1-128 字符。
+  string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+  // description 说明，可选。
+  string description = 3 [(buf.validate.field).string.max_len = 255];
+  // source 源条件：存在满足它的活跃告警（且该告警自身未被抑制）时抑制生效；不得为空。
+  InhibitSelector source = 4 [(buf.validate.field).required = true];
+  // target 目标条件：满足它的告警被抑制；可留空（不限），但不得与 equal_labels 同时为空。
+  InhibitSelector target = 5;
+  // equal_labels 相等标签，至多 10 个：源告警与目标告警在这些标签上的取值须全部相同（事件上没有的标签按空字符串）。
+  repeated string equal_labels = 6 [(buf.validate.field).repeated = {
+    max_items: 10
+    unique: true
+    items: {
+      string: {
+        max_len: 128
+        pattern: "^[a-zA-Z_][a-zA-Z0-9_]*$"
+      }
+    }
+  }];
+  // enabled 是否启用。
+  bool enabled = 7;
+}
+
+// Inhibit 抑制规则。
+message Inhibit {
+  // id 规则唯一标识。
+  string id = 1;
+  // spec 规则内容。
+  InhibitSpec spec = 2;
+  // group_name 作用分组的完整名称（含上级，以 " / " 分隔）；全部分组时为空。
+  string group_name = 3;
+  // source_rules 源条件限定的规则名称（与 spec.source.rule_ids 对应）。
+  repeated NamedRef source_rules = 4;
+  // target_rules 目标条件限定的规则名称（与 spec.target.rule_ids 对应）。
+  repeated NamedRef target_rules = 5;
+  // inhibited_count 当前正被它抑制的活跃告警数。
+  int32 inhibited_count = 6;
+  // version 版本号：每次保存 +1；编辑时原样传回用作乐观锁。
+  int32 version = 7;
+  // can_manage 当前用户能否编辑 / 删除。
+  bool can_manage = 8;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 9;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 10;
+  // update_user_id 最近更新人。
+  string update_user_id = 11;
+  // update_user_name 最近更新人显示名。
+  string update_user_name = 12;
+  // create_user_id 创建人。
+  string create_user_id = 13;
+  // create_user_name 创建人显示名。
+  string create_user_name = 14;
+}
+
+// ListInhibitsRequest 分页查询抑制规则请求。
+message ListInhibitsRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // group_id 作用分组过滤（含其全部下级分组），可选。
+  optional string group_id = 3 [(buf.validate.field).string.uuid = true];
+  // keyword 名称 / 说明模糊匹配，可选。
+  optional string keyword = 4 [(buf.validate.field).string.max_len = 128];
+  // enabled 启用状态过滤，可选。
+  optional bool enabled = 5;
+}
+
+// ListInhibitsResponse 分页查询抑制规则响应。
+message ListInhibitsResponse {
+  // items 当前页数据。
+  repeated Inhibit items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// GetInhibitRequest 查询抑制规则详情请求。
+message GetInhibitRequest {
+  // id 规则唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetInhibitResponse 查询抑制规则详情响应。
+message GetInhibitResponse {
+  // inhibit 抑制规则。
+  Inhibit inhibit = 1;
+}
+
+// CreateInhibitRequest 新建抑制规则请求。
+message CreateInhibitRequest {
+  // spec 规则内容。
+  InhibitSpec spec = 1 [(buf.validate.field).required = true];
+}
+
+// CreateInhibitResponse 新建抑制规则响应。
+message CreateInhibitResponse {
+  // inhibit 新建的抑制规则。
+  Inhibit inhibit = 1;
+}
+
+// UpdateInhibitRequest 编辑抑制规则请求。
+message UpdateInhibitRequest {
+  // id 规则唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // spec 规则内容，整体替换。
+  InhibitSpec spec = 2 [(buf.validate.field).required = true];
+  // version 乐观锁版本号，须与当前一致。
+  int32 version = 3 [(buf.validate.field).int32.gte = 1];
+}
+
+// UpdateInhibitResponse 编辑抑制规则响应。
+message UpdateInhibitResponse {
+  // inhibit 更新后的抑制规则。
+  Inhibit inhibit = 1;
+}
+
+// DeleteInhibitRequest 删除抑制规则请求。
+message DeleteInhibitRequest {
+  // id 规则唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteInhibitResponse 删除抑制规则响应。
+message DeleteInhibitResponse {}
+
+// PreviewInhibitRequest 预览抑制规则请求。
+message PreviewInhibitRequest {
+  // spec 规则内容（表单当前的内容，不要求已保存）。
+  InhibitSpec spec = 1 [(buf.validate.field).required = true];
+}
+
+// PreviewInhibitResponse 预览抑制规则响应。
+message PreviewInhibitResponse {
+  // sources 当前满足源条件的活跃告警，至多 50 条。
+  repeated Alert sources = 1;
+  // source_total 满足源条件的活跃告警总数。
+  int32 source_total = 2;
+  // targets 当前会被抑制的活跃告警（满足目标条件，且有相等标签取值相同的源告警），至多 50 条。
+  repeated Alert targets = 3;
+  // target_total 会被抑制的活跃告警总数。
+  int32 target_total = 4;
+}

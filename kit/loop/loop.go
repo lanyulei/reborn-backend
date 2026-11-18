@@ -30,6 +30,8 @@ type Loop struct {
 	fn       func(ctx context.Context) (int, error)
 	log      *slog.Logger
 	rec      Recorder
+	// maxBackoff 失败退避的上限；0 = 包级缺省（maxBackoff）。见 WithMaxBackoff。
+	maxBackoff time.Duration
 
 	mu     sync.Mutex
 	cancel context.CancelFunc
@@ -42,6 +44,13 @@ func New(name string, interval time.Duration, log *slog.Logger, rec Recorder, fn
 		interval = defaultInterval
 	}
 	return &Loop{name: name, interval: interval, fn: fn, log: log, rec: rec}
+}
+
+// WithMaxBackoff 设置失败退避的上限（Start 之前调用），返回自身。心跳、续租这类「必须在某个期限内成功一次」
+// 的循环用它把退避压在期限之内：缺省的指数退避在连续失败几次后会超过期限，数据库恢复了循环却还在等。
+func (l *Loop) WithMaxBackoff(d time.Duration) *Loop {
+	l.maxBackoff = d
+	return l
 }
 
 // Name 循环名。
@@ -68,7 +77,11 @@ func (l *Loop) Start(ctx context.Context) error {
 				return nil
 			}
 			failures++
-			wait = min(l.interval*time.Duration(1<<min(failures, maxBackoffShift)), maxBackoff)
+			limit := maxBackoff
+			if l.maxBackoff > 0 {
+				limit = l.maxBackoff
+			}
+			wait = min(l.interval*time.Duration(1<<min(failures, maxBackoffShift)), limit)
 			l.log.ErrorContext(ctx, "worker loop iteration failed", "loop", l.name, "error", err, "retry_in", wait)
 		} else {
 			failures = 0

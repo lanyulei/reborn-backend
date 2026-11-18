@@ -4,9 +4,6 @@ package aws
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -14,12 +11,12 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/lanyulei/reborn/backend/cmdb/internal/biz"
 	"github.com/lanyulei/reborn/backend/kit/cmdbcontract"
+	"github.com/lanyulei/reborn/backend/kit/sigv4"
 )
 
 const (
@@ -225,38 +222,9 @@ func (c *Collector) describeOnce(ctx context.Context, endpoint string, cfg *cmdb
 	return &out, false, nil
 }
 
-func hmacSHA256(key []byte, msg string) []byte {
-	mac := hmac.New(sha256.New, key)
-	mac.Write([]byte(msg))
-	return mac.Sum(nil)
-}
+func sha256Hex(b []byte) string { return sigv4.HashHex(b) }
 
-func sha256Hex(b []byte) string {
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:])
-}
-
-// Authorization 计算 SigV4 Authorization 头。headers 为小写头名 → 值（全部参与签名），
-// payloadHash 为请求体 SHA-256 hex；时间取 now（UTC）。
+// Authorization 计算 SigV4 Authorization 头（实现在 kit/sigv4，与对象存储驱动共用）。
 func Authorization(method, path, query string, headers map[string]string, payloadHash string, now time.Time, region, svc, accessKey, secret string) string {
-	names := make([]string, 0, len(headers))
-	for k := range headers {
-		names = append(names, strings.ToLower(k))
-	}
-	sort.Strings(names)
-	var canonicalHeaders strings.Builder
-	for _, k := range names {
-		canonicalHeaders.WriteString(k + ":" + strings.TrimSpace(headers[k]) + "\n")
-	}
-	signedHeaders := strings.Join(names, ";")
-	canonicalRequest := strings.Join([]string{method, path, query, canonicalHeaders.String(), signedHeaders, payloadHash}, "\n")
-	date := now.UTC().Format("20060102")
-	scope := date + "/" + region + "/" + svc + "/aws4_request"
-	stringToSign := strings.Join([]string{"AWS4-HMAC-SHA256", now.UTC().Format("20060102T150405Z"), scope, sha256Hex([]byte(canonicalRequest))}, "\n")
-	kDate := hmacSHA256([]byte("AWS4"+secret), date)
-	kRegion := hmacSHA256(kDate, region)
-	kService := hmacSHA256(kRegion, svc)
-	kSigning := hmacSHA256(kService, "aws4_request")
-	signature := hex.EncodeToString(hmacSHA256(kSigning, stringToSign))
-	return "AWS4-HMAC-SHA256 Credential=" + accessKey + "/" + scope + ", SignedHeaders=" + signedHeaders + ", Signature=" + signature
+	return sigv4.Authorization(method, path, query, headers, payloadHash, now, region, svc, accessKey, secret)
 }

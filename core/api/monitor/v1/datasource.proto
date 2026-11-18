@@ -1,0 +1,422 @@
+syntax = "proto3";
+
+package monitor.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/monitor/v1;v1";
+
+// MonitorDatasourceService 监控数据源：登记 Prometheus 兼容的时序库（Prometheus / VictoriaMetrics /
+// Thanos 等）的查询地址，供告警规则评估与即时查询使用。凭据只写不读；健康状态由评估引擎定期探活。
+// 即时查询接口（QueryDatasource / QueryDatasourceRange）要求即时查询页面权限或规则编辑权限，并限制并发。
+service MonitorDatasourceService {
+  // ListDatasources 分页查询数据源。
+  rpc ListDatasources(ListDatasourcesRequest) returns (ListDatasourcesResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/datasource"};
+    option (system.v1.title) = "查询监控数据源";
+  }
+  // GetDatasource 查询数据源详情。
+  rpc GetDatasource(GetDatasourceRequest) returns (GetDatasourceResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/datasource/{id}"};
+    option (system.v1.title) = "查询监控数据源详情";
+  }
+  // CreateDatasource 新建数据源；名称重复返回 409 MONITOR_DATASOURCE_NAME_EXISTS。
+  rpc CreateDatasource(CreateDatasourceRequest) returns (CreateDatasourceResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/datasource"
+      body: "*"
+    };
+    option (system.v1.title) = "新建监控数据源";
+  }
+  // UpdateDatasource 编辑数据源（整体替换；凭据不传则保留原值）。version 不一致返回 409 MONITOR_VERSION_CONFLICT。
+  rpc UpdateDatasource(UpdateDatasourceRequest) returns (UpdateDatasourceResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/monitor/datasource/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "编辑监控数据源";
+  }
+  // DeleteDatasource 删除数据源；仍被规则指定使用时拒绝（409 MONITOR_DATASOURCE_IN_USE）。
+  rpc DeleteDatasource(DeleteDatasourceRequest) returns (DeleteDatasourceResponse) {
+    option (google.api.http) = {delete: "/api/v1/monitor/datasource/{id}"};
+    option (system.v1.title) = "删除监控数据源";
+  }
+  // TestDatasourceConfig 测试尚未保存的连接配置（新建 / 编辑表单里的「测试连接」）：对地址执行一次
+  // 查询 `1`。连接失败不报错，结果在响应的 ok / error 里。地址指向链路本地 / 云元数据地址
+  // （169.254.0.0/16 等）时返回 400 MONITOR_DATASOURCE_ADDRESS_BLOCKED。
+  rpc TestDatasourceConfig(TestDatasourceConfigRequest) returns (TestDatasourceConfigResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/datasource:test"
+      body: "*"
+    };
+    option (system.v1.title) = "测试数据源连接配置";
+  }
+  // TestDatasource 测试已保存的数据源能否连通，并把结果写入其健康状态。
+  rpc TestDatasource(TestDatasourceRequest) returns (TestDatasourceResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/datasource/{id}:test"
+      body: "*"
+    };
+    option (system.v1.title) = "测试数据源连接";
+  }
+  // ListDatasourceOptions 数据源下拉选项（仅 ID、名称与状态，不含地址与认证信息）；供建规则、
+  // 即时查询、筛选条件使用。
+  rpc ListDatasourceOptions(ListDatasourceOptionsRequest) returns (ListDatasourceOptionsResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/datasource-option"};
+    option (system.v1.title) = "查询数据源选项";
+  }
+  // QueryDatasource 即时查询：在指定数据源上执行 PromQL，取某一时刻的值。返回至多 500 条序列。
+  // PromQL 有误返回 400 MONITOR_QUERY_INVALID；数据源不可达返回 502 MONITOR_DATASOURCE_UNREACHABLE。
+  rpc QueryDatasource(QueryDatasourceRequest) returns (QueryDatasourceResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/query"
+      body: "*"
+    };
+    option (system.v1.title) = "即时查询";
+  }
+  // QueryDatasourceRange 区间查询（数据预览、趋势图）：在指定数据源上执行 PromQL，取一段时间内的值。
+  // 返回至多 500 条序列；(end - start) / step 不得超过 11000 个点。
+  rpc QueryDatasourceRange(QueryDatasourceRangeRequest) returns (QueryDatasourceRangeResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/query-range"
+      body: "*"
+    };
+    option (system.v1.title) = "区间查询";
+  }
+}
+
+// DatasourceConnection 数据源的连接配置。
+message DatasourceConnection {
+  // url 查询地址，仅 http / https，不含 /api/v1/query，可带路径前缀
+  // （如 VictoriaMetrics 集群版 http://vmselect:8481/select/0/prometheus），至多 512 字符。
+  string url = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 512
+    pattern: "^https?://[^\\s]+$"
+  }];
+  // auth_type 认证方式：1=无 2=Basic（用户名 + 密码） 3=Bearer（令牌）。
+  int32 auth_type = 2 [(buf.validate.field).int32 = {
+    in: [
+      1,
+      2,
+      3
+    ]
+  }];
+  // username Basic 认证的用户名，auth_type=2 时必填。
+  string username = 3 [(buf.validate.field).string.max_len = 128];
+  // secret Basic 密码或 Bearer 令牌，只写不读（响应中恒不返回）。新建时按认证方式必填；
+  // 编辑或测试已有数据源时不传表示沿用已保存的凭据——仅当 url 的协议、主机、端口与已保存的一致时
+  // 才允许沿用，否则返回 400 MONITOR_DATASOURCE_SECRET_REQUIRED，须重新填写。
+  optional string secret = 4 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 4096
+  }];
+  // headers 自定义请求头，至多 20 个；不允许 Authorization / Cookie / Host / Content-Type 等
+  // 凭据与逐跳头（400 MONITOR_DATASOURCE_INVALID）。
+  // 请求头的值可能是密钥（如 X-API-Key），响应中一律以掩码 `******`（6 个星号）返回，键名原样返回。
+  // 编辑或测试已有数据源时把掩码原样传回表示沿用该请求头已保存的值（要改就传新值，要删就去掉这个键）；
+  // 与 secret 一样，只有 url 的协议、主机、端口与已保存的一致时才允许沿用，否则返回
+  // 400 MONITOR_DATASOURCE_SECRET_REQUIRED。新建时、或对一个没有保存过的键传掩码同样返回该错误。
+  map<string, string> headers = 5 [(buf.validate.field).map = {
+    max_pairs: 20
+    keys: {
+      string: {
+        min_len: 1
+        max_len: 64
+        pattern: "^[A-Za-z0-9!#$%&'*+.^_`|~-]+$"
+      }
+    }
+    values: {
+      string: {max_len: 1024}
+    }
+  }];
+  // timeout_ms 查询超时毫秒，1000-30000，建议 10000。
+  int32 timeout_ms = 6 [(buf.validate.field).int32 = {
+    gte: 1000
+    lte: 30000
+  }];
+  // tls_skip_verify 是否跳过 TLS 证书校验（自签证书的内网数据源）。
+  bool tls_skip_verify = 7;
+}
+
+// Datasource 监控数据源。
+message Datasource {
+  // id 数据源唯一标识。
+  string id = 1;
+  // spec 数据源内容；其中 connection.secret 恒不返回，是否已配置见 has_secret。
+  DatasourceSpec spec = 2;
+  // type 类型，固定 prometheus（Prometheus HTTP API 兼容）。
+  string type = 3;
+  // has_secret 是否已保存凭据（密码 / 令牌）。
+  bool has_secret = 4;
+  // health_status 健康状态：0=未知 1=正常 2=异常；评估引擎每 30 秒探活一次。
+  int32 health_status = 5;
+  // health_error 最近一次探活失败的原因。
+  string health_error = 6;
+  // health_time 最近一次探活时间。
+  google.protobuf.Timestamp health_time = 7;
+  // rule_count 指定使用本数据源的规则数（不含范围为「全部数据源」的规则）；大于 0 时不可删除。
+  int32 rule_count = 8;
+  // version 乐观锁版本号，编辑时原样传回。
+  int32 version = 9;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 10;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 11;
+  // update_user_id 最近更新人。
+  string update_user_id = 12;
+  // update_user_name 最近更新人显示名。
+  string update_user_name = 13;
+}
+
+// DatasourceSpec 数据源的可编辑内容（新建与编辑共用）。
+message DatasourceSpec {
+  // name 名称，1-64 字符，全局唯一。
+  string name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // connection 连接配置。
+  DatasourceConnection connection = 2 [(buf.validate.field).required = true];
+  // remote_write_url Remote Write 的完整写入地址（如 http://vminsert:8480/insert/0/prometheus/api/v1/write），
+  // 可选：记录规则经它把计算结果写回，留空则该数据源不能用于记录规则。写入请求沿用本数据源的认证方式、
+  // 自定义请求头、超时与 TLS 设置；地址须与查询地址同样可达。
+  string remote_write_url = 3 [(buf.validate.field).string = {
+    max_len: 512
+    pattern: "^(https?://[^\\s]+)?$"
+  }];
+  // description 说明，可选。
+  string description = 4 [(buf.validate.field).string.max_len = 255];
+  // is_default 是否缺省数据源（至多一个，设为 true 时原缺省数据源随之取消）；新建规则与即时查询缺省选中它。
+  bool is_default = 5;
+  // enabled 是否启用；停用后引用它的规则不再在该数据源上评估。
+  bool enabled = 6;
+}
+
+// ListDatasourcesRequest 分页查询数据源请求。
+message ListDatasourcesRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // keyword 名称 / 地址模糊匹配，可选。
+  optional string keyword = 3 [(buf.validate.field).string.max_len = 64];
+  // enabled 启用状态过滤，可选。
+  optional bool enabled = 4;
+  // health_status 健康状态过滤，可选：0=未知 1=正常 2=异常。
+  optional int32 health_status = 5 [(buf.validate.field).int32 = {
+    in: [
+      0,
+      1,
+      2
+    ]
+  }];
+}
+
+// ListDatasourcesResponse 分页查询数据源响应。
+message ListDatasourcesResponse {
+  // items 当前页数据。
+  repeated Datasource items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// GetDatasourceRequest 查询数据源详情请求。
+message GetDatasourceRequest {
+  // id 数据源唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetDatasourceResponse 查询数据源详情响应。
+message GetDatasourceResponse {
+  // datasource 数据源。
+  Datasource datasource = 1;
+}
+
+// CreateDatasourceRequest 新建数据源请求。
+message CreateDatasourceRequest {
+  // spec 数据源内容。
+  DatasourceSpec spec = 1 [(buf.validate.field).required = true];
+}
+
+// CreateDatasourceResponse 新建数据源响应。
+message CreateDatasourceResponse {
+  // datasource 新建的数据源。
+  Datasource datasource = 1;
+}
+
+// UpdateDatasourceRequest 编辑数据源请求。
+message UpdateDatasourceRequest {
+  // id 数据源唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // spec 数据源内容，整体替换；connection.secret 不传表示保留原凭据。
+  DatasourceSpec spec = 2 [(buf.validate.field).required = true];
+  // version 乐观锁版本号，须与当前一致。
+  int32 version = 3 [(buf.validate.field).int32.gte = 1];
+}
+
+// UpdateDatasourceResponse 编辑数据源响应。
+message UpdateDatasourceResponse {
+  // datasource 更新后的数据源。
+  Datasource datasource = 1;
+}
+
+// DeleteDatasourceRequest 删除数据源请求。
+message DeleteDatasourceRequest {
+  // id 数据源唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteDatasourceResponse 删除数据源响应。
+message DeleteDatasourceResponse {}
+
+// TestDatasourceConfigRequest 测试连接配置请求。
+message TestDatasourceConfigRequest {
+  // connection 待测试的连接配置。
+  DatasourceConnection connection = 1 [(buf.validate.field).required = true];
+  // id 正在编辑的数据源，可选；给出且 connection.secret 未传（或请求头的值为掩码 `******`）时，沿用
+  // 该数据源已保存的凭据 / 请求头值。沿用要求调用方有「编辑监控数据源」的接口权限，且 connection.url 的
+  // 协议、主机、端口与已保存的一致；否则返回 400 MONITOR_DATASOURCE_SECRET_REQUIRED。
+  optional string id = 2 [(buf.validate.field).string.uuid = true];
+}
+
+// TestDatasourceConfigResponse 测试连接配置响应。
+message TestDatasourceConfigResponse {
+  // ok 是否连通。
+  bool ok = 1;
+  // latency_ms 本次请求耗时毫秒。
+  int32 latency_ms = 2;
+  // error 失败原因（不含凭据）；成功时为空。
+  string error = 3;
+}
+
+// TestDatasourceRequest 测试已保存数据源请求。
+message TestDatasourceRequest {
+  // id 数据源唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// TestDatasourceResponse 测试已保存数据源响应。
+message TestDatasourceResponse {
+  // ok 是否连通。
+  bool ok = 1;
+  // latency_ms 本次请求耗时毫秒。
+  int32 latency_ms = 2;
+  // error 失败原因（不含凭据）；成功时为空。
+  string error = 3;
+}
+
+// DatasourceOption 数据源下拉选项。
+message DatasourceOption {
+  // id 数据源唯一标识。
+  string id = 1;
+  // name 名称。
+  string name = 2;
+  // is_default 是否缺省数据源。
+  bool is_default = 3;
+  // enabled 是否启用。
+  bool enabled = 4;
+  // health_status 健康状态：0=未知 1=正常 2=异常。
+  int32 health_status = 5;
+}
+
+// ListDatasourceOptionsRequest 查询数据源选项请求。
+message ListDatasourceOptionsRequest {
+  // enabled_only 只返回已启用的数据源，可选。
+  optional bool enabled_only = 1;
+}
+
+// ListDatasourceOptionsResponse 查询数据源选项响应。
+message ListDatasourceOptionsResponse {
+  // items 全部数据源（缺省数据源在前，其余按名称排序）。
+  repeated DatasourceOption items = 1;
+}
+
+// QueryPoint 一个采样点。
+message QueryPoint {
+  // timestamp_ms 采样时间，Unix 毫秒。
+  int64 timestamp_ms = 1;
+  // value 采样值；NaN、正负无穷按 JSON 字符串 "NaN" / "Infinity" / "-Infinity" 返回。
+  double value = 2;
+}
+
+// QuerySeries 一条时间序列。
+message QuerySeries {
+  // labels 序列标签（含指标名 __name__，如有）。
+  map<string, string> labels = 1;
+  // points 采样点：即时查询恰一个，区间查询按时间升序多个。
+  repeated QueryPoint points = 2;
+}
+
+// QueryDatasourceRequest 即时查询请求。
+message QueryDatasourceRequest {
+  // datasource_id 数据源唯一标识。
+  string datasource_id = 1 [(buf.validate.field).string.uuid = true];
+  // expr PromQL 表达式，至多 8192 字符。
+  string expr = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 8192
+  }];
+  // time 查询时刻，可选；不传取数据源的当前时间。
+  optional google.protobuf.Timestamp time = 3;
+}
+
+// QueryDatasourceResponse 即时查询响应。
+message QueryDatasourceResponse {
+  // result_type 结果类型：vector / scalar / matrix / string。
+  string result_type = 1;
+  // series 序列，至多 500 条。
+  repeated QuerySeries series = 2;
+  // truncated 结果是否因超过序列或点数上限被截断。
+  bool truncated = 3;
+  // warnings 数据源返回的警告。
+  repeated string warnings = 4;
+  // duration_ms 查询耗时毫秒。
+  int32 duration_ms = 5;
+}
+
+// QueryDatasourceRangeRequest 区间查询请求。
+message QueryDatasourceRangeRequest {
+  option (buf.validate.message).cel = {
+    id: "monitor.query_range.time_range"
+    message: "start must be before end"
+    expression: "this.start < this.end"
+  };
+
+  // datasource_id 数据源唯一标识。
+  string datasource_id = 1 [(buf.validate.field).string.uuid = true];
+  // expr PromQL 表达式，至多 8192 字符。
+  string expr = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 8192
+  }];
+  // start 开始时间（含）。
+  google.protobuf.Timestamp start = 3 [(buf.validate.field).required = true];
+  // end 结束时间（含），须晚于 start。
+  google.protobuf.Timestamp end = 4 [(buf.validate.field).required = true];
+  // step_s 步长秒，1-86400；点数 (end - start) / step_s 不得超过 11000。
+  int32 step_s = 5 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 86400
+  }];
+}
+
+// QueryDatasourceRangeResponse 区间查询响应。
+message QueryDatasourceRangeResponse {
+  // result_type 结果类型，区间查询恒为 matrix。
+  string result_type = 1;
+  // series 序列，至多 500 条。
+  repeated QuerySeries series = 2;
+  // truncated 结果是否因超过序列或点数上限被截断。
+  bool truncated = 3;
+  // warnings 数据源返回的警告。
+  repeated string warnings = 4;
+  // duration_ms 查询耗时毫秒。
+  int32 duration_ms = 5;
+}

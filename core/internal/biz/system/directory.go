@@ -2,19 +2,18 @@ package biz
 
 import (
 	"context"
-	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/lanyulei/reborn/backend/kit/idgen"
 )
 
-// uuidText UUID 的文本形式。目录查询的入参来自流程定义与表单取值（不可信），查询时
-// 要转成 uuid：非法形式在此丢弃，而不是让语句报错、连带回滚调用方的事务。
-var uuidText = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
-
-// validIDs 小写、去重并丢弃不是 UUID 的项（保持首次出现顺序）。
+// validIDs 小写、去重并丢弃不是 UUID 的项（保持首次出现顺序）。目录查询的入参来自流程定义
+// 与表单取值（不可信），查询时要转成 uuid：非法形式在此丢弃，而不是让语句报错、连带回滚
+// 调用方的事务。
 func validIDs(ids []string) []string {
 	out := uniqueLowerIDs(ids)
-	return slices.DeleteFunc(out, func(id string) bool { return !uuidText.MatchString(id) })
+	return slices.DeleteFunc(out, func(id string) bool { return !idgen.IsUUID(id) })
 }
 
 // DirectoryRepo 组织目录只读仓储接口，由 data 层实现（依赖倒置）；供流程引擎等
@@ -85,7 +84,7 @@ func (uc *DirectoryUsecase) UserIDsByRoles(ctx context.Context, roleCodes []stri
 // （排除 exclude）；该级为空则继续向上，直到根部门。部门不存在或整条链为空返回空。
 func (uc *DirectoryUsecase) DeptLeaderIDs(ctx context.Context, deptID string, level int, exclude string) ([]string, error) {
 	deptID = strings.ToLower(deptID)
-	if !uuidText.MatchString(deptID) {
+	if !idgen.IsUUID(deptID) {
 		return nil, nil
 	}
 	chain, err := uc.repo.ListDeptChainLeaders(ctx, deptID)

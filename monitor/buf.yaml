@@ -1,0 +1,15 @@
+version: v2
+# 评估引擎不暴露 proto 接口：只有内部配置结构（internal/conf），且仅依赖 protobuf
+# 内置类型（google/protobuf/duration.proto），无远程依赖、无 buf.lock。
+modules:
+  - path: internal
+lint:
+  use:
+    - STANDARD
+  ignore_only:
+    # 内部配置结构非对外 API，不携带版本后缀。
+    PACKAGE_VERSION_SUFFIX:
+      - internal/conf/conf.proto
+breaking:
+  use:
+    - FILE

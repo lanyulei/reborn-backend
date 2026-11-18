@@ -11,6 +11,9 @@ import (
 	serviceassistant "github.com/lanyulei/reborn/backend/core/internal/service/assistant"
 	servicecmdb "github.com/lanyulei/reborn/backend/core/internal/service/cmdb"
 	servicefile "github.com/lanyulei/reborn/backend/core/internal/service/file"
+	servicejob "github.com/lanyulei/reborn/backend/core/internal/service/job"
+	servicek8s "github.com/lanyulei/reborn/backend/core/internal/service/k8s"
+	servicemonitor "github.com/lanyulei/reborn/backend/core/internal/service/monitor"
 	servicenotify "github.com/lanyulei/reborn/backend/core/internal/service/notify"
 	serviceoncall "github.com/lanyulei/reborn/backend/core/internal/service/oncall"
 	servicesystem "github.com/lanyulei/reborn/backend/core/internal/service/system"
@@ -19,4 +22,4 @@ import (
 )
 
 // ProviderSet 聚合各业务域的 service providers。
-var ProviderSet = wire.NewSet(servicesystem.ProviderSet, servicenotify.ProviderSet, serviceassistant.ProviderSet, servicecmdb.ProviderSet, serviceoncall.ProviderSet, servicefile.ProviderSet, serviceworkflow.ProviderSet, serviceticket.ProviderSet)
+var ProviderSet = wire.NewSet(servicesystem.ProviderSet, servicenotify.ProviderSet, serviceassistant.ProviderSet, servicecmdb.ProviderSet, serviceoncall.ProviderSet, servicefile.ProviderSet, serviceworkflow.ProviderSet, serviceticket.ProviderSet, servicemonitor.ProviderSet, servicejob.ProviderSet, servicek8s.ProviderSet)

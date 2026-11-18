@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"reflect"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -147,7 +146,7 @@ func DecodeCursor(cursor string) (time.Time, string, error) {
 		return time.Time{}, "", detail(ErrCIInvalid, "invalid cursor")
 	}
 	parts := strings.SplitN(string(raw), "|", 2)
-	if len(parts) != 2 || !uuidPattern.MatchString(parts[1]) {
+	if len(parts) != 2 || !idgen.IsUUIDFold(parts[1]) {
 		return time.Time{}, "", detail(ErrCIInvalid, "invalid cursor")
 	}
 	nanos, err := strconv.ParseInt(parts[0], 10, 64)
@@ -956,7 +955,7 @@ func (uc *CIUsecase) checkRefs(ctx context.Context, fields []*Field, attrs map[s
 			continue
 		}
 		id, _ := v.(string)
-		if !uuidPattern.MatchString(id) {
+		if !idgen.IsUUIDFold(id) {
 			return detail(ErrCIInvalid, "field %q must be a resource id", f.Code)
 		}
 		exists, err := uc.cis.ExistsInModel(ctx, f.RefModel, id)
@@ -969,9 +968,6 @@ func (uc *CIUsecase) checkRefs(ctx context.Context, fields []*Field, attrs map[s
 	}
 	return nil
 }
-
-// uuidPattern ref 字段值须为 UUID 文本（避免非法文本直达 uuid 列报 500）。
-var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 // rejectSyncOwned 人工更新不得改动 owner=sync 的字段（值不变允许回传）。
 func rejectSyncOwned(fields []*Field, cur, patch map[string]any) error {

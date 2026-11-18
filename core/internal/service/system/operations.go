@@ -9,6 +9,9 @@ import (
 	assistantv1 "github.com/lanyulei/reborn/backend/core/api/assistant/v1"
 	cmdbv1 "github.com/lanyulei/reborn/backend/core/api/cmdb/v1"
 	filev1 "github.com/lanyulei/reborn/backend/core/api/file/v1"
+	jobv1 "github.com/lanyulei/reborn/backend/core/api/job/v1"
+	k8sv1 "github.com/lanyulei/reborn/backend/core/api/k8s/v1"
+	monitorv1 "github.com/lanyulei/reborn/backend/core/api/monitor/v1"
 	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
 	oncallv1 "github.com/lanyulei/reborn/backend/core/api/oncall/v1"
 	v1 "github.com/lanyulei/reborn/backend/core/api/system/v1"
@@ -61,6 +64,36 @@ var operationFiles = []protoreflect.FileDescriptor{
 	workflowv1.File_workflow_v1_config_proto,
 	workflowv1.File_workflow_v1_open_proto,
 	ticketv1.File_ticket_v1_ticket_proto,
+	monitorv1.File_monitor_v1_datasource_proto,
+	monitorv1.File_monitor_v1_rule_group_proto,
+	monitorv1.File_monitor_v1_rule_proto,
+	monitorv1.File_monitor_v1_alert_proto,
+	monitorv1.File_monitor_v1_mute_proto,
+	monitorv1.File_monitor_v1_subscription_proto,
+	monitorv1.File_monitor_v1_escalation_proto,
+	monitorv1.File_monitor_v1_inhibit_proto,
+	monitorv1.File_monitor_v1_record_rule_proto,
+	monitorv1.File_monitor_v1_alert_view_proto,
+	monitorv1.File_monitor_v1_stats_proto,
+	monitorv1.File_monitor_v1_engine_proto,
+	jobv1.File_job_v1_credential_proto,
+	jobv1.File_job_v1_project_proto,
+	jobv1.File_job_v1_template_proto,
+	jobv1.File_job_v1_execution_proto,
+	jobv1.File_job_v1_runner_proto,
+	jobv1.File_job_v1_script_proto,
+	jobv1.File_job_v1_policy_proto,
+	jobv1.File_job_v1_schedule_proto,
+	jobv1.File_job_v1_trigger_proto,
+	k8sv1.File_k8s_v1_cluster_proto,
+	k8sv1.File_k8s_v1_scope_proto,
+	k8sv1.File_k8s_v1_audit_proto,
+	k8sv1.File_k8s_v1_resource_proto,
+	k8sv1.File_k8s_v1_workload_proto,
+	k8sv1.File_k8s_v1_insight_proto,
+	k8sv1.File_k8s_v1_helm_proto,
+	k8sv1.File_k8s_v1_governance_proto,
+	k8sv1.File_k8s_v1_change_proto,
 }
 
 // authzExemptOperations 是免授权检查的操作集合（proto full method），为鉴权
@@ -88,12 +121,35 @@ var authzExemptOperations = map[string]struct{}{
 	filev1.OperationFileServiceUploadFile:   {},
 	filev1.OperationFileServiceGetFile:      {},
 	filev1.OperationFileServiceDownloadFile: {},
+	// 告警事件详情：通知里的链接要让收件人打开，而收件人不一定有监控的任何接口权限（仍须 JWT）。
+	// 访问控制在监控域：本人是这条事件的通知接收方，或持有「查询告警事件」接口权限且事件在其数据
+	// 范围内；否则 404。告警列表等其余接口不免检。
+	monitorv1.OperationMonitorAlertServiceGetAlert: {},
+	// 值班班次告警数：值班日历页与告警页都要调（仍须 JWT）。访问控制在监控域：持有「查询告警事件」或
+	// 「查询值班班次」任一接口权限才返回，否则 403；只返回每个班次的告警条数，不含事件内容。
+	monitorv1.OperationMonitorAlertServiceListShiftAlertCounts: {},
 	// 流程引擎的开放接口（接入令牌即凭据，能做什么由凭据自身的配置决定）：随 authExempt 同步免 JWT。
 	workflowv1.OperationWorkflowOpenServiceOpenStartInstance:  {},
 	workflowv1.OperationWorkflowOpenServiceOpenGetInstance:    {},
 	workflowv1.OperationWorkflowOpenServiceOpenSignalInstance: {},
 	workflowv1.OperationWorkflowOpenServiceOpenCancelInstance: {},
+	// 容器平台 Web 终端的 WebSocket 入口（一次性票据即凭据）：随 authExempt 同步免 JWT。它不是 proto 里的
+	// RPC，不会出现在可授权操作的枚举里；能否打开终端由签发票据的 OpenExecTicket 接口授权控制。
+	OperationK8sExecConnect: {},
+	// 作业中心的开放触发接口（调用令牌 / 流程 Webhook 签名即凭据）：随 authExempt 同步免 JWT。它不是 proto 里的
+	// RPC，不会出现在可授权操作的枚举里；能触发哪个模板由触发器自身的配置决定。
+	OperationJobOpenFire: {},
 }
+
+// OperationK8sExecConnect 容器平台 Web 终端 WebSocket 入口（GET /api/v1/k8s/exec）在中间件链里的操作名。
+// WebSocket 无法用 proto 的一元接口表达，所以它不是生成的常量；凭一次性票据认证，免 JWT、免接口授权
+// （server/auth.go 的 authExempt 与本文件的 authzExemptOperations 都引用本常量）。
+const OperationK8sExecConnect = "/k8s.v1.K8sExecService/Connect"
+
+// OperationJobOpenFire 作业中心开放触发接口（POST /api/v1/open/job/trigger/{id}）在中间件链里的操作名。
+// 认证要对原始请求体验签，所以它走原生路由、不是生成的常量；凭触发器的调用令牌或签名认证，免 JWT、
+// 免接口授权（server/auth.go 的 authExempt 与本文件的 authzExemptOperations 都引用本常量）。
+const OperationJobOpenFire = "/job.v1.JobOpenService/FireTrigger"
 
 // IsAuthzExempt 报告操作是否免授权检查；供 server 层 authz 中间件使用，
 // 与 ListOperations 的排除口径共享同一集合，杜绝两处定义漂移。

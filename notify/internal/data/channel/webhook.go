@@ -7,13 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/lanyulei/reborn/backend/kit/netguard"
 	"github.com/lanyulei/reborn/backend/kit/notifycontract"
 	"github.com/lanyulei/reborn/backend/notify/internal/biz"
 	"github.com/lanyulei/reborn/backend/notify/pkg/webhooksig"
@@ -28,7 +28,7 @@ const (
 )
 
 // errWebhookHostBlocked 出站目标解析到回环/私网/链路本地等地址（SSRF 防护）：确定性失败。
-var errWebhookHostBlocked = errors.New("webhook host resolves to a private or local address")
+var errWebhookHostBlocked = netguard.ErrHostBlocked
 
 // webhookPayload 出站 JSON 体。
 type webhookPayload struct {
@@ -51,63 +51,27 @@ type webhookPayload struct {
 // 重绑定），命中即确定性失败；5xx/408/429/超时/网络错误可重试，其余 4xx 不可重试；
 // 429/503 的 Retry-After 透传给退避。
 type WebhookSender struct {
-	client   *http.Client
-	dialer   *net.Dialer
-	resolver interface {
-		LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error)
-	}
-	allowInsecure bool
+	client *http.Client
+	dialer *netguard.Dialer
 }
 
 // NewWebhookSender new a WebhookSender（连接复用、禁跳转、安全拨号）。
 func NewWebhookSender() *WebhookSender {
-	s := &WebhookSender{dialer: &net.Dialer{Timeout: 3 * time.Second}, resolver: net.DefaultResolver}
+	s := &WebhookSender{dialer: netguard.NewDialer(3 * time.Second)}
 	s.client = &http.Client{
 		Transport: &http.Transport{
 			MaxIdleConns: 64, MaxIdleConnsPerHost: 8, IdleConnTimeout: 90 * time.Second,
-			DialContext: s.dialContext,
+			// 先解析再逐地址校验拨号（kit/netguard，与流程回调共用一份规则）。
+			DialContext: s.dialer.DialContext,
 		},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	return s
 }
 
-// dialContext 先解析再逐地址校验拨号：任一地址为私网/回环即整体拒绝（不能"挑一个
-// 公网地址连"——对端可返回混合记录诱导）。allowInsecure 仅测试脚手架放行。
-func (s *WebhookSender) dialContext(ctx context.Context, network, addr string) (net.Conn, error) {
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return nil, err
-	}
-	if s.allowInsecure {
-		return s.dialer.DialContext(ctx, network, addr)
-	}
-	ips, err := s.resolver.LookupIPAddr(ctx, host)
-	if err != nil {
-		return nil, err
-	}
-	if len(ips) == 0 {
-		return nil, fmt.Errorf("webhook host %q resolves to no address", host)
-	}
-	for _, ip := range ips {
-		if notifycontract.PrivateIP(ip.IP) {
-			return nil, fmt.Errorf("%w: %s → %s", errWebhookHostBlocked, host, ip.IP)
-		}
-	}
-	var last error
-	for _, ip := range ips {
-		conn, err := s.dialer.DialContext(ctx, network, net.JoinHostPort(ip.IP.String(), port))
-		if err == nil {
-			return conn, nil
-		}
-		last = err
-	}
-	return nil, last
-}
-
 // WithInsecure 允许 http://（仅测试脚手架使用）。
 func (s *WebhookSender) WithInsecure() *WebhookSender {
-	s.allowInsecure = true
+	s.dialer.AllowInsecure = true
 	return s
 }
 
@@ -122,10 +86,10 @@ func (s *WebhookSender) Send(ctx context.Context, ch *biz.Channel, msg biz.Rende
 	if cfg == nil || cfg.URL == "" {
 		return biz.SendResult{Retryable: false}, errors.New("webhook config missing url")
 	}
-	if !strings.HasPrefix(cfg.URL, "https://") && !s.allowInsecure {
+	if !strings.HasPrefix(cfg.URL, "https://") && !s.dialer.AllowInsecure {
 		return biz.SendResult{Retryable: false}, errors.New("webhook url must be https")
 	}
-	if u, err := url.Parse(cfg.URL); err != nil || (!s.allowInsecure && notifycontract.UnsafeWebhookHost(u.Hostname())) {
+	if u, err := url.Parse(cfg.URL); err != nil || (!s.dialer.AllowInsecure && notifycontract.UnsafeWebhookHost(u.Hostname())) {
 		host := "unparseable url" // 只报主机：路径/查询串可能带密钥
 		if err == nil {
 			host = u.Host

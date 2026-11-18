@@ -1,0 +1,369 @@
+syntax = "proto3";
+
+package job.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/job/v1;v1";
+
+// JobTemplateService 作业模板：把「项目中的一个 Playbook + 目标主机 + 凭据 + 执行参数 + 执行选项」
+// 固定下来，执行时只需填写参数。目标主机取自 CMDB 的一个资源类型；实际能执行到哪些主机，
+// 在提交执行时按执行人的 CMDB 数据范围重新判定。
+service JobTemplateService {
+  // ListJobTemplates 分页查询作业模板。
+  rpc ListJobTemplates(ListJobTemplatesRequest) returns (ListJobTemplatesResponse) {
+    option (google.api.http) = {get: "/api/v1/job/template"};
+    option (system.v1.title) = "查询作业模板";
+  }
+  // GetJobTemplate 查询作业模板详情。
+  rpc GetJobTemplate(GetJobTemplateRequest) returns (GetJobTemplateResponse) {
+    option (google.api.http) = {get: "/api/v1/job/template/{id}"};
+    option (system.v1.title) = "查询作业模板详情";
+  }
+  // CreateJobTemplate 新建作业模板；名称重复返回 409 JOB_TEMPLATE_NAME_EXISTS。
+  rpc CreateJobTemplate(CreateJobTemplateRequest) returns (CreateJobTemplateResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/job/template"
+      body: "*"
+    };
+    option (system.v1.title) = "新建作业模板";
+  }
+  // UpdateJobTemplate 编辑作业模板（整体替换）。version 不一致返回 409 JOB_VERSION_CONFLICT。
+  // 已提交的执行不受影响（执行内容在提交时已固化）。
+  rpc UpdateJobTemplate(UpdateJobTemplateRequest) returns (UpdateJobTemplateResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/job/template/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "编辑作业模板";
+  }
+  // DeleteJobTemplate 删除作业模板；已有的执行记录保留。
+  rpc DeleteJobTemplate(DeleteJobTemplateRequest) returns (DeleteJobTemplateResponse) {
+    option (google.api.http) = {delete: "/api/v1/job/template/{id}"};
+    option (system.v1.title) = "删除作业模板";
+  }
+  // PreviewJobTarget 预览一份尚未保存的目标主机配置会选中哪些主机（编辑模板时用），按当前用户的
+  // CMDB 数据范围解析。资源类型不在数据范围内返回 403 JOB_TARGET_FORBIDDEN。
+  rpc PreviewJobTarget(PreviewJobTargetRequest) returns (PreviewJobTargetResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/job/target:preview"
+      body: "*"
+    };
+    option (system.v1.title) = "预览目标主机";
+  }
+  // ListJobTemplateHosts 模板当前会选中的主机（执行前确认用），按当前用户的 CMDB 数据范围解析。
+  rpc ListJobTemplateHosts(ListJobTemplateHostsRequest) returns (ListJobTemplateHostsResponse) {
+    option (google.api.http) = {get: "/api/v1/job/template/{id}/host"};
+    option (system.v1.title) = "查询作业模板的目标主机";
+  }
+}
+
+// JobTarget 目标主机：从 CMDB 的一个资源类型里选主机。
+message JobTarget {
+  // model_code CMDB 资源类型码。
+  string model_code = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // mode 选择方式：1=指定资源（ci_ids） 2=按条件筛选（env / tag / keyword，每次执行时重新解析）。
+  int32 mode = 2 [(buf.validate.field).int32 = {
+    in: [
+      1,
+      2
+    ]
+  }];
+  // ci_ids 指定的资源 ID，mode=1 时 1-500 个。
+  repeated string ci_ids = 3 [(buf.validate.field).repeated = {
+    max_items: 500
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+  // env 环境等值过滤，mode=2 时可选。
+  string env = 4 [(buf.validate.field).string.max_len = 64];
+  // tag 标签等值过滤，mode=2 时可选。
+  string tag = 5 [(buf.validate.field).string.max_len = 64];
+  // keyword 名称关键字，mode=2 时可选。
+  string keyword = 6 [(buf.validate.field).string.max_len = 64];
+  // address_field 存放连接地址（IP 或主机名）的资源属性码；空表示用资源名称作为地址。
+  // 不能是敏感属性。
+  string address_field = 7 [(buf.validate.field).string.max_len = 64];
+}
+
+// JobParam 一个执行参数的定义：执行时填写，以同名变量（extra vars）传给 Playbook。
+message JobParam {
+  // code 变量名：小写字母开头，只含小写字母、数字、下划线，至多 64 字符；不得以 ansible_ / cmdb_
+  // 开头，不得是 Ansible 的保留变量名（400 JOB_TEMPLATE_INVALID）。
+  string code = 1 [(buf.validate.field).string = {pattern: "^[a-z][a-z0-9_]{0,63}$"}];
+  // name 显示名，1-64 字符。
+  string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // type 数据类型：string=单行文本 text=多行文本 int=整数 float=小数 bool=开关 enum=单选。
+  string type = 3 [(buf.validate.field).string = {
+    in: [
+      "string",
+      "text",
+      "int",
+      "float",
+      "bool",
+      "enum"
+    ]
+  }];
+  // required 是否必填。
+  bool required = 4;
+  // default 缺省值的文本形式（bool 为 true / false），可选；须能按 type 解析。
+  string default = 5 [(buf.validate.field).string.max_len = 1024];
+  // options 可选值，type=enum 时 1-50 个。
+  repeated string options = 6 [(buf.validate.field).repeated = {
+    max_items: 50
+    unique: true
+    items: {
+      string: {
+        min_len: 1
+        max_len: 128
+      }
+    }
+  }];
+  // description 填写说明，可选。
+  string description = 7 [(buf.validate.field).string.max_len = 255];
+}
+
+// JobOptions 执行选项。数值为 0 表示取缺省值。
+message JobOptions {
+  // forks 并发主机数，1-100，缺省 10。
+  int32 forks = 1 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 100
+  }];
+  // timeout_s 执行超时秒数，60-86400，缺省 3600；超时后作业被终止并标记为「超时」。
+  int32 timeout_s = 2 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 86400
+  }];
+  // port SSH 端口，缺省 22。
+  int32 port = 3 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 65535
+  }];
+  // become 是否提权执行；提权方式与密码取自凭据（凭据未配置提权方式时按 sudo）。
+  bool become = 4;
+  // check 预检模式：只报告将发生的变更，不实际修改目标主机。
+  bool check = 5;
+  // diff 在日志里输出文件变更的差异。
+  bool diff = 6;
+  // verbosity 输出详细程度，0-3。
+  int32 verbosity = 7 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 3
+  }];
+  // batch_size 滚动执行的每批主机数，1-500；0 表示不分批。分批由执行节点实现：按主机顺序切成若干批
+  // 依次执行（每批各跑一遍 Playbook），与 Playbook 自身的 serial 无关。
+  int32 batch_size = 8 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 500
+  }];
+  // max_fail_percent 滚动执行的失败阈值，0-100：一批结束后，已执行主机中失败与不可达的占比超过它即中止，
+  // 剩余主机不再执行（保持「未执行」）。0 表示出现任何失败即中止。仅分批时生效。
+  int32 max_fail_percent = 9 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 100
+  }];
+}
+
+// JobTemplateSpec 作业模板的可编辑内容（新建与编辑共用）。
+message JobTemplateSpec {
+  // name 名称，1-64 字符，全局唯一。
+  string name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // description 说明，可选。
+  string description = 2 [(buf.validate.field).string.max_len = 255];
+  // project_id 所属项目。
+  string project_id = 3 [(buf.validate.field).string.uuid = true];
+  // playbook Playbook 在仓库内的相对路径，以 .yml / .yaml 结尾，如 deploy/site.yml；
+  // 不得含 .. 段。Playbook 的 hosts 应写 all（清单里只有本次选中的主机）。
+  string playbook = 4 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 255
+  }];
+  // credential_id 登录目标主机的凭据。
+  string credential_id = 5 [(buf.validate.field).string.uuid = true];
+  // target 目标主机。
+  JobTarget target = 6 [(buf.validate.field).required = true];
+  // params 执行参数定义，至多 30 个，code 不得重复。
+  repeated JobParam params = 7 [(buf.validate.field).repeated.max_items = 30];
+  // options 执行选项。
+  JobOptions options = 8;
+  // runner_zone 执行节点区域，可选；空表示任意区域的节点都可执行。
+  string runner_zone = 9 [(buf.validate.field).string = {pattern: "^([A-Za-z0-9][A-Za-z0-9._-]{0,63})?$"}];
+  // exclusive 是否禁止并发：为 true 时，本模板有未结束的执行期间不能再次提交。
+  bool exclusive = 10;
+  // enabled 是否启用；停用后不可执行。
+  bool enabled = 11;
+  // require_approval 是否每次执行都须审批（预检模式除外）。
+  bool require_approval = 12;
+  // slice_size 作业切片的每片主机数，1-500；0 表示不切片。切片后一次提交拆成多条执行（至多 10 片，
+  // 即至多 5000 台主机），可由多个执行节点并行执行。不能与「禁止并发」同时开启。
+  int32 slice_size = 13 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 500
+  }];
+}
+
+// JobTemplate 作业模板。
+message JobTemplate {
+  // id 模板唯一标识。
+  string id = 1;
+  // spec 模板内容。
+  JobTemplateSpec spec = 2;
+  // project_name 项目名称；项目已被删除时为空。
+  string project_name = 3;
+  // project_ref 项目的分支或标签名。
+  string project_ref = 4;
+  // credential_name 凭据名称；凭据已被删除时为空。
+  string credential_name = 5;
+  // model_name 目标主机的 CMDB 资源类型名称；类型已不存在或不在当前用户数据范围内时为空。
+  string model_name = 6;
+  // version 版本号：每次编辑 +1，编辑时原样传回；执行记录会记下提交时的版本号。
+  int32 version = 7;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 8;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 9;
+  // update_user_id 最近更新人。
+  string update_user_id = 10;
+  // update_user_name 最近更新人显示名。
+  string update_user_name = 11;
+}
+
+// ListJobTemplatesRequest 分页查询作业模板请求。
+message ListJobTemplatesRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // keyword 名称 / Playbook / 说明模糊匹配，可选。
+  optional string keyword = 3 [(buf.validate.field).string.max_len = 64];
+  // project_id 项目过滤，可选。
+  optional string project_id = 4 [(buf.validate.field).string.uuid = true];
+  // enabled 启用状态过滤，可选。
+  optional bool enabled = 5;
+}
+
+// ListJobTemplatesResponse 分页查询作业模板响应。
+message ListJobTemplatesResponse {
+  // items 当前页数据。
+  repeated JobTemplate items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// GetJobTemplateRequest 查询作业模板详情请求。
+message GetJobTemplateRequest {
+  // id 模板唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetJobTemplateResponse 查询作业模板详情响应。
+message GetJobTemplateResponse {
+  // template 作业模板。
+  JobTemplate template = 1;
+}
+
+// CreateJobTemplateRequest 新建作业模板请求。
+message CreateJobTemplateRequest {
+  // spec 模板内容。
+  JobTemplateSpec spec = 1 [(buf.validate.field).required = true];
+}
+
+// CreateJobTemplateResponse 新建作业模板响应。
+message CreateJobTemplateResponse {
+  // template 新建的作业模板。
+  JobTemplate template = 1;
+}
+
+// UpdateJobTemplateRequest 编辑作业模板请求。
+message UpdateJobTemplateRequest {
+  // id 模板唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // spec 模板内容，整体替换。
+  JobTemplateSpec spec = 2 [(buf.validate.field).required = true];
+  // version 乐观锁版本号，须与当前一致。
+  int32 version = 3 [(buf.validate.field).int32.gte = 1];
+}
+
+// UpdateJobTemplateResponse 编辑作业模板响应。
+message UpdateJobTemplateResponse {
+  // template 更新后的作业模板。
+  JobTemplate template = 1;
+}
+
+// DeleteJobTemplateRequest 删除作业模板请求。
+message DeleteJobTemplateRequest {
+  // id 模板唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteJobTemplateResponse 删除作业模板响应。
+message DeleteJobTemplateResponse {}
+
+// JobTargetHost 目标主机解析结果中的一台主机。
+message JobTargetHost {
+  // ci_id CMDB 资源 ID。
+  string ci_id = 1;
+  // name 资源名称。
+  string name = 2;
+  // env 资源环境。
+  string env = 3;
+  // address 连接地址（已规范化）；取不到合法地址时为原始取值。
+  string address = 4;
+  // problem 该主机不能执行的原因，空表示可以执行：address_empty=地址为空
+  // address_invalid=地址不是合法的 IP 或主机名 address_duplicate=与前面的主机地址重复。
+  string problem = 5;
+}
+
+// PreviewJobTargetRequest 预览目标主机请求。
+message PreviewJobTargetRequest {
+  // target 目标主机配置。
+  JobTarget target = 1 [(buf.validate.field).required = true];
+}
+
+// PreviewJobTargetResponse 预览目标主机响应。
+message PreviewJobTargetResponse {
+  // hosts 选中的主机，至多 500 台。
+  repeated JobTargetHost hosts = 1;
+  // truncated 匹配的主机超过 500 台（超出部分未返回；这样的目标不能提交执行）。
+  bool truncated = 2;
+}
+
+// ListJobTemplateHostsRequest 查询作业模板的目标主机请求。
+message ListJobTemplateHostsRequest {
+  // id 模板唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// ListJobTemplateHostsResponse 查询作业模板的目标主机响应。
+message ListJobTemplateHostsResponse {
+  // hosts 模板当前选中、且在当前用户数据范围内的主机，至多 500 台（模板开启切片时至多 5000 台）。
+  repeated JobTargetHost hosts = 1;
+  // truncated 匹配的主机超过 500 台。
+  bool truncated = 2;
+  // out_of_scope 模板指定、但不在当前用户数据范围内（或已不存在 / 已退役）的主机数；仅「指定资源」方式会大于 0。
+  int32 out_of_scope = 3;
+  // approval_reasons 实际执行（非预检）时需要审批的原因；空表示无需审批。
+  repeated string approval_reasons = 4;
+  // approval_ready 审批流程当前是否可发起；需要审批而它为 false 时提交会被拒绝。
+  bool approval_ready = 5;
+  // max_hosts 本次提交的主机数上限（全局策略与切片设置综合后的值）。
+  int32 max_hosts = 6;
+}

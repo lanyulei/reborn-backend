@@ -12,6 +12,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/lanyulei/reborn/backend/kit/netguard"
 )
 
 // DefaultBizID 默认业务命名空间。
@@ -355,7 +357,7 @@ func EffectiveRateLimit(channelType string, configured RateLimit) RateLimit {
 // TemplateFuncs 模板白名单函数（core 写入校验与管道渲染同一集合注册，两端一致）：
 // 全部为纯函数、无 IO、无反射逃逸——沙箱约束不变。
 //   - fmtTime t "2006-01-02 15:04:05"：按布局格式化时间（布局可省略）
-//   - severity n：1-4 → info/warning/error/critical
+//   - severity n：1-4 → info/warning/critical/fatal（提示 / 警告 / 严重 / 致命）
 //   - json v：紧凑 JSON 文本（载荷/样本打印）
 //   - trunc s n：按 rune 截断并追加 …
 //   - upper / lower
@@ -370,7 +372,8 @@ func TemplateFuncs() map[string]any {
 	}
 }
 
-// SeverityLabel 严重级文本（1-4 → info/warning/error/critical，越界原样数字）。
+// SeverityLabel 严重级文本（1 info 提示 / 2 warning 警告 / 3 critical 严重 / 4 fatal 致命，
+// 越界原样数字）。与 proto、迁移注释和前端文案同一口径。
 func SeverityLabel(n int32) string {
 	switch n {
 	case 1:
@@ -378,9 +381,9 @@ func SeverityLabel(n int32) string {
 	case 2:
 		return "warning"
 	case 3:
-		return "error"
-	case 4:
 		return "critical"
+	case 4:
+		return "fatal"
 	}
 	return fmt.Sprintf("%d", n)
 }
@@ -412,34 +415,13 @@ func truncRunes(s string, n int) string {
 	return string(r[:n]) + "…"
 }
 
-// PrivateIP 报告地址是否为回环/私网/链路本地/ULA/CGNAT/未指定/组播（webhook 出站
-// SSRF 防护：控制面校验字面量，管道在解析后对真实连接地址再校验，免疫 DNS 重绑定）。
-func PrivateIP(ip net.IP) bool {
-	if ip == nil {
-		return true
-	}
-	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-		ip.IsMulticast() || ip.IsUnspecified() || ip.IsInterfaceLocalMulticast() {
-		return true
-	}
-	if v4 := ip.To4(); v4 != nil {
-		return v4[0] == 100 && v4[1]&0xc0 == 64 // 100.64.0.0/10 CGNAT
-	}
-	return false
-}
+// PrivateIP 报告地址是否不允许作为 webhook 的出站目标（回环 / 私网 / 链路本地 / 组播 /
+// 未指定 / CGNAT / NAT64 / 6to4 等）。规则在 kit/netguard，各域共用一份。
+func PrivateIP(ip net.IP) bool { return netguard.BlockedIP(ip) }
 
-// UnsafeWebhookHost 控制面侧的字面量校验：localhost / 字面 IP 为私网。主机名不解析
+// UnsafeWebhookHost 控制面侧的字面量校验：localhost / 不允许的字面 IP。主机名不解析
 // （解析交给管道连接时校验）。
-func UnsafeWebhookHost(host string) bool {
-	h := strings.ToLower(strings.TrimSuffix(host, "."))
-	if h == "" || h == "localhost" || strings.HasSuffix(h, ".localhost") {
-		return true
-	}
-	if ip := net.ParseIP(strings.Trim(h, "[]")); ip != nil {
-		return PrivateIP(ip)
-	}
-	return false
-}
+func UnsafeWebhookHost(host string) bool { return netguard.UnsafeHost(host) }
 
 // 生产者 ingress HMAC 密钥（notify_producer.token_hash）的落库形态。密钥本身恒为
 // SHA-256(token 明文)（客户端签名协议不变，见 notify/pkg/ingressauth）：

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+
+	"github.com/lanyulei/reborn/backend/kit/loop"
 )
 
 // PartitionedTables 三张按月分区运行表。
@@ -38,11 +40,9 @@ type MaintenanceRepo interface {
 	DeleteStaleChannelHealth(ctx context.Context, before time.Time, limit int) (int, error)
 }
 
-// Locker 分布式互斥（PG advisory lock，专用连接会话级持有）。
-type Locker interface {
-	// TryLock 非阻塞尝试；ok=false 表示他人持有。release 释放锁与连接。
-	TryLock(ctx context.Context, key string) (release func(), ok bool, err error)
-}
+// Locker 分布式互斥（PG advisory lock，专用连接会话级持有）：与各服务后台循环选主用的是
+// 同一个接口（kit/loop）。
+type Locker = loop.Locker
 
 // 锁名。
 const (

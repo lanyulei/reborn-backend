@@ -89,6 +89,8 @@ const (
 	ErrorReason_DEPT_DEPTH_EXCEEDED ErrorReason = 27
 	// DEPT_LIMIT_EXCEEDED 部门总数或单个用户所属部门数超过上限，映射 HTTP 400。
 	ErrorReason_DEPT_LIMIT_EXCEEDED ErrorReason = 28
+	// IMAGE_TYPE_INVALID 上传的 logo / 头像不是允许的图片格式（按文件内容判定，不看声明的类型），映射 HTTP 400。
+	ErrorReason_IMAGE_TYPE_INVALID ErrorReason = 29
 )
 
 // Enum value maps for ErrorReason.
@@ -123,6 +125,7 @@ var (
 		26: "DEPT_MOVE_INVALID",
 		27: "DEPT_DEPTH_EXCEEDED",
 		28: "DEPT_LIMIT_EXCEEDED",
+		29: "IMAGE_TYPE_INVALID",
 	}
 	ErrorReason_value = map[string]int32{
 		"USER_UNSPECIFIED":       0,
@@ -154,6 +157,7 @@ var (
 		"DEPT_MOVE_INVALID":      26,
 		"DEPT_DEPTH_EXCEEDED":    27,
 		"DEPT_LIMIT_EXCEEDED":    28,
+		"IMAGE_TYPE_INVALID":     29,
 	}
 )
 
@@ -188,7 +192,7 @@ var File_system_v1_error_reason_proto protoreflect.FileDescriptor
 
 const file_system_v1_error_reason_proto_rawDesc = "" +
 	"\n" +
-	"\x1csystem/v1/error_reason.proto\x12\tsystem.v1\x1a\x13errors/errors.proto*\xa9\x06\n" +
+	"\x1csystem/v1/error_reason.proto\x12\tsystem.v1\x1a\x13errors/errors.proto*\xc7\x06\n" +
 	"\vErrorReason\x12\x14\n" +
 	"\x10USER_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x0eUSER_NOT_FOUND\x10\x01\x1a\x04\xa8E\x94\x03\x12\x15\n" +
@@ -219,7 +223,8 @@ const file_system_v1_error_reason_proto_rawDesc = "" +
 	"\x10DEPT_HAS_MEMBERS\x10\x19\x1a\x04\xa8E\x99\x03\x12\x1b\n" +
 	"\x11DEPT_MOVE_INVALID\x10\x1a\x1a\x04\xa8E\x90\x03\x12\x1d\n" +
 	"\x13DEPT_DEPTH_EXCEEDED\x10\x1b\x1a\x04\xa8E\x90\x03\x12\x1d\n" +
-	"\x13DEPT_LIMIT_EXCEEDED\x10\x1c\x1a\x04\xa8E\x90\x03\x1a\x04\xa0E\xf4\x03B:Z8github.com/lanyulei/reborn/backend/core/api/system/v1;v1b\x06proto3"
+	"\x13DEPT_LIMIT_EXCEEDED\x10\x1c\x1a\x04\xa8E\x90\x03\x12\x1c\n" +
+	"\x12IMAGE_TYPE_INVALID\x10\x1d\x1a\x04\xa8E\x90\x03\x1a\x04\xa0E\xf4\x03B:Z8github.com/lanyulei/reborn/backend/core/api/system/v1;v1b\x06proto3"
 
 var (
 	file_system_v1_error_reason_proto_rawDescOnce sync.Once

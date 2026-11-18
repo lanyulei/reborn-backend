@@ -84,12 +84,12 @@ func (uc *SystemConfigUsecase) Save(ctx context.Context, cfg *SystemConfig, upda
 }
 
 // UploadLogo 保存上传的 logo 图片（存入对象存储，替换原有的），返回带内容指纹的
-// 访问 URL；文件不落配置行，前端拿到 URL 后随配置保存写入 logo 字段。uploader 为操作人。
-func (uc *SystemConfigUsecase) UploadLogo(ctx context.Context, uploader string, data []byte, mime string) (string, error) {
-	ext, ok := LogoMimeExts[mime]
-	if !ok {
-		// proto 校验白名单外的类型（防御双保险，正常到不了这里）
-		return "", fmt.Errorf("unsupported logo mime: %s", mime)
+// 访问 URL；文件不落配置行，前端拿到 URL 后随配置保存写入 logo 字段。uploader 为操作人；
+// 类型按内容判定。
+func (uc *SystemConfigUsecase) UploadLogo(ctx context.Context, uploader string, data []byte) (string, error) {
+	mime, ext, err := imageType(data, LogoMimeExts)
+	if err != nil {
+		return "", err
 	}
 	if _, err := uc.files.PutSingleton(ctx, uploader, FileBizLogo, logoBizID, "logo"+ext, mime, data, false); err != nil {
 		return "", err

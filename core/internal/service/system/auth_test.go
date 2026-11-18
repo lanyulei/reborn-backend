@@ -342,6 +342,7 @@ func TestAvatarUsecase_LegacyAvatar(t *testing.T) {
 	if _, _, err := uc.Get(ctx, u.ID); !errors.Is(err, biz.ErrAvatarNotFound) {
 		t.Fatalf("Get(no avatar) error = %v, want ErrAvatarNotFound", err)
 	}
+	newPNG := []byte("\x89PNG\r\n\x1a\nnew-avatar")
 	legacy.SetLegacyAvatar(u.ID, []byte("old-webp"), "image/webp")
 	for range 2 {
 		if data, mime, err := uc.Get(ctx, u.ID); err != nil || mime != "image/webp" || string(data) != "old-webp" {
@@ -353,12 +354,21 @@ func TestAvatarUsecase_LegacyAvatar(t *testing.T) {
 	if data, _, err := uc.Get(ctx, u.ID); err != nil || string(data) != "old-webp" {
 		t.Fatalf("Get(after import) = %q, %v; want the imported copy", data, err)
 	}
-	url, err := uc.Upload(ctx, u.ID, []byte("new-png"), "image/png")
-	if err != nil || url != biz.AvatarURL(u.ID, biz.LogoVersion([]byte("new-png"))) {
+	url, err := uc.Upload(ctx, u.ID, newPNG)
+	if err != nil || url != biz.AvatarURL(u.ID, biz.LogoVersion(newPNG)) {
 		t.Fatalf("Upload() = %q, %v", url, err)
 	}
-	if data, mime, err := uc.Get(ctx, u.ID); err != nil || mime != "image/png" || string(data) != "new-png" {
+	if data, mime, err := uc.Get(ctx, u.ID); err != nil || mime != "image/png" || string(data) != string(newPNG) {
 		t.Fatalf("Get(after upload) = %q, %q, %v", data, mime, err)
+	}
+	// 类型按内容判定：不是允许的图片即拒绝，原头像不动。
+	for name, data := range map[string][]byte{"html": []byte("<html><script>1</script></html>"), "svg": []byte("<svg/>"), "text": []byte("hello")} {
+		if _, err := uc.Upload(ctx, u.ID, data); !errors.Is(err, biz.ErrImageTypeInvalid) {
+			t.Errorf("Upload(%s) error = %v, want ErrImageTypeInvalid", name, err)
+		}
+	}
+	if data, _, err := uc.Get(ctx, u.ID); err != nil || string(data) != string(newPNG) {
+		t.Fatalf("rejected uploads must not replace the avatar: %q, %v", data, err)
 	}
 	if got, err := store.GetUser(ctx, u.ID); err != nil || got.Avatar != url {
 		t.Fatalf("user avatar url = %q, %v; want %q", got.Avatar, err, url)

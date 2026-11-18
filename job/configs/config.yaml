@@ -1,0 +1,71 @@
+# 作业执行引擎 / 执行节点启动配置；密钥类字段（数据库口令、主密钥、节点接入令牌）一律从环境变量注入，
+# 禁止在本文件写入明文。
+#
+# 一个二进制两种角色（SERVER_ROLES=engine,runner；为空 = 两者都启动）：
+#   engine  执行节点协议（8051）、租约清扫、日志清理。需要数据库与主密钥。
+#   runner  领取任务并运行 ansible-playbook。不连接数据库、不持有主密钥。
+#
+# 本地运行引擎（在 backend/job 目录）：
+#   1. 数据库先迁移到 0070 及以后（backend/core: make migrate）。
+#   2. export KRATOS_DATA_DATABASE_SOURCE='<DSN>'   # 本地与 core 相同
+#   3. export KRATOS_NOTIFY_MASTER_KEY=<与 core 相同的主密钥>
+#   4. SERVER_ROLES=engine go run ./cmd/job -conf configs
+#   5. curl http://127.0.0.1:8050/healthz
+#
+# 本地运行执行节点（需要 ansible-core、git、openssh-client；密码凭据另需 sshpass）：
+#   1. 在管理面创建执行节点，得到接入令牌
+#   2. export KRATOS_RUNNER_TOKEN='<节点 ID>.<密钥>'
+#      export KRATOS_RUNNER_ENGINE_URL=http://127.0.0.1:8051
+#      export KRATOS_RUNNER_WORK_DIR=/dev/shm/reborn-job     # 建议 tmpfs
+#   3. SERVER_ROLES=runner go run ./cmd/job -conf configs
+server:
+  # roles 为空 = 全部角色（engine / runner）；部署时用 SERVER_ROLES=engine 或 SERVER_ROLES=runner 覆盖。
+  roles: []
+  http:
+    # 8010 core / 8020 通知管道 / 8030 CMDB 数据面 / 8040 评估引擎；作业走 8050，只暴露 /healthz 与 /metrics。
+    addr: 0.0.0.0:8050
+    timeout: 5s
+  runner:
+    # 引擎面向执行节点的协议监听（仅 engine 角色）。生产环境务必配置证书或在前面终结 TLS：
+    # 该端口上传输节点接入令牌与凭据明文。
+    addr: 0.0.0.0:8051
+    timeout: 15s
+    cert_file: ""
+    key_file: ""
+data:
+  database:
+    # 仅 engine 角色使用，与 core 同库。占位符由环境变量 KRATOS_DATA_DATABASE_SOURCE 填充；
+    # 生产环境使用 job_engine_role 成员账号（见 core/migrations/0070）。
+    source: ${DATA_DATABASE_SOURCE:}
+    max_conns: 16
+    min_conns: 2
+    max_conn_idle_time: 1800s
+engine:
+  lease: 60s                    # 执行租约：节点失联超过它即判为结果未知
+  sweep_interval: 5s
+  log_retention: 7776000s       # 90d；0s = 永久保留
+  log_purge_interval: 3600s
+runner:
+  engine_url: ${RUNNER_ENGINE_URL:}
+  # export KRATOS_RUNNER_TOKEN=...
+  token: ${RUNNER_TOKEN:}
+  capacity: 2
+  # 每次执行在其下建私有子目录，结束即删；SSH 密码 / 提权密码会短暂落在其中，建议 tmpfs。
+  # 一个工作目录只给一个节点进程用。
+  work_dir: ${RUNNER_WORK_DIR:}
+  ansible_playbook: ""          # 空 = 在 PATH 中查找
+  git: ""
+  ssh_agent: ""
+  ssh_add: ""
+  known_hosts: ""               # 空 = <work_dir>/known_hosts
+  ca_file: ""
+  insecure_skip_verify: false
+  poll_interval: 2s
+  heartbeat_interval: 10s
+  cancel_grace: 30s
+  drain_timeout: 600s
+  git_allow_protocols: ""       # 空 = http:https:ssh
+notify:
+  master:
+    # 仅 engine 角色使用，与 core 同一主密钥：export KRATOS_NOTIFY_MASTER_KEY=...
+    key: ${NOTIFY_MASTER_KEY:}

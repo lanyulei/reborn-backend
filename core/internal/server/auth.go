@@ -39,6 +39,12 @@ var authExempt = map[string]struct{}{
 	workflowv1.OperationWorkflowOpenServiceOpenGetInstance:    {},
 	workflowv1.OperationWorkflowOpenServiceOpenSignalInstance: {},
 	workflowv1.OperationWorkflowOpenServiceOpenCancelInstance: {},
+	// 容器平台 Web 终端的 WebSocket 入口：浏览器的 WebSocket 不能带 Authorization 头，凭一次性票据认证
+	//（库内只存哈希，30 秒有效，核销即删），校验在用例层完成；签发票据的接口不免检。
+	systemservice.OperationK8sExecConnect: {},
+	// 作业中心的开放触发接口：供流程服务节点 / 外部系统调用，不走用户登录——凭调用令牌或流程 Webhook
+	// 的签名认证（库内只存哈希与密文，可重置可停用），校验在用例层完成；触发器的管理接口不免检。
+	systemservice.OperationJobOpenFire: {},
 }
 
 // authMiddleware 组装鉴权中间件：白名单外的全部方法要求 Authorization: Bearer

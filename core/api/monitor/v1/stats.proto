@@ -1,0 +1,259 @@
+syntax = "proto3";
+
+package monitor.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/monitor/v1;v1";
+
+// MonitorStatsService 告警统计：概览、按天趋势、排行、处理效率（MTTA / MTTR）与降噪效果。
+// 只统计当前用户数据范围内（对规则分组「只读」以上）的告警；带时间范围的接口按事件的首次触发时间取数，
+// 范围至多 90 天（超出返回 400 MONITOR_TIME_RANGE_INVALID）。全部只读。
+service MonitorStatsService {
+  // GetAlertOverview 概览：当前各级别的活跃告警数、未认领数，以及今日新增 / 恢复数。
+  rpc GetAlertOverview(GetAlertOverviewRequest) returns (GetAlertOverviewResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/stats/overview"};
+    option (system.v1.title) = "查询告警概览";
+  }
+  // GetAlertTrend 趋势：按天的告警量，可按级别或规则分组拆分。
+  rpc GetAlertTrend(GetAlertTrendRequest) returns (GetAlertTrendResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/stats/trend"};
+    option (system.v1.title) = "查询告警趋势";
+  }
+  // GetAlertTop 排行：告警最多的规则或资源（治理噪声用）。
+  rpc GetAlertTop(GetAlertTopRequest) returns (GetAlertTopResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/stats/top"};
+    option (system.v1.title) = "查询告警排行";
+  }
+  // GetAlertEfficiency 处理效率：平均认领耗时（MTTA）与平均恢复耗时（MTTR），按规则分组或级别拆分。
+  rpc GetAlertEfficiency(GetAlertEfficiencyRequest) returns (GetAlertEfficiencyResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/stats/efficiency"};
+    option (system.v1.title) = "查询告警处理效率";
+  }
+  // GetAlertNoise 降噪效果：产生的告警事件数与其中被屏蔽、被抑制的数量，以及实际发出的通知数。
+  rpc GetAlertNoise(GetAlertNoiseRequest) returns (GetAlertNoiseResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/stats/noise"};
+    option (system.v1.title) = "查询告警降噪效果";
+  }
+}
+
+// GetAlertOverviewRequest 查询告警概览请求。
+message GetAlertOverviewRequest {
+  // group_id 规则分组过滤（含其全部下级分组），可选。
+  optional string group_id = 1 [(buf.validate.field).string.uuid = true];
+  // timezone 「今日」按哪个时区的自然日计算（IANA 时区名），可选；缺省 Asia/Shanghai。
+  string timezone = 2 [(buf.validate.field).string.max_len = 64];
+}
+
+// GetAlertOverviewResponse 查询告警概览响应。
+message GetAlertOverviewResponse {
+  // firing 当前活跃告警总数。
+  int32 firing = 1;
+  // firing_by_severity 各级别的活跃告警数，下标 0-3 依次对应级别 1-4。
+  repeated int32 firing_by_severity = 2;
+  // unacked 活跃告警中未认领的数量（不含已屏蔽与被抑制的）。
+  int32 unacked = 3;
+  // muted 活跃告警中已屏蔽的数量。
+  int32 muted = 4;
+  // inhibited 活跃告警中被抑制的数量。
+  int32 inhibited = 5;
+  // today_fired 今日新产生的告警事件数。
+  int32 today_fired = 6;
+  // today_resolved 今日恢复的告警事件数（不含手动关闭）。
+  int32 today_resolved = 7;
+  // today_closed 今日关闭的告警事件数（手动关闭，或规则删除 / 停用）。
+  int32 today_closed = 8;
+}
+
+// GetAlertTrendRequest 查询告警趋势请求。
+message GetAlertTrendRequest {
+  option (buf.validate.message).cel = {
+    id: "monitor.stats.trend.time_range"
+    message: "start_time must be before end_time"
+    expression: "this.start_time < this.end_time"
+  };
+
+  // start_time 时间范围起点（含）。
+  google.protobuf.Timestamp start_time = 1 [(buf.validate.field).required = true];
+  // end_time 时间范围终点（不含）；与起点相距至多 90 天。
+  google.protobuf.Timestamp end_time = 2 [(buf.validate.field).required = true];
+  // group_id 规则分组过滤（含其全部下级分组），可选。
+  optional string group_id = 3 [(buf.validate.field).string.uuid = true];
+  // by 拆分维度：severity 按级别（缺省，留空同）/ group 按规则分组（取 group_id 的直接下级分组，未给 group_id
+  // 时取可见的顶级分组；告警数最多的 10 个各成一条，其余并入「其他」）。
+  string by = 4 [(buf.validate.field).string = {
+    in: [
+      "",
+      "severity",
+      "group"
+    ]
+  }];
+  // timezone 按哪个时区的自然日分桶（IANA 时区名），可选；缺省 Asia/Shanghai。
+  string timezone = 5 [(buf.validate.field).string.max_len = 64];
+}
+
+// AlertTrendSeries 趋势里的一条折线。
+message AlertTrendSeries {
+  // key 拆分键：级别数字（1-4），或规则分组 ID；「其他」为 other。
+  string key = 1;
+  // name 显示名：级别名称 / 分组名称 /「其他」。
+  string name = 2;
+  // counts 各天的告警事件数，下标与 days 对应。
+  repeated int32 counts = 3;
+  // total 合计。
+  int32 total = 4;
+}
+
+// GetAlertTrendResponse 查询告警趋势响应。
+message GetAlertTrendResponse {
+  // days 各天的日期（yyyy-mm-dd，按请求的时区），升序、连续（没有告警的日期也在内）。
+  repeated string days = 1;
+  // series 各条折线。
+  repeated AlertTrendSeries series = 2;
+  // totals 各天的告警事件总数，下标与 days 对应。
+  repeated int32 totals = 3;
+}
+
+// GetAlertTopRequest 查询告警排行请求。
+message GetAlertTopRequest {
+  option (buf.validate.message).cel = {
+    id: "monitor.stats.top.time_range"
+    message: "start_time must be before end_time"
+    expression: "this.start_time < this.end_time"
+  };
+
+  // start_time 时间范围起点（含）。
+  google.protobuf.Timestamp start_time = 1 [(buf.validate.field).required = true];
+  // end_time 时间范围终点（不含）；与起点相距至多 90 天。
+  google.protobuf.Timestamp end_time = 2 [(buf.validate.field).required = true];
+  // group_id 规则分组过滤（含其全部下级分组），可选。
+  optional string group_id = 3 [(buf.validate.field).string.uuid = true];
+  // by 排行对象：rule 规则 / ci 关联的 CMDB 资源（只统计关联到资源的事件）/ label:<标签名> 某个事件标签的取值
+  // （如 label:instance）。
+  string by = 4 [(buf.validate.field).string = {
+    max_len: 140
+    pattern: "^(rule|ci|label:[a-zA-Z_][a-zA-Z0-9_]*)$"
+  }];
+  // limit 返回前几名，1-50，缺省 10。
+  int32 limit = 5 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 50
+  }];
+}
+
+// AlertTopItem 排行里的一行。
+message AlertTopItem {
+  // key 规则 ID / 资源 ID / 标签取值。
+  string key = 1;
+  // name 规则名称 / 资源名称 / 标签取值。
+  string name = 2;
+  // count 时间范围内产生的告警事件数。
+  int32 count = 3;
+  // firing 其中当前仍在告警的数量。
+  int32 firing = 4;
+  // max_severity 其中的最高级别。
+  int32 max_severity = 5;
+  // group_name 规则所在分组的完整名称；仅按规则排行时有值。
+  string group_name = 6;
+  // exists 规则 / 资源当前是否仍存在（可跳转）；按标签排行时恒为 true。
+  bool exists = 7;
+}
+
+// GetAlertTopResponse 查询告警排行响应。
+message GetAlertTopResponse {
+  // items 按告警事件数倒序。
+  repeated AlertTopItem items = 1;
+  // total 时间范围内参与排行的告警事件总数。
+  int32 total = 2;
+}
+
+// GetAlertEfficiencyRequest 查询告警处理效率请求。
+message GetAlertEfficiencyRequest {
+  option (buf.validate.message).cel = {
+    id: "monitor.stats.efficiency.time_range"
+    message: "start_time must be before end_time"
+    expression: "this.start_time < this.end_time"
+  };
+
+  // start_time 时间范围起点（含）。
+  google.protobuf.Timestamp start_time = 1 [(buf.validate.field).required = true];
+  // end_time 时间范围终点（不含）；与起点相距至多 90 天。
+  google.protobuf.Timestamp end_time = 2 [(buf.validate.field).required = true];
+  // group_id 规则分组过滤（含其全部下级分组），可选。
+  optional string group_id = 3 [(buf.validate.field).string.uuid = true];
+  // by 拆分维度：group 按规则分组（缺省，留空同；口径同趋势接口）/ severity 按级别。
+  string by = 4 [(buf.validate.field).string = {
+    in: [
+      "",
+      "group",
+      "severity"
+    ]
+  }];
+}
+
+// AlertEfficiencyItem 处理效率的一行。
+message AlertEfficiencyItem {
+  // key 规则分组 ID 或级别数字；汇总行为 total。
+  string key = 1;
+  // name 分组名称 / 级别名称 /「合计」。
+  string name = 2;
+  // alerts 时间范围内产生的告警事件数。
+  int32 alerts = 3;
+  // acked 其中被认领过的数量。
+  int32 acked = 4;
+  // resolved 其中已恢复的数量（不含手动关闭与规则删除导致的关闭）。
+  int32 resolved = 5;
+  // mtta_s 平均认领耗时秒（首次触发 → 认领，只算被认领过的）；没有可算的事件时为 0。
+  int64 mtta_s = 6;
+  // mttr_s 平均恢复耗时秒（首次触发 → 恢复，只算已恢复的）；没有可算的事件时为 0。
+  int64 mttr_s = 7;
+}
+
+// GetAlertEfficiencyResponse 查询告警处理效率响应。
+message GetAlertEfficiencyResponse {
+  // items 各分组 / 各级别。
+  repeated AlertEfficiencyItem items = 1;
+  // total 汇总行。
+  AlertEfficiencyItem total = 2;
+}
+
+// GetAlertNoiseRequest 查询告警降噪效果请求。
+message GetAlertNoiseRequest {
+  option (buf.validate.message).cel = {
+    id: "monitor.stats.noise.time_range"
+    message: "start_time must be before end_time"
+    expression: "this.start_time < this.end_time"
+  };
+
+  // start_time 时间范围起点（含）。
+  google.protobuf.Timestamp start_time = 1 [(buf.validate.field).required = true];
+  // end_time 时间范围终点（不含）；与起点相距至多 90 天。
+  google.protobuf.Timestamp end_time = 2 [(buf.validate.field).required = true];
+  // group_id 规则分组过滤（含其全部下级分组），可选。
+  optional string group_id = 3 [(buf.validate.field).string.uuid = true];
+}
+
+// GetAlertNoiseResponse 查询告警降噪效果响应。
+message GetAlertNoiseResponse {
+  // alerts 时间范围内产生的告警事件数。
+  int32 alerts = 1;
+  // muted 其中被屏蔽过（含因资源维护态）的事件数。
+  int32 muted = 2;
+  // inhibited 其中被抑制过的事件数。
+  int32 inhibited = 3;
+  // notified 其中至少发出过一次通知的事件数。
+  int32 notified = 4;
+  // silent 其中从未发出通知的事件数（被屏蔽、被抑制，或没有任何通知对象）。
+  int32 silent = 5;
+  // notifications 实际发出的通知次数（规则通知 + 订阅通知 + 升级通知；一次通知发给多人算一次）。
+  int32 notifications = 6;
+  // rule_notifications 其中规则通知对象的通知次数（触发 + 重复 + 恢复）。
+  int32 rule_notifications = 7;
+  // subscription_notifications 其中订阅通知的次数。
+  int32 subscription_notifications = 8;
+  // escalation_notifications 其中升级通知的次数。
+  int32 escalation_notifications = 9;
+}

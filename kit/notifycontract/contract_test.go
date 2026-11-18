@@ -99,7 +99,7 @@ func TestRateLimitAndDefaults(t *testing.T) {
 func TestTemplateFuncsAndSSRF(t *testing.T) {
 	t.Parallel()
 	f := TemplateFuncs()
-	if f["severity"].(func(int32) string)(4) != "critical" || SeverityLabel(9) != "9" {
+	if f["severity"].(func(int32) string)(4) != "fatal" || SeverityLabel(9) != "9" {
 		t.Fatal("severity label")
 	}
 	if got := f["trunc"].(func(string, int) string)("你好世界", 2); got != "你好…" {

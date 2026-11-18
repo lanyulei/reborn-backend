@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	monitorservice "github.com/lanyulei/reborn/backend/core/internal/service/monitor"
+
 	"github.com/lanyulei/reborn/backend/core/internal/conf"
 )
 
@@ -60,7 +62,7 @@ func TestWorkerOnlyServerExposesNoBusinessRoutes(t *testing.T) {
 			svc.user, svc.role, svc.dept, svc.auth, svc.syscfg, svc.loginLog, svc.notify, svc.template, svc.route, svc.silence,
 			svc.subscription, svc.producer, svc.event, svc.dispatch, svc.deliveryLog, svc.deadLetter, svc.assistant, svc.assistantChat,
 			svc.cmdbModel, svc.cmdbCI, svc.cmdbRelation, svc.cmdbScope, svc.cmdbSync, svc.cmdbInsight, nil, nil, nil, svc.file,
-			nil, nil, nil, nil, nil, nil, nil, svc.signer, svc.authz, roles, pinger, nil)
+			nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, monitorservice.P2Services{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, svc.signer, svc.authz, roles, pinger, nil)
 		ts := httptest.NewServer(srv)
 		t.Cleanup(ts.Close)
 		return ts

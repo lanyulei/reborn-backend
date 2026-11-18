@@ -1,0 +1,150 @@
+# 本平台自监控：core / notify / cmdb / monitor 各服务 /metrics 暴露的指标。
+groups:
+  - name: 平台后台任务
+    interval: 1m
+    rules:
+      - alert: core 后台循环持续失败
+        expr: sum by (loop) (increase(core_loop_runs_total{result="error"}[10m])) > 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "core 的后台循环 {{ $labels.loop }} 最近 10 分钟失败 {{ printf \"%.0f\" $value }} 次"
+      - alert: notify 后台循环持续失败
+        expr: sum by (loop) (increase(notify_loop_runs_total{result="error"}[10m])) > 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "通知管道的后台循环 {{ $labels.loop }} 最近 10 分钟失败 {{ printf \"%.0f\" $value }} 次"
+      - alert: cmdb 后台循环持续失败
+        expr: sum by (loop) (increase(cmdb_loop_runs_total{result="error"}[10m])) > 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CMDB 采集服务的后台循环 {{ $labels.loop }} 最近 10 分钟失败 {{ printf \"%.0f\" $value }} 次"
+      - alert: monitor 后台循环持续失败
+        expr: sum by (loop) (increase(monitor_loop_runs_total{result="error"}[10m])) > 3
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "评估引擎的后台循环 {{ $labels.loop }} 最近 10 分钟失败 {{ printf \"%.0f\" $value }} 次，告警评估可能受影响"
+  - name: 流程任务
+    interval: 1m
+    rules:
+      - alert: 流程任务积压
+        expr: max(core_workflow_jobs_overdue) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "有 {{ printf \"%.0f\" $value }} 个流程后台任务到期超过 1 分钟仍未执行"
+      - alert: 流程任务长时间未执行
+        expr: max(core_workflow_jobs_overdue_seconds) > 900
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "最早的一个到期流程任务已逾期 {{ printf \"%.0f\" $value }} 秒，流程定时器 / 自动任务可能停摆"
+      - alert: 流程任务进入死信
+        expr: max(core_workflow_jobs_dead) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "有 {{ printf \"%.0f\" $value }} 个流程后台任务重试耗尽进入死信，需要人工处理"
+  - name: 通知管道
+    interval: 1m
+    rules:
+      - alert: 通知事件积压
+        expr: max(notify_events_pending) > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "有 {{ printf \"%.0f\" $value }} 个通知事件等待路由"
+      - alert: 通知投递积压
+        expr: max(notify_dispatch_due) > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "有 {{ printf \"%.0f\" $value }} 条通知到期未发送"
+      - alert: 通知队列停滞
+        expr: max by (queue) (notify_queue_oldest_age_seconds) > 300
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "通知队列 {{ $labels.queue }} 中最早的一条已等待 {{ printf \"%.0f\" $value }} 秒，通知可能发不出去"
+      - alert: 通知进入死信
+        expr: sum by (channel_type) (increase(notify_dispatch_total{result="dead"}[15m])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "渠道类型 {{ $labels.channel_type }} 最近 15 分钟有 {{ printf \"%.0f\" $value }} 条通知重试耗尽进入死信"
+      - alert: 通知渠道熔断
+        expr: max by (channel_id) (notify_breaker_open) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "通知渠道 {{ $labels.channel_id }} 因连续失败被熔断"
+      - alert: 通知配置长时间未刷新
+        expr: max(notify_config_age_seconds) > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "通知管道的配置快照已 {{ printf \"%.0f\" $value }} 秒未确认最新，路由 / 模板的修改可能未生效"
+      - alert: 通知配置刷新失败
+        expr: sum(increase(notify_config_refresh_failures_total[10m])) > 3
+        labels:
+          severity: warning
+        annotations:
+          summary: "通知管道最近 10 分钟刷新配置失败 {{ printf \"%.0f\" $value }} 次"
+      - alert: 通知入口拒绝事件
+        expr: sum(increase(notify_ingress_requests_total{result!="ok"}[10m])) > 10
+        labels:
+          severity: info
+        annotations:
+          summary: "通知入口最近 10 分钟有 {{ printf \"%.0f\" $value }} 个请求未被接受"
+  - name: 评估引擎
+    interval: 1m
+    rules:
+      - alert: 告警评估失败
+        expr: sum(increase(monitor_evaluations_total{result="failed"}[10m])) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "评估引擎最近 10 分钟有 {{ printf \"%.0f\" $value }} 次评估因引擎自身故障失败"
+      - alert: 告警规则查询错误增多
+        expr: 100 * sum(rate(monitor_evaluations_total{result="query_error"}[10m])) / sum(rate(monitor_evaluations_total[10m])) > 20
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ printf \"%.1f\" $value }}% 的规则评估查询出错，请检查数据源"
+      - alert: 告警评估延迟
+        expr: histogram_quantile(0.99, sum by (le) (rate(monitor_evaluation_lag_seconds_bucket[5m]))) > 60
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "规则评估的 P99 延迟 {{ printf \"%.0f\" $value }} 秒，评估实例可能不足"
+      - alert: 告警评估耗时过长
+        expr: histogram_quantile(0.99, sum by (le) (rate(monitor_evaluation_duration_seconds_bucket[5m]))) > 30
+        for: 10m
+        labels:
+          severity: info
+        annotations:
+          summary: "单次规则评估的 P99 耗时 {{ printf \"%.1f\" $value }} 秒"
+      - alert: 屏蔽规则超出装载上限
+        expr: sum(increase(monitor_mutes_truncated_total[10m])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "屏蔽规则数量超出评估引擎的装载上限，超出的规则不生效，请清理过期的屏蔽规则"

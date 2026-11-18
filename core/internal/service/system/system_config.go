@@ -60,7 +60,7 @@ func (s *SystemConfigService) UploadSystemLogo(ctx context.Context, req *v1.Uplo
 	if err != nil {
 		return nil, err
 	}
-	url, err := s.uc.UploadLogo(ctx, uploader, req.GetData(), req.GetMime())
+	url, err := s.uc.UploadLogo(ctx, uploader, req.GetData())
 	if err != nil {
 		return nil, err
 	}

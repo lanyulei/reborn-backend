@@ -1,0 +1,275 @@
+syntax = "proto3";
+
+package monitor.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "monitor/v1/alert.proto";
+import "monitor/v1/common.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/monitor/v1;v1";
+
+// MonitorMuteService 屏蔽规则：在一段时间内（一次性，或按周重复）屏蔽命中条件的告警——只屏蔽通知
+// （事件照常产生并标记已屏蔽），或连事件一并不产生。条件之间是「并且」，留空的条件不作限制。
+// 权限：查看要求对屏蔽规则的作用分组「只读」以上；新建 / 编辑 / 删除要求「可管理」；
+// 作用于全部分组的屏蔽规则仅超级管理员可维护。
+service MonitorMuteService {
+  // ListMutes 分页查询屏蔽规则。
+  rpc ListMutes(ListMutesRequest) returns (ListMutesResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/mute"};
+    option (system.v1.title) = "查询屏蔽规则";
+  }
+  // GetMute 查询屏蔽规则详情。
+  rpc GetMute(GetMuteRequest) returns (GetMuteResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/mute/{id}"};
+    option (system.v1.title) = "查询屏蔽规则详情";
+  }
+  // CreateMute 新建屏蔽规则；至多 5 秒后对评估引擎生效。
+  rpc CreateMute(CreateMuteRequest) returns (CreateMuteResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/mute"
+      body: "*"
+    };
+    option (system.v1.title) = "新建屏蔽规则";
+  }
+  // UpdateMute 编辑屏蔽规则（整体替换）。version 不一致返回 409 MONITOR_VERSION_CONFLICT。
+  rpc UpdateMute(UpdateMuteRequest) returns (UpdateMuteResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/monitor/mute/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "编辑屏蔽规则";
+  }
+  // DeleteMute 删除屏蔽规则。
+  rpc DeleteMute(DeleteMuteRequest) returns (DeleteMuteResponse) {
+    option (google.api.http) = {delete: "/api/v1/monitor/mute/{id}"};
+    option (system.v1.title) = "删除屏蔽规则";
+  }
+  // PreviewMute 保存前预览：列出当前活跃告警中会被该屏蔽规则命中的事件（不考虑时间范围，不落库）。
+  rpc PreviewMute(PreviewMuteRequest) returns (PreviewMuteResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/mute:preview"
+      body: "*"
+    };
+    option (system.v1.title) = "预览屏蔽规则命中";
+  }
+}
+
+// MuteSpec 屏蔽规则的可编辑内容（新建、编辑、预览共用）。
+message MuteSpec {
+  option (buf.validate.message).cel = {
+    id: "monitor.mute.time"
+    message: "one-off mute requires start_time < end_time and no periodic; periodic mute requires periodic"
+    expression: "this.time_type == 1 ? (has(this.start_time) && has(this.end_time) && this.start_time < this.end_time && !has(this.periodic)) : has(this.periodic)"
+  };
+  option (buf.validate.message).cel = {
+    id: "monitor.mute.time_range"
+    message: "start_time must be before end_time"
+    expression: "!has(this.start_time) || !has(this.end_time) || this.start_time < this.end_time"
+  };
+
+  // group_id 作用的规则分组（含其全部下级），可选；不传表示作用于全部分组（仅超级管理员）。
+  optional string group_id = 1 [(buf.validate.field).string.uuid = true];
+  // name 名称，1-128 字符。
+  string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+  // reason 屏蔽原因，必填，1-255 字符。
+  string reason = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 255
+  }];
+  // rule_ids 限定的规则，至多 200 个；为空表示不限。
+  repeated string rule_ids = 4 [(buf.validate.field).repeated = {
+    max_items: 200
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+  // datasource_ids 限定的数据源，至多 50 个；为空表示不限。
+  repeated string datasource_ids = 5 [(buf.validate.field).repeated = {
+    max_items: 50
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+  // severities 限定的级别（1=提示 2=警告 3=严重 4=致命）；为空表示不限。
+  repeated int32 severities = 6 [(buf.validate.field).repeated = {
+    max_items: 4
+    unique: true
+    items: {
+      int32: {
+        gte: 1
+        lte: 4
+      }
+    }
+  }];
+  // matchers 事件标签匹配条件，至多 20 行，行间是「并且」；为空表示不限。
+  repeated LabelMatcher matchers = 7 [(buf.validate.field).repeated.max_items = 20];
+  // mode 屏蔽方式：1=只屏蔽通知（事件照常产生并标记已屏蔽） 2=屏蔽事件（不产生事件）。
+  int32 mode = 8 [(buf.validate.field).int32 = {
+    in: [
+      1,
+      2
+    ]
+  }];
+  // time_type 时间类型：1=一次性（start_time 至 end_time） 2=周期（按 periodic 每周重复）。
+  int32 time_type = 9 [(buf.validate.field).int32 = {
+    in: [
+      1,
+      2
+    ]
+  }];
+  // start_time 开始时间（含）。一次性时必填；周期时可选，表示周期屏蔽自该时刻起生效。
+  optional google.protobuf.Timestamp start_time = 10;
+  // end_time 结束时间（不含）。一次性时必填；周期时可选，表示周期屏蔽到该时刻失效。
+  optional google.protobuf.Timestamp end_time = 11;
+  // periodic 周期时间窗，time_type=2 时必填且至少一个时间窗；一次性时不传。
+  optional EffectiveTime periodic = 12;
+  // enabled 是否启用。
+  bool enabled = 13;
+}
+
+// Mute 屏蔽规则。
+message Mute {
+  // id 屏蔽规则唯一标识。
+  string id = 1;
+  // spec 屏蔽规则内容。
+  MuteSpec spec = 2;
+  // group_name 作用分组的完整名称；作用于全部分组时为空。
+  string group_name = 3;
+  // rules 限定规则的名称（与 spec.rule_ids 对应）。
+  repeated NamedRef rules = 4;
+  // datasources 限定数据源的名称（与 spec.datasource_ids 对应）。
+  repeated NamedRef datasources = 5;
+  // state 当前状态：pending 未开始 / active 生效中 / expired 已结束 / disabled 已停用；
+  // 周期屏蔽在有效期内但不在时间窗内时为 pending。
+  string state = 6;
+  // muted_count 当前被它屏蔽通知的活跃告警数。
+  int32 muted_count = 7;
+  // version 乐观锁版本号，编辑时原样传回。
+  int32 version = 8;
+  // can_manage 当前用户能否编辑、删除本屏蔽规则。
+  bool can_manage = 9;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 10;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 11;
+  // create_user_id 创建人。
+  string create_user_id = 12;
+  // create_user_name 创建人显示名。
+  string create_user_name = 13;
+  // update_user_id 最近更新人。
+  string update_user_id = 14;
+  // update_user_name 最近更新人显示名。
+  string update_user_name = 15;
+}
+
+// ListMutesRequest 分页查询屏蔽规则请求。
+message ListMutesRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // keyword 名称 / 原因模糊匹配，可选。
+  optional string keyword = 3 [(buf.validate.field).string.max_len = 128];
+  // group_id 作用分组过滤，可选：返回作用于该分组、其上级或其下级的屏蔽规则，以及作用于全部分组的。
+  optional string group_id = 4 [(buf.validate.field).string.uuid = true];
+  // enabled 启用状态过滤，可选。
+  optional bool enabled = 5;
+  // mode 屏蔽方式过滤，可选：1=只屏蔽通知 2=屏蔽事件。
+  optional int32 mode = 6 [(buf.validate.field).int32 = {
+    in: [
+      1,
+      2
+    ]
+  }];
+  // state 当前状态过滤，可选：pending / active / expired / disabled。
+  optional string state = 7 [(buf.validate.field).string = {
+    in: [
+      "pending",
+      "active",
+      "expired",
+      "disabled"
+    ]
+  }];
+}
+
+// ListMutesResponse 分页查询屏蔽规则响应。
+message ListMutesResponse {
+  // items 当前页数据。
+  repeated Mute items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// GetMuteRequest 查询屏蔽规则详情请求。
+message GetMuteRequest {
+  // id 屏蔽规则唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetMuteResponse 查询屏蔽规则详情响应。
+message GetMuteResponse {
+  // mute 屏蔽规则。
+  Mute mute = 1;
+}
+
+// CreateMuteRequest 新建屏蔽规则请求。
+message CreateMuteRequest {
+  // spec 屏蔽规则内容。
+  MuteSpec spec = 1 [(buf.validate.field).required = true];
+}
+
+// CreateMuteResponse 新建屏蔽规则响应。
+message CreateMuteResponse {
+  // mute 新建的屏蔽规则。
+  Mute mute = 1;
+}
+
+// UpdateMuteRequest 编辑屏蔽规则请求。
+message UpdateMuteRequest {
+  // id 屏蔽规则唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // spec 屏蔽规则内容，整体替换。
+  MuteSpec spec = 2 [(buf.validate.field).required = true];
+  // version 乐观锁版本号，须与当前一致。
+  int32 version = 3 [(buf.validate.field).int32.gte = 1];
+}
+
+// UpdateMuteResponse 编辑屏蔽规则响应。
+message UpdateMuteResponse {
+  // mute 更新后的屏蔽规则。
+  Mute mute = 1;
+}
+
+// DeleteMuteRequest 删除屏蔽规则请求。
+message DeleteMuteRequest {
+  // id 屏蔽规则唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteMuteResponse 删除屏蔽规则响应。
+message DeleteMuteResponse {}
+
+// PreviewMuteRequest 预览屏蔽规则命中请求。
+message PreviewMuteRequest {
+  // spec 待预览的屏蔽规则内容。
+  MuteSpec spec = 1 [(buf.validate.field).required = true];
+}
+
+// PreviewMuteResponse 预览屏蔽规则命中响应。
+message PreviewMuteResponse {
+  // alerts 会被命中的活跃告警，按最近触发时间倒序，至多 50 条。
+  repeated Alert alerts = 1;
+  // total 会被命中的活跃告警总数。
+  int32 total = 2;
+}

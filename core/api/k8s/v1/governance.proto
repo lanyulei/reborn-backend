@@ -1,0 +1,418 @@
+syntax = "proto3";
+
+package k8s.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/k8s/v1;v1";
+
+// K8sGovernanceService 容器平台治理：限时 kubeconfig、巡检、终端录制回放、告警规则模板。
+service K8sGovernanceService {
+  // IssueKubeconfig 为当前用户签发一份限时 kubeconfig 令牌。kubeconfig 指向平台的集群代理入口
+  // （/api/v1/k8s/proxy/{集群 ID}），权限与平台内一致；吊销、过期、账号停用后立即失效。
+  rpc IssueKubeconfig(IssueKubeconfigRequest) returns (IssueKubeconfigResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster/{cluster_id}/kubeconfig"
+      body: "*"
+    };
+    option (system.v1.title) = "签发限时 kubeconfig";
+  }
+  // ListKubeTokens 查询限时 kubeconfig 令牌：缺省只看自己的；超管可看全部或指定用户的。
+  rpc ListKubeTokens(ListKubeTokensRequest) returns (ListKubeTokensResponse) {
+    option (google.api.http) = {get: "/api/v1/k8s/kube-token"};
+    option (system.v1.title) = "查询限时 kubeconfig";
+  }
+  // RevokeKubeToken 吊销一个限时 kubeconfig 令牌（自己的，或超管吊销任何人的）。
+  rpc RevokeKubeToken(RevokeKubeTokenRequest) returns (RevokeKubeTokenResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/kube-token/{id}:revoke"
+      body: "*"
+    };
+    option (system.v1.title) = "吊销限时 kubeconfig";
+  }
+  // RevokeUserKubeTokens 吊销某个用户的全部限时 kubeconfig 令牌（仅超管）。
+  rpc RevokeUserKubeTokens(RevokeUserKubeTokensRequest) returns (RevokeUserKubeTokensResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/kube-token:revoke-user"
+      body: "*"
+    };
+    option (system.v1.title) = "吊销用户的全部限时 kubeconfig";
+  }
+  // ListInspectionRuns 分页查询某个集群的巡检记录（新的在前）。
+  rpc ListInspectionRuns(ListInspectionRunsRequest) returns (ListInspectionRunsResponse) {
+    option (google.api.http) = {get: "/api/v1/k8s/inspection"};
+    option (system.v1.title) = "查询巡检记录";
+  }
+  // GetInspectionRun 巡检详情：摘要与发现项。只返回当前用户数据范围内的命名空间的发现项。
+  rpc GetInspectionRun(GetInspectionRunRequest) returns (GetInspectionRunResponse) {
+    option (google.api.http) = {get: "/api/v1/k8s/inspection/{id}"};
+    option (system.v1.title) = "查看巡检记录";
+  }
+  // RunInspection 立即对某个集群执行一次巡检；已有待执行或执行中的巡检时返回 409 K8S_INSPECTION_BUSY。
+  rpc RunInspection(RunInspectionRequest) returns (RunInspectionResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/inspection"
+      body: "*"
+    };
+    option (system.v1.title) = "执行巡检";
+  }
+  // GetExecRecord 终端录制回放内容（只有输出，不含输入）；每次读取记入审计。
+  rpc GetExecRecord(GetExecRecordRequest) returns (GetExecRecordResponse) {
+    option (google.api.http) = {get: "/api/v1/k8s/exec-session/{id}/record"};
+    option (system.v1.title) = "回放终端录制";
+  }
+  // CheckDebugContainer 持有本接口权限才能启动调试容器（打开终端时 kind = 2）：调试容器会改动 Pod
+  // （加入临时容器）并可使用允许清单内的任意调试镜像，与普通终端分开授权。接口本身只返回空对象。
+  rpc CheckDebugContainer(CheckDebugContainerRequest) returns (CheckDebugContainerResponse) {
+    option (google.api.http) = {get: "/api/v1/k8s/debug-container"};
+    option (system.v1.title) = "使用调试容器";
+  }
+  // GetAlertRuleTemplate K8s 告警规则模板（Prometheus 规则 YAML），供监控告警的规则导入使用。
+  rpc GetAlertRuleTemplate(GetAlertRuleTemplateRequest) returns (GetAlertRuleTemplateResponse) {
+    option (google.api.http) = {get: "/api/v1/k8s/alert-rule-template"};
+    option (system.v1.title) = "获取 K8s 告警规则模板";
+  }
+}
+
+// K8sFileService 容器文件传输：请求体 / 响应体是文件原文，不走生成的处理函数，由 core 的转发层注册
+// 路由；这里的声明用于接口授权与文档。能否访问容器由集群按用户身份判定（pods/exec 权限）。
+service K8sFileService {
+  // DownloadPodFile 从容器下载文件（单个文件为原文，目录为 tar）。
+  rpc DownloadPodFile(DownloadPodFileRequest) returns (DownloadPodFileResponse) {
+    option (google.api.http) = {get: "/api/v1/k8s/cluster/{cluster_id}/pod/file:download"};
+    option (system.v1.title) = "从容器下载文件";
+  }
+  // UploadPodFile 向容器的某个目录上传一个文件（请求体为文件原文，参数在查询串）。
+  rpc UploadPodFile(UploadPodFileRequest) returns (UploadPodFileResponse) {
+    option (google.api.http) = {post: "/api/v1/k8s/cluster/{cluster_id}/pod/file:upload"};
+    option (system.v1.title) = "向容器上传文件";
+  }
+}
+
+// IssueKubeconfigRequest 签发限时 kubeconfig 请求。
+message IssueKubeconfigRequest {
+  // cluster_id 集群唯一标识；须在当前用户的数据范围内。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // ttl_seconds 有效期（秒），1 小时到 7 天（上限可由配置收紧）。
+  int64 ttl_seconds = 2 [(buf.validate.field).int64 = {
+    gte: 3600
+    lte: 604800
+  }];
+  // note 用途备注，可选。
+  string note = 3 [(buf.validate.field).string.max_len = 128];
+}
+
+// IssueKubeconfigResponse 签发限时 kubeconfig 响应。
+message IssueKubeconfigResponse {
+  // token 令牌信息。
+  KubeToken token = 1;
+  // secret 令牌明文，只返回这一次。
+  string secret = 2;
+  // server 集群代理入口的完整地址；未配置对外地址时为以 / 开头的相对路径，由前端拼上当前站点地址。
+  string server = 3;
+  // kubeconfig 可直接保存的 kubeconfig 文件内容（server 为相对路径时其中的地址需替换，见 server）。
+  string kubeconfig = 4;
+}
+
+// KubeToken 限时 kubeconfig 令牌。
+message KubeToken {
+  // id 令牌唯一标识。
+  string id = 1;
+  // user_id 所属用户。
+  string user_id = 2;
+  // username 用户名。
+  string username = 3;
+  // cluster_id 集群。
+  string cluster_id = 4;
+  // cluster_name 集群名称。
+  string cluster_name = 5;
+  // note 用途备注。
+  string note = 6;
+  // create_time 签发时间。
+  google.protobuf.Timestamp create_time = 7;
+  // expire_time 过期时间。
+  google.protobuf.Timestamp expire_time = 8;
+  // last_used_time 最近一次使用时间；从未使用为空。
+  google.protobuf.Timestamp last_used_time = 9;
+  // last_used_ip 最近一次使用的来源 IP。
+  string last_used_ip = 10;
+  // revoke_time 吊销时间；未吊销为空。
+  google.protobuf.Timestamp revoke_time = 11;
+  // active 是否仍有效（未吊销且未过期）。
+  bool active = 12;
+}
+
+// ListKubeTokensRequest 查询限时 kubeconfig 请求。
+message ListKubeTokensRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // all 查看所有用户的令牌（仅超管有效）。
+  bool all = 3;
+  // user_id 只看某个用户的（仅超管有效），可选。
+  optional string user_id = 4 [(buf.validate.field).string.uuid = true];
+  // cluster_id 按集群筛选，可选。
+  optional string cluster_id = 5 [(buf.validate.field).string.uuid = true];
+  // active_only 只看仍有效的。
+  bool active_only = 6;
+}
+
+// ListKubeTokensResponse 查询限时 kubeconfig 响应。
+message ListKubeTokensResponse {
+  // items 当前页数据。
+  repeated KubeToken items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// RevokeKubeTokenRequest 吊销限时 kubeconfig 请求。
+message RevokeKubeTokenRequest {
+  // id 令牌唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// RevokeKubeTokenResponse 吊销限时 kubeconfig 响应。
+message RevokeKubeTokenResponse {}
+
+// RevokeUserKubeTokensRequest 吊销用户的全部限时 kubeconfig 请求。
+message RevokeUserKubeTokensRequest {
+  // user_id 用户。
+  string user_id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// RevokeUserKubeTokensResponse 吊销用户的全部限时 kubeconfig 响应。
+message RevokeUserKubeTokensResponse {
+  // revoked 本次吊销的令牌数。
+  int32 revoked = 1;
+}
+
+// InspectionCheckStat 一个检查项的统计。
+message InspectionCheckStat {
+  // check 检查项标识。
+  string check = 1;
+  // severity 级别：1=提示 2=警告 3=严重。
+  int32 severity = 2;
+  // count 发现项总数。
+  int32 count = 3;
+}
+
+// InspectionRun 一次巡检。
+message InspectionRun {
+  // id 巡检唯一标识。
+  string id = 1;
+  // cluster_id 集群。
+  string cluster_id = 2;
+  // cluster_name 集群名称。
+  string cluster_name = 3;
+  // trigger 触发方式：1=定时 2=手动。
+  int32 trigger = 4;
+  // status 状态：1=待执行 2=执行中 3=完成 4=失败。
+  int32 status = 5;
+  // score 得分 0-100。
+  int32 score = 6;
+  // critical 严重发现项数。
+  int32 critical = 7;
+  // warning 警告发现项数。
+  int32 warning = 8;
+  // info 提示发现项数。
+  int32 info = 9;
+  // checks 各检查项的统计。
+  repeated InspectionCheckStat checks = 10;
+  // pods 检查的 Pod 数。
+  int32 pods = 11;
+  // workloads 检查的工作负载数。
+  int32 workloads = 12;
+  // nodes 检查的节点数。
+  int32 nodes = 13;
+  // certs 检查的证书数。
+  int32 certs = 14;
+  // partial 对象数超过遍历上限，结果不完整。
+  bool partial = 15;
+  // error 失败原因。
+  string error = 16;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 17;
+  // finish_time 结束时间。
+  google.protobuf.Timestamp finish_time = 18;
+}
+
+// InspectionFinding 一条发现项。
+message InspectionFinding {
+  // check 检查项标识。
+  string check = 1;
+  // severity 级别：1=提示 2=警告 3=严重。
+  int32 severity = 2;
+  // namespace 命名空间；集群级对象为空。
+  string namespace = 3;
+  // kind 对象 Kind。
+  string kind = 4;
+  // name 对象名称。
+  string name = 5;
+  // message 说明。
+  string message = 6;
+}
+
+// ListInspectionRunsRequest 查询巡检记录请求。
+message ListInspectionRunsRequest {
+  // cluster_id 集群唯一标识；须在当前用户的数据范围内。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // page 页码，从 1 开始。
+  int64 page = 2 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 3 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+}
+
+// ListInspectionRunsResponse 查询巡检记录响应。
+message ListInspectionRunsResponse {
+  // items 当前页数据。
+  repeated InspectionRun items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// GetInspectionRunRequest 查看巡检记录请求。
+message GetInspectionRunRequest {
+  // id 巡检唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetInspectionRunResponse 查看巡检记录响应。
+message GetInspectionRunResponse {
+  // run 巡检（统计为整个集群的口径）。
+  InspectionRun run = 1;
+  // findings 当前用户可见的发现项（至多 5000 条）。
+  repeated InspectionFinding findings = 2;
+  // scoped 当前用户只能看到部分命名空间的发现项。
+  bool scoped = 3;
+}
+
+// RunInspectionRequest 执行巡检请求。
+message RunInspectionRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// RunInspectionResponse 执行巡检响应。
+message RunInspectionResponse {
+  // run 新建的待执行巡检。
+  InspectionRun run = 1;
+}
+
+// GetExecRecordRequest 回放终端录制请求。
+message GetExecRecordRequest {
+  // id 终端会话唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// ExecRecordEvent 录制的一个事件。
+message ExecRecordEvent {
+  // offset_ms 距会话开始的毫秒数。
+  int64 offset_ms = 1;
+  // type 事件类型：o=输出 r=窗口大小变化。
+  string type = 2;
+  // data 输出内容（type=o）。
+  bytes data = 3;
+  // cols 列数（type=r）。
+  uint32 cols = 4;
+  // rows 行数（type=r）。
+  uint32 rows = 5;
+}
+
+// GetExecRecordResponse 回放终端录制响应。
+message GetExecRecordResponse {
+  // events 按时间排序的事件。
+  repeated ExecRecordEvent events = 1;
+  // truncated 录制超过上限后停止，内容不完整。
+  bool truncated = 2;
+  // duration_ms 录制的总时长（毫秒）。
+  int64 duration_ms = 3;
+}
+
+// GetAlertRuleTemplateRequest 获取 K8s 告警规则模板请求。
+message GetAlertRuleTemplateRequest {}
+
+// GetAlertRuleTemplateResponse 获取 K8s 告警规则模板响应。
+message GetAlertRuleTemplateResponse {
+  // content Prometheus 规则 YAML。
+  string content = 1;
+  // rules 规则条数。
+  int32 rules = 2;
+}
+
+// DownloadPodFileRequest 从容器下载文件请求。
+message DownloadPodFileRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // namespace 命名空间。
+  string namespace = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 63
+  }];
+  // pod Pod 名称。
+  string pod = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 253
+  }];
+  // container 容器名称；空 = 第一个容器。
+  string container = 4 [(buf.validate.field).string.max_len = 253];
+  // path 容器内文件或目录的绝对路径。
+  string path = 5 [(buf.validate.field).string = {
+    min_len: 2
+    max_len: 4096
+    prefix: "/"
+  }];
+}
+
+// DownloadPodFileResponse 占位：实际响应体为文件原文或 tar。
+message DownloadPodFileResponse {}
+
+// UploadPodFileRequest 向容器上传文件请求（均为查询参数；请求体为文件原文）。
+message UploadPodFileRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // namespace 命名空间。
+  string namespace = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 63
+  }];
+  // pod Pod 名称。
+  string pod = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 253
+  }];
+  // container 容器名称；空 = 第一个容器。
+  string container = 4 [(buf.validate.field).string.max_len = 253];
+  // path 目标目录的绝对路径。
+  string path = 5 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 4096
+    prefix: "/"
+  }];
+  // name 文件名（不含路径）。
+  string name = 6 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 255
+  }];
+}
+
+// UploadPodFileResponse 向容器上传文件响应。
+message UploadPodFileResponse {
+  // size 写入的字节数。
+  int64 size = 1;
+}
+
+// CheckDebugContainerRequest 调试容器权限检查请求。
+message CheckDebugContainerRequest {}
+
+// CheckDebugContainerResponse 调试容器权限检查响应。
+message CheckDebugContainerResponse {}

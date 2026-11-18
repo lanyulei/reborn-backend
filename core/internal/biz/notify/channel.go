@@ -223,6 +223,10 @@ func validateConfigKind(channelType string, cfg *ChannelConfig) error {
 		if err := validateWebhookURL(cfg.Webhook.URL); err != nil {
 			return err
 		}
+		// 管道发送时只接受 https：保存时就拒绝，而不是存进去之后每次发送都失败。
+		if u, err := url.Parse(cfg.Webhook.URL); err != nil || u.Scheme != "https" {
+			return fmt.Errorf("%w: webhook url must be https", ErrChannelConfigInvalid)
+		}
 		return validateWebhookHeaders(cfg.Webhook.Headers)
 	}
 	if cfg.Robot != nil {

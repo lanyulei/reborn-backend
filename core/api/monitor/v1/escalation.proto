@@ -1,0 +1,396 @@
+syntax = "proto3";
+
+package monitor.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "monitor/v1/common.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/monitor/v1;v1";
+
+// MonitorEscalationService 升级策略：告警持续未认领 / 未恢复时逐级通知更多的人。策略是独立可复用的对象，
+// 规则经 escalation_id 引用。策略归属一个规则分组（该分组及其下级分组内的规则可引用），或为全局策略
+// （group_id 留空，所有分组可引用，仅超级管理员可维护）。
+// 权限：查看要求对归属分组「只读」以上（全局策略所有人可见）；新建 / 编辑 / 删除要求「可管理」。
+service MonitorEscalationService {
+  // ListEscalations 分页查询升级策略（只返回全局策略与当前用户数据范围内分组的策略）。
+  rpc ListEscalations(ListEscalationsRequest) returns (ListEscalationsResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/escalation"};
+    option (system.v1.title) = "查询升级策略";
+  }
+  // GetEscalation 查询升级策略详情。
+  rpc GetEscalation(GetEscalationRequest) returns (GetEscalationResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/escalation/{id}"};
+    option (system.v1.title) = "查询升级策略详情";
+  }
+  // CreateEscalation 新建升级策略；同一归属下名称重复返回 409 MONITOR_ESCALATION_NAME_EXISTS。
+  rpc CreateEscalation(CreateEscalationRequest) returns (CreateEscalationResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/escalation"
+      body: "*"
+    };
+    option (system.v1.title) = "新建升级策略";
+  }
+  // UpdateEscalation 编辑升级策略（整体替换）。version 不一致返回 409 MONITOR_VERSION_CONFLICT。
+  // 归属分组不可更改。修改对已在告警中的事件立即生效：各级已发出的通知次数保留。
+  rpc UpdateEscalation(UpdateEscalationRequest) returns (UpdateEscalationResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/monitor/escalation/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "编辑升级策略";
+  }
+  // DeleteEscalation 删除升级策略；仍被规则引用时返回 409 MONITOR_ESCALATION_IN_USE。
+  rpc DeleteEscalation(DeleteEscalationRequest) returns (DeleteEscalationResponse) {
+    option (google.api.http) = {delete: "/api/v1/monitor/escalation/{id}"};
+    option (system.v1.title) = "删除升级策略";
+  }
+  // EstimateEscalation 估算通知量（不保存）：按给出的策略内容，一条始终无人认领、始终不恢复的告警在
+  // 24 小时内最多发出多少次通知。可同时给出规则自身的重复通知设置，一并计入。
+  rpc EstimateEscalation(EstimateEscalationRequest) returns (EstimateEscalationResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/escalation:estimate"
+      body: "*"
+    };
+    option (system.v1.title) = "估算升级策略通知量";
+  }
+  // ListEscalationOptions 规则表单的升级策略候选项：某个规则分组内的规则可以引用的、已启用的策略
+  // （全局策略 + 归属于该分组或其上级分组的策略）。
+  rpc ListEscalationOptions(ListEscalationOptionsRequest) returns (ListEscalationOptionsResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/escalation-option"};
+    option (system.v1.title) = "查询升级策略候选项";
+  }
+  // ListOncallGroupOptions 升级策略表单的值班分组候选项（「值班分组管理员」选择器用）：全部值班分组的 ID 与名称。
+  // 只读、最小披露；随升级策略的新建 / 编辑权限开放，不要求值班管理的权限。用户、值班表、部门的候选项用
+  // ListMonitorTargetOptions。
+  rpc ListOncallGroupOptions(ListOncallGroupOptionsRequest) returns (ListOncallGroupOptionsResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/oncall-group-option"};
+    option (system.v1.title) = "查询值班分组候选项";
+  }
+}
+
+// EscalationSchedule 升级通知对象里的一张值班表。
+message EscalationSchedule {
+  // id 值班表唯一标识；通知时取该值班表当前的值班人。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // backup_only 仅通知备班（不通知主班）。
+  bool backup_only = 2;
+}
+
+// EscalationDept 升级通知对象里的一个部门。
+message EscalationDept {
+  // id 部门唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // up 向上几级：0 = 通知本部门负责人，1 = 通知上一级部门的负责人，以此类推，至多 5；
+  // 上级部门不存在时退回到能找到的最高一级。
+  int32 up = 2 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 5
+  }];
+}
+
+// EscalationTargets 升级策略一级的通知对象；四类取并集、去重后通知，至少填一类。
+message EscalationTargets {
+  option (buf.validate.message).cel = {
+    id: "monitor.escalation.targets.required"
+    message: "at least one notify target is required"
+    expression: "size(this.user_ids) + size(this.schedules) + size(this.oncall_group_ids) + size(this.depts) > 0"
+  };
+  option (buf.validate.message).cel = {
+    id: "monitor.escalation.targets.schedule_unique"
+    message: "each schedule may appear only once"
+    expression: "this.schedules.map(s, s.id).unique()"
+  };
+
+  // user_ids 指定用户，至多 20 个。
+  repeated string user_ids = 1 [(buf.validate.field).repeated = {
+    max_items: 20
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+  // schedules 值班表，至多 20 张。
+  repeated EscalationSchedule schedules = 2 [(buf.validate.field).repeated.max_items = 20];
+  // oncall_group_ids 值班分组，至多 20 个；通知各分组的管理员。
+  repeated string oncall_group_ids = 3 [(buf.validate.field).repeated = {
+    max_items: 20
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+  // depts 部门负责人，至多 20 项（同一部门可按不同的上溯层级各列一项）。
+  repeated EscalationDept depts = 4 [(buf.validate.field).repeated.max_items = 20];
+}
+
+// EscalationLevel 升级策略的一级。
+message EscalationLevel {
+  // trigger 触发条件：1=告警持续 after_m 分钟仍未认领（认领后本级不再升级、不再提醒）
+  // 2=告警持续 after_m 分钟仍未恢复（不受认领影响）。
+  int32 trigger = 1 [(buf.validate.field).int32 = {
+    in: [
+      1,
+      2
+    ]
+  }];
+  // after_m 自事件首次触发起算的分钟数，1-10080；各级须严格递增。
+  int32 after_m = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 10080
+  }];
+  // targets 本级的通知对象。
+  EscalationTargets targets = 3 [(buf.validate.field).required = true];
+  // repeat_interval_m 本级的重复提醒间隔分钟：0 表示只在升级时通知一次，否则 5-10080。
+  int32 repeat_interval_m = 4 [(buf.validate.field).cel = {
+    id: "monitor.escalation.level.repeat_interval"
+    message: "repeat_interval_m must be 0 or between 5 and 10080"
+    expression: "this == 0 || (this >= 5 && this <= 10080)"
+  }];
+  // max_notify 本级的通知次数上限（含升级时的那一次），0-100，0 表示不限。
+  int32 max_notify = 5 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 100
+  }];
+}
+
+// EscalationSpec 升级策略的可编辑内容。
+message EscalationSpec {
+  option (buf.validate.message).cel = {
+    id: "monitor.escalation.levels.after_unique"
+    message: "each level must have a distinct after_m"
+    expression: "this.levels.map(l, l.after_m).unique()"
+  };
+
+  // group_id 归属的规则分组，可选：该分组（含下级）内的规则可引用；留空为全局策略（仅超级管理员可建）。新建后不可更改。
+  string group_id = 1 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+  // name 名称，1-128 字符，同一归属下唯一。
+  string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+  // description 说明，可选。
+  string description = 3 [(buf.validate.field).string.max_len = 255];
+  // mode 升级后是否继续提醒前面的人：1=叠加（前面各级与规则通知对象的重复提醒照常继续，直到各自的次数上限）
+  // 2=接替（只提醒当前这一级；恢复通知不受影响，仍发给所有被通知过的人）。
+  int32 mode = 4 [(buf.validate.field).int32 = {
+    in: [
+      1,
+      2
+    ]
+  }];
+  // min_severity 最低级别 1-4：事件级别低于它时不升级（如 3 = 仅「严重」及以上才升级）。
+  int32 min_severity = 5 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 4
+  }];
+  // levels 各级，1-10 级，按升级先后排列：after_m 须逐级严格递增（否则 400 MONITOR_ESCALATION_INVALID）。
+  repeated EscalationLevel levels = 6 [(buf.validate.field).repeated = {
+    min_items: 1
+    max_items: 10
+  }];
+  // enabled 是否启用；停用后引用它的规则不再升级。
+  bool enabled = 7;
+}
+
+// EscalationLevelRefs 一级通知对象的显示名（与 spec.levels 的同一下标对应）。
+message EscalationLevelRefs {
+  // users 指定用户。
+  repeated NamedRef users = 1;
+  // schedules 值班表。
+  repeated NamedRef schedules = 2;
+  // oncall_groups 值班分组。
+  repeated NamedRef oncall_groups = 3;
+  // depts 部门（与 targets.depts 逐项对应）。
+  repeated NamedRef depts = 4;
+}
+
+// EscalationEstimate 24 小时通知量估算：一条始终无人认领、始终不恢复的告警最多发出多少次通知
+// （每次通知算一次，不乘以收件人数）。
+message EscalationEstimate {
+  // rule 规则自身的通知次数（首次 + 重复通知）；未给出规则的重复通知设置时为 1。
+  int32 rule = 1;
+  // levels 各级的通知次数，下标与 levels 对应。
+  repeated int32 levels = 2;
+  // total 合计。
+  int32 total = 3;
+}
+
+// Escalation 升级策略。
+message Escalation {
+  // id 策略唯一标识。
+  string id = 1;
+  // spec 策略内容。
+  EscalationSpec spec = 2;
+  // group_name 归属分组的完整名称（含上级，以 " / " 分隔）；全局策略为空。
+  string group_name = 3;
+  // level_refs 各级通知对象的显示名，下标与 spec.levels 对应。
+  repeated EscalationLevelRefs level_refs = 4;
+  // rule_count 引用它的规则数。
+  int32 rule_count = 5;
+  // estimate 24 小时通知量估算（不含规则自身的重复通知）。
+  EscalationEstimate estimate = 6;
+  // version 版本号：每次保存 +1；编辑时原样传回用作乐观锁。
+  int32 version = 7;
+  // can_manage 当前用户能否编辑 / 删除（对归属分组「可管理」；全局策略须是超级管理员）。
+  bool can_manage = 8;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 9;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 10;
+  // update_user_id 最近更新人。
+  string update_user_id = 11;
+  // update_user_name 最近更新人显示名。
+  string update_user_name = 12;
+}
+
+// ListEscalationsRequest 分页查询升级策略请求。
+message ListEscalationsRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // group_id 归属分组过滤（含其全部下级分组），可选。
+  optional string group_id = 3 [(buf.validate.field).string.uuid = true];
+  // global 只看全局策略（true）或只看分组策略（false），可选。
+  optional bool global = 4;
+  // keyword 名称 / 说明模糊匹配，可选。
+  optional string keyword = 5 [(buf.validate.field).string.max_len = 128];
+  // enabled 启用状态过滤，可选。
+  optional bool enabled = 6;
+}
+
+// ListEscalationsResponse 分页查询升级策略响应。
+message ListEscalationsResponse {
+  // items 当前页数据。
+  repeated Escalation items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// GetEscalationRequest 查询升级策略详情请求。
+message GetEscalationRequest {
+  // id 策略唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetEscalationResponse 查询升级策略详情响应。
+message GetEscalationResponse {
+  // escalation 升级策略。
+  Escalation escalation = 1;
+}
+
+// CreateEscalationRequest 新建升级策略请求。
+message CreateEscalationRequest {
+  // spec 策略内容。
+  EscalationSpec spec = 1 [(buf.validate.field).required = true];
+}
+
+// CreateEscalationResponse 新建升级策略响应。
+message CreateEscalationResponse {
+  // escalation 新建的升级策略。
+  Escalation escalation = 1;
+}
+
+// UpdateEscalationRequest 编辑升级策略请求。
+message UpdateEscalationRequest {
+  // id 策略唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // spec 策略内容，整体替换；group_id 须与现有的一致。
+  EscalationSpec spec = 2 [(buf.validate.field).required = true];
+  // version 乐观锁版本号，须与当前一致。
+  int32 version = 3 [(buf.validate.field).int32.gte = 1];
+}
+
+// UpdateEscalationResponse 编辑升级策略响应。
+message UpdateEscalationResponse {
+  // escalation 更新后的升级策略。
+  Escalation escalation = 1;
+}
+
+// DeleteEscalationRequest 删除升级策略请求。
+message DeleteEscalationRequest {
+  // id 策略唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteEscalationResponse 删除升级策略响应。
+message DeleteEscalationResponse {}
+
+// EstimateEscalationRequest 估算升级策略通知量请求。
+message EstimateEscalationRequest {
+  // spec 策略内容（表单当前的内容，不要求已保存）。
+  EscalationSpec spec = 1 [(buf.validate.field).required = true];
+  // rule_repeat_interval_m 规则自身的重复通知间隔分钟（0 或 5-10080），可选；给出后规则的重复通知一并计入。
+  int32 rule_repeat_interval_m = 2 [(buf.validate.field).cel = {
+    id: "monitor.escalation.estimate.repeat_interval"
+    message: "rule_repeat_interval_m must be 0 or between 5 and 10080"
+    expression: "this == 0 || (this >= 5 && this <= 10080)"
+  }];
+  // rule_max_notify 规则自身的通知次数上限（0-1000，0 不限），可选。
+  int32 rule_max_notify = 3 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 1000
+  }];
+}
+
+// EstimateEscalationResponse 估算升级策略通知量响应。
+message EstimateEscalationResponse {
+  // estimate 估算结果。
+  EscalationEstimate estimate = 1;
+}
+
+// EscalationOption 可选的升级策略。
+message EscalationOption {
+  // id 策略唯一标识。
+  string id = 1;
+  // name 名称。
+  string name = 2;
+  // global 是否全局策略。
+  bool global = 3;
+  // group_name 归属分组的完整名称；全局策略为空。
+  string group_name = 4;
+  // level_count 级数。
+  int32 level_count = 5;
+  // mode 升级方式：1=叠加 2=接替。
+  int32 mode = 6;
+  // min_severity 最低级别。
+  int32 min_severity = 7;
+}
+
+// ListEscalationOptionsRequest 查询升级策略候选项请求。
+message ListEscalationOptionsRequest {
+  // group_id 规则所在（或将要放入）的分组；须对它「只读」以上。
+  string group_id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// ListEscalationOptionsResponse 查询升级策略候选项响应。
+message ListEscalationOptionsResponse {
+  // items 该分组内的规则可引用的已启用策略：全局策略在前，其余按名称排序，至多 500 条。
+  repeated EscalationOption items = 1;
+}
+
+// OncallGroupOption 可选的值班分组。
+message OncallGroupOption {
+  // id 值班分组唯一标识。
+  string id = 1;
+  // name 值班分组名称。
+  string name = 2;
+}
+
+// ListOncallGroupOptionsRequest 查询值班分组候选项请求。
+message ListOncallGroupOptionsRequest {}
+
+// ListOncallGroupOptionsResponse 查询值班分组候选项响应。
+message ListOncallGroupOptionsResponse {
+  // items 全部值班分组，按名称排序，至多 500 个。
+  repeated OncallGroupOption items = 1;
+}

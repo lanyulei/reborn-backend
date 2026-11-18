@@ -1,0 +1,201 @@
+syntax = "proto3";
+
+package job.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/job/v1;v1";
+
+// JobScheduleService 定时作业：按 Cron 表达式以固定参数执行作业模板。
+//
+// 定时作业以负责人（创建人，可转交）的身份提交执行：目标主机按负责人的 CMDB 数据范围解析，
+// 负责人被停用后触发会失败并记录原因。与手动执行走同一套校验与审批：模板须审批或目标含受保护环境时，
+// 每次触发都会产生一条「待审批」的执行。同一触发时间只提交一次（多实例部署安全）。
+service JobScheduleService {
+  // ListJobSchedules 分页查询定时作业。
+  rpc ListJobSchedules(ListJobSchedulesRequest) returns (ListJobSchedulesResponse) {
+    option (google.api.http) = {get: "/api/v1/job/schedule"};
+    option (system.v1.title) = "查询定时作业";
+  }
+  // CreateJobSchedule 新建定时作业；Cron 表达式或参数不合法返回 400 JOB_SCHEDULE_INVALID。
+  rpc CreateJobSchedule(CreateJobScheduleRequest) returns (CreateJobScheduleResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/job/schedule"
+      body: "*"
+    };
+    option (system.v1.title) = "新建定时作业";
+  }
+  // UpdateJobSchedule 编辑定时作业（整体替换；启停也经此接口）。version 不一致返回 409 JOB_VERSION_CONFLICT。
+  // 负责人变更为当前操作人。
+  rpc UpdateJobSchedule(UpdateJobScheduleRequest) returns (UpdateJobScheduleResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/job/schedule/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "编辑定时作业";
+  }
+  // DeleteJobSchedule 删除定时作业；已提交的执行不受影响。
+  rpc DeleteJobSchedule(DeleteJobScheduleRequest) returns (DeleteJobScheduleResponse) {
+    option (google.api.http) = {delete: "/api/v1/job/schedule/{id}"};
+    option (system.v1.title) = "删除定时作业";
+  }
+  // PreviewJobSchedule 校验 Cron 表达式并返回接下来的 5 个触发时间。
+  rpc PreviewJobSchedule(PreviewJobScheduleRequest) returns (PreviewJobScheduleResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/job/schedule:preview"
+      body: "*"
+    };
+    option (system.v1.title) = "预览定时作业触发时间";
+  }
+}
+
+// JobScheduleSpec 定时作业的可编辑内容（新建与编辑共用）。
+message JobScheduleSpec {
+  // name 名称，1-64 字符，全局唯一。
+  string name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // template_id 作业模板。
+  string template_id = 2 [(buf.validate.field).string.uuid = true];
+  // cron 标准 5 段 Cron 表达式（分 时 日 月 周），如 0 3 * * *；最短间隔 1 分钟。
+  string cron = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // timezone Cron 表达式所用的 IANA 时区，如 Asia/Shanghai。
+  string timezone = 4 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // params 固定的参数取值（变量名 → 值），保存时按模板的参数定义校验。
+  google.protobuf.Struct params = 5;
+  // misfire 错过触发时间（服务停机等）后的处理：1=跳过 2=补跑一次。
+  int32 misfire = 6 [(buf.validate.field).int32 = {
+    in: [
+      1,
+      2
+    ]
+  }];
+  // enabled 是否启用。
+  bool enabled = 7;
+  // description 说明，可选。
+  string description = 8 [(buf.validate.field).string.max_len = 255];
+  // template_version 保存人确认过的模板版本。响应里是已保存的版本；请求里可选：传入页面展示时的
+  // 模板版本号，模板此后被改过则启用被拒（400），须打开表单核对后再保存；不传（0）取模板当前版本。
+  int32 template_version = 9;
+}
+
+// JobSchedule 定时作业。
+message JobSchedule {
+  // id 定时作业唯一标识。
+  string id = 1;
+  // spec 定时作业内容。
+  JobScheduleSpec spec = 2;
+  // template_name 作业模板名称；模板已被删除时为空（此后触发会失败）。
+  string template_name = 3;
+  // owner_id 负责人。
+  string owner_id = 4;
+  // owner_name 负责人显示名。
+  string owner_name = 5;
+  // next_time 下次触发时间；停用时为空。
+  google.protobuf.Timestamp next_time = 6;
+  // last_time 最近一次触发时间。
+  google.protobuf.Timestamp last_time = 7;
+  // last_execution_id 最近一次触发提交的执行。
+  string last_execution_id = 8;
+  // last_error 最近一次触发失败的原因；成功后清空。
+  string last_error = 9;
+  // version 乐观锁版本号，编辑时原样传回。
+  int32 version = 10;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 11;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 12;
+}
+
+// ListJobSchedulesRequest 分页查询定时作业请求。
+message ListJobSchedulesRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // keyword 名称 / 说明模糊匹配，可选。
+  optional string keyword = 3 [(buf.validate.field).string.max_len = 64];
+  // template_id 作业模板过滤，可选。
+  optional string template_id = 4 [(buf.validate.field).string.uuid = true];
+  // enabled 启用状态过滤，可选。
+  optional bool enabled = 5;
+}
+
+// ListJobSchedulesResponse 分页查询定时作业响应。
+message ListJobSchedulesResponse {
+  // items 当前页数据。
+  repeated JobSchedule items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// CreateJobScheduleRequest 新建定时作业请求。
+message CreateJobScheduleRequest {
+  // spec 定时作业内容。
+  JobScheduleSpec spec = 1 [(buf.validate.field).required = true];
+}
+
+// CreateJobScheduleResponse 新建定时作业响应。
+message CreateJobScheduleResponse {
+  // schedule 新建的定时作业。
+  JobSchedule schedule = 1;
+}
+
+// UpdateJobScheduleRequest 编辑定时作业请求。
+message UpdateJobScheduleRequest {
+  // id 定时作业唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // spec 定时作业内容，整体替换。
+  JobScheduleSpec spec = 2 [(buf.validate.field).required = true];
+  // version 乐观锁版本号，须与当前一致。
+  int32 version = 3 [(buf.validate.field).int32.gte = 1];
+}
+
+// UpdateJobScheduleResponse 编辑定时作业响应。
+message UpdateJobScheduleResponse {
+  // schedule 更新后的定时作业。
+  JobSchedule schedule = 1;
+}
+
+// DeleteJobScheduleRequest 删除定时作业请求。
+message DeleteJobScheduleRequest {
+  // id 定时作业唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteJobScheduleResponse 删除定时作业响应。
+message DeleteJobScheduleResponse {}
+
+// PreviewJobScheduleRequest 预览定时作业触发时间请求。
+message PreviewJobScheduleRequest {
+  // cron 标准 5 段 Cron 表达式。
+  string cron = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // timezone IANA 时区。
+  string timezone = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+}
+
+// PreviewJobScheduleResponse 预览定时作业触发时间响应。
+message PreviewJobScheduleResponse {
+  // next_times 接下来的 5 个触发时间。
+  repeated google.protobuf.Timestamp next_times = 1;
+}

@@ -7,6 +7,9 @@ import (
 	assistantv1 "github.com/lanyulei/reborn/backend/core/api/assistant/v1"
 	cmdbv1 "github.com/lanyulei/reborn/backend/core/api/cmdb/v1"
 	filev1 "github.com/lanyulei/reborn/backend/core/api/file/v1"
+	jobv1 "github.com/lanyulei/reborn/backend/core/api/job/v1"
+	k8sv1 "github.com/lanyulei/reborn/backend/core/api/k8s/v1"
+	monitorv1 "github.com/lanyulei/reborn/backend/core/api/monitor/v1"
 	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
 	oncallv1 "github.com/lanyulei/reborn/backend/core/api/oncall/v1"
 	v1 "github.com/lanyulei/reborn/backend/core/api/system/v1"
@@ -17,6 +20,9 @@ import (
 	assistantservice "github.com/lanyulei/reborn/backend/core/internal/service/assistant"
 	cmdbservice "github.com/lanyulei/reborn/backend/core/internal/service/cmdb"
 	fileservice "github.com/lanyulei/reborn/backend/core/internal/service/file"
+	jobservice "github.com/lanyulei/reborn/backend/core/internal/service/job"
+	k8sservice "github.com/lanyulei/reborn/backend/core/internal/service/k8s"
+	monitorservice "github.com/lanyulei/reborn/backend/core/internal/service/monitor"
 	notifyservice "github.com/lanyulei/reborn/backend/core/internal/service/notify"
 	oncallservice "github.com/lanyulei/reborn/backend/core/internal/service/oncall"
 	service "github.com/lanyulei/reborn/backend/core/internal/service/system"
@@ -59,6 +65,20 @@ func NewHTTPServer(c *conf.Server, logger *slog.Logger, user *service.UserServic
 	wfDefinition *workflowservice.DefinitionService, wfInstance *workflowservice.InstanceService, wfTask *workflowservice.TaskService,
 	wfConfig *workflowservice.ConfigService, wfOpen *workflowservice.OpenService,
 	ticketCatalog *ticketservice.CatalogService, ticket *ticketservice.TicketService,
+	monDatasource *monitorservice.DatasourceService, monGroup *monitorservice.RuleGroupService, monRule *monitorservice.RuleService,
+	monAlert *monitorservice.AlertService, monMute *monitorservice.MuteService, monSubscription *monitorservice.SubscriptionService,
+	monP2 monitorservice.P2Services,
+	jobCredential *jobservice.CredentialService, jobProject *jobservice.ProjectService, jobTemplate *jobservice.TemplateService,
+	jobExecution *jobservice.ExecutionService, jobRunner *jobservice.RunnerService,
+	jobScript *jobservice.ScriptService, jobPolicy *jobservice.PolicyService, jobSchedule *jobservice.ScheduleService,
+	jobTrigger *jobservice.TriggerService,
+	k8sCluster *k8sservice.ClusterService, k8sScope *k8sservice.ScopeService, k8sAudit *k8sservice.AuditService,
+	k8sResource *k8sservice.ResourceService, k8sWorkload *k8sservice.WorkloadService, k8sStream *k8sservice.StreamService,
+	k8sHelmRepo *k8sservice.HelmRepoService, k8sHelmRelease *k8sservice.HelmReleaseService,
+	k8sInsight *k8sservice.InsightService,
+	k8sGov *k8sservice.GovernanceService,
+	k8sChange *k8sservice.ChangeService,
+	k8sConf *conf.K8S,
 	signer *biz.TokenSigner, authzUC *biz.AuthzUsecase,
 	roles Roles, pinger Pinger, metrics *Metrics,
 ) *http.Server {
@@ -74,7 +94,7 @@ func NewHTTPServer(c *conf.Server, logger *slog.Logger, user *service.UserServic
 			authzMiddleware(authzUC, logger),
 		),
 		// body 8MiB 上限在路由前包裹；proto.Message 的 JSON 请求/响应统一走 protojson（kit/httpx）。
-		http.Filter(httpx.LimitRequestBody),
+		http.Filter(k8sBodyLimit), // 通用 8MiB；容器文件上传除外（见 k8s_gov.go）
 		http.RequestDecoder(httpx.DecodeRequest),
 		http.ResponseEncoder(httpx.EncodeResponse),
 	}
@@ -135,5 +155,42 @@ func NewHTTPServer(c *conf.Server, logger *slog.Logger, user *service.UserServic
 	workflowv1.RegisterWorkflowOpenServiceHTTPServer(srv, wfOpen)
 	ticketv1.RegisterTicketCatalogServiceHTTPServer(srv, ticketCatalog)
 	ticketv1.RegisterTicketServiceHTTPServer(srv, ticket)
+	monitorv1.RegisterMonitorDatasourceServiceHTTPServer(srv, monDatasource)
+	monitorv1.RegisterMonitorRuleGroupServiceHTTPServer(srv, monGroup)
+	monitorv1.RegisterMonitorRuleServiceHTTPServer(srv, monRule)
+	monitorv1.RegisterMonitorAlertServiceHTTPServer(srv, monAlert)
+	monitorv1.RegisterMonitorMuteServiceHTTPServer(srv, monMute)
+	monitorv1.RegisterMonitorSubscriptionServiceHTTPServer(srv, monSubscription)
+	monitorv1.RegisterMonitorEscalationServiceHTTPServer(srv, monP2.Escalation)
+	monitorv1.RegisterMonitorInhibitServiceHTTPServer(srv, monP2.Inhibit)
+	monitorv1.RegisterMonitorRecordRuleServiceHTTPServer(srv, monP2.RecordRule)
+	monitorv1.RegisterMonitorAlertViewServiceHTTPServer(srv, monP2.AlertView)
+	monitorv1.RegisterMonitorStatsServiceHTTPServer(srv, monP2.Stats)
+	monitorv1.RegisterMonitorEngineServiceHTTPServer(srv, monP2.Engine)
+	jobv1.RegisterJobCredentialServiceHTTPServer(srv, jobCredential)
+	jobv1.RegisterJobProjectServiceHTTPServer(srv, jobProject)
+	jobv1.RegisterJobTemplateServiceHTTPServer(srv, jobTemplate)
+	jobv1.RegisterJobExecutionServiceHTTPServer(srv, jobExecution)
+	jobv1.RegisterJobRunnerServiceHTTPServer(srv, jobRunner)
+	jobv1.RegisterJobScriptServiceHTTPServer(srv, jobScript)
+	jobv1.RegisterJobPolicyServiceHTTPServer(srv, jobPolicy)
+	jobv1.RegisterJobScheduleServiceHTTPServer(srv, jobSchedule)
+	jobv1.RegisterJobTriggerServiceHTTPServer(srv, jobTrigger)
+	// 开放触发接口要对原始请求体验签，不走生成注册（见 job.go）。
+	registerJobOpen(srv, jobTrigger)
+	k8sv1.RegisterK8SClusterServiceHTTPServer(srv, k8sCluster)
+	k8sv1.RegisterK8SScopeServiceHTTPServer(srv, k8sScope)
+	k8sv1.RegisterK8SAuditServiceHTTPServer(srv, k8sAudit)
+	k8sv1.RegisterK8SResourceServiceHTTPServer(srv, k8sResource)
+	k8sv1.RegisterK8SWorkloadServiceHTTPServer(srv, k8sWorkload)
+	k8sv1.RegisterK8SHelmRepoServiceHTTPServer(srv, k8sHelmRepo)
+	k8sv1.RegisterK8SHelmReleaseServiceHTTPServer(srv, k8sHelmRelease)
+	k8sv1.RegisterK8SInsightServiceHTTPServer(srv, k8sInsight)
+	k8sv1.RegisterK8SGovernanceServiceHTTPServer(srv, k8sGov)
+	k8sv1.RegisterK8SChangeServiceHTTPServer(srv, k8sChange)
+	// 集群代理入口（限时 kubeconfig）与容器文件传输不经生成代码绑定，见 k8s_gov.go。
+	registerK8sGovernance(srv, k8sGov, logger)
+	// K8sStreamService（SSE）与 Web 终端（WebSocket）不经生成代码绑定，见 k8s.go。
+	registerK8sStreams(srv, k8sStream, k8sConf.GetAllowedOrigins(), logger)
 	return srv
 }

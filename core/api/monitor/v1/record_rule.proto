@@ -1,0 +1,270 @@
+syntax = "proto3";
+
+package monitor.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/monitor/v1;v1";
+
+// MonitorRecordRuleService 记录规则：按固定周期预计算一条（通常较昂贵的）PromQL，把结果经数据源的
+// Remote Write 地址写回为一个新指标，供告警规则引用。规则名称即写回的指标名；所选数据源必须配置了
+// Remote Write 地址（否则 400 MONITOR_RECORD_RULE_NO_WRITE_URL）。记录规则不产生告警事件。
+// 权限：与告警规则相同——查看要求对所在分组「只读」以上，新建 / 编辑 / 删除 / 启停要求「可管理」。
+service MonitorRecordRuleService {
+  // ListRecordRules 分页查询记录规则（只返回当前用户数据范围内的），带最近一次执行的状态。
+  rpc ListRecordRules(ListRecordRulesRequest) returns (ListRecordRulesResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/record-rule"};
+    option (system.v1.title) = "查询记录规则";
+  }
+  // GetRecordRule 查询记录规则详情。
+  rpc GetRecordRule(GetRecordRuleRequest) returns (GetRecordRuleResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/record-rule/{id}"};
+    option (system.v1.title) = "查询记录规则详情";
+  }
+  // CreateRecordRule 新建记录规则；同一分组、同一数据源下指标名重复返回 409 MONITOR_RECORD_RULE_NAME_EXISTS。
+  rpc CreateRecordRule(CreateRecordRuleRequest) returns (CreateRecordRuleResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/record-rule"
+      body: "*"
+    };
+    option (system.v1.title) = "新建记录规则";
+  }
+  // UpdateRecordRule 编辑记录规则（整体替换）。version 不一致返回 409 MONITOR_VERSION_CONFLICT。
+  rpc UpdateRecordRule(UpdateRecordRuleRequest) returns (UpdateRecordRuleResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/monitor/record-rule/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "编辑记录规则";
+  }
+  // DeleteRecordRule 删除记录规则；已写回的指标数据不受影响。
+  rpc DeleteRecordRule(DeleteRecordRuleRequest) returns (DeleteRecordRuleResponse) {
+    option (google.api.http) = {delete: "/api/v1/monitor/record-rule/{id}"};
+    option (system.v1.title) = "删除记录规则";
+  }
+  // ToggleRecordRule 启用或停用记录规则。
+  rpc ToggleRecordRule(ToggleRecordRuleRequest) returns (ToggleRecordRuleResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/record-rule/{id}:toggle"
+      body: "*"
+    };
+    option (system.v1.title) = "启停记录规则";
+  }
+  // ValidateRecordRule 校验记录规则（不保存）：逐项返回问题——表达式语法、指标名、附加标签、数据源是否
+  // 存在并已启用、是否配置了 Remote Write 地址、是否与已有记录规则重名。
+  rpc ValidateRecordRule(ValidateRecordRuleRequest) returns (ValidateRecordRuleResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/record-rule:validate"
+      body: "*"
+    };
+    option (system.v1.title) = "校验记录规则";
+  }
+}
+
+// RecordRuleSpec 记录规则的可编辑内容。
+message RecordRuleSpec {
+  // group_id 所属规则分组。
+  string group_id = 1 [(buf.validate.field).string.uuid = true];
+  // name 名称，即写回的指标名：须符合 Prometheus 指标名规则（字母、下划线或冒号开头，只含字母、数字、
+  // 下划线、冒号），1-128 字符；建议按 level:metric:operation 命名，如 job:http_requests:rate5m。
+  // 同一分组、同一数据源下唯一。
+  string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+    pattern: "^[a-zA-Z_:][a-zA-Z0-9_:]*$"
+  }];
+  // description 说明，可选。
+  string description = 3 [(buf.validate.field).string.max_len = 512];
+  // datasource_id 数据源：在其上查询，并经它的 Remote Write 地址写回。
+  string datasource_id = 4 [(buf.validate.field).string.uuid = true];
+  // expr PromQL 表达式，至多 8192 字节；语法限制同告警规则的表达式。
+  string expr = 5 [(buf.validate.field).string = {
+    min_len: 1
+    max_bytes: 8192
+  }];
+  // interval_s 执行周期秒，15-3600，建议 60。
+  int32 interval_s = 6 [(buf.validate.field).int32 = {
+    gte: 15
+    lte: 3600
+  }];
+  // labels 附加标签，至多 20 个：写回时与结果序列的标签合并（同名时附加标签优先）。名称不得以 __ 开头。
+  map<string, string> labels = 7 [(buf.validate.field).map = {
+    max_pairs: 20
+    keys: {
+      string: {
+        max_len: 128
+        pattern: "^[a-zA-Z_][a-zA-Z0-9_]*$"
+      }
+    }
+    values: {
+      string: {
+        min_len: 1
+        max_len: 256
+      }
+    }
+  }];
+  // enabled 是否启用。
+  bool enabled = 8;
+}
+
+// RecordRule 记录规则。
+message RecordRule {
+  // id 规则唯一标识。
+  string id = 1;
+  // spec 规则内容。
+  RecordRuleSpec spec = 2;
+  // group_name 所属分组的完整名称（含上级，以 " / " 分隔）。
+  string group_name = 3;
+  // datasource_name 数据源名称；数据源已不存在时为空。
+  string datasource_name = 4;
+  // writable 数据源当前是否可写（存在、已启用且配置了 Remote Write 地址）；为 false 时规则不会执行。
+  bool writable = 5;
+  // version 版本号：每次保存 +1；编辑时原样传回用作乐观锁。
+  int32 version = 6;
+  // last_status 最近一次执行结果：0=未执行 1=已写回 2=查询无结果 3=查询失败 4=写回失败；停用时为 0。
+  int32 last_status = 7;
+  // last_eval_time 最近一次执行时间。
+  google.protobuf.Timestamp last_eval_time = 8;
+  // last_error 最近一次执行的错误信息。
+  string last_error = 9;
+  // last_duration_ms 最近一次执行耗时毫秒。
+  int32 last_duration_ms = 10;
+  // last_series 最近一次写回的序列数。
+  int32 last_series = 11;
+  // next_eval_time 下次执行时间。
+  google.protobuf.Timestamp next_eval_time = 12;
+  // can_manage 当前用户能否管理本规则（对所在分组「可管理」）。
+  bool can_manage = 13;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 14;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 15;
+  // update_user_id 最近更新人。
+  string update_user_id = 16;
+  // update_user_name 最近更新人显示名。
+  string update_user_name = 17;
+}
+
+// ListRecordRulesRequest 分页查询记录规则请求。
+message ListRecordRulesRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // group_id 规则分组过滤（含其全部下级分组），可选。
+  optional string group_id = 3 [(buf.validate.field).string.uuid = true];
+  // datasource_id 数据源过滤，可选。
+  optional string datasource_id = 4 [(buf.validate.field).string.uuid = true];
+  // keyword 名称 / 说明 / PromQL 模糊匹配，可选。
+  optional string keyword = 5 [(buf.validate.field).string.max_len = 128];
+  // enabled 启用状态过滤，可选。
+  optional bool enabled = 6;
+  // last_status 最近一次执行结果过滤，可选：0=未执行 1=已写回 2=查询无结果 3=查询失败 4=写回失败。
+  optional int32 last_status = 7 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 4
+  }];
+}
+
+// ListRecordRulesResponse 分页查询记录规则响应。
+message ListRecordRulesResponse {
+  // items 当前页数据。
+  repeated RecordRule items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// GetRecordRuleRequest 查询记录规则详情请求。
+message GetRecordRuleRequest {
+  // id 规则唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetRecordRuleResponse 查询记录规则详情响应。
+message GetRecordRuleResponse {
+  // record_rule 记录规则。
+  RecordRule record_rule = 1;
+}
+
+// CreateRecordRuleRequest 新建记录规则请求。
+message CreateRecordRuleRequest {
+  // spec 规则内容。
+  RecordRuleSpec spec = 1 [(buf.validate.field).required = true];
+}
+
+// CreateRecordRuleResponse 新建记录规则响应。
+message CreateRecordRuleResponse {
+  // record_rule 新建的记录规则。
+  RecordRule record_rule = 1;
+}
+
+// UpdateRecordRuleRequest 编辑记录规则请求。
+message UpdateRecordRuleRequest {
+  // id 规则唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // spec 规则内容，整体替换。
+  RecordRuleSpec spec = 2 [(buf.validate.field).required = true];
+  // version 乐观锁版本号，须与当前一致。
+  int32 version = 3 [(buf.validate.field).int32.gte = 1];
+}
+
+// UpdateRecordRuleResponse 编辑记录规则响应。
+message UpdateRecordRuleResponse {
+  // record_rule 更新后的记录规则。
+  RecordRule record_rule = 1;
+}
+
+// DeleteRecordRuleRequest 删除记录规则请求。
+message DeleteRecordRuleRequest {
+  // id 规则唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteRecordRuleResponse 删除记录规则响应。
+message DeleteRecordRuleResponse {}
+
+// ToggleRecordRuleRequest 启停记录规则请求。
+message ToggleRecordRuleRequest {
+  // id 规则唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // enabled 目标状态：true 启用，false 停用。
+  bool enabled = 2;
+}
+
+// ToggleRecordRuleResponse 启停记录规则响应。
+message ToggleRecordRuleResponse {
+  // record_rule 更新后的记录规则。
+  RecordRule record_rule = 1;
+}
+
+// ValidateRecordRuleRequest 校验记录规则请求。
+message ValidateRecordRuleRequest {
+  // spec 规则内容（表单当前的内容）。
+  RecordRuleSpec spec = 1 [(buf.validate.field).required = true];
+  // id 正在编辑的规则，可选：判断重名时把它自己排除在外。
+  optional string id = 2 [(buf.validate.field).string.uuid = true];
+}
+
+// RecordRuleIssue 记录规则的一个问题。
+message RecordRuleIssue {
+  // field 出问题的字段：expr / name / labels / datasource_id / group_id。
+  string field = 1;
+  // reason 错误码（如 MONITOR_RECORD_RULE_INVALID、MONITOR_RECORD_RULE_NO_WRITE_URL、MONITOR_RECORD_RULE_NAME_EXISTS）。
+  string reason = 2;
+  // message 说明。
+  string message = 3;
+}
+
+// ValidateRecordRuleResponse 校验记录规则响应。
+message ValidateRecordRuleResponse {
+  // valid 是否可以保存（issues 为空）。
+  bool valid = 1;
+  // issues 问题列表。
+  repeated RecordRuleIssue issues = 2;
+}

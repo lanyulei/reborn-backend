@@ -1,0 +1,198 @@
+syntax = "proto3";
+
+package k8s.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/k8s/v1;v1";
+
+// K8sAuditService 操作审计（只读）：全部写操作、Secret 明文查看、终端会话、集群与授权的配置变更。
+service K8sAuditService {
+  // ListAudits 分页查询审计记录。缺省只回看 7 天，跨度上限 90 天。
+  rpc ListAudits(ListAuditsRequest) returns (ListAuditsResponse) {
+    option (google.api.http) = {get: "/api/v1/k8s/audit"};
+    option (system.v1.title) = "查询容器平台操作审计";
+  }
+  // GetAudit 审计详情：含变更前后的对象（YAML）。
+  rpc GetAudit(GetAuditRequest) returns (GetAuditResponse) {
+    option (google.api.http) = {get: "/api/v1/k8s/audit/{id}"};
+    option (system.v1.title) = "查看容器平台操作审计";
+  }
+  // ListExecSessions 分页查询终端会话记录。缺省只回看 7 天，跨度上限 90 天。
+  rpc ListExecSessions(ListExecSessionsRequest) returns (ListExecSessionsResponse) {
+    option (google.api.http) = {get: "/api/v1/k8s/exec-session"};
+    option (system.v1.title) = "查询终端会话记录";
+  }
+}
+
+// Audit 一条审计记录。
+message Audit {
+  // id 记录唯一标识。
+  string id = 1;
+  // create_time 操作时间。
+  google.protobuf.Timestamp create_time = 2;
+  // user_id 操作人。
+  string user_id = 3;
+  // username 操作人用户名。
+  string username = 4;
+  // client_ip 来源 IP。
+  string client_ip = 5;
+  // cluster_id 集群。
+  string cluster_id = 6;
+  // cluster_name 集群名称。
+  string cluster_name = 7;
+  // namespace 命名空间。
+  string namespace = 8;
+  // api_group 资源所属 API 组。
+  string api_group = 9;
+  // api_version 资源 API 版本。
+  string api_version = 10;
+  // resource 资源类型。
+  string resource = 11;
+  // kind 资源 Kind。
+  string kind = 12;
+  // name 资源名称。
+  string name = 13;
+  // action 动作。
+  string action = 14;
+  // result 结果：1=成功 2=失败。
+  int32 result = 15;
+  // error 失败原因。
+  string error = 16;
+  // emergency 紧急变更。
+  bool emergency = 17;
+  // change_id 关联的变更单。
+  string change_id = 18;
+  // truncated 对象过大未记录。
+  bool truncated = 19;
+  // before_yaml 变更前的对象（仅详情返回）。
+  string before_yaml = 20;
+  // after_yaml 变更后的对象（仅详情返回）。
+  string after_yaml = 21;
+  // patch 本次改动或动作参数，JSON 文本（仅详情返回）。
+  string patch = 22;
+}
+
+// ListAuditsRequest 分页查询审计记录请求。
+message ListAuditsRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // create_time_start 起始时间，可选；缺省为结束时间前 7 天。
+  google.protobuf.Timestamp create_time_start = 3;
+  // create_time_end 结束时间，可选；缺省为当前时间。
+  google.protobuf.Timestamp create_time_end = 4;
+  // cluster_id 按集群筛选，可选。
+  optional string cluster_id = 5 [(buf.validate.field).string.uuid = true];
+  // namespace 按命名空间筛选，可选。
+  optional string namespace = 6 [(buf.validate.field).string.max_len = 63];
+  // resource 按资源类型筛选，可选。
+  optional string resource = 7 [(buf.validate.field).string.max_len = 128];
+  // name 按资源名称筛选（精确），可选。
+  optional string name = 8 [(buf.validate.field).string.max_len = 253];
+  // action 按动作筛选，可选。
+  optional string action = 9 [(buf.validate.field).string.max_len = 32];
+  // user_id 按操作人筛选，可选。
+  optional string user_id = 10 [(buf.validate.field).string.uuid = true];
+  // result 按结果筛选，可选：1=成功 2=失败。
+  optional int32 result = 11 [(buf.validate.field).int32 = {
+    in: [
+      1,
+      2
+    ]
+  }];
+  // keyword 资源名称 / 操作人用户名模糊匹配，可选。
+  optional string keyword = 12 [(buf.validate.field).string.max_len = 64];
+}
+
+// ListAuditsResponse 分页查询审计记录响应。
+message ListAuditsResponse {
+  // items 当前页数据（不含对象内容）。
+  repeated Audit items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// GetAuditRequest 审计详情请求。
+message GetAuditRequest {
+  // id 记录唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetAuditResponse 审计详情响应。
+message GetAuditResponse {
+  // audit 审计记录。
+  Audit audit = 1;
+}
+
+// ExecSession 终端会话记录。
+message ExecSession {
+  // id 会话唯一标识。
+  string id = 1;
+  // user_id 用户。
+  string user_id = 2;
+  // username 用户名。
+  string username = 3;
+  // client_ip 来源 IP。
+  string client_ip = 4;
+  // cluster_id 集群。
+  string cluster_id = 5;
+  // cluster_name 集群名称。
+  string cluster_name = 6;
+  // namespace 命名空间。
+  string namespace = 7;
+  // pod Pod 名称。
+  string pod = 8;
+  // container 容器名称。
+  string container = 9;
+  // kind 类型：1=容器终端 2=调试容器。
+  int32 kind = 10;
+  // start_time 开始时间。
+  google.protobuf.Timestamp start_time = 11;
+  // end_time 结束时间；进行中为空。
+  google.protobuf.Timestamp end_time = 12;
+  // end_reason 结束原因。
+  string end_reason = 13;
+  // bytes_in 输入字节数。
+  int64 bytes_in = 14;
+  // bytes_out 输出字节数。
+  int64 bytes_out = 15;
+  // recorded 是否有录制内容。
+  bool recorded = 16;
+}
+
+// ListExecSessionsRequest 分页查询终端会话记录请求。
+message ListExecSessionsRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // start_time_start 起始时间，可选；缺省为结束时间前 7 天。
+  google.protobuf.Timestamp start_time_start = 3;
+  // start_time_end 结束时间，可选；缺省为当前时间。
+  google.protobuf.Timestamp start_time_end = 4;
+  // cluster_id 按集群筛选，可选。
+  optional string cluster_id = 5 [(buf.validate.field).string.uuid = true];
+  // user_id 按用户筛选，可选。
+  optional string user_id = 6 [(buf.validate.field).string.uuid = true];
+  // keyword Pod 名称 / 用户名模糊匹配，可选。
+  optional string keyword = 7 [(buf.validate.field).string.max_len = 64];
+}
+
+// ListExecSessionsResponse 分页查询终端会话记录响应。
+message ListExecSessionsResponse {
+  // items 当前页数据。
+  repeated ExecSession items = 1;
+  // total 总数。
+  int64 total = 2;
+}

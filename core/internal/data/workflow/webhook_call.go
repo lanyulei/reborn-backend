@@ -15,6 +15,7 @@ import (
 	"time"
 
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/workflow"
+	"github.com/lanyulei/reborn/backend/kit/netguard"
 )
 
 // 自动任务出站请求头。
@@ -41,23 +42,20 @@ var _ biz.ServiceCaller = (*WebhookCaller)(nil)
 // WebhookCaller 自动任务的 Webhook 调用器：仅 HTTPS、不跟随跳转；连接前对**解析后的真实
 // 地址**做内网 / 回环校验（免疫 DNS 重绑定），任一解析地址命中即拒绝；响应体有上限。
 type WebhookCaller struct {
-	client   *http.Client
-	dialer   *net.Dialer
-	resolver interface {
-		LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error)
-	}
-	allowInsecure bool
+	client *http.Client
+	dialer *netguard.Dialer
 }
 
 // NewWebhookCaller new a WebhookCaller.
 func NewWebhookCaller() *WebhookCaller {
-	c := &WebhookCaller{dialer: &net.Dialer{Timeout: 3 * time.Second}, resolver: net.DefaultResolver}
+	c := &WebhookCaller{dialer: netguard.NewDialer(3 * time.Second)}
 	c.client = &http.Client{
 		Timeout: webhookTimeout,
 		Transport: &http.Transport{
 			MaxIdleConns: 32, MaxIdleConnsPerHost: 4, IdleConnTimeout: 90 * time.Second,
 			TLSHandshakeTimeout: 5 * time.Second, ResponseHeaderTimeout: webhookTimeout,
-			DialContext: c.dialContext,
+			// 先解析再逐地址校验拨号（kit/netguard）。
+			DialContext: c.dialer.DialContext,
 		},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
@@ -66,41 +64,8 @@ func NewWebhookCaller() *WebhookCaller {
 
 // WithInsecure 允许 http:// 与回环地址（仅测试脚手架使用）。
 func (c *WebhookCaller) WithInsecure() *WebhookCaller {
-	c.allowInsecure = true
+	c.dialer.AllowInsecure = true
 	return c
-}
-
-// dialContext 先解析再逐地址校验拨号：任一地址为内网 / 回环即整体拒绝（不能「挑一个公网
-// 地址连」——对端可返回混合记录诱导）。
-func (c *WebhookCaller) dialContext(ctx context.Context, network, addr string) (net.Conn, error) {
-	if c.allowInsecure {
-		return c.dialer.DialContext(ctx, network, addr)
-	}
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return nil, err
-	}
-	ips, err := c.resolver.LookupIPAddr(ctx, host)
-	if err != nil {
-		return nil, err
-	}
-	if len(ips) == 0 {
-		return nil, fmt.Errorf("webhook host %q resolves to no address", host)
-	}
-	for _, ip := range ips {
-		if biz.BlockedIP(ip.IP) {
-			return nil, fmt.Errorf("%w: %s", errHostBlocked, host)
-		}
-	}
-	var last error
-	for _, ip := range ips {
-		conn, err := c.dialer.DialContext(ctx, network, net.JoinHostPort(ip.IP.String(), port))
-		if err == nil {
-			return conn, nil
-		}
-		last = err
-	}
-	return nil, last
 }
 
 // sign 计算请求签名。
@@ -120,7 +85,7 @@ func (c *WebhookCaller) Call(ctx context.Context, hook *biz.Webhook, jobID strin
 	if err != nil {
 		return nil, false, errors.New("webhook url is invalid")
 	}
-	if req.URL.Scheme != "https" && !c.allowInsecure {
+	if req.URL.Scheme != "https" && !c.dialer.AllowInsecure {
 		return nil, false, errors.New("webhook url must be https")
 	}
 	ts := strconv.FormatInt(time.Now().Unix(), 10)
@@ -133,7 +98,7 @@ func (c *WebhookCaller) Call(ctx context.Context, hook *biz.Webhook, jobID strin
 	}
 	resp, err := c.client.Do(req)
 	if err != nil {
-		if errors.Is(err, errHostBlocked) {
+		if errors.Is(err, netguard.ErrHostBlocked) {
 			return nil, false, errHostBlocked
 		}
 		// 不透出底层错误全文（可能含地址细节）：只区分超时与其它网络错误。

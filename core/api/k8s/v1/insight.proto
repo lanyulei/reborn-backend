@@ -1,0 +1,245 @@
+syntax = "proto3";
+
+package k8s.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/api/httpbody.proto";
+import "google/protobuf/timestamp.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/k8s/v1;v1";
+
+// K8sInsightService 可观测（只读）：总览、Warning 事件、指标面板、关联链路与引用关系、诊断摘要、
+// 与 CMDB 主机的实时关联。响应体均为 JSON：总览 / 事件 / 指标 / 主机关联由 core 生成（结构见各接口注释），
+// 其余由数据面生成（结构见 kit/k8scontract/insight.go）。全部接口都按调用者的数据范围过滤或判定。
+service K8sInsightService {
+  // GetOverview 总览：调用者数据范围内的集群状态、资源水位摘要与最近的 Warning 事件。响应：{clusters:[{id,name,displayName,env,status,lastError,k8sVersion,level,hasDatasource,summaryTime,summary:k8scontract.ClusterSummary}],events:[事件]}。
+  rpc GetOverview(GetOverviewRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {get: "/api/v1/k8s/overview"};
+    option (system.v1.title) = "查看容器平台总览";
+  }
+  // ListEvents 跨集群检索 Warning 事件（同一对象同一原因一行，带累计次数）。缺省回看 7 天。只返回调用者数据范围内的集群与命名空间的事件。响应：{items:[{id,clusterId,clusterName,namespace,kind,name,reason,message,source,count,firstTime,lastTime}],total}。
+  rpc ListEvents(ListEventsRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {get: "/api/v1/k8s/event"};
+    option (system.v1.title) = "查询集群事件";
+  }
+  // QueryMetrics 指标面板：按固定的面板与目标查询集群关联的监控数据源（不接受查询语句）。需要调用者在该集群（及目标所在命名空间）有只读以上的数据范围。响应：{configured,panels:[{id,title,unit,series:[{name,points:[[秒,值]]}],error}]}；集群未关联数据源时 configured=false。
+  rpc QueryMetrics(QueryMetricsRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster/{cluster_id}/metrics:query"
+      body: "*"
+    };
+    option (system.v1.title) = "查询容器平台指标";
+  }
+  // LocateHost 按内网 IP 在调用者数据范围内的各集群查找节点，返回节点及其上的工作负载（CMDB 主机详情页用）。响应：{items:[{clusterId,clusterName,displayName,node,state,status,pods,workloads:[{namespace,kind,name,pods}],truncated}]}。
+  rpc LocateHost(LocateHostRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {get: "/api/v1/k8s/host-location"};
+    option (system.v1.title) = "定位主机所在集群";
+  }
+  // GetNodeHost 按内网 IP 查找 CMDB 中对应的主机资源（受调用者的 CMDB 数据范围约束）。响应：{items:[{id,name,modelCode,modelName,env,status,owner,ownerName}]}。
+  rpc GetNodeHost(GetNodeHostRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {get: "/api/v1/k8s/cluster/{cluster_id}/node-host"};
+    option (system.v1.title) = "查看节点对应的主机资源";
+  }
+  // GetPodSelector 工作负载 / Service 选中 Pod 的标签选择器（含 matchExpressions）。响应：k8scontract.SelectorResponse。
+  rpc GetPodSelector(GetPodSelectorRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {get: "/api/v1/k8s/cluster/{cluster_id}/selector"};
+    option (system.v1.title) = "查看 Pod 选择器";
+  }
+  // GetRelations 关联关系：Ingress → Service → Pod 的链路与每一段的健康状况；Service 的后端 Pod；ConfigMap / Secret 被哪些工作负载引用。响应：k8scontract.RelationsResponse。
+  rpc GetRelations(GetRelationsRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {get: "/api/v1/k8s/cluster/{cluster_id}/relation"};
+    option (system.v1.title) = "查看资源关联关系";
+  }
+  // DiagnosePod Pod 诊断摘要：阶段、各容器状态与上次终止原因、最近事件、异常容器的日志末尾。排查 Pod 起不来 / 反复重启时使用。响应：k8scontract.PodDiagnosis。
+  rpc DiagnosePod(DiagnosePodRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {get: "/api/v1/k8s/cluster/{cluster_id}/diagnosis/pod"};
+    option (system.v1.title) = "诊断 Pod";
+  }
+  // DiagnoseWorkload 工作负载诊断摘要（Deployment / StatefulSet / DaemonSet）：副本状态、Conditions、异常 Pod 及原因、最近事件。响应：k8scontract.WorkloadDiagnosis。
+  rpc DiagnoseWorkload(DiagnoseWorkloadRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {get: "/api/v1/k8s/cluster/{cluster_id}/diagnosis/workload"};
+    option (system.v1.title) = "诊断工作负载";
+  }
+}
+
+// GetOverviewRequest 查看总览请求。
+message GetOverviewRequest {}
+
+// ListEventsRequest 查询集群事件请求。
+message ListEventsRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // last_time_start 最近发生时间的起点，可选；缺省为终点前 7 天。
+  google.protobuf.Timestamp last_time_start = 3;
+  // last_time_end 最近发生时间的终点，可选；缺省为当前时间。
+  google.protobuf.Timestamp last_time_end = 4;
+  // cluster_id 按集群筛选，可选。
+  optional string cluster_id = 5 [(buf.validate.field).string.uuid = true];
+  // namespace 按命名空间筛选，可选。
+  optional string namespace = 6 [(buf.validate.field).string.max_len = 63];
+  // kind 按关联对象的 Kind 筛选（如 Pod、Node），可选。
+  optional string kind = 7 [(buf.validate.field).string.max_len = 128];
+  // name 按关联对象的名称筛选（精确），可选。
+  optional string name = 8 [(buf.validate.field).string.max_len = 253];
+  // reason 按事件原因筛选（精确，如 FailedScheduling），可选。
+  optional string reason = 9 [(buf.validate.field).string.max_len = 128];
+  // keyword 对象名称 / 事件说明模糊匹配，可选。
+  optional string keyword = 10 [(buf.validate.field).string.max_len = 64];
+}
+
+// MetricsTarget 指标面板的目标。
+message MetricsTarget {
+  // kind 目标类型：cluster / node / workload / pod。
+  string kind = 1 [(buf.validate.field).string = {
+    in: [
+      "cluster",
+      "node",
+      "workload",
+      "pod"
+    ]
+  }];
+  // namespace 命名空间（workload / pod 必填）。
+  string namespace = 2 [(buf.validate.field).string.pattern = "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)?$"];
+  // name 节点 / 工作负载 / Pod 的名称（cluster 为空）。
+  string name = 3 [(buf.validate.field).string.pattern = "^([a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?)?$"];
+  // workload_kind 工作负载类型（kind = workload 时）：Deployment / StatefulSet / DaemonSet。
+  string workload_kind = 4 [(buf.validate.field).string = {
+    in: [
+      "",
+      "Deployment",
+      "StatefulSet",
+      "DaemonSet"
+    ]
+  }];
+}
+
+// QueryMetricsRequest 查询指标请求。
+message QueryMetricsRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // target 目标。
+  MetricsTarget target = 2 [(buf.validate.field).required = true];
+  // panels 要查询的面板 ID，至多 12 个；空 = 该目标类型的全部面板。
+  repeated string panels = 3 [(buf.validate.field).repeated = {
+    max_items: 12
+    items: {
+      string: {pattern: "^[a-z_]{1,32}$"}
+    }
+  }];
+  // start 起始时间；缺省为终点前 1 小时。
+  google.protobuf.Timestamp start = 4;
+  // end 结束时间；缺省为当前时间。跨度至多 7 天。
+  google.protobuf.Timestamp end = 5;
+}
+
+// LocateHostRequest 定位主机请求。
+message LocateHostRequest {
+  // ip 主机的内网 IP。
+  string ip = 1 [(buf.validate.field).string.ip = true];
+}
+
+// GetNodeHostRequest 查看节点对应的主机资源请求。
+message GetNodeHostRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // ip 节点的内网 IP。
+  string ip = 2 [(buf.validate.field).string.ip = true];
+}
+
+// GetPodSelectorRequest 查看 Pod 选择器请求。
+message GetPodSelectorRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // group API 组；核心组为空。
+  string group = 2 [(buf.validate.field).string.max_len = 253];
+  // version API 版本。
+  string version = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 63
+  }];
+  // resource 资源类型（复数小写，如 deployments）。
+  string resource = 4 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 253
+  }];
+  // namespace 命名空间。
+  string namespace = 5 [(buf.validate.field).string.max_len = 63];
+  // name 对象名称。
+  string name = 6 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 253
+  }];
+}
+
+// GetRelationsRequest 查看资源关联关系请求。
+message GetRelationsRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // group API 组；核心组为空。
+  string group = 2 [(buf.validate.field).string.max_len = 253];
+  // version API 版本。
+  string version = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 63
+  }];
+  // resource 资源类型（复数小写，如 deployments）。
+  string resource = 4 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 253
+  }];
+  // namespace 命名空间。
+  string namespace = 5 [(buf.validate.field).string.max_len = 63];
+  // name 对象名称。
+  string name = 6 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 253
+  }];
+}
+
+// DiagnosePodRequest 诊断 Pod 请求。
+message DiagnosePodRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // namespace 命名空间。
+  string namespace = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 63
+  }];
+  // name 名称。
+  string name = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 253
+  }];
+}
+
+// DiagnoseWorkloadRequest 诊断工作负载请求。
+message DiagnoseWorkloadRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // group API 组；核心组为空。
+  string group = 2 [(buf.validate.field).string.max_len = 253];
+  // version API 版本。
+  string version = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 63
+  }];
+  // resource 资源类型（复数小写，如 deployments）。
+  string resource = 4 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 253
+  }];
+  // namespace 命名空间。
+  string namespace = 5 [(buf.validate.field).string.max_len = 63];
+  // name 对象名称。
+  string name = 6 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 253
+  }];
+}

@@ -120,6 +120,10 @@ var permissionCatalog = []MenuSpec{
 					"/system.v1.RoleService/SetRolePermissions",
 					"/system.v1.RoleService/ListPermissionCatalog",
 					"/system.v1.RoleService/ListOperations",
+					// 容器平台数据范围（角色在哪些集群的哪些命名空间有什么档位）与选择集群用的集群列表。
+					"/k8s.v1.K8sScopeService/GetRoleScope",
+					"/k8s.v1.K8sScopeService/ReplaceRoleScope",
+					"/k8s.v1.K8sClusterService/ListClusters",
 				},
 			},
 			{
@@ -750,6 +754,7 @@ var permissionCatalog = []MenuSpec{
 			"/cmdb.v1.CmdbCIService/ListCIHistory",
 			"/cmdb.v1.CmdbCIService/GetCIAt",
 			"/cmdb.v1.CmdbCIService/SearchCIs",
+			"/k8s.v1.K8sInsightService/LocateHost",
 			"/cmdb.v1.CmdbCIService/ListOwnerCandidates",
 			"/cmdb.v1.CmdbRelationService/ListRelated",
 			"/cmdb.v1.CmdbRelationService/Neighbors",
@@ -905,6 +910,1263 @@ var permissionCatalog = []MenuSpec{
 					"/oncall.v1.OncallShareService/GetShareLinkToken",
 					"/oncall.v1.OncallShareService/ResetShareLink",
 					"/oncall.v1.OncallShareService/DeleteShareLink",
+				},
+			},
+		},
+	},
+	{
+		Code: "monitor.alert",
+		Name: "告警事件",
+		// 分组树与数据源选项：列表的分组 / 数据源筛选。告警详情（GetAlert）免接口授权、不在此登记：
+		// 通知收件人要能打开，访问控制在监控域内（收件人，或持有 ListAlerts 权限且在数据范围内）。
+		// 值班班次告警数（ListShiftAlertCounts）同样免接口授权：值班日历页也要调，持有本菜单或值班日历的
+		// 接口权限即可，判定在监控域内。
+		DefaultOps: []string{
+			"/monitor.v1.MonitorAlertService/ListAlerts",
+			"/monitor.v1.MonitorAlertService/AggregateAlerts",
+			"/monitor.v1.MonitorRuleGroupService/ListRuleGroups",
+			"/monitor.v1.MonitorDatasourceService/ListDatasourceOptions",
+			"/monitor.v1.MonitorAlertViewService/ListAlertViews",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "monitor.alert.ack",
+				Name: "认领 / 转交",
+				Ops: []string{
+					"/monitor.v1.MonitorAlertService/AckAlert",
+					"/monitor.v1.MonitorAlertService/UnackAlert",
+					"/monitor.v1.MonitorAlertService/TransferAlert",
+					"/monitor.v1.MonitorAlertService/BatchAckAlerts",
+					"/monitor.v1.MonitorRuleService/ListMonitorTargetOptions",
+				},
+			},
+			{
+				Code: "monitor.alert.comment",
+				Name: "备注",
+				Ops: []string{
+					"/monitor.v1.MonitorAlertService/CommentAlert",
+				},
+			},
+			{
+				Code: "monitor.alert.close",
+				Name: "手动关闭",
+				Ops: []string{
+					"/monitor.v1.MonitorAlertService/CloseAlert",
+					"/monitor.v1.MonitorAlertService/BatchCloseAlerts",
+				},
+			},
+			{
+				Code: "monitor.alert.ticket",
+				Name: "转工单",
+				Ops: []string{
+					"/monitor.v1.MonitorAlertService/CreateAlertTicket",
+					"/monitor.v1.MonitorRuleService/ListMonitorRuleOptions",
+				},
+			},
+			{
+				Code: "monitor.alert.view",
+				Name: "保存视图",
+				Ops: []string{
+					"/monitor.v1.MonitorAlertViewService/CreateAlertView",
+					"/monitor.v1.MonitorAlertViewService/UpdateAlertView",
+					"/monitor.v1.MonitorAlertViewService/DeleteAlertView",
+				},
+			},
+		},
+	},
+	{
+		Code: "monitor.rule",
+		Name: "告警规则",
+		DefaultOps: []string{
+			"/monitor.v1.MonitorRuleService/ListRules",
+			"/monitor.v1.MonitorRuleService/GetRule",
+			"/monitor.v1.MonitorRuleService/ListRuleVersions",
+			"/monitor.v1.MonitorRuleService/GetRuleVersion",
+			"/monitor.v1.MonitorRuleService/ListRuleEvalRecords",
+			"/monitor.v1.MonitorRuleGroupService/ListRuleGroups",
+			"/monitor.v1.MonitorDatasourceService/ListDatasourceOptions",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "monitor.rule.create",
+				Name: "新建规则",
+				Ops: []string{
+					"/monitor.v1.MonitorRuleService/CreateRule",
+					"/monitor.v1.MonitorRuleService/CloneRule",
+					"/monitor.v1.MonitorRuleService/ValidateRuleExprs",
+					"/monitor.v1.MonitorRuleService/ListMonitorTargetOptions",
+					"/monitor.v1.MonitorRuleService/ListMonitorRuleOptions",
+					"/monitor.v1.MonitorEscalationService/ListEscalationOptions",
+					"/monitor.v1.MonitorDatasourceService/QueryDatasource",
+					"/monitor.v1.MonitorDatasourceService/QueryDatasourceRange",
+				},
+			},
+			{
+				Code: "monitor.rule.edit",
+				Name: "编辑规则",
+				Ops: []string{
+					"/monitor.v1.MonitorRuleService/UpdateRule",
+					"/monitor.v1.MonitorRuleService/BatchRules",
+					"/monitor.v1.MonitorRuleService/RollbackRule",
+					"/monitor.v1.MonitorRuleService/ValidateRuleExprs",
+					"/monitor.v1.MonitorRuleService/ListMonitorTargetOptions",
+					"/monitor.v1.MonitorRuleService/ListMonitorRuleOptions",
+					"/monitor.v1.MonitorEscalationService/ListEscalationOptions",
+					"/monitor.v1.MonitorDatasourceService/QueryDatasource",
+					"/monitor.v1.MonitorDatasourceService/QueryDatasourceRange",
+				},
+			},
+			{
+				Code: "monitor.rule.delete",
+				Name: "删除规则",
+				Ops: []string{
+					"/monitor.v1.MonitorRuleService/DeleteRule",
+				},
+			},
+			{
+				Code: "monitor.rule.toggle",
+				Name: "启停规则",
+				Ops: []string{
+					"/monitor.v1.MonitorRuleService/ToggleRule",
+				},
+			},
+			{
+				Code: "monitor.rule.import",
+				Name: "导入规则",
+				Ops: []string{
+					"/monitor.v1.MonitorRuleService/PreviewImportRules",
+					"/monitor.v1.MonitorRuleService/ImportRules",
+					"/k8s.v1.K8sGovernanceService/GetAlertRuleTemplate",
+					"/monitor.v1.MonitorRuleService/ListMonitorTargetOptions",
+					"/monitor.v1.MonitorRuleService/ListRuleTemplatePacks",
+					"/monitor.v1.MonitorRuleService/GetRuleTemplatePack",
+				},
+			},
+			{
+				Code: "monitor.rule.export",
+				Name: "导出规则",
+				Ops: []string{
+					"/monitor.v1.MonitorRuleService/ExportRules",
+				},
+			},
+			{
+				Code: "monitor.rule.group",
+				Name: "分组维护",
+				Ops: []string{
+					"/monitor.v1.MonitorRuleGroupService/CreateRuleGroup",
+					"/monitor.v1.MonitorRuleGroupService/UpdateRuleGroup",
+					"/monitor.v1.MonitorRuleGroupService/DeleteRuleGroup",
+				},
+			},
+			{
+				Code: "monitor.rule.scope",
+				Name: "分组授权",
+				Ops: []string{
+					"/monitor.v1.MonitorRuleGroupService/ListGroupRoleScopes",
+					"/monitor.v1.MonitorRuleGroupService/SetGroupRoleScopes",
+				},
+			},
+			{
+				Code: "monitor.rule.simulate",
+				Name: "模拟触发",
+				Ops: []string{
+					"/monitor.v1.MonitorRuleService/SimulateRule",
+					"/monitor.v1.MonitorDatasourceService/ListDatasourceOptions",
+				},
+			},
+		},
+	},
+	{
+		// 屏蔽规则与抑制规则两个页签。
+		Code: "monitor.mute",
+		Name: "降噪规则",
+		DefaultOps: []string{
+			"/monitor.v1.MonitorMuteService/ListMutes",
+			"/monitor.v1.MonitorMuteService/GetMute",
+			"/monitor.v1.MonitorInhibitService/ListInhibits",
+			"/monitor.v1.MonitorInhibitService/GetInhibit",
+			"/monitor.v1.MonitorRuleService/ListRules",
+			"/monitor.v1.MonitorRuleGroupService/ListRuleGroups",
+			"/monitor.v1.MonitorDatasourceService/ListDatasourceOptions",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "monitor.mute.create",
+				Name: "新建屏蔽规则",
+				Ops: []string{
+					"/monitor.v1.MonitorMuteService/CreateMute",
+					"/monitor.v1.MonitorMuteService/PreviewMute",
+				},
+			},
+			{
+				Code: "monitor.mute.edit",
+				Name: "编辑屏蔽规则",
+				Ops: []string{
+					"/monitor.v1.MonitorMuteService/UpdateMute",
+					"/monitor.v1.MonitorMuteService/PreviewMute",
+				},
+			},
+			{
+				Code: "monitor.mute.delete",
+				Name: "删除屏蔽规则",
+				Ops: []string{
+					"/monitor.v1.MonitorMuteService/DeleteMute",
+				},
+			},
+			{
+				Code: "monitor.mute.inhibit_create",
+				Name: "新建抑制规则",
+				Ops: []string{
+					"/monitor.v1.MonitorInhibitService/CreateInhibit",
+					"/monitor.v1.MonitorInhibitService/PreviewInhibit",
+				},
+			},
+			{
+				Code: "monitor.mute.inhibit_edit",
+				Name: "编辑抑制规则",
+				Ops: []string{
+					"/monitor.v1.MonitorInhibitService/UpdateInhibit",
+					"/monitor.v1.MonitorInhibitService/PreviewInhibit",
+				},
+			},
+			{
+				Code: "monitor.mute.inhibit_delete",
+				Name: "删除抑制规则",
+				Ops: []string{
+					"/monitor.v1.MonitorInhibitService/DeleteInhibit",
+				},
+			},
+		},
+	},
+	{
+		Code: "monitor.subscription",
+		Name: "告警订阅",
+		DefaultOps: []string{
+			"/monitor.v1.MonitorSubscriptionService/ListAlertSubscriptions",
+			"/monitor.v1.MonitorSubscriptionService/GetAlertSubscription",
+			"/monitor.v1.MonitorRuleService/ListRules",
+			"/monitor.v1.MonitorRuleGroupService/ListRuleGroups",
+			"/monitor.v1.MonitorDatasourceService/ListDatasourceOptions",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "monitor.subscription.create",
+				Name: "新建订阅",
+				Ops: []string{
+					"/monitor.v1.MonitorSubscriptionService/CreateAlertSubscription",
+					"/monitor.v1.MonitorSubscriptionService/PreviewAlertSubscription",
+					"/monitor.v1.MonitorRuleService/ListMonitorTargetOptions",
+				},
+			},
+			{
+				Code: "monitor.subscription.edit",
+				Name: "编辑订阅",
+				Ops: []string{
+					"/monitor.v1.MonitorSubscriptionService/UpdateAlertSubscription",
+					"/monitor.v1.MonitorSubscriptionService/PreviewAlertSubscription",
+					"/monitor.v1.MonitorRuleService/ListMonitorTargetOptions",
+				},
+			},
+			{
+				Code: "monitor.subscription.delete",
+				Name: "删除订阅",
+				Ops: []string{
+					"/monitor.v1.MonitorSubscriptionService/DeleteAlertSubscription",
+				},
+			},
+		},
+	},
+	{
+		Code: "monitor.escalation",
+		Name: "升级策略",
+		DefaultOps: []string{
+			"/monitor.v1.MonitorEscalationService/ListEscalations",
+			"/monitor.v1.MonitorEscalationService/GetEscalation",
+			"/monitor.v1.MonitorRuleGroupService/ListRuleGroups",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "monitor.escalation.create",
+				Name: "新建升级策略",
+				Ops: []string{
+					"/monitor.v1.MonitorEscalationService/CreateEscalation",
+					"/monitor.v1.MonitorEscalationService/EstimateEscalation",
+					"/monitor.v1.MonitorRuleService/ListMonitorTargetOptions",
+					"/monitor.v1.MonitorEscalationService/ListOncallGroupOptions",
+				},
+			},
+			{
+				Code: "monitor.escalation.edit",
+				Name: "编辑升级策略",
+				Ops: []string{
+					"/monitor.v1.MonitorEscalationService/UpdateEscalation",
+					"/monitor.v1.MonitorEscalationService/EstimateEscalation",
+					"/monitor.v1.MonitorRuleService/ListMonitorTargetOptions",
+					"/monitor.v1.MonitorEscalationService/ListOncallGroupOptions",
+				},
+			},
+			{
+				Code: "monitor.escalation.delete",
+				Name: "删除升级策略",
+				Ops: []string{
+					"/monitor.v1.MonitorEscalationService/DeleteEscalation",
+				},
+			},
+		},
+	},
+	{
+		Code: "monitor.record",
+		Name: "记录规则",
+		DefaultOps: []string{
+			"/monitor.v1.MonitorRecordRuleService/ListRecordRules",
+			"/monitor.v1.MonitorRecordRuleService/GetRecordRule",
+			"/monitor.v1.MonitorRuleGroupService/ListRuleGroups",
+			"/monitor.v1.MonitorDatasourceService/ListDatasourceOptions",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "monitor.record.create",
+				Name: "新建记录规则",
+				Ops: []string{
+					"/monitor.v1.MonitorRecordRuleService/CreateRecordRule",
+					"/monitor.v1.MonitorRecordRuleService/ValidateRecordRule",
+					"/monitor.v1.MonitorDatasourceService/QueryDatasource",
+					"/monitor.v1.MonitorDatasourceService/QueryDatasourceRange",
+				},
+			},
+			{
+				Code: "monitor.record.edit",
+				Name: "编辑记录规则",
+				Ops: []string{
+					"/monitor.v1.MonitorRecordRuleService/UpdateRecordRule",
+					"/monitor.v1.MonitorRecordRuleService/ToggleRecordRule",
+					"/monitor.v1.MonitorRecordRuleService/ValidateRecordRule",
+					"/monitor.v1.MonitorDatasourceService/QueryDatasource",
+					"/monitor.v1.MonitorDatasourceService/QueryDatasourceRange",
+				},
+			},
+			{
+				Code: "monitor.record.delete",
+				Name: "删除记录规则",
+				Ops: []string{
+					"/monitor.v1.MonitorRecordRuleService/DeleteRecordRule",
+				},
+			},
+		},
+	},
+	{
+		Code: "monitor.datasource",
+		Name: "数据源",
+		DefaultOps: []string{
+			"/monitor.v1.MonitorDatasourceService/ListDatasources",
+			"/monitor.v1.MonitorDatasourceService/GetDatasource",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "monitor.datasource.create",
+				Name: "新建数据源",
+				Ops: []string{
+					"/monitor.v1.MonitorDatasourceService/CreateDatasource",
+					"/monitor.v1.MonitorDatasourceService/TestDatasourceConfig",
+				},
+			},
+			{
+				Code: "monitor.datasource.edit",
+				Name: "编辑数据源",
+				Ops: []string{
+					"/monitor.v1.MonitorDatasourceService/UpdateDatasource",
+					"/monitor.v1.MonitorDatasourceService/TestDatasourceConfig",
+				},
+			},
+			{
+				Code: "monitor.datasource.delete",
+				Name: "删除数据源",
+				Ops: []string{
+					"/monitor.v1.MonitorDatasourceService/DeleteDatasource",
+				},
+			},
+			{
+				Code: "monitor.datasource.test",
+				Name: "测试连接",
+				Ops: []string{
+					"/monitor.v1.MonitorDatasourceService/TestDatasource",
+				},
+			},
+		},
+	},
+	{
+		Code: "monitor.explore",
+		Name: "即时查询",
+		DefaultOps: []string{
+			"/monitor.v1.MonitorDatasourceService/ListDatasourceOptions",
+			"/monitor.v1.MonitorDatasourceService/QueryDatasource",
+			"/monitor.v1.MonitorDatasourceService/QueryDatasourceRange",
+		},
+	},
+	{
+		Code: "monitor.stats",
+		Name: "告警统计",
+		DefaultOps: []string{
+			"/monitor.v1.MonitorStatsService/GetAlertOverview",
+			"/monitor.v1.MonitorStatsService/GetAlertTrend",
+			"/monitor.v1.MonitorStatsService/GetAlertTop",
+			"/monitor.v1.MonitorStatsService/GetAlertEfficiency",
+			"/monitor.v1.MonitorStatsService/GetAlertNoise",
+			"/monitor.v1.MonitorRuleGroupService/ListRuleGroups",
+		},
+	},
+	{
+		Code: "monitor.engine",
+		Name: "引擎状态",
+		DefaultOps: []string{
+			"/monitor.v1.MonitorEngineService/GetEngineStatus",
+		},
+	},
+	{
+		Code: "job.adhoc",
+		Name: "快速执行",
+		// 表单要选凭据、脚本库脚本、执行节点区域，并从 CMDB 选资源类型 / 地址字段 / 资源；提交前检查不落库。
+		DefaultOps: []string{
+			"/job.v1.JobExecutionService/CheckJobAdhoc",
+			"/job.v1.JobTemplateService/PreviewJobTarget",
+			"/job.v1.JobCredentialService/ListJobCredentialOptions",
+			"/job.v1.JobRunnerService/ListJobRunnerZones",
+			"/job.v1.JobScriptService/ListJobScripts",
+			"/job.v1.JobScriptService/GetJobScript",
+			"/cmdb.v1.CmdbModelService/ListModels",
+			"/cmdb.v1.CmdbModelService/GetModel",
+			"/cmdb.v1.CmdbCIService/ListCIs",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "job.adhoc.run",
+				Name: "执行",
+				// 提交后跳到执行详情：能执行的人也要能看到自己这次执行的状态、主机结果与日志。
+				Ops: []string{
+					"/job.v1.JobExecutionService/SubmitJobAdhoc",
+					"/job.v1.JobExecutionService/GetJobExecution",
+					"/job.v1.JobExecutionService/ListJobExecutionHosts",
+					"/job.v1.JobExecutionService/GetJobExecutionLog",
+				},
+			},
+		},
+	},
+	{
+		Code: "job.script",
+		Name: "脚本库",
+		DefaultOps: []string{
+			"/job.v1.JobScriptService/ListJobScripts",
+			"/job.v1.JobScriptService/GetJobScript",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "job.script.create",
+				Name: "新建脚本",
+				Ops: []string{
+					"/job.v1.JobScriptService/CreateJobScript",
+				},
+			},
+			{
+				Code: "job.script.edit",
+				Name: "编辑脚本",
+				Ops: []string{
+					"/job.v1.JobScriptService/UpdateJobScript",
+				},
+			},
+			{
+				Code: "job.script.delete",
+				Name: "删除脚本",
+				Ops: []string{
+					"/job.v1.JobScriptService/DeleteJobScript",
+				},
+			},
+		},
+	},
+	{
+		Code: "job.schedule",
+		Name: "定时作业",
+		// 模板列表：列表的模板筛选。
+		DefaultOps: []string{
+			"/job.v1.JobScheduleService/ListJobSchedules",
+			"/job.v1.JobTemplateService/ListJobTemplates",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "job.schedule.create",
+				Name: "新建定时作业",
+				Ops: []string{
+					"/job.v1.JobScheduleService/CreateJobSchedule",
+					"/job.v1.JobScheduleService/PreviewJobSchedule",
+					"/job.v1.JobTemplateService/ListJobTemplates",
+					"/job.v1.JobTemplateService/GetJobTemplate",
+				},
+			},
+			{
+				Code: "job.schedule.edit",
+				Name: "编辑 / 启停定时作业",
+				Ops: []string{
+					"/job.v1.JobScheduleService/UpdateJobSchedule",
+					"/job.v1.JobScheduleService/PreviewJobSchedule",
+					"/job.v1.JobTemplateService/ListJobTemplates",
+					"/job.v1.JobTemplateService/GetJobTemplate",
+				},
+			},
+			{
+				Code: "job.schedule.delete",
+				Name: "删除定时作业",
+				Ops: []string{
+					"/job.v1.JobScheduleService/DeleteJobSchedule",
+				},
+			},
+		},
+	},
+	{
+		Code: "job.trigger",
+		Name: "触发器",
+		DefaultOps: []string{
+			"/job.v1.JobTriggerService/ListJobTriggers",
+			"/job.v1.JobTriggerService/ListJobTriggerFires",
+			"/job.v1.JobTemplateService/ListJobTemplates",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "job.trigger.create",
+				Name: "新建触发器",
+				// 告警触发器的表单要选告警规则。
+				Ops: []string{
+					"/job.v1.JobTriggerService/CreateJobTrigger",
+					"/job.v1.JobTemplateService/ListJobTemplates",
+					"/job.v1.JobTemplateService/GetJobTemplate",
+					"/monitor.v1.MonitorRuleService/ListRules",
+					"/monitor.v1.MonitorRuleGroupService/ListRuleGroups",
+				},
+			},
+			{
+				Code: "job.trigger.edit",
+				Name: "编辑 / 启停触发器",
+				Ops: []string{
+					"/job.v1.JobTriggerService/UpdateJobTrigger",
+					"/job.v1.JobTemplateService/ListJobTemplates",
+					"/job.v1.JobTemplateService/GetJobTemplate",
+					"/monitor.v1.MonitorRuleService/ListRules",
+					"/monitor.v1.MonitorRuleGroupService/ListRuleGroups",
+				},
+			},
+			{
+				Code: "job.trigger.delete",
+				Name: "删除触发器",
+				Ops: []string{
+					"/job.v1.JobTriggerService/DeleteJobTrigger",
+				},
+			},
+			{
+				Code: "job.trigger.token",
+				Name: "重置令牌",
+				Ops: []string{
+					"/job.v1.JobTriggerService/ResetJobTriggerToken",
+				},
+			},
+		},
+	},
+	{
+		Code: "job.policy",
+		Name: "安全策略",
+		DefaultOps: []string{
+			"/job.v1.JobPolicyService/ListJobRiskRules",
+			"/job.v1.JobPolicyService/GetJobPolicy",
+			"/job.v1.JobPolicyService/TestJobRiskRules",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "job.policy.rule",
+				Name: "维护高危命令规则",
+				Ops: []string{
+					"/job.v1.JobPolicyService/CreateJobRiskRule",
+					"/job.v1.JobPolicyService/UpdateJobRiskRule",
+					"/job.v1.JobPolicyService/DeleteJobRiskRule",
+				},
+			},
+			{
+				Code: "job.policy.edit",
+				Name: "修改全局策略",
+				// 审批流程从流程定义里选。
+				Ops: []string{
+					"/job.v1.JobPolicyService/UpdateJobPolicy",
+					"/workflow.v1.WorkflowDefinitionService/ListDefinitions",
+				},
+			},
+		},
+	},
+	{
+		Code: "job.stats",
+		Name: "执行统计",
+		DefaultOps: []string{
+			"/job.v1.JobExecutionService/GetJobStats",
+		},
+	},
+	{
+		Code: "job.template",
+		Name: "作业模板",
+		// 项目选项：列表的项目筛选。
+		DefaultOps: []string{
+			"/job.v1.JobTemplateService/ListJobTemplates",
+			"/job.v1.JobTemplateService/GetJobTemplate",
+			"/job.v1.JobProjectService/ListJobProjectOptions",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "job.template.create",
+				Name: "新建模板",
+				Ops: []string{
+					"/job.v1.JobTemplateService/CreateJobTemplate",
+					"/job.v1.JobTemplateService/PreviewJobTarget",
+					"/job.v1.JobProjectService/ListJobProjectOptions",
+					"/job.v1.JobCredentialService/ListJobCredentialOptions",
+					"/job.v1.JobRunnerService/ListJobRunnerZones",
+					"/cmdb.v1.CmdbModelService/ListModels",
+					"/cmdb.v1.CmdbModelService/GetModel",
+					"/cmdb.v1.CmdbCIService/ListCIs",
+				},
+			},
+			{
+				Code: "job.template.edit",
+				Name: "编辑模板",
+				Ops: []string{
+					"/job.v1.JobTemplateService/UpdateJobTemplate",
+					"/job.v1.JobTemplateService/PreviewJobTarget",
+					"/job.v1.JobProjectService/ListJobProjectOptions",
+					"/job.v1.JobCredentialService/ListJobCredentialOptions",
+					"/job.v1.JobRunnerService/ListJobRunnerZones",
+					"/cmdb.v1.CmdbModelService/ListModels",
+					"/cmdb.v1.CmdbModelService/GetModel",
+					"/cmdb.v1.CmdbCIService/ListCIs",
+				},
+			},
+			{
+				Code: "job.template.delete",
+				Name: "删除模板",
+				Ops: []string{
+					"/job.v1.JobTemplateService/DeleteJobTemplate",
+				},
+			},
+			{
+				Code: "job.template.run",
+				Name: "执行作业",
+				// 提交后跳到执行详情：能执行的人也要能看到自己这次执行的状态、主机结果与日志。
+				Ops: []string{
+					"/job.v1.JobExecutionService/SubmitJobExecution",
+					"/job.v1.JobTemplateService/GetJobTemplate",
+					"/job.v1.JobTemplateService/ListJobTemplateHosts",
+					"/job.v1.JobExecutionService/GetJobExecution",
+					"/job.v1.JobExecutionService/ListJobExecutionHosts",
+					"/job.v1.JobExecutionService/GetJobExecutionLog",
+				},
+			},
+		},
+	},
+	{
+		Code: "job.execution",
+		Name: "执行记录",
+		// 模板列表：列表的模板筛选。
+		DefaultOps: []string{
+			"/job.v1.JobExecutionService/ListJobExecutions",
+			"/job.v1.JobExecutionService/GetJobExecution",
+			"/job.v1.JobExecutionService/ListJobExecutionHosts",
+			"/job.v1.JobExecutionService/GetJobExecutionLog",
+			"/job.v1.JobTemplateService/ListJobTemplates",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "job.execution.cancel",
+				Name: "取消执行",
+				Ops: []string{
+					"/job.v1.JobExecutionService/CancelJobExecution",
+				},
+			},
+		},
+	},
+	{
+		Code: "job.project",
+		Name: "项目",
+		DefaultOps: []string{
+			"/job.v1.JobProjectService/ListJobProjects",
+			"/job.v1.JobProjectService/GetJobProject",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "job.project.create",
+				Name: "新建项目",
+				Ops: []string{
+					"/job.v1.JobProjectService/CreateJobProject",
+				},
+			},
+			{
+				Code: "job.project.edit",
+				Name: "编辑项目",
+				Ops: []string{
+					"/job.v1.JobProjectService/UpdateJobProject",
+				},
+			},
+			{
+				Code: "job.project.delete",
+				Name: "删除项目",
+				Ops: []string{
+					"/job.v1.JobProjectService/DeleteJobProject",
+				},
+			},
+		},
+	},
+	{
+		Code: "job.credential",
+		Name: "凭据",
+		DefaultOps: []string{
+			"/job.v1.JobCredentialService/ListJobCredentials",
+			"/job.v1.JobCredentialService/GetJobCredential",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "job.credential.create",
+				Name: "新建凭据",
+				Ops: []string{
+					"/job.v1.JobCredentialService/CreateJobCredential",
+				},
+			},
+			{
+				Code: "job.credential.edit",
+				Name: "编辑凭据",
+				Ops: []string{
+					"/job.v1.JobCredentialService/UpdateJobCredential",
+				},
+			},
+			{
+				Code: "job.credential.delete",
+				Name: "删除凭据",
+				Ops: []string{
+					"/job.v1.JobCredentialService/DeleteJobCredential",
+				},
+			},
+		},
+	},
+	{
+		Code: "job.runner",
+		Name: "执行节点",
+		DefaultOps: []string{
+			"/job.v1.JobRunnerService/ListJobRunners",
+			"/job.v1.JobRunnerService/ListJobRunnerZones",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "job.runner.create",
+				Name: "登记节点",
+				Ops: []string{
+					"/job.v1.JobRunnerService/CreateJobRunner",
+				},
+			},
+			{
+				Code: "job.runner.edit",
+				Name: "编辑节点",
+				Ops: []string{
+					"/job.v1.JobRunnerService/UpdateJobRunner",
+				},
+			},
+			{
+				Code: "job.runner.delete",
+				Name: "删除节点",
+				Ops: []string{
+					"/job.v1.JobRunnerService/DeleteJobRunner",
+				},
+			},
+			{
+				Code: "job.runner.token",
+				Name: "重置令牌",
+				Ops: []string{
+					"/job.v1.JobRunnerService/ResetJobRunnerToken",
+				},
+			},
+		},
+	},
+	// 容器平台：下列接口由 core 完成登录与接口授权后转给数据面；能否对具体集群 / 命名空间里的资源操作成功，
+	// 由集群按用户的数据范围判定（数据范围在「角色授权」里配置）。通用的预检 / 提交 / 删除接口被多个页面的元素共用。
+	{
+		Code: "k8s.cluster",
+		Name: "集群管理",
+		// 集群列表与详情，以及节点、命名空间两个页签的列表与详情。
+		DefaultOps: []string{
+			"/k8s.v1.K8sClusterService/ListClusters",
+			"/k8s.v1.K8sClusterService/GetCluster",
+			"/k8s.v1.K8sClusterService/ListClusterOptions",
+			"/k8s.v1.K8sHelmReleaseService/ListNamespaceQuotas",
+			"/k8s.v1.K8sResourceService/ListNamespaceOptions",
+			"/k8s.v1.K8sResourceService/ListAPIResources",
+			"/k8s.v1.K8sResourceService/ListResources",
+			"/k8s.v1.K8sResourceService/GetObject",
+			"/k8s.v1.K8sResourceService/ListObjectEvents",
+			"/k8s.v1.K8sStreamService/WatchResources",
+			"/k8s.v1.K8sInsightService/GetPodSelector",
+			"/k8s.v1.K8sInsightService/QueryMetrics",
+			"/k8s.v1.K8sInsightService/GetNodeHost",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "k8s.cluster.create",
+				Name: "接入集群",
+				Ops: []string{
+					"/k8s.v1.K8sClusterService/CreateCluster",
+					"/k8s.v1.K8sClusterService/ParseKubeconfig",
+					"/monitor.v1.MonitorDatasourceService/ListDatasourceOptions",
+					// 审批用的工单模板选项。
+					"/ticket.v1.TicketCatalogService/ListCatalog",
+					"/k8s.v1.K8sClusterService/TestCluster",
+				},
+			},
+			{
+				Code: "k8s.cluster.edit",
+				Name: "编辑集群",
+				Ops: []string{
+					"/k8s.v1.K8sClusterService/UpdateCluster",
+					"/k8s.v1.K8sClusterService/ParseKubeconfig",
+					"/monitor.v1.MonitorDatasourceService/ListDatasourceOptions",
+					// 审批用的工单模板选项；自助申请所用模板的设置。
+					"/ticket.v1.TicketCatalogService/ListCatalog",
+					"/k8s.v1.K8sChangeService/GetChangeSettings",
+					"/k8s.v1.K8sChangeService/UpdateChangeSettings",
+					"/k8s.v1.K8sClusterService/TestCluster",
+				},
+			},
+			{
+				Code: "k8s.cluster.delete",
+				Name: "移除集群",
+				Ops: []string{
+					"/k8s.v1.K8sClusterService/DeleteCluster",
+				},
+			},
+			{
+				Code: "k8s.cluster.agent",
+				Name: "管理 Agent",
+				// 生成安装命令（含一次性的注册令牌）与吊销令牌。
+				Ops: []string{
+					"/k8s.v1.K8sClusterService/InstallAgent",
+					"/k8s.v1.K8sClusterService/RevokeAgent",
+				},
+			},
+			{
+				Code: "k8s.cluster.node_schedule",
+				Name: "节点调度开关",
+				Ops: []string{
+					"/k8s.v1.K8sWorkloadService/CordonNode",
+				},
+			},
+			{
+				Code: "k8s.cluster.node_drain",
+				Name: "排空节点",
+				Ops: []string{
+					"/k8s.v1.K8sWorkloadService/PreviewDrainNode",
+					"/k8s.v1.K8sStreamService/DrainNode",
+				},
+			},
+			{
+				Code: "k8s.cluster.node_edit",
+				Name: "编辑节点",
+				// 标签与污点。
+				Ops: []string{
+					"/k8s.v1.K8sResourceService/PreviewObject",
+					"/k8s.v1.K8sResourceService/ApplyObject",
+				},
+			},
+			{
+				Code: "k8s.cluster.namespace_create",
+				Name: "新建命名空间",
+				// 可同时创建 ResourceQuota 与 LimitRange。
+				Ops: []string{
+					"/k8s.v1.K8sResourceService/PreviewObject",
+					"/k8s.v1.K8sResourceService/ApplyObject",
+					"/k8s.v1.K8sResourceService/PreviewManifest",
+					"/k8s.v1.K8sResourceService/ApplyManifest",
+				},
+			},
+			{
+				Code: "k8s.cluster.namespace_edit",
+				Name: "编辑命名空间",
+				// 含配额的增删改。
+				Ops: []string{
+					"/k8s.v1.K8sResourceService/PreviewObject",
+					"/k8s.v1.K8sResourceService/ApplyObject",
+					"/k8s.v1.K8sResourceService/DeleteObject",
+				},
+			},
+			{
+				Code: "k8s.cluster.namespace_delete",
+				Name: "删除命名空间",
+				Ops: []string{
+					"/k8s.v1.K8sResourceService/DeleteObject",
+				},
+			},
+		},
+	},
+	{
+		Code: "k8s.workload",
+		Name: "工作负载",
+		// Deployment / StatefulSet / DaemonSet / Job / CronJob / Pod 的列表、详情与历史版本。
+		DefaultOps: []string{
+			"/k8s.v1.K8sClusterService/ListClusterOptions",
+			"/k8s.v1.K8sResourceService/ListNamespaceOptions",
+			"/k8s.v1.K8sResourceService/ListAPIResources",
+			"/k8s.v1.K8sResourceService/ListResources",
+			"/k8s.v1.K8sResourceService/GetObject",
+			"/k8s.v1.K8sResourceService/ListObjectEvents",
+			"/k8s.v1.K8sStreamService/WatchResources",
+			"/k8s.v1.K8sInsightService/GetPodSelector",
+			"/k8s.v1.K8sInsightService/QueryMetrics",
+			"/k8s.v1.K8sInsightService/DiagnosePod",
+			"/k8s.v1.K8sInsightService/DiagnoseWorkload",
+			"/k8s.v1.K8sWorkloadService/ListWorkloadRevisions",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "k8s.workload.create",
+				Name: "新建工作负载",
+				Ops: []string{
+					"/k8s.v1.K8sResourceService/PreviewObject",
+					"/k8s.v1.K8sResourceService/ApplyObject",
+					"/k8s.v1.K8sResourceService/PreviewManifest",
+					"/k8s.v1.K8sResourceService/ApplyManifest",
+				},
+			},
+			{
+				Code: "k8s.workload.edit",
+				Name: "编辑工作负载",
+				// 编辑 YAML、更新镜像、暂停 / 恢复发布、CronJob 的暂停与手动触发。
+				Ops: []string{
+					"/k8s.v1.K8sResourceService/PreviewObject",
+					"/k8s.v1.K8sResourceService/ApplyObject",
+					"/k8s.v1.K8sWorkloadService/SetWorkloadImage",
+					"/k8s.v1.K8sWorkloadService/PauseWorkload",
+					"/k8s.v1.K8sWorkloadService/SuspendCronJob",
+					"/k8s.v1.K8sWorkloadService/TriggerCronJob",
+				},
+			},
+			{
+				Code: "k8s.workload.delete",
+				Name: "删除工作负载",
+				// 含删除与驱逐 Pod。
+				Ops: []string{
+					"/k8s.v1.K8sResourceService/DeleteObject",
+					"/k8s.v1.K8sWorkloadService/EvictPod",
+				},
+			},
+			{
+				Code: "k8s.workload.scale",
+				Name: "伸缩",
+				Ops: []string{
+					"/k8s.v1.K8sWorkloadService/ScaleWorkload",
+				},
+			},
+			{
+				Code: "k8s.workload.restart",
+				Name: "重启",
+				Ops: []string{
+					"/k8s.v1.K8sWorkloadService/RestartWorkload",
+				},
+			},
+			{
+				Code: "k8s.workload.rollback",
+				Name: "回滚",
+				Ops: []string{
+					"/k8s.v1.K8sWorkloadService/RollbackWorkload",
+				},
+			},
+			{
+				Code: "k8s.workload.log",
+				Name: "查看日志",
+				Ops: []string{
+					"/k8s.v1.K8sStreamService/StreamPodLog",
+					"/k8s.v1.K8sStreamService/StreamWorkloadLog",
+				},
+			},
+			{
+				Code: "k8s.workload.exec",
+				Name: "Web 终端",
+				// 签发终端票据；随后的 WebSocket 连接凭票据认证。
+				Ops: []string{
+					"/k8s.v1.K8sWorkloadService/OpenExecTicket",
+				},
+			},
+			{
+				Code: "k8s.workload.debug",
+				Name: "调试容器",
+				// 在 Pod 里启动临时容器并进入（同一个票据接口，kind = 2）；另需持有专门的调试容器权限接口。
+				Ops: []string{
+					"/k8s.v1.K8sWorkloadService/OpenExecTicket",
+					"/k8s.v1.K8sGovernanceService/CheckDebugContainer",
+				},
+			},
+			{
+				Code: "k8s.workload.file",
+				Name: "文件传输",
+				Ops: []string{
+					"/k8s.v1.K8sFileService/DownloadPodFile",
+					"/k8s.v1.K8sFileService/UploadPodFile",
+				},
+			},
+		},
+	},
+	{
+		Code: "k8s.config",
+		Name: "网络与配置",
+		// Service / Ingress / ConfigMap / Secret / 存储的列表与详情（Secret 的值恒为掩码）。
+		DefaultOps: []string{
+			"/k8s.v1.K8sClusterService/ListClusterOptions",
+			"/k8s.v1.K8sResourceService/ListNamespaceOptions",
+			"/k8s.v1.K8sResourceService/ListAPIResources",
+			"/k8s.v1.K8sResourceService/ListResources",
+			"/k8s.v1.K8sResourceService/GetObject",
+			"/k8s.v1.K8sResourceService/ListObjectEvents",
+			"/k8s.v1.K8sStreamService/WatchResources",
+			"/k8s.v1.K8sInsightService/GetPodSelector",
+			"/k8s.v1.K8sInsightService/GetRelations",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "k8s.config.create",
+				Name: "新建网络与配置",
+				Ops: []string{
+					"/k8s.v1.K8sResourceService/PreviewObject",
+					"/k8s.v1.K8sResourceService/ApplyObject",
+					"/k8s.v1.K8sResourceService/PreviewManifest",
+					"/k8s.v1.K8sResourceService/ApplyManifest",
+				},
+			},
+			{
+				Code: "k8s.config.edit",
+				Name: "编辑网络与配置",
+				// 修改配置后可重启引用它的工作负载。
+				Ops: []string{
+					"/k8s.v1.K8sWorkloadService/RestartWorkload",
+					"/k8s.v1.K8sResourceService/PreviewObject",
+					"/k8s.v1.K8sResourceService/ApplyObject",
+					"/k8s.v1.K8sWorkloadService/RestartWorkload",
+				},
+			},
+			{
+				Code: "k8s.config.delete",
+				Name: "删除网络与配置",
+				Ops: []string{
+					"/k8s.v1.K8sResourceService/DeleteObject",
+				},
+			},
+			{
+				Code: "k8s.config.secret_reveal",
+				Name: "查看 Secret 明文",
+				// 每次查看都记入审计。
+				Ops: []string{
+					"/k8s.v1.K8sResourceService/RevealSecret",
+				},
+			},
+		},
+	},
+	{
+		Code: "k8s.resource",
+		Name: "资源浏览器",
+		// 任意资源类型（含 CRD）的列表、详情与 YAML。
+		DefaultOps: []string{
+			"/k8s.v1.K8sClusterService/ListClusterOptions",
+			"/k8s.v1.K8sResourceService/ListNamespaceOptions",
+			"/k8s.v1.K8sResourceService/ListAPIResources",
+			"/k8s.v1.K8sResourceService/ListResources",
+			"/k8s.v1.K8sResourceService/GetObject",
+			"/k8s.v1.K8sResourceService/ListObjectEvents",
+			"/k8s.v1.K8sStreamService/WatchResources",
+			"/k8s.v1.K8sInsightService/GetPodSelector",
+			"/k8s.v1.K8sInsightService/GetRelations",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "k8s.resource.create",
+				Name: "新建资源",
+				Ops: []string{
+					"/k8s.v1.K8sResourceService/PreviewObject",
+					"/k8s.v1.K8sResourceService/ApplyObject",
+					"/k8s.v1.K8sResourceService/PreviewManifest",
+					"/k8s.v1.K8sResourceService/ApplyManifest",
+				},
+			},
+			{
+				Code: "k8s.resource.edit",
+				Name: "编辑资源",
+				Ops: []string{
+					"/k8s.v1.K8sResourceService/PreviewObject",
+					"/k8s.v1.K8sResourceService/ApplyObject",
+				},
+			},
+			{
+				Code: "k8s.resource.delete",
+				Name: "删除资源",
+				Ops: []string{
+					"/k8s.v1.K8sResourceService/DeleteObject",
+				},
+			},
+		},
+	},
+	{
+		Code: "k8s.app",
+		Name: "应用",
+		// Helm Release 的列表与详情、Helm 仓库列表；Release 里的资源可跳到资源详情。
+		DefaultOps: []string{
+			"/k8s.v1.K8sClusterService/ListClusterOptions",
+			"/k8s.v1.K8sResourceService/ListNamespaceOptions",
+			"/k8s.v1.K8sHelmReleaseService/ListHelmReleases",
+			"/k8s.v1.K8sHelmReleaseService/GetHelmRelease",
+			"/k8s.v1.K8sHelmRepoService/ListHelmRepos",
+			"/k8s.v1.K8sHelmRepoService/ListHelmRepoOptions",
+			"/k8s.v1.K8sResourceService/GetObject",
+			"/k8s.v1.K8sResourceService/ListObjectEvents",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "k8s.app.repo",
+				Name: "管理 Helm 仓库",
+				Ops: []string{
+					"/k8s.v1.K8sHelmRepoService/CreateHelmRepo",
+					"/k8s.v1.K8sHelmRepoService/UpdateHelmRepo",
+					"/k8s.v1.K8sHelmRepoService/DeleteHelmRepo",
+					"/k8s.v1.K8sHelmRepoService/TestHelmRepo",
+					"/k8s.v1.K8sHelmRepoService/ListHelmCharts",
+					"/k8s.v1.K8sHelmRepoService/GetHelmChart",
+				},
+			},
+			{
+				Code: "k8s.app.install",
+				Name: "安装应用",
+				Ops: []string{
+					"/k8s.v1.K8sHelmRepoService/ListHelmRepoOptions",
+					"/k8s.v1.K8sHelmRepoService/ListHelmCharts",
+					"/k8s.v1.K8sHelmRepoService/GetHelmChart",
+					"/k8s.v1.K8sHelmReleaseService/PreviewHelmRelease",
+					"/k8s.v1.K8sHelmReleaseService/InstallHelmRelease",
+				},
+			},
+			{
+				Code: "k8s.app.upgrade",
+				Name: "升级与回滚应用",
+				Ops: []string{
+					"/k8s.v1.K8sHelmRepoService/ListHelmRepoOptions",
+					"/k8s.v1.K8sHelmRepoService/ListHelmCharts",
+					"/k8s.v1.K8sHelmRepoService/GetHelmChart",
+					"/k8s.v1.K8sHelmReleaseService/PreviewHelmRelease",
+					"/k8s.v1.K8sHelmReleaseService/UpgradeHelmRelease",
+					"/k8s.v1.K8sHelmReleaseService/RollbackHelmRelease",
+				},
+			},
+			{
+				Code: "k8s.app.uninstall",
+				Name: "卸载应用",
+				Ops: []string{
+					"/k8s.v1.K8sHelmReleaseService/UninstallHelmRelease",
+				},
+			},
+		},
+	},
+	{
+		Code: "k8s.overview",
+		Name: "总览",
+		// 各集群的健康状态、资源水位摘要、最近的 Warning 事件与指标概览；集群的监控数据源选项。
+		DefaultOps: []string{
+			"/k8s.v1.K8sInsightService/GetOverview",
+			"/k8s.v1.K8sInsightService/QueryMetrics",
+			"/k8s.v1.K8sClusterService/ListClusterOptions",
+		},
+	},
+	{
+		Code: "k8s.event",
+		Name: "事件",
+		// 跨集群的 Warning 事件检索；集群选项用于筛选。
+		DefaultOps: []string{
+			"/k8s.v1.K8sInsightService/ListEvents",
+			"/k8s.v1.K8sClusterService/ListClusterOptions",
+		},
+	},
+	{
+		Code: "k8s.change",
+		Name: "变更单",
+		// 变更单列表与详情；自助申请（命名空间 / 集群权限）的入口与提交。
+		DefaultOps: []string{
+			"/k8s.v1.K8sChangeService/ListChanges",
+			"/k8s.v1.K8sChangeService/GetChange",
+			"/k8s.v1.K8sChangeService/GetChangeSettings",
+			"/k8s.v1.K8sChangeService/ListRequestClusters",
+			"/k8s.v1.K8sChangeService/RequestNamespace",
+			"/k8s.v1.K8sChangeService/RequestPermission",
+			"/k8s.v1.K8sClusterService/ListClusterOptions",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "k8s.change.cancel",
+				Name: "撤回变更单",
+				Ops:  []string{"/k8s.v1.K8sChangeService/CancelChange"},
+			},
+			{
+				Code: "k8s.change.bypass",
+				Name: "紧急变更（免审批）",
+				// 持有该接口权限即可在需审批的集群上直接执行，审计标记为紧急变更。
+				Ops: []string{"/k8s.v1.K8sChangeService/CheckChangeBypass"},
+			},
+		},
+	},
+	{
+		Code: "k8s.audit",
+		Name: "操作审计",
+		// 变更记录与终端会话记录；集群选项用于筛选。
+		DefaultOps: []string{
+			"/k8s.v1.K8sAuditService/ListAudits",
+			"/k8s.v1.K8sAuditService/GetAudit",
+			"/k8s.v1.K8sAuditService/ListExecSessions",
+			"/k8s.v1.K8sClusterService/ListClusterOptions",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "k8s.audit.replay",
+				Name: "回放终端录制",
+				Ops: []string{
+					"/k8s.v1.K8sGovernanceService/GetExecRecord",
+				},
+			},
+		},
+	},
+	{
+		Code: "k8s.inspection",
+		Name: "巡检",
+		// 巡检记录与发现项；集群选项用于选择集群。
+		DefaultOps: []string{
+			"/k8s.v1.K8sGovernanceService/ListInspectionRuns",
+			"/k8s.v1.K8sGovernanceService/GetInspectionRun",
+			"/k8s.v1.K8sClusterService/ListClusterOptions",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "k8s.inspection.run",
+				Name: "立即巡检",
+				Ops: []string{
+					"/k8s.v1.K8sGovernanceService/RunInspection",
+				},
+			},
+		},
+	},
+	{
+		Code: "k8s.kubeconfig",
+		Name: "访问凭证",
+		// 自己的限时 kubeconfig 列表与吊销；集群选项用于选择集群。吊销他人的令牌由用例限定为超管。
+		DefaultOps: []string{
+			"/k8s.v1.K8sGovernanceService/ListKubeTokens",
+			"/k8s.v1.K8sGovernanceService/RevokeKubeToken",
+			"/k8s.v1.K8sGovernanceService/RevokeUserKubeTokens",
+			"/k8s.v1.K8sClusterService/ListClusterOptions",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "k8s.kubeconfig.issue",
+				Name: "签发 kubeconfig",
+				Ops: []string{
+					"/k8s.v1.K8sGovernanceService/IssueKubeconfig",
 				},
 			},
 		},

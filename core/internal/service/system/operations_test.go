@@ -8,6 +8,7 @@ import (
 
 	cmdbv1 "github.com/lanyulei/reborn/backend/core/api/cmdb/v1"
 	filev1 "github.com/lanyulei/reborn/backend/core/api/file/v1"
+	monitorv1 "github.com/lanyulei/reborn/backend/core/api/monitor/v1"
 	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
 	oncallv1 "github.com/lanyulei/reborn/backend/core/api/oncall/v1"
 	v1 "github.com/lanyulei/reborn/backend/core/api/system/v1"
@@ -46,7 +47,8 @@ func TestListOperations(t *testing.T) {
 		if !strings.HasPrefix(svc, "system.v1.") && !strings.HasPrefix(svc, "notify.v1.") &&
 			!strings.HasPrefix(svc, "assistant.v1.") && !strings.HasPrefix(svc, "cmdb.v1.") &&
 			!strings.HasPrefix(svc, "oncall.v1.") && !strings.HasPrefix(svc, "workflow.v1.") &&
-			!strings.HasPrefix(svc, "ticket.v1.") {
+			!strings.HasPrefix(svc, "ticket.v1.") && !strings.HasPrefix(svc, "monitor.v1.") &&
+			!strings.HasPrefix(svc, "job.v1.") && !strings.HasPrefix(svc, "k8s.v1.") {
 			t.Fatalf("operation %q not in an authorized proto package", op.Name)
 		}
 		if op.Title == "" {
@@ -173,12 +175,21 @@ func TestIsAuthzExempt(t *testing.T) {
 		filev1.OperationFileServiceUploadFile,
 		filev1.OperationFileServiceGetFile,
 		filev1.OperationFileServiceDownloadFile,
+		// 告警事件详情：已登录的通知收件人要能打开通知里的链接；访问控制在监控域按「接收方，或
+		// 有告警查询权限且在数据范围内」判定，其余一律 404
+		monitorv1.OperationMonitorAlertServiceGetAlert,
+		monitorv1.OperationMonitorAlertServiceListShiftAlertCounts,
 		// 流程引擎的开放接口：供其他系统接入，凭接入令牌认证（库内只存哈希、可停用可重置），
 		// 能发起哪些流程由凭据配置决定、只能操作自己发起的实例；凭据的管理接口不免检
 		workflowv1.OperationWorkflowOpenServiceOpenStartInstance,
 		workflowv1.OperationWorkflowOpenServiceOpenGetInstance,
 		workflowv1.OperationWorkflowOpenServiceOpenSignalInstance,
 		workflowv1.OperationWorkflowOpenServiceOpenCancelInstance,
+		// 容器平台 Web 终端的 WebSocket 入口：浏览器的 WebSocket 不能带 Authorization 头，凭一次性票据认证
+		// （30 秒有效、核销即删）；签发票据的 OpenExecTicket 不免检
+		OperationK8sExecConnect,
+		// 作业中心的开放触发接口：凭触发器的调用令牌或流程 Webhook 的签名认证；触发器的管理接口不免检
+		OperationJobOpenFire,
 	}
 	if len(authzExemptOperations) != len(want) {
 		t.Fatalf("authzExemptOperations has %d members, want exactly %d", len(authzExemptOperations), len(want))

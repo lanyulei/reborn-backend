@@ -1,0 +1,763 @@
+syntax = "proto3";
+
+package monitor.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "monitor/v1/common.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/monitor/v1;v1";
+
+// MonitorAlertService 告警事件：评估引擎产生的告警，从触发到恢复（或关闭）为一个事件。
+// 活跃告警 = 状态为告警中；历史告警 = 已恢复或已关闭。查询接口只返回当前用户数据范围内
+// （对事件所在规则分组「只读」以上）的事件，详情另允许该事件的通知对象查看。
+// 事件操作：认领 / 取消认领 / 转交 / 备注要求对事件所在分组「只读」以上；手动关闭 / 转工单要求「可管理」
+// （403 MONITOR_FORBIDDEN）；仅作为通知对象能看到事件的人不能操作。每次操作都记入事件时间线。
+service MonitorAlertService {
+  // ListAlerts 分页查询告警事件（按最近触发时间倒序）。
+  rpc ListAlerts(ListAlertsRequest) returns (ListAlertsResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/alert"};
+    option (system.v1.title) = "查询告警事件";
+  }
+  // GetAlert 查询告警事件详情与通知时间线。本接口免接口授权（通知里的链接要让收件人打开），仍须登录；
+  // 能否查看由下面两条决定，都不满足时与事件不存在同样返回 404 MONITOR_ALERT_NOT_FOUND：
+  //   - 持有「查询告警事件」接口权限，且事件所在分组在数据范围内：完整视图；
+  //   - 本人是该事件某次通知的接收方：收件人视图——can_view_rule 为 false，notify_logs 只含发给本人的
+  //     记录（接收方只有本人，没有 notify_event_ids 与 subscription_id），alert 的 mute_id / mute_name 为空。
+  rpc GetAlert(GetAlertRequest) returns (GetAlertResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/alert/{id}"};
+    option (system.v1.title) = "查询告警事件详情";
+  }
+  // AggregateAlerts 活跃告警的聚合视图：按规则 / 级别 / 分组 / 某个标签统计当前告警中的事件数。
+  rpc AggregateAlerts(AggregateAlertsRequest) returns (AggregateAlertsResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/alert-aggregate"};
+    option (system.v1.title) = "查询活跃告警聚合";
+  }
+  // AckAlert 认领告警事件：标记「我在处理」。认领后规则的重复通知与升级策略里「未认领」类的各级不再通知
+  // （「未恢复」类的级不受影响）。只能认领告警中的事件（否则 409 MONITOR_ALERT_NOT_FIRING）；已被本人认领时
+  // 原样返回，已被他人认领返回 409 MONITOR_ALERT_ALREADY_ACKED。
+  rpc AckAlert(AckAlertRequest) returns (AckAlertResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/alert/{id}:ack"
+      body: "*"
+    };
+    option (system.v1.title) = "认领告警事件";
+  }
+  // UnackAlert 取消认领：事件回到未认领，重复通知与「未认领」类升级从此刻起恢复计算。认领人本人，或对事件
+  // 所在分组「可管理」的人可以取消；事件本来就未认领时原样返回。
+  rpc UnackAlert(UnackAlertRequest) returns (UnackAlertResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/alert/{id}:unack"
+      body: "*"
+    };
+    option (system.v1.title) = "取消认领告警事件";
+  }
+  // TransferAlert 把事件转交给另一位用户处理：认领人改为对方（事件此前未认领时等同于指派）。只能转交告警中的
+  // 事件；对方须是可用用户（400 MONITOR_ALERT_ACTION_INVALID）。已被他人认领的事件须对分组「可管理」才能转交。
+  rpc TransferAlert(TransferAlertRequest) returns (TransferAlertResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/alert/{id}:transfer"
+      body: "*"
+    };
+    option (system.v1.title) = "转交告警事件";
+  }
+  // CommentAlert 给事件追加一条备注（处理记录），进入事件时间线；任何状态的事件都可以备注。
+  rpc CommentAlert(CommentAlertRequest) returns (CommentAlertResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/alert/{id}:comment"
+      body: "*"
+    };
+    option (system.v1.title) = "备注告警事件";
+  }
+  // CloseAlert 手动关闭告警中的事件：用于指标已不再上报、永远等不到恢复的事件（机器下线、标签改名）。
+  // 不发恢复通知。关闭由评估引擎在下一轮执行（通常几秒内），接口返回时事件可能仍是告警中，pending 为 true；
+  // 条件仍然成立时下一轮会按新事件重新触发。事件已不在告警中返回 409 MONITOR_ALERT_NOT_FIRING。
+  rpc CloseAlert(CloseAlertRequest) returns (CloseAlertResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/alert/{id}:close"
+      body: "*"
+    };
+    option (system.v1.title) = "关闭告警事件";
+  }
+  // BatchAckAlerts 批量认领（至多 200 条）：逐条独立执行，部分失败不影响其余，结果逐条返回。
+  rpc BatchAckAlerts(BatchAckAlertsRequest) returns (BatchAckAlertsResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/alert:batch-ack"
+      body: "*"
+    };
+    option (system.v1.title) = "批量认领告警事件";
+  }
+  // BatchCloseAlerts 批量手动关闭（至多 200 条）：逐条独立执行，结果逐条返回。
+  rpc BatchCloseAlerts(BatchCloseAlertsRequest) returns (BatchCloseAlertsResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/alert:batch-close"
+      body: "*"
+    };
+    option (system.v1.title) = "批量关闭告警事件";
+  }
+  // CreateAlertTicket 把事件转为工单：按所选工单模板提单，提单人为当前用户，事件关联的 CMDB 资源自动作为工单的
+  // 关联资源；创建成功后事件与工单互相关联，告警恢复时在工单上追加一条记录。一个事件只能关联一张工单
+  // （409 MONITOR_ALERT_TICKET_EXISTS）。提单本身的校验（模板可用、表单必填等）失败时返回工单域的错误码。
+  rpc CreateAlertTicket(CreateAlertTicketRequest) returns (CreateAlertTicketResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/alert/{id}:ticket"
+      body: "*"
+    };
+    option (system.v1.title) = "告警事件转工单";
+  }
+  // ListShiftAlertCounts 某张值班表在一段时间内各班次的告警数：班次起止时间内「通知到当班人」的告警事件数
+  // （规则通知、订阅通知、升级通知都算，同一事件只计一次）。供值班日历展示；只统计调用方数据范围内的事件。
+  rpc ListShiftAlertCounts(ListShiftAlertCountsRequest) returns (ListShiftAlertCountsResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/shift-alert-count"};
+    option (system.v1.title) = "查询值班班次告警数";
+  }
+}
+
+// Alert 告警事件。
+message Alert {
+  // id 事件唯一标识。
+  string id = 1;
+  // fingerprint 事件指纹：同一规则、同一数据源、同一组标签的告警指纹相同，可用于查找同一对象的历次告警。
+  string fingerprint = 2;
+  // rule_id 规则唯一标识。
+  string rule_id = 3;
+  // rule_name 触发时的规则名称（规则删除或改名后仍保留）。
+  string rule_name = 4;
+  // rule_exists 规则当前是否仍存在（可跳转到规则详情）。
+  bool rule_exists = 5;
+  // group_id 触发时规则所属分组。
+  string group_id = 6;
+  // group_name 分组的完整名称（含上级，以 " / " 分隔）。
+  string group_name = 7;
+  // datasource_id 数据源唯一标识。
+  string datasource_id = 8;
+  // datasource_name 数据源名称。
+  string datasource_name = 9;
+  // severity 级别：1=提示 2=警告 3=严重 4=致命；告警期间随最新判定变化。
+  int32 severity = 10;
+  // status 状态：1=告警中 2=已恢复 3=已关闭（规则被删除 / 停用或数据源不再适用时关闭，不发恢复通知）。
+  int32 status = 11;
+  // labels 事件标签：查询返回的序列标签（不含 __name__）与规则附加标签合并。
+  map<string, string> labels = 12;
+  // annotations 渲染后的附加信息。
+  map<string, string> annotations = 13;
+  // expr 触发的 PromQL。
+  string expr = 14;
+  // value 最近一次触发值；NaN、正负无穷按 JSON 字符串返回，无值时不返回。
+  optional double value = 15;
+  // recovery_value 恢复取值（规则配置了恢复取值 PromQL 且取值成功时才有）。
+  optional double recovery_value = 16;
+  // first_fire_time 首次触发时间。
+  google.protobuf.Timestamp first_fire_time = 17;
+  // last_fire_time 最近一次判定仍在告警的时间。
+  google.protobuf.Timestamp last_fire_time = 18;
+  // resolve_time 恢复或关闭时间；告警中时为空。
+  google.protobuf.Timestamp resolve_time = 19;
+  // duration_s 持续秒数：告警中为首次触发至今，否则为首次触发至恢复 / 关闭。
+  int64 duration_s = 20;
+  // muted 是否被「只屏蔽通知」的屏蔽规则命中（事件照常记录，不发通知）。
+  bool muted = 21;
+  // mute_id 命中的屏蔽规则，未屏蔽时为空。
+  string mute_id = 22;
+  // mute_name 命中的屏蔽规则名称。
+  string mute_name = 23;
+  // notify_count 已发出的触发 / 重复通知次数（不含恢复通知）。
+  int32 notify_count = 24;
+  // last_notify_time 最近一次通知时间。
+  google.protobuf.Timestamp last_notify_time = 25;
+  // ack_user_id 认领人；未认领为空。
+  string ack_user_id = 26;
+  // ack_user_name 认领人显示名。
+  string ack_user_name = 27;
+  // ack_time 认领时间；未认领为空。
+  google.protobuf.Timestamp ack_time = 28;
+  // ack_duration_s 认领耗时秒（首次触发到认领）；未认领为 0。
+  int64 ack_duration_s = 29;
+  // closed_by_id 手动关闭的操作人；不是手动关闭的为空。
+  string closed_by_id = 30;
+  // closed_by_name 手动关闭的操作人显示名。
+  string closed_by_name = 31;
+  // close_reason 手动关闭的原因。
+  string close_reason = 32;
+  // closing 已下达手动关闭、评估引擎尚未执行（事件仍是告警中）。
+  bool closing = 33;
+  // inhibited 是否被抑制（事件照常记录，不发通知、不升级）。
+  bool inhibited = 34;
+  // inhibit_kind 抑制方式：0=未被抑制 1=抑制规则 2=拓扑抑制（上游资源有活跃告警）。
+  int32 inhibit_kind = 35;
+  // inhibit_id 命中的抑制规则；拓扑抑制或未被抑制时为空。
+  string inhibit_id = 36;
+  // inhibit_name 命中的抑制规则名称。
+  string inhibit_name = 37;
+  // inhibit_alert_id 造成抑制的源告警事件；未被抑制时为空。
+  string inhibit_alert_id = 38;
+  // inhibit_alert_name 源告警的规则名称。
+  string inhibit_alert_name = 39;
+  // ci_id 关联的 CMDB 资源；未关联为空。
+  string ci_id = 40;
+  // ci_name 关联资源的名称。
+  string ci_name = 41;
+  // escalation_level 已升级到第几级，0=未升级。
+  int32 escalation_level = 42;
+  // ticket_id 关联的工单；没有为空。
+  string ticket_id = 43;
+  // ticket_number 关联工单的编号。
+  string ticket_number = 44;
+  // workflow_instance_id 规则配置「触发流程」后发起的流程实例；没有为空。
+  string workflow_instance_id = 45;
+  // ai_summary AI 生成的事件摘要与排查建议；没有为空。
+  string ai_summary = 46;
+  // handle_state 处理状态（列表展示用，按下列顺序取第一个成立的）：4=被抑制 3=已屏蔽 2=已认领 1=未认领。
+  int32 handle_state = 47;
+  // can_manage 当前用户能否手动关闭、转工单（对事件所在分组「可管理」）。
+  bool can_manage = 48;
+  // can_ack 当前用户能否认领 / 取消认领 / 转交 / 备注（对事件所在分组「只读」以上）。
+  bool can_ack = 49;
+}
+
+// ListAlertsRequest 分页查询告警事件请求。
+message ListAlertsRequest {
+  option (buf.validate.message).cel = {
+    id: "monitor.alert.list.time_range"
+    message: "fire_time_start must be <= fire_time_end"
+    expression: "!has(this.fire_time_start) || !has(this.fire_time_end) || this.fire_time_start <= this.fire_time_end"
+  };
+
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // statuses 状态过滤，可多选：1=告警中 2=已恢复 3=已关闭；不传为全部。活跃告警传 [1]，历史告警传 [2,3]。
+  repeated int32 statuses = 3 [(buf.validate.field).repeated = {
+    max_items: 3
+    unique: true
+    items: {
+      int32: {
+        in: [
+          1,
+          2,
+          3
+        ]
+      }
+    }
+  }];
+  // group_id 规则分组过滤（含其全部下级分组），可选。
+  optional string group_id = 4 [(buf.validate.field).string.uuid = true];
+  // rule_id 规则过滤，可选。
+  optional string rule_id = 5 [(buf.validate.field).string.uuid = true];
+  // datasource_id 数据源过滤，可选。
+  optional string datasource_id = 6 [(buf.validate.field).string.uuid = true];
+  // severities 级别过滤，可多选：1=提示 2=警告 3=严重 4=致命；不传为全部。
+  repeated int32 severities = 7 [(buf.validate.field).repeated = {
+    max_items: 4
+    unique: true
+    items: {
+      int32: {
+        gte: 1
+        lte: 4
+      }
+    }
+  }];
+  // muted 是否已屏蔽过滤，可选。
+  optional bool muted = 8;
+  // keyword 规则名称模糊匹配，可选。
+  optional string keyword = 9 [(buf.validate.field).string.max_len = 128];
+  // labels 事件标签过滤，每项形如 name=value（精确相等），至多 5 项，各项之间是「并且」，可选。
+  repeated string labels = 10 [(buf.validate.field).repeated = {
+    max_items: 5
+    items: {
+      string: {
+        max_len: 400
+        pattern: "^[a-zA-Z_][a-zA-Z0-9_]*=.+$"
+      }
+    }
+  }];
+  // fire_time_start 首次触发时间下界（含），可选。
+  optional google.protobuf.Timestamp fire_time_start = 11;
+  // fire_time_end 首次触发时间上界（含），可选。
+  optional google.protobuf.Timestamp fire_time_end = 12;
+  // mine 只看我负责的事件：通知过我的（我是规则的通知对象、订阅接收方或升级通知对象），或由我认领的，可选。
+  optional bool mine = 13;
+  // fingerprint 事件指纹过滤（查看同一对象的历次告警），可选。
+  optional string fingerprint = 14 [(buf.validate.field).string.pattern = "^[0-9a-f]{32}$"];
+  // ci_id 关联的 CMDB 资源过滤（资源详情页的告警页签），可选。
+  optional string ci_id = 15 [(buf.validate.field).string.uuid = true];
+  // acked 是否已认领过滤，可选。
+  optional bool acked = 16;
+  // inhibited 是否被抑制过滤，可选。
+  optional bool inhibited = 17;
+  // ack_user_id 认领人过滤，可选。
+  optional string ack_user_id = 18 [(buf.validate.field).string.uuid = true];
+  // handle_state 处理状态过滤，可选：1=未认领（未被屏蔽、未被抑制、无人认领）2=已认领 3=已屏蔽 4=被抑制；
+  // 口径同 Alert.handle_state。
+  optional int32 handle_state = 19 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 4
+  }];
+}
+
+// ListAlertsResponse 分页查询告警事件响应。
+message ListAlertsResponse {
+  // items 当前页数据。
+  repeated Alert items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// AlertRecipient 一次通知的一个接收方。
+message AlertRecipient {
+  // type 类型：user 用户 / group 通知群。
+  string type = 1;
+  // id 用户 ID，或通知群标识（如 $group:ops）。
+  string id = 2;
+  // name 用户显示名；通知群为其标识。
+  string name = 3;
+}
+
+// AlertNotifyLog 告警通知时间线的一条记录：一次通知中因规则或某条订阅发给了谁。
+message AlertNotifyLog {
+  // id 记录唯一标识。
+  string id = 1;
+  // kind 通知类型：1=触发 2=重复 3=恢复 4=升级（升级到某一级时的首次通知与该级的重复提醒）。
+  int32 kind = 2;
+  // seq 该事件的第几次通知；升级通知为该级的第几次通知（级数见 level）。
+  int32 seq = 3;
+  // source 来源：1=规则的通知对象 2=订阅规则 3=升级策略某一级的通知对象。
+  int32 source = 4;
+  // subscription_id 命中的订阅规则；来源为规则时为空。
+  string subscription_id = 5;
+  // subscription_name 订阅规则名称。
+  string subscription_name = 6;
+  // recipients 接收方。
+  repeated AlertRecipient recipients = 7;
+  // notify_event_ids 写入通知管道的事件 ID，可据此到「通知管理 → 事件」查看投递情况。
+  repeated string notify_event_ids = 8;
+  // note 备注，如「未解析到通知对象」。
+  string note = 9;
+  // create_time 通知时间。
+  google.protobuf.Timestamp create_time = 10;
+  // level 升级通知的级数 1-10；其余通知为 0。
+  int32 level = 11;
+}
+
+// GetAlertRequest 查询告警事件详情请求。
+message GetAlertRequest {
+  // id 事件唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetAlertResponse 查询告警事件详情响应。
+message GetAlertResponse {
+  // alert 告警事件。
+  Alert alert = 1;
+  // notify_logs 通知时间线，按时间升序，至多 200 条。
+  repeated AlertNotifyLog notify_logs = 2;
+  // can_view_rule 当前用户能否查看该事件的规则（在数据范围内）；仅作为通知对象查看时为 false。
+  bool can_view_rule = 3;
+  // timeline 事件时间线，按时间升序，至多 500 条：触发、每次通知、升级、认领 / 转交、屏蔽、抑制、备注、工单、
+  // 恢复 / 关闭等。通知类条目（type=notification）与 notify_logs 是同一批记录。收件人视图只含触发 / 恢复 /
+  // 关闭与发给本人的通知，不含备注与操作人。
+  repeated AlertTimelineItem timeline = 4;
+  // ci 关联的 CMDB 资源卡片；事件未关联资源时为空。
+  AlertCI ci = 5;
+  // impact 影响面：关联资源的下游资源（按拓扑关系向下至多 3 层，至多 50 个）。
+  repeated AlertImpactCI impact = 6;
+  // impact_truncated 影响面超过 50 个，已截断。
+  bool impact_truncated = 7;
+  // ticket 关联的工单；没有为空。
+  AlertTicket ticket = 8;
+}
+
+// AlertEventDetail 时间线条目的细节；各类型只填用得到的字段，其余为零值。
+message AlertEventDetail {
+  // text 备注内容（comment）、关闭原因（close）、转交说明（transfer）或通知说明（notify）。
+  string text = 1;
+  // cause 关闭的缘由（close）：manual 手动关闭 / rule 规则被删除、停用或数据源不再适用。
+  string cause = 2;
+  // from_user 转交前的认领人（transfer）；此前无人认领为空。
+  NamedRef from_user = 3;
+  // to_user 转交给谁（transfer）。
+  NamedRef to_user = 4;
+  // mute_id 屏蔽规则（mute / unmute）；因关联资源处于维护态而屏蔽时为空。
+  string mute_id = 5;
+  // mute_name 屏蔽规则名称。
+  string mute_name = 6;
+  // maintenance 因关联资源处于维护态而屏蔽（mute / unmute）。
+  bool maintenance = 7;
+  // inhibit_kind 抑制方式（inhibit / uninhibit）：1=抑制规则 2=拓扑抑制。
+  int32 inhibit_kind = 8;
+  // inhibit_id 抑制规则。
+  string inhibit_id = 9;
+  // inhibit_name 抑制规则名称。
+  string inhibit_name = 10;
+  // inhibit_alert_id 造成抑制的源告警事件。
+  string inhibit_alert_id = 11;
+  // level 升级到第几级（escalate）。
+  int32 level = 12;
+  // severity 当时的级别（fire / resolve）。
+  int32 severity = 13;
+  // ticket_id 工单（ticket / ticket_note）。
+  string ticket_id = 14;
+  // ticket_number 工单编号。
+  string ticket_number = 15;
+  // auto 是否由规则自动建单（ticket）。
+  bool auto = 16;
+  // workflow_instance_id 发起的流程实例（workflow）。
+  string workflow_instance_id = 17;
+  // action_kind 失败的事件动作（action_failed）：1=自动建单 2=触发流程 3=AI 摘要 4=在工单上追加恢复记录。
+  int32 action_kind = 18;
+  // error 失败原因（action_failed）。
+  string error = 19;
+}
+
+// AlertTimelineItem 事件时间线的一条。
+message AlertTimelineItem {
+  // id 条目唯一标识。
+  string id = 1;
+  // type 类型：fire 触发 / resolve 恢复 / close 关闭 / mute 被屏蔽 / unmute 屏蔽解除 / inhibit 被抑制 /
+  // uninhibit 抑制解除 / escalate 升级 / notify 通知说明 / ack 认领 / unack 取消认领 / transfer 转交 /
+  // comment 备注 / ticket 转工单 / ticket_note 在工单上追加了恢复记录 / workflow 触发流程 / ai_summary 生成 AI 摘要 /
+  // action_failed 事件动作失败 / notification 一次通知（此时 notify_log 有值，detail 为空）。
+  string type = 2;
+  // time 发生时间。
+  google.protobuf.Timestamp time = 3;
+  // operator 操作人；系统产生的条目为空。
+  NamedRef operator = 4;
+  // detail 细节。
+  AlertEventDetail detail = 5;
+  // notify_log 通知记录；仅 type=notification 时有值。
+  AlertNotifyLog notify_log = 6;
+}
+
+// AlertCI 事件关联的 CMDB 资源卡片。
+message AlertCI {
+  // id 资源唯一标识。
+  string id = 1;
+  // name 资源名称。
+  string name = 2;
+  // model_code 模型编码。
+  string model_code = 3;
+  // model_name 模型名称。
+  string model_name = 4;
+  // env 环境。
+  string env = 5;
+  // status 状态：planning 规划中 / active 使用中 / maintenance 维护中 / retired 已退役。
+  string status = 6;
+  // owner 负责人：是系统用户时为其显示名，否则为资源上登记的原文。
+  string owner = 7;
+  // owner_id 负责人是系统用户时的用户 ID，否则为空。
+  string owner_id = 8;
+  // tags 资源标签。
+  repeated string tags = 9;
+  // exists 资源当前是否仍存在（已删除或退役的资源不可跳转）。
+  bool exists = 10;
+  // can_view 当前用户能否在资源管理里查看该资源（有 CMDB 的数据范围）；为 false 时不要给出跳转链接。
+  bool can_view = 11;
+  // firing_count 该资源当前的活跃告警数（调用方数据范围内）。
+  int32 firing_count = 12;
+}
+
+// AlertImpactCI 影响面里的一个下游资源。
+message AlertImpactCI {
+  // id 资源唯一标识。
+  string id = 1;
+  // name 资源名称。
+  string name = 2;
+  // model_code 模型编码。
+  string model_code = 3;
+  // model_name 模型名称。
+  string model_name = 4;
+  // depth 与事件关联资源的距离（1 = 直接下游）。
+  int32 depth = 5;
+  // firing_count 该资源当前的活跃告警数（调用方数据范围内）。
+  int32 firing_count = 6;
+  // can_view 当前用户能否在资源管理里查看该资源。
+  bool can_view = 7;
+}
+
+// AlertTicket 事件关联的工单。
+message AlertTicket {
+  // id 工单唯一标识。
+  string id = 1;
+  // number 工单编号。
+  string number = 2;
+  // title 工单标题。
+  string title = 3;
+  // status 工单状态（取值同工单管理）。
+  int32 status = 4;
+  // auto 是否由规则自动建单。
+  bool auto = 5;
+  // can_view 当前用户能否查看该工单（提单人、流程参与者或有管理视图权限）；为 false 时 title 为空、不要给出跳转链接。
+  bool can_view = 6;
+}
+
+// AckAlertRequest 认领告警事件请求。
+message AckAlertRequest {
+  // id 事件唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// AckAlertResponse 认领告警事件响应。
+message AckAlertResponse {
+  // alert 认领后的事件。
+  Alert alert = 1;
+}
+
+// UnackAlertRequest 取消认领告警事件请求。
+message UnackAlertRequest {
+  // id 事件唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// UnackAlertResponse 取消认领告警事件响应。
+message UnackAlertResponse {
+  // alert 取消认领后的事件。
+  Alert alert = 1;
+}
+
+// TransferAlertRequest 转交告警事件请求。
+message TransferAlertRequest {
+  // id 事件唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // user_id 转交给谁；须是可用用户，不能是当前的认领人。
+  string user_id = 2 [(buf.validate.field).string.uuid = true];
+  // note 转交说明，可选，至多 500 字符；记入时间线。
+  string note = 3 [(buf.validate.field).string.max_len = 500];
+}
+
+// TransferAlertResponse 转交告警事件响应。
+message TransferAlertResponse {
+  // alert 转交后的事件。
+  Alert alert = 1;
+}
+
+// CommentAlertRequest 备注告警事件请求。
+message CommentAlertRequest {
+  // id 事件唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // text 备注内容，1-2000 字符，不能全是空白。
+  string text = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 2000
+  }];
+}
+
+// CommentAlertResponse 备注告警事件响应。
+message CommentAlertResponse {
+  // item 新增的时间线条目。
+  AlertTimelineItem item = 1;
+}
+
+// CloseAlertRequest 关闭告警事件请求。
+message CloseAlertRequest {
+  // id 事件唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // reason 关闭原因，可选，至多 255 字符；记入事件与时间线。
+  string reason = 2 [(buf.validate.field).string.max_len = 255];
+}
+
+// CloseAlertResponse 关闭告警事件响应。
+message CloseAlertResponse {
+  // alert 事件的当前内容（引擎尚未执行关闭时仍是告警中，closing 为 true）。
+  Alert alert = 1;
+  // pending 关闭已受理、等待评估引擎执行；刷新列表即可看到结果。
+  bool pending = 2;
+}
+
+// AlertActionResult 批量操作中一个事件的结果。
+message AlertActionResult {
+  // id 事件唯一标识。
+  string id = 1;
+  // ok 是否成功。
+  bool ok = 2;
+  // reason 失败的错误码（如 MONITOR_FORBIDDEN、MONITOR_ALERT_NOT_FIRING）；成功时为空。
+  string reason = 3;
+  // message 失败原因说明；成功时为空。
+  string message = 4;
+}
+
+// BatchAckAlertsRequest 批量认领告警事件请求。
+message BatchAckAlertsRequest {
+  // ids 事件 ID，1-200 个。
+  repeated string ids = 1 [(buf.validate.field).repeated = {
+    min_items: 1
+    max_items: 200
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+}
+
+// BatchAckAlertsResponse 批量认领告警事件响应。
+message BatchAckAlertsResponse {
+  // results 逐条结果，顺序与请求的 ids 一致。
+  repeated AlertActionResult results = 1;
+  // succeeded 成功条数。
+  int32 succeeded = 2;
+  // failed 失败条数。
+  int32 failed = 3;
+}
+
+// BatchCloseAlertsRequest 批量关闭告警事件请求。
+message BatchCloseAlertsRequest {
+  // ids 事件 ID，1-200 个。
+  repeated string ids = 1 [(buf.validate.field).repeated = {
+    min_items: 1
+    max_items: 200
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+  // reason 关闭原因，可选，至多 255 字符；记入每个事件。
+  string reason = 2 [(buf.validate.field).string.max_len = 255];
+}
+
+// BatchCloseAlertsResponse 批量关闭告警事件响应。
+message BatchCloseAlertsResponse {
+  // results 逐条结果，顺序与请求的 ids 一致；成功表示关闭已受理（由评估引擎随后执行）。
+  repeated AlertActionResult results = 1;
+  // succeeded 成功条数。
+  int32 succeeded = 2;
+  // failed 失败条数。
+  int32 failed = 3;
+}
+
+// CreateAlertTicketRequest 告警事件转工单请求。
+message CreateAlertTicketRequest {
+  // id 事件唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // template_id 工单模板。
+  string template_id = 2 [(buf.validate.field).string.uuid = true];
+  // title 工单标题，可选，至多 255 字符；不传为「【级别】规则名称」。
+  string title = 3 [(buf.validate.field).string.max_len = 255];
+  // priority 工单优先级，可选：1=低 2=普通 3=高 4=紧急；不传（0）按事件级别对应（提示→低 … 致命→紧急）。
+  int32 priority = 4 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 4
+  }];
+  // data 工单表单数据（按模板的字段定义校验），可选。
+  google.protobuf.Struct data = 5;
+  // creator_dept 提单部门，可选：须为当前用户所属部门；不传取主部门。
+  optional string creator_dept = 6 [(buf.validate.field).string.uuid = true];
+  // request_id 幂等键，可选（客户端生成的 UUID）：重复提交返回首次创建的工单。
+  optional string request_id = 7 [(buf.validate.field).string.uuid = true];
+}
+
+// CreateAlertTicketResponse 告警事件转工单响应。
+message CreateAlertTicketResponse {
+  // ticket 创建的工单。
+  AlertTicket ticket = 1;
+  // alert 关联工单后的事件。
+  Alert alert = 2;
+}
+
+// ListShiftAlertCountsRequest 查询值班班次告警数请求。
+message ListShiftAlertCountsRequest {
+  option (buf.validate.message).cel = {
+    id: "monitor.shift_alert_count.time_range"
+    message: "start_time must be before end_time and the range must not exceed 62 days"
+    expression: "this.start_time < this.end_time && this.end_time - this.start_time <= duration('1488h')"
+  };
+
+  // schedule_id 值班表。
+  string schedule_id = 1 [(buf.validate.field).string.uuid = true];
+  // start_time 时间范围起点（含）。
+  google.protobuf.Timestamp start_time = 2 [(buf.validate.field).required = true];
+  // end_time 时间范围终点（不含）；与起点相距至多 62 天。
+  google.protobuf.Timestamp end_time = 3 [(buf.validate.field).required = true];
+}
+
+// ShiftAlertCount 一个班次的告警数。
+message ShiftAlertCount {
+  // user_id 当班人（替班的取替班人）。
+  string user_id = 1;
+  // user_name 当班人显示名。
+  string user_name = 2;
+  // role 班次角色：1=主班 2=备班。
+  int32 role = 3;
+  // start_time 班次开始时间。
+  google.protobuf.Timestamp start_time = 4;
+  // end_time 班次结束时间。
+  google.protobuf.Timestamp end_time = 5;
+  // alert_count 班次内通知到当班人的告警事件数（同一事件只计一次）。
+  int32 alert_count = 6;
+}
+
+// ListShiftAlertCountsResponse 查询值班班次告警数响应。
+message ListShiftAlertCountsResponse {
+  // items 与时间范围有交集的各班次，按开始时间升序，至多 500 个。
+  repeated ShiftAlertCount items = 1;
+}
+
+// AggregateAlertsRequest 查询活跃告警聚合请求。
+message AggregateAlertsRequest {
+  // by 聚合维度：rule 按规则 / severity 按级别 / group 按规则分组 / label:<标签名> 按某个事件标签的取值
+  // （如 label:instance）。
+  string by = 1 [(buf.validate.field).string = {
+    max_len: 140
+    pattern: "^(rule|severity|group|label:[a-zA-Z_][a-zA-Z0-9_]*)$"
+  }];
+  // group_id 规则分组过滤（含其全部下级分组），可选。
+  optional string group_id = 2 [(buf.validate.field).string.uuid = true];
+  // datasource_id 数据源过滤，可选。
+  optional string datasource_id = 3 [(buf.validate.field).string.uuid = true];
+  // severities 级别过滤，可多选；不传为全部。
+  repeated int32 severities = 4 [(buf.validate.field).repeated = {
+    max_items: 4
+    unique: true
+    items: {
+      int32: {
+        gte: 1
+        lte: 4
+      }
+    }
+  }];
+  // muted 是否已屏蔽过滤，可选。
+  optional bool muted = 5;
+  // acked 是否已认领过滤，可选。
+  optional bool acked = 6;
+  // inhibited 是否被抑制过滤，可选。
+  optional bool inhibited = 7;
+  // labels 事件标签过滤，每项形如 name=value（精确相等），至多 5 项，各项之间是「并且」，可选。
+  repeated string labels = 8 [(buf.validate.field).repeated = {
+    max_items: 5
+    items: {
+      string: {
+        max_len: 400
+        pattern: "^[a-zA-Z_][a-zA-Z0-9_]*=.+$"
+      }
+    }
+  }];
+}
+
+// AlertAggregate 聚合视图的一行。
+message AlertAggregate {
+  // key 聚合键：规则 ID / 级别数字 / 分组 ID / 标签取值（事件没有该标签时为空字符串）。
+  string key = 1;
+  // name 显示名：规则名称 / 级别名称 / 分组完整名称 / 标签取值。
+  string name = 2;
+  // count 活跃告警数。
+  int32 count = 3;
+  // max_severity 其中的最高级别。
+  int32 max_severity = 4;
+  // severity_counts 各级别的活跃告警数，下标 0-3 依次对应级别 1-4。
+  repeated int32 severity_counts = 5;
+  // last_fire_time 其中最近一次触发时间。
+  google.protobuf.Timestamp last_fire_time = 6;
+}
+
+// AggregateAlertsResponse 查询活跃告警聚合响应。
+message AggregateAlertsResponse {
+  // items 聚合结果，按活跃告警数倒序，至多 200 行。
+  repeated AlertAggregate items = 1;
+  // total 符合过滤条件的活跃告警总数。
+  int32 total = 2;
+}

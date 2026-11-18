@@ -1,0 +1,109 @@
+syntax = "proto3";
+
+package k8s.v1;
+
+import "errors/errors.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/k8s/v1;v1";
+
+// ErrorReason 是容器平台域的业务错误码枚举，由 protoc-gen-go-errors 生成带 code 的
+// 错误构造器。枚举值沿用 Kratos 错误码惯例（域前缀），豁免 ENUM_VALUE_PREFIX。
+// 10 之后的值与 kit/k8scontract 的 Reason* 同名：数据面返回的错误原因由 core 原样透传
+// （守护测试比对两处的名称与 HTTP 状态码）。
+enum ErrorReason {
+  option (errors.default_code) = 500;
+  // K8S_UNSPECIFIED 未指定的容器平台错误。
+  K8S_UNSPECIFIED = 0;
+  // K8S_VERSION_CONFLICT 数据已被他人修改（version 不一致），请刷新后重试，映射 HTTP 409。
+  K8S_VERSION_CONFLICT = 1 [(errors.code) = 409];
+  // K8S_SECRET_UNAVAILABLE 加密主密钥未配置，无法保存集群凭据，映射 HTTP 503。
+  K8S_SECRET_UNAVAILABLE = 2 [(errors.code) = 503];
+  // K8S_CLUSTER_NAME_EXISTS 集群名称已被占用，映射 HTTP 409。
+  K8S_CLUSTER_NAME_EXISTS = 3 [(errors.code) = 409];
+  // K8S_CLUSTER_INVALID 集群配置不合法（地址、证书、凭据、kubeconfig 无法解析等），映射 HTTP 400。
+  K8S_CLUSTER_INVALID = 4 [(errors.code) = 400];
+  // K8S_SCOPE_INVALID 数据范围不合法（集群不存在、命名空间名不合法、档位与命名空间不匹配、重复项），映射 HTTP 400。
+  K8S_SCOPE_INVALID = 5 [(errors.code) = 400];
+  // K8S_AUDIT_NOT_FOUND 审计记录不存在，映射 HTTP 404。
+  K8S_AUDIT_NOT_FOUND = 6 [(errors.code) = 404];
+  // K8S_TIME_RANGE_INVALID 查询时间范围不合法（跨度超过 90 天或起止颠倒），映射 HTTP 400。
+  K8S_TIME_RANGE_INVALID = 7 [(errors.code) = 400];
+  // K8S_TICKET_INVALID 终端票据无效或已过期，映射 HTTP 401。
+  K8S_TICKET_INVALID = 8 [(errors.code) = 401];
+  // K8S_AGENT_UNCONFIGURED 未配置 Agent 隧道入口地址，无法生成安装命令，映射 HTTP 503。
+  K8S_AGENT_UNCONFIGURED = 9 [(errors.code) = 503];
+
+  // K8S_INVALID_ARGUMENT 请求参数不合法，映射 HTTP 400。
+  K8S_INVALID_ARGUMENT = 10 [(errors.code) = 400];
+  // K8S_FORBIDDEN 集群拒绝了该操作：当前用户在该集群 / 命名空间的数据范围不足，映射 HTTP 403。
+  K8S_FORBIDDEN = 11 [(errors.code) = 403];
+  // K8S_NOT_FOUND 资源对象不存在，映射 HTTP 404。
+  K8S_NOT_FOUND = 12 [(errors.code) = 404];
+  // K8S_CONFLICT 对象已被他人修改或已存在，映射 HTTP 409。
+  K8S_CONFLICT = 13 [(errors.code) = 409];
+  // K8S_REJECTED 集群校验或准入策略拒绝了该对象，映射 HTTP 422。
+  K8S_REJECTED = 14 [(errors.code) = 422];
+  // K8S_CLUSTER_NOT_FOUND 集群不存在或已停用，映射 HTTP 404。
+  K8S_CLUSTER_NOT_FOUND = 15 [(errors.code) = 404];
+  // K8S_CLUSTER_UNREACHABLE 集群不可达或未通过接入自检，映射 HTTP 503。
+  K8S_CLUSTER_UNREACHABLE = 16 [(errors.code) = 503];
+  // K8S_NOT_OWNER 该数据面实例不负责此集群（归属已转移），映射 HTTP 421。
+  K8S_NOT_OWNER = 17 [(errors.code) = 421];
+  // K8S_CACHE_SYNCING 资源缓存建立中，请稍后重试，映射 HTTP 503。
+  K8S_CACHE_SYNCING = 18 [(errors.code) = 503];
+  // K8S_UNSUPPORTED 该资源不支持此操作，映射 HTTP 400。
+  K8S_UNSUPPORTED = 19 [(errors.code) = 400];
+  // K8S_TOO_MANY_STREAMS 并发的日志流或终端会话超过上限，映射 HTTP 429。
+  K8S_TOO_MANY_STREAMS = 20 [(errors.code) = 429];
+  // K8S_EXEC_DISABLED 该集群禁止使用终端，映射 HTTP 403。
+  K8S_EXEC_DISABLED = 21 [(errors.code) = 403];
+  // K8S_IDENTITY_INVALID 内部身份校验失败（core 与数据面的内部密钥不一致或时钟偏差过大），映射 HTTP 401。
+  K8S_IDENTITY_INVALID = 22 [(errors.code) = 401];
+  // K8S_UPSTREAM_ERROR 集群返回了未归类的错误，映射 HTTP 502。
+  K8S_UPSTREAM_ERROR = 23 [(errors.code) = 502];
+  // K8S_PLANE_UNAVAILABLE 没有可用的容器平台数据面实例，映射 HTTP 503。
+  K8S_PLANE_UNAVAILABLE = 24 [(errors.code) = 503];
+
+  // K8S_HELM_REPO_NOT_FOUND Helm 仓库不存在，映射 HTTP 404。
+  K8S_HELM_REPO_NOT_FOUND = 60 [(errors.code) = 404];
+  // K8S_HELM_REPO_NAME_EXISTS Helm 仓库名称已被占用，映射 HTTP 409。
+  K8S_HELM_REPO_NAME_EXISTS = 61 [(errors.code) = 409];
+  // K8S_HELM_REPO_INVALID Helm 仓库配置不合法（地址、类型、凭据、证书等），映射 HTTP 400。
+  K8S_HELM_REPO_INVALID = 62 [(errors.code) = 400];
+
+  // K8S_CHANGE_SUBMITTED 不是失败：该集群的变更需审批，已生成变更单与工单（metadata：change_id /
+  // ticket_id / ticket_number），审批通过后由系统执行，映射 HTTP 428。
+  K8S_CHANGE_SUBMITTED = 70 [(errors.code) = 428];
+  // K8S_CHANGE_NOT_FOUND 变更单不存在或无权查看，映射 HTTP 404。
+  K8S_CHANGE_NOT_FOUND = 71 [(errors.code) = 404];
+  // K8S_CHANGE_INVALID 申请内容不合法（命名空间名、配额项、档位等），映射 HTTP 400。
+  K8S_CHANGE_INVALID = 72 [(errors.code) = 400];
+  // K8S_CHANGE_STATE 变更单当前状态不允许该操作（如已审批的变更单不能撤回），映射 HTTP 409。
+  K8S_CHANGE_STATE = 73 [(errors.code) = 409];
+  // K8S_CHANGE_BYPASS_FORBIDDEN 没有免审批（紧急变更）的权限，映射 HTTP 403。
+  K8S_CHANGE_BYPASS_FORBIDDEN = 74 [(errors.code) = 403];
+  // K8S_CHANGE_TEMPLATE_UNAVAILABLE 审批所用的工单模板不可用（已停用、流程不可用，或表单有本系统填不了的必填项），映射 HTTP 409。
+  K8S_CHANGE_TEMPLATE_UNAVAILABLE = 75 [(errors.code) = 409];
+  // K8S_CHANGE_REQUEST_DISABLED 自助申请未开放（未配置所用的工单模板），映射 HTTP 409。
+  K8S_CHANGE_REQUEST_DISABLED = 76 [(errors.code) = 409];
+
+  // K8S_KUBE_TOKEN_NOT_FOUND 限时 kubeconfig 令牌不存在，映射 HTTP 404。
+  K8S_KUBE_TOKEN_NOT_FOUND = 80 [(errors.code) = 404];
+  // K8S_KUBE_TOKEN_LIMIT 未失效的限时 kubeconfig 数量已达上限，请先吊销不再使用的，映射 HTTP 409。
+  K8S_KUBE_TOKEN_LIMIT = 81 [(errors.code) = 409];
+  // K8S_KUBE_TOKEN_INVALID 限时 kubeconfig 参数不合法（有效期超出范围等），映射 HTTP 400。
+  K8S_KUBE_TOKEN_INVALID = 82 [(errors.code) = 400];
+  // K8S_INSPECTION_NOT_FOUND 巡检记录不存在，映射 HTTP 404。
+  K8S_INSPECTION_NOT_FOUND = 83 [(errors.code) = 404];
+  // K8S_INSPECTION_BUSY 该集群已有待执行或执行中的巡检，映射 HTTP 409。
+  K8S_INSPECTION_BUSY = 84 [(errors.code) = 409];
+  // K8S_EXEC_RECORD_NOT_FOUND 终端会话不存在或没有录制内容，映射 HTTP 404。
+  K8S_EXEC_RECORD_NOT_FOUND = 85 [(errors.code) = 404];
+  // K8S_FILE_INVALID 文件传输参数不合法（路径、文件名、容器内缺少 tar 等），映射 HTTP 400。
+  K8S_FILE_INVALID = 86 [(errors.code) = 400];
+  // K8S_FILE_TOO_LARGE 文件超过传输大小上限，映射 HTTP 413。
+  K8S_FILE_TOO_LARGE = 87 [(errors.code) = 413];
+  // K8S_APPROVAL_REQUIRED 该集群的变更需审批，不能经 kubeconfig 直接写入，映射 HTTP 403
+  // （不用 409：kubectl 把 409 当作乐观锁冲突反复重试）。
+  K8S_APPROVAL_REQUIRED = 88 [(errors.code) = 403];
+}

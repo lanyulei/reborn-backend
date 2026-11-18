@@ -1,0 +1,100 @@
+# Redis（redis_exporter）。
+groups:
+  - name: Redis
+    interval: 1m
+    rules:
+      - alert: Redis 实例不可用
+        expr: redis_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis 实例 {{ $labels.instance }} 无法连接"
+      - alert: Redis 近期重启
+        expr: redis_uptime_in_seconds < 300
+        labels:
+          severity: info
+        annotations:
+          summary: "Redis 实例 {{ $labels.instance }} 在最近 5 分钟内重启过"
+      - alert: Redis 内存使用率过高
+        expr: 100 * redis_memory_used_bytes / redis_memory_max_bytes > 85 and redis_memory_max_bytes > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis 实例 {{ $labels.instance }} 内存使用率 {{ printf \"%.1f\" $value }}%"
+      - alert: Redis 内存即将用尽
+        expr: 100 * redis_memory_used_bytes / redis_memory_max_bytes > 95 and redis_memory_max_bytes > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis 实例 {{ $labels.instance }} 内存使用率 {{ printf \"%.1f\" $value }}%，即将开始淘汰或拒绝写入"
+      - alert: Redis 内存碎片率过高
+        expr: redis_mem_fragmentation_ratio > 1.8 and redis_memory_used_bytes > 1073741824
+        for: 30m
+        labels:
+          severity: info
+        annotations:
+          summary: "Redis 实例 {{ $labels.instance }} 内存碎片率 {{ printf \"%.2f\" $value }}"
+      - alert: Redis 连接数过高
+        expr: 100 * redis_connected_clients / redis_config_maxclients > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis 实例 {{ $labels.instance }} 连接数已用 {{ printf \"%.1f\" $value }}%"
+      - alert: Redis 拒绝连接
+        expr: increase(redis_rejected_connections_total[5m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis 实例 {{ $labels.instance }} 最近 5 分钟拒绝了 {{ printf \"%.0f\" $value }} 个连接（达到 maxclients）"
+      - alert: Redis 阻塞客户端过多
+        expr: redis_blocked_clients > 20
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis 实例 {{ $labels.instance }} 有 {{ $value }} 个客户端阻塞在 BLPOP 等命令上"
+      - alert: Redis 键被淘汰
+        expr: rate(redis_evicted_keys_total[5m]) > 10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis 实例 {{ $labels.instance }} 每秒淘汰 {{ printf \"%.1f\" $value }} 个键，内存不足"
+      - alert: Redis RDB 持久化失败
+        expr: redis_rdb_last_bgsave_status == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis 实例 {{ $labels.instance }} 最近一次 RDB 持久化失败"
+      - alert: Redis 长时间未持久化
+        expr: time() - redis_rdb_last_save_timestamp_seconds > 86400
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis 实例 {{ $labels.instance }} 已超过 24 小时没有成功保存 RDB"
+      - alert: Redis AOF 重写失败
+        expr: redis_aof_last_bgrewrite_status == 0 and redis_aof_enabled == 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis 实例 {{ $labels.instance }} 最近一次 AOF 重写失败"
+      - alert: Redis 主从链路断开
+        expr: redis_master_link_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis 从库 {{ $labels.instance }} 与主库的复制链路断开"
+      - alert: Redis 从库数量减少
+        expr: delta(redis_connected_slaves[5m]) < 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis 主库 {{ $labels.instance }} 的从库数量在最近 5 分钟内减少"

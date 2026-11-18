@@ -11,7 +11,6 @@ import (
 	"mime"
 	"net/http"
 	"path"
-	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -67,9 +66,6 @@ var (
 	// ErrFileQuotaExceeded 未绑定的临时文件数达到上限。
 	ErrFileQuotaExceeded = kerrors.New(429, v1.ErrorReason_FILE_QUOTA_EXCEEDED.String(), "too many unused uploads; submit or wait for them to expire")
 )
-
-// uuidText 文件 ID 的文本形式（绑定入参来自业务请求，查询时要转 uuid）。
-var uuidText = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 // File 是文件元数据领域模型。
 type File struct {
@@ -316,7 +312,7 @@ func (uc *Usecase) Bind(ctx context.Context, tx txrun.Tx, uploader, bizType, biz
 		return ErrFileNotFound
 	}
 	ids := uniqueLower(fileIDs)
-	if slices.ContainsFunc(ids, func(id string) bool { return !uuidText.MatchString(id) }) {
+	if slices.ContainsFunc(ids, func(id string) bool { return !idgen.IsUUID(id) }) {
 		return ErrFileNotFound // 非法 ID 不进 SQL（转 uuid 报错会连带回滚调用方事务并表现为 500）
 	}
 	n, err := uc.binds.BindTx(ctx, tx, uploader, bizType, bizID, ids)
@@ -342,7 +338,7 @@ func (uc *Usecase) Release(ctx context.Context, tx txrun.Tx, bizType, bizID stri
 // ReleaseFiles 在调用方业务事务内软删某业务对象的指定附件（业务对象不再引用它们时调用）。
 // 只作用于确实绑定在该对象上的文件；非法 ID 直接忽略（不会命中任何行）。
 func (uc *Usecase) ReleaseFiles(ctx context.Context, tx txrun.Tx, bizType, bizID string, fileIDs []string) error {
-	ids := slices.DeleteFunc(uniqueLower(fileIDs), func(id string) bool { return !uuidText.MatchString(id) })
+	ids := slices.DeleteFunc(uniqueLower(fileIDs), func(id string) bool { return !idgen.IsUUID(id) })
 	if len(ids) == 0 || bizType == "" || bizID == "" {
 		return nil
 	}

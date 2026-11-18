@@ -7,10 +7,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
 	basedata "github.com/lanyulei/reborn/backend/core/internal/data"
+	"github.com/lanyulei/reborn/backend/kit/idgen"
 )
 
 var _ biz.AvatarStore = (*avatarStore)(nil)
@@ -25,16 +25,13 @@ type avatarStore struct {
 // NewAvatarStore new an avatarStore.
 func NewAvatarStore(data *basedata.Data) *avatarStore { return &avatarStore{data: data} }
 
-var (
-	avatarIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
-	avatarFileExts  = []string{".png", ".jpg", ".webp"}
-)
+var avatarFileExts = []string{".png", ".jpg", ".webp"}
 
 func (s *avatarStore) dir() string { return filepath.Join(s.data.LogoDir, "avatars") }
 
 // ReadAvatarFile implements biz.AvatarStore.
 func (s *avatarStore) ReadAvatarFile(_ context.Context, userID string) ([]byte, string, error) {
-	if !avatarIDPattern.MatchString(userID) {
+	if !idgen.IsUUID(userID) {
 		return nil, "", biz.ErrAvatarNotFound
 	}
 	for _, ext := range avatarFileExts {

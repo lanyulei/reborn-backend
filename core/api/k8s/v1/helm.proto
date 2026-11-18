@@ -1,0 +1,460 @@
+syntax = "proto3";
+
+package k8s.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/api/httpbody.proto";
+import "google/protobuf/timestamp.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/k8s/v1;v1";
+
+// K8sHelmRepoService Helm 仓库：登记、测试与 Chart 目录。凭据只写不读：任何响应都不返回，编辑时不传即沿用。
+// 测试、目录与 Chart 详情由数据面访问仓库（core 不发起出站请求），响应体是数据面返回的 JSON
+// （结构见 kit/k8scontract 的 Helm*）。
+service K8sHelmRepoService {
+  // ListHelmRepos 分页查询 Helm 仓库。
+  rpc ListHelmRepos(ListHelmReposRequest) returns (ListHelmReposResponse) {
+    option (google.api.http) = {get: "/api/v1/k8s/helm-repo"};
+    option (system.v1.title) = "查询 Helm 仓库";
+  }
+  // CreateHelmRepo 登记 Helm 仓库。名称重复返回 409 K8S_HELM_REPO_NAME_EXISTS。
+  rpc CreateHelmRepo(CreateHelmRepoRequest) returns (CreateHelmRepoResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/helm-repo"
+      body: "*"
+    };
+    option (system.v1.title) = "新建 Helm 仓库";
+  }
+  // UpdateHelmRepo 编辑 Helm 仓库（整体替换）。version 不一致返回 409 K8S_VERSION_CONFLICT。
+  rpc UpdateHelmRepo(UpdateHelmRepoRequest) returns (UpdateHelmRepoResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/k8s/helm-repo/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "编辑 Helm 仓库";
+  }
+  // DeleteHelmRepo 删除 Helm 仓库；已安装的 Release 不受影响。
+  rpc DeleteHelmRepo(DeleteHelmRepoRequest) returns (DeleteHelmRepoResponse) {
+    option (google.api.http) = {delete: "/api/v1/k8s/helm-repo/{id}"};
+    option (system.v1.title) = "删除 Helm 仓库";
+  }
+  // ListHelmRepoOptions 已启用的 Helm 仓库（安装 / 升级时选择）。
+  rpc ListHelmRepoOptions(ListHelmRepoOptionsRequest) returns (ListHelmRepoOptionsResponse) {
+    option (google.api.http) = {get: "/api/v1/k8s/helm-repo-option"};
+    option (system.v1.title) = "查询可用 Helm 仓库";
+  }
+  // TestHelmRepo 测试仓库配置：实际访问一次。响应：k8scontract.HelmRepoTestResponse。
+  rpc TestHelmRepo(TestHelmRepoRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/helm-repo:test"
+      body: "*"
+    };
+    option (system.v1.title) = "测试 Helm 仓库";
+  }
+  // ListHelmCharts 仓库的 Chart 目录（OCI 仓库须给出 Chart 名，返回其标签）。响应：k8scontract.HelmChartsResponse。
+  rpc ListHelmCharts(ListHelmChartsRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {get: "/api/v1/k8s/helm-repo/{repo_id}/chart"};
+    option (system.v1.title) = "查询 Helm Chart";
+  }
+  // GetHelmChart Chart 详情：缺省 values、values 的 schema、README。响应：k8scontract.HelmChartResponse。
+  rpc GetHelmChart(GetHelmChartRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {get: "/api/v1/k8s/helm-repo/{repo_id}/chart-detail"};
+    option (system.v1.title) = "查看 Helm Chart";
+  }
+}
+
+// K8sHelmReleaseService 集群上的 Helm Release。全部由 core 转发给数据面，数据面以调用者的身份访问集群
+// （能否读写 Release 由集群按数据范围判定；Release 存放在 Secret 中，只读档位无法查看）。
+// 写操作至多同步等待 20 秒：未完成则返回 pending，操作继续执行，稍后查看 Release 状态。
+service K8sHelmReleaseService {
+  // ListHelmReleases Release 列表。响应：k8scontract.HelmListResponse。
+  rpc ListHelmReleases(ListHelmReleasesRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {get: "/api/v1/k8s/cluster/{cluster_id}/helm-release"};
+    option (system.v1.title) = "查询 Helm Release";
+  }
+  // GetHelmRelease Release 详情：values、清单、资源、历史。响应：k8scontract.HelmReleaseDetail。
+  rpc GetHelmRelease(GetHelmReleaseRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {get: "/api/v1/k8s/cluster/{cluster_id}/helm-release-detail"};
+    option (system.v1.title) = "查看 Helm Release";
+  }
+  // PreviewHelmRelease 预检安装或升级（dry-run）：渲染出的清单；升级时带当前清单与 values。响应：k8scontract.HelmPreviewResponse。
+  rpc PreviewHelmRelease(PreviewHelmReleaseRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster/{cluster_id}/helm-release:preview"
+      body: "*"
+    };
+    option (system.v1.title) = "预检 Helm 安装或升级";
+  }
+  // InstallHelmRelease 安装。响应：k8scontract.HelmApplyResponse。
+  rpc InstallHelmRelease(InstallHelmReleaseRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster/{cluster_id}/helm-release:install"
+      body: "*"
+    };
+    option (system.v1.title) = "安装 Helm Release";
+  }
+  // UpgradeHelmRelease 升级。响应：k8scontract.HelmApplyResponse。
+  rpc UpgradeHelmRelease(UpgradeHelmReleaseRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster/{cluster_id}/helm-release:upgrade"
+      body: "*"
+    };
+    option (system.v1.title) = "升级 Helm Release";
+  }
+  // RollbackHelmRelease 回滚到指定版本。响应：k8scontract.HelmApplyResponse。
+  rpc RollbackHelmRelease(RollbackHelmReleaseRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster/{cluster_id}/helm-release:rollback"
+      body: "*"
+    };
+    option (system.v1.title) = "回滚 Helm Release";
+  }
+  // UninstallHelmRelease 卸载。响应：k8scontract.HelmApplyResponse。
+  rpc UninstallHelmRelease(UninstallHelmReleaseRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster/{cluster_id}/helm-release:uninstall"
+      body: "*"
+    };
+    option (system.v1.title) = "卸载 Helm Release";
+  }
+  // ListNamespaceQuotas 命名空间的配额用量。响应：k8scontract.NamespaceQuotaResponse。
+  rpc ListNamespaceQuotas(ListNamespaceQuotasRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {get: "/api/v1/k8s/cluster/{cluster_id}/namespace-quota"};
+    option (system.v1.title) = "查询命名空间配额用量";
+  }
+}
+
+// HelmRepoSpec Helm 仓库的可编辑内容（新建与编辑共用）。
+message HelmRepoSpec {
+  // name 名称，1-64 字符，全局唯一。
+  string name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // type 类型：1=HTTP 仓库 2=OCI 仓库。
+  int32 type = 2 [(buf.validate.field).int32 = {
+    in: [
+      1,
+      2
+    ]
+  }];
+  // url 仓库地址：https:// 、http://（不可带凭据）或 oci://。
+  string url = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 512
+  }];
+  // username 用户名，可选。
+  string username = 4 [(buf.validate.field).string.max_len = 128];
+  // ca_cert CA 证书（PEM），可选。
+  string ca_cert = 5 [(buf.validate.field).string.max_len = 65536];
+  // insecure_skip_verify 跳过 TLS 证书校验。
+  bool insecure_skip_verify = 6;
+  // description 说明，可选。
+  string description = 7 [(buf.validate.field).string.max_len = 255];
+  // enabled 是否启用。
+  bool enabled = 8;
+}
+
+// HelmRepo Helm 仓库。
+message HelmRepo {
+  // id 仓库唯一标识。
+  string id = 1;
+  // spec 仓库内容。
+  HelmRepoSpec spec = 2;
+  // has_secret 是否已保存密码 / 令牌。
+  bool has_secret = 3;
+  // version 乐观锁版本号，编辑时原样传回。
+  int32 version = 4;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 5;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 6;
+}
+
+// ListHelmReposRequest 分页查询 Helm 仓库请求。
+message ListHelmReposRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // keyword 名称 / 地址模糊匹配，可选。
+  optional string keyword = 3 [(buf.validate.field).string.max_len = 64];
+}
+
+// ListHelmReposResponse 分页查询 Helm 仓库响应。
+message ListHelmReposResponse {
+  // items 当前页数据。
+  repeated HelmRepo items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// CreateHelmRepoRequest 新建 Helm 仓库请求。
+message CreateHelmRepoRequest {
+  // spec 仓库内容。
+  HelmRepoSpec spec = 1 [(buf.validate.field).required = true];
+  // secret 密码或令牌，可选。
+  optional string secret = 2 [(buf.validate.field).string.max_len = 16384];
+}
+
+// CreateHelmRepoResponse 新建 Helm 仓库响应。
+message CreateHelmRepoResponse {
+  // repo 新建的仓库。
+  HelmRepo repo = 1;
+}
+
+// UpdateHelmRepoRequest 编辑 Helm 仓库请求。
+message UpdateHelmRepoRequest {
+  // id 仓库唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // spec 仓库内容，整体替换。
+  HelmRepoSpec spec = 2 [(buf.validate.field).required = true];
+  // secret 密码或令牌；不传 = 沿用已保存的，传空串 = 清除。
+  optional string secret = 3 [(buf.validate.field).string.max_len = 16384];
+  // version 乐观锁版本号，须与当前一致。
+  int32 version = 4 [(buf.validate.field).int32.gte = 1];
+}
+
+// UpdateHelmRepoResponse 编辑 Helm 仓库响应。
+message UpdateHelmRepoResponse {
+  // repo 更新后的仓库。
+  HelmRepo repo = 1;
+}
+
+// DeleteHelmRepoRequest 删除 Helm 仓库请求。
+message DeleteHelmRepoRequest {
+  // id 仓库唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteHelmRepoResponse 删除 Helm 仓库响应。
+message DeleteHelmRepoResponse {}
+
+// ListHelmRepoOptionsRequest 查询可用 Helm 仓库请求。
+message ListHelmRepoOptionsRequest {}
+
+// HelmRepoOption 可用仓库的一项。
+message HelmRepoOption {
+  // id 仓库唯一标识。
+  string id = 1;
+  // name 名称。
+  string name = 2;
+  // type 类型：1=HTTP 仓库 2=OCI 仓库。
+  int32 type = 3;
+  // url 仓库地址。
+  string url = 4;
+}
+
+// ListHelmRepoOptionsResponse 查询可用 Helm 仓库响应。
+message ListHelmRepoOptionsResponse {
+  // items 已启用的仓库，按名称排序。
+  repeated HelmRepoOption items = 1;
+}
+
+// TestHelmRepoRequest 测试 Helm 仓库请求。
+message TestHelmRepoRequest {
+  // id 已保存的仓库；非空且未传 secret 时沿用已保存的凭据。
+  string id = 1 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+  // spec 仓库内容。
+  HelmRepoSpec spec = 2 [(buf.validate.field).required = true];
+  // secret 密码或令牌，可选。
+  optional string secret = 3 [(buf.validate.field).string.max_len = 16384];
+  // chart OCI 仓库用于验证的 Chart 名，可选。
+  string chart = 4 [(buf.validate.field).string.max_len = 254];
+}
+
+// ListHelmChartsRequest 查询 Helm Chart 请求。
+message ListHelmChartsRequest {
+  // repo_id 仓库唯一标识。
+  string repo_id = 1 [(buf.validate.field).string.uuid = true];
+  // keyword 名称 / 说明 / 关键字包含匹配，可选。
+  string keyword = 2 [(buf.validate.field).string.max_len = 64];
+  // chart 只看这一个 Chart（OCI 仓库必填）。
+  string chart = 3 [(buf.validate.field).string.max_len = 254];
+  // refresh 跳过 5 分钟的索引缓存。
+  bool refresh = 4;
+}
+
+// GetHelmChartRequest 查看 Helm Chart 请求。
+message GetHelmChartRequest {
+  // repo_id 仓库唯一标识。
+  string repo_id = 1 [(buf.validate.field).string.uuid = true];
+  // chart Chart 名称。
+  string chart = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 254
+  }];
+  // version Chart 版本。
+  string version = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+}
+
+// ListHelmReleasesRequest 查询 Helm Release 请求。
+message ListHelmReleasesRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // namespace 命名空间；空 = 全部命名空间。
+  string namespace = 2 [(buf.validate.field).string.max_len = 63];
+  // keyword 名称包含匹配，可选。
+  string keyword = 3 [(buf.validate.field).string.max_len = 64];
+}
+
+// GetHelmReleaseRequest 查看 Helm Release 请求。
+message GetHelmReleaseRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // namespace 命名空间。
+  string namespace = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 63
+  }];
+  // name Release 名称。
+  string name = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 53
+  }];
+}
+
+// PreviewHelmReleaseRequest 预检 Helm 安装或升级请求。
+message PreviewHelmReleaseRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // namespace 命名空间。
+  string namespace = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 63
+  }];
+  // name Release 名称。
+  string name = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 53
+  }];
+  // repo_id Helm 仓库。
+  string repo_id = 4 [(buf.validate.field).string.uuid = true];
+  // chart Chart 名称。
+  string chart = 5 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 254
+  }];
+  // version Chart 版本。
+  string version = 6 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+  // values 用户提供的 values（YAML），可选。
+  string values = 7 [(buf.validate.field).string.max_len = 524288];
+  // upgrade true = 按升级预检（与当前 Release 对比）。
+  bool upgrade = 8;
+}
+
+// InstallHelmReleaseRequest 安装 Helm Release 请求。
+message InstallHelmReleaseRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // namespace 命名空间。
+  string namespace = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 63
+  }];
+  // name Release 名称。
+  string name = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 53
+  }];
+  // repo_id Helm 仓库。
+  string repo_id = 4 [(buf.validate.field).string.uuid = true];
+  // chart Chart 名称。
+  string chart = 5 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 254
+  }];
+  // version Chart 版本。
+  string version = 6 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+  // values 用户提供的 values（YAML），可选。
+  string values = 7 [(buf.validate.field).string.max_len = 524288];
+}
+
+// UpgradeHelmReleaseRequest 升级 Helm Release 请求。
+message UpgradeHelmReleaseRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // namespace 命名空间。
+  string namespace = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 63
+  }];
+  // name Release 名称。
+  string name = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 53
+  }];
+  // repo_id Helm 仓库。
+  string repo_id = 4 [(buf.validate.field).string.uuid = true];
+  // chart Chart 名称。
+  string chart = 5 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 254
+  }];
+  // version Chart 版本。
+  string version = 6 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+  // values 用户提供的 values（YAML），可选。
+  string values = 7 [(buf.validate.field).string.max_len = 524288];
+}
+
+// RollbackHelmReleaseRequest 回滚 Helm Release 请求。
+message RollbackHelmReleaseRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // namespace 命名空间。
+  string namespace = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 63
+  }];
+  // name Release 名称。
+  string name = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 53
+  }];
+  // revision 目标版本号。
+  int32 revision = 4 [(buf.validate.field).int32.gte = 1];
+}
+
+// UninstallHelmReleaseRequest 卸载 Helm Release 请求。
+message UninstallHelmReleaseRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // namespace 命名空间。
+  string namespace = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 63
+  }];
+  // name Release 名称。
+  string name = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 53
+  }];
+}
+
+// ListNamespaceQuotasRequest 查询命名空间配额用量请求。
+message ListNamespaceQuotasRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // namespace 命名空间；空 = 可见的全部命名空间。
+  string namespace = 2 [(buf.validate.field).string.max_len = 63];
+}

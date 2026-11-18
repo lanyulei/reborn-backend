@@ -1,0 +1,227 @@
+syntax = "proto3";
+
+package monitor.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/monitor/v1;v1";
+
+// MonitorRuleGroupService 告警规则分组与角色数据范围。分组是一棵树（至多 5 层、总数至多 500），
+// 是规则的归属，也是数据范围的授权单位：把某分组授权给角色（只读 / 可管理）即包含其全部下级；
+// 用户的有效范围是其全部启用角色的并集，超级管理员不受限，没有任何授权的用户看不到任何分组。
+service MonitorRuleGroupService {
+  // ListRuleGroups 查询当前用户可见的全部规则分组（平铺返回，按 parent_id 组装成树），
+  // 带当前用户对每个分组的级别。
+  rpc ListRuleGroups(ListRuleGroupsRequest) returns (ListRuleGroupsResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/rule-group"};
+    option (system.v1.title) = "查询规则分组";
+  }
+  // CreateRuleGroup 新建分组。新建下级分组要求对上级分组「可管理」；新建顶级分组仅超级管理员。
+  rpc CreateRuleGroup(CreateRuleGroupRequest) returns (CreateRuleGroupResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/monitor/rule-group"
+      body: "*"
+    };
+    option (system.v1.title) = "新建规则分组";
+  }
+  // UpdateRuleGroup 修改分组名称、说明与排序（不能更换上级）。
+  rpc UpdateRuleGroup(UpdateRuleGroupRequest) returns (UpdateRuleGroupResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/monitor/rule-group/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "编辑规则分组";
+  }
+  // DeleteRuleGroup 删除分组；仍有下级分组或规则、或仍被屏蔽规则 / 订阅规则引用时拒绝
+  // （409 MONITOR_GROUP_IN_USE；后一种情形 metadata 带 mute_count / subscription_count）。
+  rpc DeleteRuleGroup(DeleteRuleGroupRequest) returns (DeleteRuleGroupResponse) {
+    option (google.api.http) = {delete: "/api/v1/monitor/rule-group/{id}"};
+    option (system.v1.title) = "删除规则分组";
+  }
+  // ListGroupRoleScopes 查询某分组上直接授权的角色（不含从上级分组继承的授权）。
+  rpc ListGroupRoleScopes(ListGroupRoleScopesRequest) returns (ListGroupRoleScopesResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/role-scope"};
+    option (system.v1.title) = "查询分组角色授权";
+  }
+  // SetGroupRoleScopes 整组替换某分组的角色授权（未出现在请求里的角色被取消授权）；仅超级管理员。
+  rpc SetGroupRoleScopes(SetGroupRoleScopesRequest) returns (SetGroupRoleScopesResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/monitor/role-scope"
+      body: "*"
+    };
+    option (system.v1.title) = "设置分组角色授权";
+  }
+}
+
+// RuleGroup 规则分组。
+message RuleGroup {
+  // id 分组唯一标识。
+  string id = 1;
+  // parent_id 上级分组；顶级分组为空。
+  string parent_id = 2;
+  // name 名称，同一上级下唯一。
+  string name = 3;
+  // full_name 含全部上级的完整名称，以 " / " 分隔，如「基础设施 / 主机」。
+  string full_name = 4;
+  // description 说明。
+  string description = 5;
+  // sort 同级排序，升序。
+  int32 sort = 6;
+  // depth 层级，顶级分组为 1。
+  int32 depth = 7;
+  // level 当前用户对本分组的级别：0=无权限 1=只读 2=可管理。为保持树形完整，可见分组的上级分组
+  // 即使不在用户范围内也会返回，此时为 0（只用于展示层级，不能查看其下的规则与告警）。
+  int32 level = 8;
+  // rule_count 直接属于本分组的规则数（不含下级分组）。
+  int32 rule_count = 9;
+  // child_count 直接下级分组数。
+  int32 child_count = 10;
+  // builtin 是否系统内置的缺省分组。
+  bool builtin = 11;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 12;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 13;
+}
+
+// ListRuleGroupsRequest 查询规则分组请求。
+message ListRuleGroupsRequest {}
+
+// ListRuleGroupsResponse 查询规则分组响应。
+message ListRuleGroupsResponse {
+  // items 全部可见分组，上级在前，同级按 sort、名称排序。
+  repeated RuleGroup items = 1;
+  // is_admin 当前用户是否超级管理员（可新建顶级分组、设置角色授权）。
+  bool is_admin = 2;
+}
+
+// CreateRuleGroupRequest 新建规则分组请求。
+message CreateRuleGroupRequest {
+  // parent_id 上级分组，可选；不传为顶级分组（仅超级管理员）。
+  optional string parent_id = 1 [(buf.validate.field).string.uuid = true];
+  // name 名称，1-64 字符，同一上级下唯一。
+  string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // description 说明，可选。
+  string description = 3 [(buf.validate.field).string.max_len = 255];
+  // sort 同级排序，升序，0-9999。
+  int32 sort = 4 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 9999
+  }];
+}
+
+// CreateRuleGroupResponse 新建规则分组响应。
+message CreateRuleGroupResponse {
+  // group 新建的分组。
+  RuleGroup group = 1;
+}
+
+// UpdateRuleGroupRequest 编辑规则分组请求。
+message UpdateRuleGroupRequest {
+  // id 分组唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // name 名称，1-64 字符，同一上级下唯一。
+  string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // description 说明。
+  string description = 3 [(buf.validate.field).string.max_len = 255];
+  // sort 同级排序，升序，0-9999。
+  int32 sort = 4 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 9999
+  }];
+}
+
+// UpdateRuleGroupResponse 编辑规则分组响应。
+message UpdateRuleGroupResponse {
+  // group 更新后的分组。
+  RuleGroup group = 1;
+}
+
+// DeleteRuleGroupRequest 删除规则分组请求。
+message DeleteRuleGroupRequest {
+  // id 分组唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteRuleGroupResponse 删除规则分组响应。
+message DeleteRuleGroupResponse {}
+
+// GroupRoleScope 一个角色对某分组的授权。
+message GroupRoleScope {
+  // role_id 角色唯一标识。
+  string role_id = 1;
+  // role_name 角色名称。
+  string role_name = 2;
+  // role_enabled 角色是否启用；停用的角色不产生数据范围。
+  bool role_enabled = 3;
+  // level 授权级别：1=只读 2=可管理。
+  int32 level = 4;
+  // update_user_name 最近授权人显示名。
+  string update_user_name = 5;
+  // update_time 最近授权时间。
+  google.protobuf.Timestamp update_time = 6;
+}
+
+// ListGroupRoleScopesRequest 查询分组角色授权请求。
+message ListGroupRoleScopesRequest {
+  // group_id 分组唯一标识。
+  string group_id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// ListGroupRoleScopesResponse 查询分组角色授权响应。
+message ListGroupRoleScopesResponse {
+  // items 直接授权在该分组上的角色。
+  repeated GroupRoleScope items = 1;
+  // inherited 从上级分组继承来的授权（只读展示，须到来源分组上修改）。
+  repeated InheritedGroupRoleScope inherited = 2;
+}
+
+// InheritedGroupRoleScope 从上级分组继承来的授权。
+message InheritedGroupRoleScope {
+  // role_id 角色唯一标识。
+  string role_id = 1;
+  // role_name 角色名称。
+  string role_name = 2;
+  // level 授权级别：1=只读 2=可管理。
+  int32 level = 3;
+  // group_id 授权所在的上级分组。
+  string group_id = 4;
+  // group_name 授权所在的上级分组名称。
+  string group_name = 5;
+}
+
+// GroupRoleScopeItem 待设置的一条角色授权。
+message GroupRoleScopeItem {
+  // role_id 角色唯一标识。
+  string role_id = 1 [(buf.validate.field).string.uuid = true];
+  // level 授权级别：1=只读 2=可管理。
+  int32 level = 2 [(buf.validate.field).int32 = {
+    in: [
+      1,
+      2
+    ]
+  }];
+}
+
+// SetGroupRoleScopesRequest 设置分组角色授权请求。
+message SetGroupRoleScopesRequest {
+  // group_id 分组唯一标识。
+  string group_id = 1 [(buf.validate.field).string.uuid = true];
+  // items 该分组的全部角色授权，至多 200 条，角色不得重复；传空数组即清空授权。
+  repeated GroupRoleScopeItem items = 2 [(buf.validate.field).repeated.max_items = 200];
+}
+
+// SetGroupRoleScopesResponse 设置分组角色授权响应。
+message SetGroupRoleScopesResponse {
+  // items 设置后直接授权在该分组上的角色。
+  repeated GroupRoleScope items = 1;
+}

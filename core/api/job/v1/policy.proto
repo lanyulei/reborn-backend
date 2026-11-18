@@ -1,0 +1,243 @@
+syntax = "proto3";
+
+package job.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/job/v1;v1";
+
+// JobPolicyService 安全策略：高危命令规则与全局策略。
+//
+// 高危命令规则对快速执行的命令与脚本内容做正则匹配（RE2 语法），命中后的动作：
+// 1=拦截（不允许提交） 2=须审批 3=仅提醒。作业模板的 Playbook 存放在 Git 仓库里，不在匹配范围内，
+// 由模板的「须审批」开关与受保护环境管控。
+// 审批复用流程引擎：需要审批的执行先进入「待审批」，同时按全局策略里配置的流程发起一个审批流程实例，
+// 流程通过后进入排队，被驳回 / 撤回 / 终止则标记为「审批未通过」。
+service JobPolicyService {
+  // ListJobRiskRules 查询全部高危命令规则。
+  rpc ListJobRiskRules(ListJobRiskRulesRequest) returns (ListJobRiskRulesResponse) {
+    option (google.api.http) = {get: "/api/v1/job/risk-rule"};
+    option (system.v1.title) = "查询高危命令规则";
+  }
+  // CreateJobRiskRule 新建高危命令规则；正则无法编译返回 400 JOB_RISK_RULE_INVALID。
+  rpc CreateJobRiskRule(CreateJobRiskRuleRequest) returns (CreateJobRiskRuleResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/job/risk-rule"
+      body: "*"
+    };
+    option (system.v1.title) = "新建高危命令规则";
+  }
+  // UpdateJobRiskRule 编辑高危命令规则（整体替换）。version 不一致返回 409 JOB_VERSION_CONFLICT。
+  rpc UpdateJobRiskRule(UpdateJobRiskRuleRequest) returns (UpdateJobRiskRuleResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/job/risk-rule/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "编辑高危命令规则";
+  }
+  // DeleteJobRiskRule 删除高危命令规则。
+  rpc DeleteJobRiskRule(DeleteJobRiskRuleRequest) returns (DeleteJobRiskRuleResponse) {
+    option (google.api.http) = {delete: "/api/v1/job/risk-rule/{id}"};
+    option (system.v1.title) = "删除高危命令规则";
+  }
+  // TestJobRiskRules 用一段命令 / 脚本内容试匹配全部启用的规则（可附带一条尚未保存的规则），
+  // 返回命中的规则；不落库。
+  rpc TestJobRiskRules(TestJobRiskRulesRequest) returns (TestJobRiskRulesResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/job/risk-rule:test"
+      body: "*"
+    };
+    option (system.v1.title) = "测试高危命令规则";
+  }
+  // GetJobPolicy 查询全局策略。
+  rpc GetJobPolicy(GetJobPolicyRequest) returns (GetJobPolicyResponse) {
+    option (google.api.http) = {get: "/api/v1/job/policy"};
+    option (system.v1.title) = "查询作业全局策略";
+  }
+  // UpdateJobPolicy 更新全局策略。审批流程标识不存在或当前不可发起返回 400 JOB_POLICY_INVALID。
+  rpc UpdateJobPolicy(UpdateJobPolicyRequest) returns (UpdateJobPolicyResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/job/policy"
+      body: "*"
+    };
+    option (system.v1.title) = "更新作业全局策略";
+  }
+}
+
+// JobRiskRuleSpec 高危命令规则的可编辑内容（新建与编辑共用）。
+message JobRiskRuleSpec {
+  // name 名称，1-64 字符，全局唯一。
+  string name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // pattern 正则表达式（RE2 语法），在命令 / 脚本内容里查找，1-512 字符。
+  string pattern = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 512
+  }];
+  // action 命中后的动作：1=拦截 2=须审批 3=仅提醒。
+  int32 action = 3 [(buf.validate.field).int32 = {
+    in: [
+      1,
+      2,
+      3
+    ]
+  }];
+  // enabled 是否启用。
+  bool enabled = 4;
+  // description 说明，可选；命中时展示给执行人与审批人。
+  string description = 5 [(buf.validate.field).string.max_len = 255];
+}
+
+// JobRiskRule 高危命令规则。
+message JobRiskRule {
+  // id 规则唯一标识。
+  string id = 1;
+  // spec 规则内容。
+  JobRiskRuleSpec spec = 2;
+  // version 乐观锁版本号，编辑时原样传回。
+  int32 version = 3;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 4;
+  // update_user_name 最近更新人显示名。
+  string update_user_name = 5;
+}
+
+// JobRiskHit 命中的一条高危命令规则。
+message JobRiskHit {
+  // rule_id 规则 ID；试匹配尚未保存的规则时为空。
+  string rule_id = 1;
+  // name 规则名称。
+  string name = 2;
+  // action 动作：1=拦截 2=须审批 3=仅提醒。
+  int32 action = 3;
+  // description 规则说明。
+  string description = 4;
+  // match 命中的片段（至多 120 字符）。
+  string match = 5;
+}
+
+// ListJobRiskRulesRequest 查询高危命令规则请求。
+message ListJobRiskRulesRequest {}
+
+// ListJobRiskRulesResponse 查询高危命令规则响应。
+message ListJobRiskRulesResponse {
+  // items 全部规则，按动作（拦截在前）与名称排序，至多 200 条。
+  repeated JobRiskRule items = 1;
+}
+
+// CreateJobRiskRuleRequest 新建高危命令规则请求。
+message CreateJobRiskRuleRequest {
+  // spec 规则内容。
+  JobRiskRuleSpec spec = 1 [(buf.validate.field).required = true];
+}
+
+// CreateJobRiskRuleResponse 新建高危命令规则响应。
+message CreateJobRiskRuleResponse {
+  // rule 新建的规则。
+  JobRiskRule rule = 1;
+}
+
+// UpdateJobRiskRuleRequest 编辑高危命令规则请求。
+message UpdateJobRiskRuleRequest {
+  // id 规则唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // spec 规则内容，整体替换。
+  JobRiskRuleSpec spec = 2 [(buf.validate.field).required = true];
+  // version 乐观锁版本号，须与当前一致。
+  int32 version = 3 [(buf.validate.field).int32.gte = 1];
+}
+
+// UpdateJobRiskRuleResponse 编辑高危命令规则响应。
+message UpdateJobRiskRuleResponse {
+  // rule 更新后的规则。
+  JobRiskRule rule = 1;
+}
+
+// DeleteJobRiskRuleRequest 删除高危命令规则请求。
+message DeleteJobRiskRuleRequest {
+  // id 规则唯一标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteJobRiskRuleResponse 删除高危命令规则响应。
+message DeleteJobRiskRuleResponse {}
+
+// TestJobRiskRulesRequest 测试高危命令规则请求。
+message TestJobRiskRulesRequest {
+  // content 要试匹配的命令或脚本内容，至多 256KB。
+  string content = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_bytes: 262144
+  }];
+  // draft 一条尚未保存的规则，可选：给出时只用它匹配（规则编辑表单里的「测试」）。
+  JobRiskRuleSpec draft = 2;
+}
+
+// TestJobRiskRulesResponse 测试高危命令规则响应。
+message TestJobRiskRulesResponse {
+  // hits 命中的规则，拦截在前。
+  repeated JobRiskHit hits = 1;
+}
+
+// JobPolicy 作业中心全局策略。
+message JobPolicy {
+  // protected_envs 受保护环境（CMDB 资源的环境取值，如 prod），至多 20 个：目标主机里有这些环境的主机时
+  // 须审批（预检模式除外）。
+  repeated string protected_envs = 1 [(buf.validate.field).repeated = {
+    max_items: 20
+    unique: true
+    items: {
+      string: {
+        min_len: 1
+        max_len: 64
+      }
+    }
+  }];
+  // approval_workflow_key 审批所用的流程定义标识；空表示未配置，此时需要审批的提交一律被拒绝
+  // （409 JOB_APPROVAL_UNAVAILABLE）。流程里可用的变量：kind（作业类型 1-4）、name、host_count、
+  // envs（主机环境列表）、reason（需要审批的原因）、check（是否预检）、trigger（触发来源 1-4）。
+  string approval_workflow_key = 2 [(buf.validate.field).string = {pattern: "^([a-z][a-z0-9_-]{1,63})?$"}];
+  // adhoc_approval 快速执行是否一律须审批。
+  bool adhoc_approval = 3;
+  // max_hosts 单条执行的主机数上限，1-500；0 表示取系统上限 500。
+  int32 max_hosts = 4 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 500
+  }];
+  // version 乐观锁版本号，更新时原样传回。
+  int32 version = 5;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 6;
+  // update_user_name 最近更新人显示名。
+  string update_user_name = 7;
+  // approval_workflow_name 审批流程的名称；未配置或流程已不存在时为空。
+  string approval_workflow_name = 8;
+  // approval_workflow_ready 审批流程当前是否可发起（已启用且已发布）。
+  bool approval_workflow_ready = 9;
+}
+
+// GetJobPolicyRequest 查询全局策略请求。
+message GetJobPolicyRequest {}
+
+// GetJobPolicyResponse 查询全局策略响应。
+message GetJobPolicyResponse {
+  // policy 全局策略。
+  JobPolicy policy = 1;
+}
+
+// UpdateJobPolicyRequest 更新全局策略请求。
+message UpdateJobPolicyRequest {
+  // policy 全局策略，整体替换；其中 version 须与当前一致（只读字段忽略）。
+  JobPolicy policy = 1 [(buf.validate.field).required = true];
+}
+
+// UpdateJobPolicyResponse 更新全局策略响应。
+message UpdateJobPolicyResponse {
+  // policy 更新后的全局策略。
+  JobPolicy policy = 1;
+}

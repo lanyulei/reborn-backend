@@ -1,0 +1,43 @@
+# 容器平台数据面（backend/k8s）配置。敏感项只走环境变量（KRATOS_ 前缀），不写进文件：
+#   export KRATOS_DATA_DATABASE_SOURCE='<DSN>'
+#   export KRATOS_PLANE_INTERNAL_KEY='<与 core 的 k8s.internal_key 相同，至少 32 字节>'
+#   export KRATOS_NOTIFY_MASTER_KEY='<与 core 相同的加密主密钥>'
+server:
+  http:
+    addr: 0.0.0.0:8060
+    timeout: 30s
+    # core 访问本实例的地址；多实例部署时每个实例填自己的可达地址。空 = http://<主机名>:<监听端口>
+    advertise_addr: ${SERVER_HTTP_ADVERTISE_ADDR:}
+  tunnel:
+    addr: 0.0.0.0:8061
+    cert_file: ""
+    key_file: ""
+    # 隧道入口前面有负载均衡 / TLS 终结时，填它们的网段（CIDR），按 X-Forwarded-For 的最后一跳识别来源
+    trusted_proxies: []
+data:
+  database:
+    source: ${DATA_DATABASE_SOURCE:}
+    max_conns: 16
+    min_conns: 2
+    max_conn_idle_time: 1800s
+plane:
+  internal_key: ${PLANE_INTERNAL_KEY:}
+  lease: 30s
+  probe_interval: 30s
+  max_clusters: 0
+  memory_limit_mb: 0
+  cache_idle: 900s
+  cache_sync_timeout: 30s
+  audit_retention: 15552000s    # 180d；0s = 永久保留
+  qps: 50
+  burst: 100
+  # 调试容器的镜像允许清单（第一个为缺省）；空 = 只允许 docker.io/library/busybox:1.36
+  debug_images: []
+  max_file_mb: 100              # 容器文件传输的单次大小上限
+  exec_record_disabled: false   # 终端录制（只录输出）；true = 关闭
+  exec_record_max_mb: 8         # 单个会话录制的输出上限
+  inspection_interval: 86400s   # 定时巡检间隔
+  inspection_disabled: false    # true = 只保留手动触发
+notify:
+  master:
+    key: ${NOTIFY_MASTER_KEY:}

@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/lanyulei/reborn/backend/kit/idgen"
 )
 
 // 字段数据类型。
@@ -76,9 +78,6 @@ func ValidFormat(format string) bool {
 	_, ok := formatPatterns[format]
 	return format == "" || ok
 }
-
-// uuidText UUID 的文本形式（不区分大小写）。
-var uuidText = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 // Rule 字段校验规则；nil 表示不约束。json 标签为持久化契约（jsonb）。
 type Rule struct {
@@ -224,7 +223,7 @@ func normalizeValue(f *Field, raw any) (any, error) {
 		out := make([]any, 0, len(items))
 		for _, item := range items {
 			s, ok := item.(string)
-			if !ok || !uuidText.MatchString(s) {
+			if !ok || !idgen.IsUUIDFold(s) {
 				return nil, bad("must be a list of file ids")
 			}
 			if s = strings.ToLower(s); !slices.Contains(out, any(s)) {
@@ -295,7 +294,7 @@ func normalizeValue(f *Field, raw any) (any, error) {
 		if s == "" {
 			return s, nil // 空串 = 未填（必填由调用方的必填判定拦截）
 		}
-		if !uuidText.MatchString(s) {
+		if !idgen.IsUUIDFold(s) {
 			return nil, bad("must be a valid id")
 		}
 		return strings.ToLower(s), nil

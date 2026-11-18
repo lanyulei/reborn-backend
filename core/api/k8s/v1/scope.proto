@@ -1,0 +1,72 @@
+syntax = "proto3";
+
+package k8s.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/k8s/v1;v1";
+
+// K8sScopeService 角色数据范围：角色在哪些集群的哪些命名空间有什么档位。保存后由数据面同步为
+// 集群内的 RoleBinding / ClusterRoleBinding（约 10 秒内生效），权限由集群判定。
+service K8sScopeService {
+  // GetRoleScope 读取某个角色的数据范围。
+  rpc GetRoleScope(GetRoleScopeRequest) returns (GetRoleScopeResponse) {
+    option (google.api.http) = {get: "/api/v1/k8s/role-scope"};
+    option (system.v1.title) = "查看容器平台数据范围";
+  }
+  // ReplaceRoleScope 整组替换某个角色的数据范围。
+  rpc ReplaceRoleScope(ReplaceRoleScopeRequest) returns (ReplaceRoleScopeResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/k8s/role-scope"
+      body: "*"
+    };
+    option (system.v1.title) = "配置容器平台数据范围";
+  }
+}
+
+// RoleScopeItem 一条数据范围。
+message RoleScopeItem {
+  // cluster_id 集群。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // cluster_name 集群名称（只读）。
+  string cluster_name = 2;
+  // namespace 命名空间；* 表示全部命名空间。
+  string namespace = 3 [(buf.validate.field).string.pattern = "^(\\*|[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)$"];
+  // level 档位：1=只读 2=开发 3=命名空间管理员 4=集群管理员（仅可用于全部命名空间）。
+  int32 level = 4 [(buf.validate.field).int32 = {
+    in: [
+      1,
+      2,
+      3,
+      4
+    ]
+  }];
+}
+
+// GetRoleScopeRequest 读取角色数据范围请求。
+message GetRoleScopeRequest {
+  // role_id 角色。
+  string role_id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetRoleScopeResponse 读取角色数据范围响应。
+message GetRoleScopeResponse {
+  // items 数据范围，按集群名称、命名空间排序。
+  repeated RoleScopeItem items = 1;
+}
+
+// ReplaceRoleScopeRequest 替换角色数据范围请求。
+message ReplaceRoleScopeRequest {
+  // role_id 角色。
+  string role_id = 1 [(buf.validate.field).string.uuid = true];
+  // items 新的数据范围（整组替换，至多 500 条）；空 = 清空。
+  repeated RoleScopeItem items = 2 [(buf.validate.field).repeated.max_items = 500];
+}
+
+// ReplaceRoleScopeResponse 替换角色数据范围响应。
+message ReplaceRoleScopeResponse {
+  // items 保存后的数据范围。
+  repeated RoleScopeItem items = 1;
+}

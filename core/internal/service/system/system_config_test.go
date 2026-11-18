@@ -95,12 +95,12 @@ func TestSystemConfigService_UploadThenGetLogo(t *testing.T) {
 	svc, _ := newSystemConfigService(t)
 
 	resp, err := svc.UploadSystemLogo(logoCtx(), &v1.UploadSystemLogoRequest{
-		Data: []byte("\x89PNG-fake-1"), Mime: "image/png",
+		Data: []byte("\x89PNG\r\n\x1a\nfake-1"), Mime: "image/png",
 	})
 	if err != nil {
 		t.Fatalf("UploadSystemLogo() error = %v", err)
 	}
-	if url := resp.GetUrl(); url != "/api/v1/system/config/logo?v="+biz.LogoVersion([]byte("\x89PNG-fake-1")) {
+	if url := resp.GetUrl(); url != "/api/v1/system/config/logo?v="+biz.LogoVersion([]byte("\x89PNG\r\n\x1a\nfake-1")) {
 		t.Fatalf("UploadSystemLogo() url = %q, want fingerprinted path", url)
 	}
 
@@ -108,7 +108,7 @@ func TestSystemConfigService_UploadThenGetLogo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSystemLogo() error = %v", err)
 	}
-	if body.GetContentType() != "image/png" || string(body.GetData()) != "\x89PNG-fake-1" {
+	if body.GetContentType() != "image/png" || string(body.GetData()) != "\x89PNG\r\n\x1a\nfake-1" {
 		t.Fatalf("GetSystemLogo() = (%q, %q), want roundtrip", body.GetContentType(), body.GetData())
 	}
 
@@ -143,6 +143,26 @@ func TestSystemConfigService_UploadLogoNeedsUser(t *testing.T) {
 	}
 }
 
+// 类型按内容判定，不看声明：声明成 PNG 的 HTML 被拒；声明错了的真图片按实际类型保存。
+func TestSystemConfigService_LogoTypeByContent(t *testing.T) {
+	t.Parallel()
+	svc, _ := newSystemConfigService(t)
+	for name, data := range map[string]string{"html": "<html><script>alert(1)</script></html>", "text": "not an image", "pdf": "%PDF-1.7\n"} {
+		if _, err := svc.UploadSystemLogo(logoCtx(), &v1.UploadSystemLogoRequest{Data: []byte(data), Mime: "image/png"}); !errors.Is(err, biz.ErrImageTypeInvalid) {
+			t.Errorf("UploadSystemLogo(%s as png) error = %v, want ErrImageTypeInvalid", name, err)
+		}
+	}
+	if _, err := svc.GetSystemLogo(context.Background(), &v1.GetSystemLogoRequest{}); !errors.Is(err, v1.ErrorLogoNotFound("")) {
+		t.Fatalf("rejected uploads must not be stored: %v", err)
+	}
+	if _, err := svc.UploadSystemLogo(logoCtx(), &v1.UploadSystemLogoRequest{Data: []byte("\xff\xd8\xff\xe0jpeg-bytes"), Mime: "image/png"}); err != nil {
+		t.Fatalf("UploadSystemLogo(jpeg declared as png) error = %v", err)
+	}
+	if body, err := svc.GetSystemLogo(context.Background(), &v1.GetSystemLogoRequest{}); err != nil || body.GetContentType() != "image/jpeg" {
+		t.Fatalf("GetSystemLogo() type = %q, %v; want the detected image/jpeg", body.GetContentType(), err)
+	}
+}
+
 // 改用对象存储之前上传的 logo（旧位置上的文件）：照常读到，并在首次读取时导入；之后的上传
 // 以新文件为准，旧位置上的文件不再生效。
 func TestSystemConfigService_LegacyLogo(t *testing.T) {
@@ -160,10 +180,10 @@ func TestSystemConfigService_LegacyLogo(t *testing.T) {
 	if body, err := svc.GetSystemLogo(context.Background(), &v1.GetSystemLogoRequest{}); err != nil || string(body.GetData()) != "<svg>old</svg>" {
 		t.Fatalf("GetSystemLogo(after import) = %q, %v; want the imported copy", body.GetData(), err)
 	}
-	if _, err := svc.UploadSystemLogo(logoCtx(), &v1.UploadSystemLogoRequest{Data: []byte("\x89PNG-new"), Mime: "image/png"}); err != nil {
+	if _, err := svc.UploadSystemLogo(logoCtx(), &v1.UploadSystemLogoRequest{Data: []byte("\x89PNG\r\n\x1a\nnew"), Mime: "image/png"}); err != nil {
 		t.Fatalf("UploadSystemLogo() error = %v", err)
 	}
-	if body, err := svc.GetSystemLogo(context.Background(), &v1.GetSystemLogoRequest{}); err != nil || body.GetContentType() != "image/png" || string(body.GetData()) != "\x89PNG-new" {
+	if body, err := svc.GetSystemLogo(context.Background(), &v1.GetSystemLogoRequest{}); err != nil || body.GetContentType() != "image/png" || string(body.GetData()) != "\x89PNG\r\n\x1a\nnew" {
 		t.Fatalf("GetSystemLogo(after upload) = (%q, %q), %v", body.GetContentType(), body.GetData(), err)
 	}
 }

@@ -1,0 +1,87 @@
+# golangci-lint v2 配置：默认规则集（errcheck/govet/ineffassign/staticcheck/unused）
+# 叠加安全与拼写检查；格式化统一走 gofumpt。
+# 分层契约（../notify/AGENTS.md §1）由 depguard 在构建期强制：依赖方向为
+# server → service / worker → biz ← data（biz 定义仓储与集群访问接口，data 实现）；
+# client-go 只允许在 internal/data 之下 import。
+version: "2"
+
+formatters:
+  enable:
+    - gofumpt
+
+linters:
+  enable:
+    - gosec
+    - misspell
+    - copyloopvar
+    - nolintlint
+    - depguard
+  settings:
+    depguard:
+      rules:
+        # biz 是业务核心：禁止 import 任何外层与驱动（依赖倒置——biz 定义
+        # Repo 接口，data 实现）。
+        biz:
+          files:
+            - "**/internal/biz/**"
+          deny:
+            - pkg: "github.com/lanyulei/reborn/backend/k8s/internal/data"
+              desc: "biz 禁止 import data：仓储接口在 biz 定义，实现在 data 绑定"
+            - pkg: "github.com/lanyulei/reborn/backend/k8s/internal/worker"
+              desc: "biz 禁止 import worker：依赖方向只允许 worker → biz"
+            - pkg: "github.com/lanyulei/reborn/backend/k8s/internal/server"
+              desc: "biz 禁止 import server：传输装配层在最外层"
+            - pkg: "github.com/lanyulei/reborn/backend/k8s/internal/service"
+              desc: "biz 禁止 import service：依赖方向只允许 service → biz"
+            - pkg: "github.com/go-kratos/kratos/v3/transport"
+              desc: "biz 禁止 import 传输层"
+            - pkg: "github.com/jackc/pgx"
+              desc: "biz 禁止 import 数据库驱动：data 是唯一允许驱动的层"
+            - pkg: "github.com/lanyulei/reborn/backend/kit/dbx"
+              desc: "biz 禁止 import kit/dbx（含 pgx）：仅 data 层可用"
+            - pkg: "k8s.io"
+              desc: "biz 禁止 import client-go / apimachinery：集群访问经 data/kube 实现的接口"
+        # data 实现仓储：禁止反向依赖上层。
+        data:
+          files:
+            - "**/internal/data/**"
+          deny:
+            - pkg: "github.com/lanyulei/reborn/backend/k8s/internal/worker"
+              desc: "data 禁止 import worker：依赖方向只允许 worker → biz ← data"
+            - pkg: "github.com/lanyulei/reborn/backend/k8s/internal/server"
+              desc: "data 禁止 import server：传输层与仓储互不感知"
+        # worker 把 biz 用例包成后台循环：不触碰仓储实现与驱动。
+        worker:
+          files:
+            - "**/internal/worker/**"
+          deny:
+            - pkg: "k8s.io"
+              desc: "worker 禁止 import client-go：集群访问经 biz 接口"
+            - pkg: "github.com/lanyulei/reborn/backend/k8s/internal/data"
+              desc: "worker 禁止 import data：经 biz 接口间接消费"
+            - pkg: "github.com/lanyulei/reborn/backend/k8s/internal/server"
+              desc: "worker 禁止 import server：角色门控在 server 装配层"
+            - pkg: "github.com/jackc/pgx"
+              desc: "worker 禁止 import 数据库驱动：data 是唯一允许驱动的层"
+        # service 是内部接口的 HTTP 编排层：不触碰仓储实现与驱动。
+        service:
+          files:
+            - "**/internal/service/**"
+          deny:
+            - pkg: "k8s.io"
+              desc: "service 禁止 import client-go：集群访问经 biz 接口"
+            - pkg: "github.com/lanyulei/reborn/backend/k8s/internal/data"
+              desc: "service 禁止 import data：经 biz 用例间接消费"
+            - pkg: "github.com/jackc/pgx"
+              desc: "service 禁止 import 数据库驱动：data 是唯一允许驱动的层"
+            - pkg: "github.com/lanyulei/reborn/backend/kit/dbx"
+              desc: "service 禁止 import kit/dbx（含 pgx）：仅 data 层可用"
+  exclusions:
+    rules:
+      # 测试要真的起子进程（git、ssh-keygen、假的 ansible-playbook、pgrep、python3）、用 CGI 包一层
+      # git-http-backend 充当测试仓库、并使用写死的假凭据来断言掩码——这几条 gosec 规则在测试文件里
+      # 只会误报。生产代码不豁免：那里的每一处 nolint 都单独写明理由（../notify/AGENTS.md §9）。
+      - path: _test\.go
+        linters:
+          - gosec
+        text: "G101|G204|G304|G504|G702"
