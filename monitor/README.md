@@ -362,7 +362,7 @@ Prometheus 错误结构（`"status":"error"`）时取其中的 `errorType` / `er
 
 ```bash
 # 1. 数据库迁移到 0076 及以后（在 backend/core：go run ./cmd/migrate -conf configs up），并先发布 core
-# 2. DSN 与 core 相同（本地取 backend/core/configs/config.yaml 的 data.database.source）
+# 2. DSN 与 core 相同（本地写在 backend/.env，make run 自动读取；模板见 backend/.env.example）
 export KRATOS_DATA_DATABASE_SOURCE='<DSN>'
 # 3. 可选：数据源带凭据时
 export KRATOS_NOTIFY_MASTER_KEY=<与 core 相同的主密钥>

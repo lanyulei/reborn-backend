@@ -1,17 +1,13 @@
 # CMDB 数据面（采集 / 对账）启动配置；密钥类字段从环境变量注入，禁止在本文件写入明文口令。
+# 数据库连接（data.database）与凭据加密主密钥（notify.master.key）全部服务一致，定义在共享基线
+# kit/bootstrap/shared.yaml，取值由环境变量注入（KRATOS_DATA_DATABASE_SOURCE / KRATOS_NOTIFY_MASTER_KEY，
+# 本地见 backend/.env.example）；这里只写本服务特有的段，以及要偏离基线的值。
+# 生产环境的数据库账号用 cmdb_sync_role 成员（见 core/migrations/0034）。
 server:
   http:
     # 8010 为 core、8020 为通知管道；数据面走 8030，只暴露 /healthz 与 /metrics。
     addr: 0.0.0.0:8030
     timeout: 5s
-data:
-  database:
-    # 与 core 同库；生产环境经 KRATOS_DATA_DATABASE_SOURCE 注入，并使用 cmdb_sync_role
-    # 成员账号（见 core/migrations/0034）。
-    source: "host=127.0.0.1 user=postgres password=ekgGZebuZgCmyzv2WW5V dbname=reborn port=5432 sslmode=disable TimeZone=Asia/Shanghai"
-    max_conns: 16
-    min_conns: 2
-    max_conn_idle_time: 1800s
 sync:
   # roles 为空 = 全部角色（scheduler / worker / webhook）；部署时用 SERVER_ROLES=worker 等覆盖。
   # webhook 角色暴露 POST /webhook/v1/cmdb/sync/{source_id}（令牌头 X-Cmdb-Webhook-Token）。
@@ -31,7 +27,3 @@ sync:
     interval: 3600s
     partitions_ahead: 2
     history_retention: 31536000s  # 365d；0 = 不删除
-notify:
-  master:
-    # 与 core 同一主密钥：export KRATOS_NOTIFY_MASTER_KEY=...
-    key: ${NOTIFY_MASTER_KEY}

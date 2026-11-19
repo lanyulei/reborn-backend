@@ -5,6 +5,10 @@
 
 | 包 | 内容 | 允许 import 的层 |
 |---|---|---|
+| `bootstrap` | 配置加载：内嵌的共享基线 `shared.yaml`（全部服务必须一致的键只写这一处）→ 服务 `configs/` → `KRATOS_` 环境变量 | cmd |
+| `kitconf` | 各服务 `internal/conf/conf.proto` 共用的配置结构（`HTTP` / `Database` / `Master`），源文件 `proto/kitconf/common.proto`，`make gen` 生成；服务侧经符号链接 `<服务>/kitproto → ../kit/proto` 引入 | conf / data / cmd |
+| `roles` | 进程角色解析：`SERVER_ROLES` 优先于配置，空 = 全部角色，未知角色名报错 | server / conf |
+| `keycheck` | 共享密钥一致性核对：core 把主密钥 / 内部签名密钥的指纹登记进 `system_key_check`，其余服务启动时比对，不一致启动失败 | cmd |
 | `httpx` | protojson 编解码、8MiB body 上限（413）、protovalidate 钩子、日志敏感字段掩码、服务器超时加固、slog 日志装配 | server / cmd |
 | `dbx` | pgxpool 构造 + Ping、`WithTx/WithTxOptions`、`LikeContains` 转义、`NilIfEmpty/NilIfEmptyBytes/TextArray`、advisory lock 专用连接 | **仅 data**（含 pgx 依赖，depguard 禁止 biz/service import） |
 | `secretbox` | AES-256-GCM 凭据加密（key = sha256(主密钥)，密文 nonce‖ct）；core 只用 Seal、管道只用 Open——"只写不读"靠调用面约束 | data |

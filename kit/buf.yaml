@@ -1,0 +1,15 @@
+version: v2
+# 各服务 internal/conf 共用的配置结构；服务侧经符号链接 <服务>/kitproto → ../kit/proto 引入
+# （buf 不接受工作区目录之外的模块路径）。
+modules:
+  - path: proto
+lint:
+  use:
+    - STANDARD
+  ignore_only:
+    # 内部配置结构非对外 API，不携带版本后缀。
+    PACKAGE_VERSION_SUFFIX:
+      - proto/kitconf/common.proto
+breaking:
+  use:
+    - FILE

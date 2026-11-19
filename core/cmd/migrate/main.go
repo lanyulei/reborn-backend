@@ -20,10 +20,8 @@ import (
 
 	"github.com/lanyulei/reborn/backend/core/internal/conf"
 	"github.com/lanyulei/reborn/backend/core/migrations"
+	"github.com/lanyulei/reborn/backend/kit/bootstrap"
 
-	"github.com/go-kratos/kratos/v3/config"
-	"github.com/go-kratos/kratos/v3/config/env"
-	"github.com/go-kratos/kratos/v3/config/file"
 	"github.com/golang-migrate/migrate/v4"
 	pgxmigrate "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
@@ -136,16 +134,11 @@ func printVersion(logger *slog.Logger, m *migrate.Migrate) error {
 	return nil
 }
 
-// loadDSN 读取 data.database.source（与 cmd/server 同一配置源与环境变量覆盖规则）。
+// loadDSN 读取 data.database.source（与 cmd/server 同一配置源：共享基线 + configs + KRATOS_ 环境变量）。
 func loadDSN() (string, error) {
-	c := config.New(config.WithSource(file.NewSource(flagconf), env.NewSource("KRATOS")))
-	defer func() { _ = c.Close() }()
-	if err := c.Load(); err != nil {
-		return "", fmt.Errorf("load config: %w", err)
-	}
 	var bc conf.Bootstrap
-	if err := c.Scan(&bc); err != nil {
-		return "", fmt.Errorf("scan config: %w", err)
+	if err := bootstrap.Load(flagconf, &bc); err != nil {
+		return "", err
 	}
 	dsn := bc.GetData().GetDatabase().GetSource()
 	if dsn == "" {

@@ -3,28 +3,22 @@
 #
 # 本地运行（在 backend/monitor 目录）：
 #   1. 数据库先迁移到 0076 及以后（backend/core: make migrate）；发布顺序：迁移 → core → 引擎。
-#   2. export KRATOS_DATA_DATABASE_SOURCE='<DSN>'
-#      本地开发的 DSN 与 core 相同，取 backend/core/configs/config.yaml 的
-#      data.database.source 的值（本文件不重复该值）。未设置时启动即失败：
-#      "database source is required"。
-#   3. 可选：export KRATOS_NOTIFY_MASTER_KEY=<与 core 相同的主密钥>（数据源带 Basic / Bearer 凭据时需要）。
+#   2. backend/.env 里配好 KRATOS_DATA_DATABASE_SOURCE（见 backend/.env.example；全部服务共用一份）。
+#      未设置时启动即失败："database source is required"。
+#   3. 可选：KRATOS_NOTIFY_MASTER_KEY（与 core 相同，启动时按指纹核对；数据源带 Basic / Bearer 凭据时需要）。
 #   4. make run（kratos run），或 go run ./cmd/monitor -conf configs
 #   5. curl http://127.0.0.1:8040/healthz
+# 数据库连接（data.database）与凭据加密主密钥（notify.master.key）全部服务一致，定义在共享基线
+# kit/bootstrap/shared.yaml，取值由环境变量注入（KRATOS_DATA_DATABASE_SOURCE / KRATOS_NOTIFY_MASTER_KEY，
+# 本地见 backend/.env.example）；这里只写本服务特有的段，以及要偏离基线的值。
 server:
   http:
     # 8010 为 core、8020 为通知管道、8030 为 CMDB 数据面；评估引擎走 8040，只暴露 /healthz 与 /metrics。
     addr: 0.0.0.0:8040
     timeout: 5s
-data:
-  database:
-    # 与 core 同库。占位符由环境变量 KRATOS_DATA_DATABASE_SOURCE 填充（kratos env 源去掉
-    # KRATOS_ 前缀后注入为 DATA_DATABASE_SOURCE 键）；生产环境使用 monitor_engine_role
-    # 成员账号（见 core/migrations/0069）。
-    source: ${DATA_DATABASE_SOURCE}
-    # 须大于 evaluator.concurrency + 3（选主锁各占一个专用连接）。
-    max_conns: 16
-    min_conns: 2
-    max_conn_idle_time: 1800s
+# 连接池沿用共享基线（max_conns 16）；调大 evaluator.concurrency 时须保证
+# data.database.max_conns > evaluator.concurrency + 3（选主锁各占一个专用连接）。
+# 生产环境的账号用 monitor_engine_role 成员（见 core/migrations/0069）。
 engine:
   # roles 为空 = 全部角色（planner / evaluator）；部署时用 SERVER_ROLES=evaluator 等覆盖。
   roles: []
@@ -58,7 +52,3 @@ engine:
     partitions_ahead: 2
     eval_record_retention: 604800s  # 7d
     alert_retention: 15552000s      # 180d；0s = 不删除
-notify:
-  master:
-    # 与 core 同一主密钥：export KRATOS_NOTIFY_MASTER_KEY=...
-    key: ${NOTIFY_MASTER_KEY}

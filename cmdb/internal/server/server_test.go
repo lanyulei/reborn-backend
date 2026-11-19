@@ -5,25 +5,45 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"github.com/lanyulei/reborn/backend/cmdb/internal/conf"
+	"github.com/lanyulei/reborn/backend/kit/kitconf"
 )
 
 func TestNewRoles(t *testing.T) {
 	t.Setenv("SERVER_ROLES", "")
-	all := NewRoles(&conf.Sync{})
+	must := func(c *conf.Sync) Roles {
+		t.Helper()
+		roles, err := NewRoles(c)
+		if err != nil {
+			t.Fatalf("NewRoles() error = %v", err)
+		}
+		return roles
+	}
+	all := must(&conf.Sync{})
 	if !all.Has(RoleScheduler) || !all.Has(RoleWorker) || !all.Has(RoleWebhook) || len(all.List()) != 3 {
 		t.Fatalf("empty config must enable all roles: %v", all.List())
 	}
-	only := NewRoles(&conf.Sync{Roles: []string{" Worker ", "bogus"}})
-	if only.Has(RoleScheduler) || !only.Has(RoleWorker) {
+	if nilConf := must(nil); len(nilConf.List()) != 3 {
+		t.Fatalf("nil config must enable all roles: %v", nilConf.List())
+	}
+	only := must(&conf.Sync{Roles: []string{" Worker "}})
+	if only.Has("scheduler") || !only.Has("worker") {
 		t.Fatalf("roles = %v", only.List())
 	}
+	if _, err := NewRoles(&conf.Sync{Roles: []string{"worker", "bogus"}}); err == nil {
+		t.Fatal("unknown role must fail assembly instead of being silently dropped")
+	}
 	t.Setenv("SERVER_ROLES", "scheduler")
-	env := NewRoles(&conf.Sync{Roles: []string{"worker"}})
-	if !env.Has(RoleScheduler) || env.Has(RoleWorker) {
+	env := must(&conf.Sync{Roles: []string{"worker"}})
+	if !env.Has("scheduler") || env.Has("worker") {
 		t.Fatalf("env must take precedence: %v", env.List())
+	}
+	t.Setenv("SERVER_ROLES", "worker, scheduler")
+	if got := must(nil).List(); !slices.Equal(got, []string{"scheduler", "worker"}) {
+		t.Fatalf("list order = %v", got)
 	}
 }
 
@@ -35,7 +55,7 @@ func (p pinger) Ping() error { return p.err }
 
 func TestHTTPServer_Healthz(t *testing.T) {
 	t.Parallel()
-	srv := NewHTTPServer(&conf.Server{Http: &conf.Server_HTTP{}}, Roles{}, testLogger(), pinger{}, nil)
+	srv := NewHTTPServer(&conf.Server{Http: &kitconf.HTTP{}}, Roles{}, testLogger(), pinger{}, nil)
 	ts := httptest.NewServer(srv)
 	defer ts.Close()
 	resp, err := http.Get(ts.URL + "/healthz")
@@ -54,7 +74,7 @@ func TestHTTPServer_Healthz(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("metrics = %d", resp.StatusCode)
 	}
-	bad := NewHTTPServer(&conf.Server{Http: &conf.Server_HTTP{}}, Roles{}, testLogger(), pinger{err: http.ErrServerClosed}, nil)
+	bad := NewHTTPServer(&conf.Server{Http: &kitconf.HTTP{}}, Roles{}, testLogger(), pinger{err: http.ErrServerClosed}, nil)
 	ts2 := httptest.NewServer(bad)
 	defer ts2.Close()
 	resp, err = http.Get(ts2.URL + "/healthz")

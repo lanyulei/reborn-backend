@@ -18,6 +18,7 @@ import (
 	"github.com/lanyulei/reborn/backend/core/internal/pkg/txrun"
 	"github.com/lanyulei/reborn/backend/kit/idgen"
 	kc "github.com/lanyulei/reborn/backend/kit/k8scontract"
+	"github.com/lanyulei/reborn/backend/kit/kitconf"
 
 	kerrors "github.com/go-kratos/kratos/v3/errors"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -54,7 +55,7 @@ func newEnv(t *testing.T) *env {
 	if db := cfg.ConnConfig.Database; !strings.Contains(db, "test") {
 		t.Fatalf("TEST_DATABASE_SOURCE 指向库 %q：库名须含 \"test\"", db)
 	}
-	d, cleanup, err := basedata.NewData(&conf.Data{Database: &conf.Data_Database{Source: dsn}})
+	d, cleanup, err := basedata.NewData(&conf.Data{Database: &kitconf.Database{Source: dsn}})
 	if err != nil {
 		t.Fatalf("NewData() error = %v", err)
 	}

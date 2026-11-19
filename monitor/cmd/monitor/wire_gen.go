@@ -24,7 +24,10 @@ import (
 
 // wireApp init kratos application.
 func wireApp(confServer *conf.Server, confData *conf.Data, engine *conf.Engine, notify *conf.Notify, appVersion server.AppVersion, logger *slog.Logger) (*kratos.App, func(), error) {
-	roles := server.NewRoles(engine)
+	roles, err := server.NewRoles(engine)
+	if err != nil {
+		return nil, nil, err
+	}
 	dataData, cleanup, err := data.NewData(confData)
 	if err != nil {
 		return nil, nil, err

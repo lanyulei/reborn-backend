@@ -2,6 +2,8 @@ version: v2
 modules:
   - path: api
   - path: internal
+  # 各服务共用的配置结构：符号链接到 ../kit/proto（buf 不接受工作区目录之外的模块路径）。
+  - path: kitproto
   - path: third_party
 deps:
   - buf.build/googleapis/googleapis
@@ -12,6 +14,8 @@ lint:
   ignore:
     # 上游 Kratos 错误码扩展定义，按原样 vendored（与 core 同一份），不参与 lint。
     - third_party
+    # 共用配置结构在 kit 模块内 lint。
+    - kitproto
   ignore_only:
     # 枚举值沿用 Kratos 错误码惯例（域前缀），protoc-gen-go-errors 据此生成构造器。
     ENUM_VALUE_PREFIX:

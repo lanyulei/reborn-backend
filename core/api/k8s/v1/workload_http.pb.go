@@ -24,6 +24,7 @@ const OperationK8SWorkloadServiceListWorkloadRevisions = "/k8s.v1.K8sWorkloadSer
 const OperationK8SWorkloadServiceOpenExecTicket = "/k8s.v1.K8sWorkloadService/OpenExecTicket"
 const OperationK8SWorkloadServicePauseWorkload = "/k8s.v1.K8sWorkloadService/PauseWorkload"
 const OperationK8SWorkloadServicePreviewDrainNode = "/k8s.v1.K8sWorkloadService/PreviewDrainNode"
+const OperationK8SWorkloadServiceResizePod = "/k8s.v1.K8sWorkloadService/ResizePod"
 const OperationK8SWorkloadServiceRestartWorkload = "/k8s.v1.K8sWorkloadService/RestartWorkload"
 const OperationK8SWorkloadServiceRollbackWorkload = "/k8s.v1.K8sWorkloadService/RollbackWorkload"
 const OperationK8SWorkloadServiceScaleWorkload = "/k8s.v1.K8sWorkloadService/ScaleWorkload"
@@ -44,6 +45,9 @@ type K8SWorkloadServiceHTTPServer interface {
 	PauseWorkload(context.Context, *PauseWorkloadRequest) (*httpbody.HttpBody, error)
 	// PreviewDrainNode PreviewDrainNode 排空预览：将被驱逐、跳过与阻止排空的 Pod。响应：k8scontract.DrainPreviewResponse。
 	PreviewDrainNode(context.Context, *PreviewDrainNodeRequest) (*httpbody.HttpBody, error)
+	// ResizePod ResizePod 原地调整运行中 Pod 的容器资源（CPU / 内存的请求与上限），不重建 Pod。
+	// 经 Pod 的 resize 子资源执行，需要 Kubernetes 1.33+；集群接受后由 kubelet 异步生效。
+	ResizePod(context.Context, *ResizePodRequest) (*httpbody.HttpBody, error)
 	// RestartWorkload RestartWorkload 滚动重启（Deployment / StatefulSet / DaemonSet）。
 	RestartWorkload(context.Context, *RestartWorkloadRequest) (*httpbody.HttpBody, error)
 	// RollbackWorkload RollbackWorkload 回滚到指定的历史版本。
@@ -69,6 +73,7 @@ func RegisterK8SWorkloadServiceHTTPServer(s *http.Server, srv K8SWorkloadService
 	r.Handle("POST", "/api/v1/k8s/cluster/{cluster_id}/cronjob:trigger", _K8SWorkloadService_TriggerCronJob0_HTTP_Handler(srv))
 	r.Handle("POST", "/api/v1/k8s/cluster/{cluster_id}/cronjob:suspend", _K8SWorkloadService_SuspendCronJob0_HTTP_Handler(srv))
 	r.Handle("POST", "/api/v1/k8s/cluster/{cluster_id}/pod:evict", _K8SWorkloadService_EvictPod0_HTTP_Handler(srv))
+	r.Handle("POST", "/api/v1/k8s/cluster/{cluster_id}/pod:resize", _K8SWorkloadService_ResizePod0_HTTP_Handler(srv))
 	r.Handle("POST", "/api/v1/k8s/cluster/{cluster_id}/node:cordon", _K8SWorkloadService_CordonNode0_HTTP_Handler(srv))
 	r.Handle("POST", "/api/v1/k8s/cluster/{cluster_id}/node/drain:preview", _K8SWorkloadService_PreviewDrainNode0_HTTP_Handler(srv))
 	r.Handle("POST", "/api/v1/k8s/cluster/{cluster_id}/exec-ticket", _K8SWorkloadService_OpenExecTicket0_HTTP_Handler(srv))
@@ -272,6 +277,28 @@ func _K8SWorkloadService_EvictPod0_HTTP_Handler(srv K8SWorkloadServiceHTTPServer
 	}
 }
 
+func _K8SWorkloadService_ResizePod0_HTTP_Handler(srv K8SWorkloadServiceHTTPServer) func(ctx http.Context) error {
+	return func(ctx http.Context) error {
+		var in ResizePodRequest
+		if err := ctx.Bind(&in); err != nil {
+			return err
+		}
+		if err := ctx.BindVars(&in); err != nil {
+			return err
+		}
+		http.SetOperation(ctx, OperationK8SWorkloadServiceResizePod)
+		h := ctx.Middleware(func(ctx context.Context, req interface{}) (interface{}, error) {
+			return srv.ResizePod(ctx, req.(*ResizePodRequest))
+		})
+		out, err := h(ctx, &in)
+		if err != nil {
+			return err
+		}
+		reply := out.(*httpbody.HttpBody)
+		return ctx.Blob(200, http.BodyContentType(reply), reply.GetData())
+	}
+}
+
 func _K8SWorkloadService_CordonNode0_HTTP_Handler(srv K8SWorkloadServiceHTTPServer) func(ctx http.Context) error {
 	return func(ctx http.Context) error {
 		var in CordonNodeRequest
@@ -351,6 +378,9 @@ type K8SWorkloadServiceHTTPClient interface {
 	PauseWorkload(ctx context.Context, req *PauseWorkloadRequest, opts ...http.CallOption) (rsp *httpbody.HttpBody, err error)
 	// PreviewDrainNode PreviewDrainNode 排空预览：将被驱逐、跳过与阻止排空的 Pod。响应：k8scontract.DrainPreviewResponse。
 	PreviewDrainNode(ctx context.Context, req *PreviewDrainNodeRequest, opts ...http.CallOption) (rsp *httpbody.HttpBody, err error)
+	// ResizePod ResizePod 原地调整运行中 Pod 的容器资源（CPU / 内存的请求与上限），不重建 Pod。
+	// 经 Pod 的 resize 子资源执行，需要 Kubernetes 1.33+；集群接受后由 kubelet 异步生效。
+	ResizePod(ctx context.Context, req *ResizePodRequest, opts ...http.CallOption) (rsp *httpbody.HttpBody, err error)
 	// RestartWorkload RestartWorkload 滚动重启（Deployment / StatefulSet / DaemonSet）。
 	RestartWorkload(ctx context.Context, req *RestartWorkloadRequest, opts ...http.CallOption) (rsp *httpbody.HttpBody, err error)
 	// RollbackWorkload RollbackWorkload 回滚到指定的历史版本。
@@ -471,6 +501,25 @@ func (c *K8SWorkloadServiceHTTPClientImpl) PreviewDrainNode(ctx context.Context,
 		http.Accept("application/protojson"),
 		http.ContentType("application/protojson"),
 		http.Operation(OperationK8SWorkloadServicePreviewDrainNode),
+		http.PathTemplate(pattern),
+	}, opts...)
+	err := c.cc.Invoke(ctx, "POST", path, in, &out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ResizePod ResizePod 原地调整运行中 Pod 的容器资源（CPU / 内存的请求与上限），不重建 Pod。
+// 经 Pod 的 resize 子资源执行，需要 Kubernetes 1.33+；集群接受后由 kubelet 异步生效。
+func (c *K8SWorkloadServiceHTTPClientImpl) ResizePod(ctx context.Context, in *ResizePodRequest, opts ...http.CallOption) (*httpbody.HttpBody, error) {
+	var out httpbody.HttpBody
+	pattern := "/api/v1/k8s/cluster/{cluster_id}/pod:resize"
+	path := http.BuildPath(pattern, in)
+	opts = append([]http.CallOption{
+		http.Accept("application/protojson"),
+		http.ContentType("application/protojson"),
+		http.Operation(OperationK8SWorkloadServiceResizePod),
 		http.PathTemplate(pattern),
 	}, opts...)
 	err := c.cc.Invoke(ctx, "POST", path, in, &out, opts...)

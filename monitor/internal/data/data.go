@@ -43,12 +43,7 @@ type Data struct {
 
 // NewData 构造连接池并 Ping 验证；cleanup 释放连接。
 func NewData(c *conf.Data) (*Data, func(), error) {
-	pool, err := dbx.NewPool(c.GetDatabase().GetSource(), dbx.PoolOptions{
-		MaxConns:    c.GetDatabase().GetMaxConns(),
-		MinConns:    c.GetDatabase().GetMinConns(),
-		MaxIdleTime: c.GetDatabase().GetMaxConnIdleTime().AsDuration(),
-		PingTimeout: dataPingTimeout,
-	})
+	pool, err := dbx.NewPoolFromConf(c.GetDatabase(), dataPingTimeout)
 	if err != nil {
 		return nil, nil, err
 	}

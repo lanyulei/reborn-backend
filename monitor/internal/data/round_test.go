@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lanyulei/reborn/backend/kit/kitconf"
 	"github.com/lanyulei/reborn/backend/kit/secretbox"
 	"github.com/lanyulei/reborn/backend/monitor/internal/conf"
 )
@@ -74,7 +75,7 @@ func TestSecretBox(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	box, err := NewSecretBox(&conf.Notify{Master: &conf.Notify_Master{Key: "k1"}})
+	box, err := NewSecretBox(&conf.Notify{Master: &kitconf.Master{Key: "k1"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +83,7 @@ func TestSecretBox(t *testing.T) {
 		t.Fatalf("Open() = %q, %v", got, err)
 	}
 	// 主密钥未配置（含 nil 配置）：明确的哨兵错误，不阻断构造。
-	for _, c := range []*conf.Notify{nil, {}, {Master: &conf.Notify_Master{}}} {
+	for _, c := range []*conf.Notify{nil, {}, {Master: &kitconf.Master{}}} {
 		none, err := NewSecretBox(c)
 		if err != nil {
 			t.Fatal(err)
@@ -92,7 +93,7 @@ func TestSecretBox(t *testing.T) {
 		}
 	}
 	// 密钥不匹配：报错且错误信息不含明文。
-	wrong, _ := NewSecretBox(&conf.Notify{Master: &conf.Notify_Master{Key: "k2"}})
+	wrong, _ := NewSecretBox(&conf.Notify{Master: &kitconf.Master{Key: "k2"}})
 	if _, err := wrong.Open(sealed); err == nil || strings.Contains(err.Error(), "p@ss") {
 		t.Fatalf("err = %v", err)
 	}

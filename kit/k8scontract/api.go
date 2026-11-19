@@ -42,6 +42,7 @@ const (
 	OpCronTrigger     = "cronjob-trigger"    // ObjectRequest → ApplyResponse（新建的 Job）
 	OpCronSuspend     = "cronjob-suspend"    // SuspendRequest → Empty
 	OpPodEvict        = "pod-evict"          // ObjectRequest → Empty
+	OpPodResize       = "pod-resize"         // ResizeRequest → Empty
 	OpNodeCordon      = "node-cordon"        // CordonRequest → Empty
 	OpDrainPreview    = "node-drain-preview" // DrainRequest → DrainPreviewResponse
 	OpSecretReveal    = "secret-reveal"      // ObjectRequest → SecretRevealResponse
@@ -381,6 +382,25 @@ type SetImageRequest struct {
 	Ref       Ref    `json:"ref"`
 	Container string `json:"container"`
 	Image     string `json:"image"`
+}
+
+// ResizeRequest 原地调整运行中 Pod 的容器资源（Pod 的 resize 子资源，Kubernetes 1.33+；不重建 Pod）。
+type ResizeRequest struct {
+	Ref        Ref               `json:"ref"`
+	Containers []ContainerResize `json:"containers"`
+}
+
+// ContainerResize 一个容器的目标资源；Requests / Limits 为空 = 不改。
+type ContainerResize struct {
+	Name     string          `json:"name"`
+	Requests *ResizeQuantity `json:"requests,omitempty"`
+	Limits   *ResizeQuantity `json:"limits,omitempty"`
+}
+
+// ResizeQuantity CPU 与内存的数量（如 500m、256Mi）。nil = 保持不变；不接受空串（不能借此删除已有的设置）。
+type ResizeQuantity struct {
+	CPU    *string `json:"cpu,omitempty"`
+	Memory *string `json:"memory,omitempty"`
 }
 
 // Revision 工作负载的一个历史版本。

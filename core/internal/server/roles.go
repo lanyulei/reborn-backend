@@ -1,12 +1,10 @@
 package server
 
 import (
-	"fmt"
 	"log/slog"
-	"os"
-	"strings"
 
 	"github.com/lanyulei/reborn/backend/core/internal/conf"
+	kitroles "github.com/lanyulei/reborn/backend/kit/roles"
 )
 
 // 进程角色：同一份程序可以只承担其中一部分职责，分开部署、各自扩缩容。
@@ -16,9 +14,6 @@ const (
 	// RoleWorker 运行后台循环（值班、附件清理、流程作业、工单 SLA 巡检）。
 	RoleWorker = "worker"
 )
-
-// rolesEnv 角色环境变量（与 cmdb / notify 服务同名同语义）。
-const rolesEnv = "SERVER_ROLES"
 
 // Roles 本进程启用的角色集合。
 type Roles map[string]struct{}
@@ -31,23 +26,11 @@ func AllRoles() Roles {
 // NewRoles 解析角色：环境变量 SERVER_ROLES（逗号分隔）优先，其次 conf.server.roles，两者皆空 =
 // 全部角色。出现不认识的角色名直接报错——拼错一个字母就悄悄少跑一类职责，比启动失败危险得多。
 func NewRoles(c *conf.Server, logger *slog.Logger) (Roles, error) {
-	list := c.GetRoles()
-	if env := strings.TrimSpace(os.Getenv(rolesEnv)); env != "" {
-		list = strings.Split(env, ",")
+	set, _, err := kitroles.Resolve(c.GetRoles(), RoleAPI, RoleWorker)
+	if err != nil {
+		return nil, err
 	}
-	roles := Roles{}
-	for _, r := range list {
-		switch r = strings.TrimSpace(strings.ToLower(r)); r {
-		case "":
-		case RoleAPI, RoleWorker:
-			roles[r] = struct{}{}
-		default:
-			return nil, fmt.Errorf("unknown server role %q: want %s or %s", r, RoleAPI, RoleWorker)
-		}
-	}
-	if len(roles) == 0 {
-		roles = AllRoles()
-	}
+	roles := Roles(set)
 	logger.Info("server roles enabled", "roles", roles.List())
 	if !roles.Has(RoleWorker) {
 		// 只承担接口的进程不跑后台循环：定时节点、任务超时、自动任务、SLA 通知、值班提醒都靠

@@ -1,4 +1,7 @@
 # 服务启动配置；密钥类字段从环境变量注入，禁止在本文件写入明文口令。
+# 数据库连接（data.database）与凭据加密主密钥（notify.master.key）全部服务一致，定义在共享基线
+# kit/bootstrap/shared.yaml，取值由环境变量注入（KRATOS_DATA_DATABASE_SOURCE / KRATOS_NOTIFY_MASTER_KEY，
+# 本地见 backend/.env.example）；这里只写本服务特有的段，以及要偏离基线的值。
 server:
   http:
     # 8000 被本地前端 dev server 占用，后端固定走 8010（前端代理指到这里）。
@@ -8,12 +11,6 @@ server:
   # 环境变量 SERVER_ROLES（逗号分隔）优先。分开部署时须保证至少有一个进程承担 worker 角色。
   roles: []
 data:
-  database:
-    # 本地开发 DSN；生产环境通过环境变量注入（KRATOS_DATA_DATABASE_SOURCE）。
-    source: "host=127.0.0.1 user=postgres password=ekgGZebuZgCmyzv2WW5V dbname=reborn port=5432 sslmode=disable TimeZone=Asia/Shanghai"
-    max_conns: 16
-    min_conns: 2
-    max_conn_idle_time: 1800s
   upload:
     # 本地驱动的落盘目录（系统 logo / 头像 / 附件都在 <dir>/files 下）；需随部署持久化，用本地
     # 驱动的多实例部署须为共享卷。<dir> 下的 logo.* 与 avatars/ 是改用对象存储之前上传的旧文件：
@@ -60,15 +57,6 @@ security:
     # 策略快照惰性刷新 TTL：超出后首个请求触发重载（stale-serve 兜底），
     # 取值过小会放大数据库读放大，过大则跨实例生效延迟变长；界 1s~10m。
     policy_ttl: 30s
-notify:
-  master:
-    # 通知渠道凭据（SMTP 密码/机器人 token/HMAC 密钥）AES-256-GCM 加密主密钥：
-    # 占位符由 config resolver 从环境变量填充（env.NewSource("KRATOS") 去掉
-    # KRATOS_ 前缀后注入为 NOTIFY_MASTER_KEY 键）：
-    #   export KRATOS_NOTIFY_MASTER_KEY=$(openssl rand -hex 32)
-    # 未设置时解析为空串：不带 secret 的渠道不受影响；创建/轮换带 secret 的
-    # 渠道返回 NOTIFY_SECRET_UNAVAILABLE，绝不静默落明文。
-    key: ${NOTIFY_MASTER_KEY}
 assistant:
   # OpenAI 兼容模型接入；api_key 由环境变量注入（env.NewSource("KRATOS") 去掉
   # KRATOS_ 前缀后注入为 ASSISTANT_API_KEY 键）：
@@ -100,7 +88,8 @@ monitor:
   # 生成一条 AI 摘要的时间上限（智能助手未配置模型密钥时不生成摘要）。
   ai_summary_timeout: 30s
 k8s:
-  # core 与容器平台数据面（backend/k8s）之间的身份头签名密钥，至少 32 字节，两边必须一致：
+  # core 与容器平台数据面（backend/k8s）之间的身份头签名密钥，至少 32 字节；两边读同一个环境变量，
+  # 启动时按指纹核对是否一致：
   #   export KRATOS_K8S_INTERNAL_KEY='<openssl rand -hex 32>'
   # 为空时集群登记仍可用，资源类接口返回 503。
   internal_key: ${K8S_INTERNAL_KEY:}

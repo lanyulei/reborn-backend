@@ -19,6 +19,7 @@ import (
 	"github.com/lanyulei/reborn/backend/core/internal/conf"
 	basedata "github.com/lanyulei/reborn/backend/core/internal/data"
 	datanotify "github.com/lanyulei/reborn/backend/core/internal/data/notify"
+	"github.com/lanyulei/reborn/backend/kit/kitconf"
 	"github.com/lanyulei/reborn/backend/kit/notifycontract"
 
 	"github.com/go-kratos/kratos/v3/errors"
@@ -59,7 +60,7 @@ func newEnv(t *testing.T) *env {
 	} else if db := cfg.ConnConfig.Database; !strings.Contains(db, "test") {
 		t.Fatalf("TEST_DATABASE_SOURCE 指向库 %q：库名须含 \"test\"", db)
 	}
-	d, cleanup, err := basedata.NewData(&conf.Data{Database: &conf.Data_Database{Source: dsn}})
+	d, cleanup, err := basedata.NewData(&conf.Data{Database: &kitconf.Database{Source: dsn}})
 	if err != nil {
 		t.Fatalf("NewData() error = %v", err)
 	}
@@ -82,7 +83,7 @@ func newEnv(t *testing.T) *env {
 		}
 	}
 	store, groups, schedules, shifts, shares := NewStore(d), NewGroupRepo(d), NewScheduleRepo(d), NewShiftRepo(d), NewShareRepo(d)
-	tokenBox, err := NewTokenBox(&conf.Notify{Master: &conf.Notify_Master{Key: "integration-test-master-key"}})
+	tokenBox, err := NewTokenBox(&conf.Notify{Master: &kitconf.Master{Key: "integration-test-master-key"}})
 	if err != nil {
 		t.Fatalf("NewTokenBox() error = %v", err)
 	}

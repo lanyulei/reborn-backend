@@ -69,6 +69,25 @@ func (s *WorkloadService) EvictPod(ctx context.Context, req *v1.EvictPodRequest)
 	return s.call(ctx, req.GetClusterId(), kc.OpPodEvict, kc.ObjectRequest{Ref: toRef(req.GetRef())})
 }
 
+// ResizePod implements proto K8sWorkloadService/ResizePod.
+func (s *WorkloadService) ResizePod(ctx context.Context, req *v1.ResizePodRequest) (*httpbody.HttpBody, error) {
+	containers := make([]kc.ContainerResize, 0, len(req.GetContainers()))
+	for _, c := range req.GetContainers() {
+		containers = append(containers, kc.ContainerResize{
+			Name: c.GetName(), Requests: toResizeQuantity(c.GetRequests()), Limits: toResizeQuantity(c.GetLimits()),
+		})
+	}
+	return s.call(ctx, req.GetClusterId(), kc.OpPodResize, kc.ResizeRequest{Ref: toRef(req.GetRef()), Containers: containers})
+}
+
+// toResizeQuantity 转为契约结构；未传的数量保持 nil（= 不改）。
+func toResizeQuantity(q *v1.ResizeQuantity) *kc.ResizeQuantity {
+	if q == nil {
+		return nil
+	}
+	return &kc.ResizeQuantity{CPU: q.Cpu, Memory: q.Memory}
+}
+
 // CordonNode implements proto K8sWorkloadService/CordonNode.
 func (s *WorkloadService) CordonNode(ctx context.Context, req *v1.CordonNodeRequest) (*httpbody.HttpBody, error) {
 	return s.call(ctx, req.GetClusterId(), kc.OpNodeCordon, kc.CordonRequest{Name: req.GetName(), Unschedulable: req.GetUnschedulable()})

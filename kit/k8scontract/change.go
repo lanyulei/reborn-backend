@@ -76,7 +76,7 @@ const (
 var (
 	writeOps = map[string]struct{}{
 		OpApply: {}, OpDelete: {}, OpManifestApply: {}, OpScale: {}, OpRestart: {}, OpSetImage: {}, OpRollback: {},
-		OpPause: {}, OpCronTrigger: {}, OpCronSuspend: {}, OpPodEvict: {}, OpNodeCordon: {},
+		OpPause: {}, OpCronTrigger: {}, OpCronSuspend: {}, OpPodEvict: {}, OpPodResize: {}, OpNodeCordon: {},
 		OpHelmInstall: {}, OpHelmUpgrade: {}, OpHelmRollback: {}, OpHelmUninstall: {},
 	}
 	writeStreams = map[string]struct{}{StreamDrain: {}}

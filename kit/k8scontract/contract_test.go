@@ -121,3 +121,17 @@ func TestEventNotifyType(t *testing.T) {
 		t.Fatalf("too long: %d", len(got))
 	}
 }
+
+func TestWriteOpsGated(t *testing.T) {
+	t.Parallel()
+	for _, op := range []string{OpPodEvict, OpPodResize, OpSetImage, OpScale} {
+		if !IsWriteOp(op) {
+			t.Errorf("%s must be a write op", op)
+		}
+	}
+	for _, op := range []string{OpGet, OpList, OpPreview, OpSecretReveal} {
+		if IsWriteOp(op) {
+			t.Errorf("%s must not be a write op", op)
+		}
+	}
+}

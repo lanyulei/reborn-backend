@@ -3,6 +3,7 @@ syntax = "proto3";
 package conf;
 
 import "google/protobuf/duration.proto";
+import "kitconf/common.proto";
 
 option go_package = "github.com/lanyulei/reborn/backend/job/internal/conf;conf";
 
@@ -22,15 +23,6 @@ message Bootstrap {
 
 // Server 是监听与角色配置。
 message Server {
-  // HTTP 是健康检查 / 指标监听（/healthz /metrics），两种角色都启动。
-  message HTTP {
-    // network 监听网络类型，如 tcp；留空使用默认值。
-    string network = 1;
-    // addr 监听地址，缺省端口 8050（8010 core / 8020 通知管道 / 8030 CMDB 数据面 / 8040 评估引擎）。
-    string addr = 2;
-    // timeout 请求处理超时。
-    google.protobuf.Duration timeout = 3;
-  }
   // RunnerAPI 是引擎面向执行节点的协议监听（kit/jobcontract 的四个 POST 接口），仅 engine 角色启动。
   message RunnerAPI {
     // network 监听网络类型，如 tcp；留空使用默认值。
@@ -44,7 +36,7 @@ message Server {
     string key_file = 5;
   }
   // http 健康检查 / 指标监听。
-  HTTP http = 1;
+  kitconf.HTTP http = 1;
   // runner 执行节点协议监听。
   RunnerAPI runner = 2;
   // roles 启用的角色：engine / runner；环境变量 SERVER_ROLES（逗号分隔）优先；两者皆空 = 全部角色。
@@ -53,20 +45,8 @@ message Server {
 
 // Data 是数据层资源配置；密钥类字段一律从环境变量注入。
 message Data {
-  // Database 是 PostgreSQL 连接池配置（pgx）。
-  message Database {
-    // source 数据源 DSN；一律经环境变量 KRATOS_DATA_DATABASE_SOURCE 注入，
-    // 配置文件里只写占位符 ${DATA_DATABASE_SOURCE}。engine 角色下为空时启动失败；runner 角色不使用。
-    string source = 1;
-    // max_conns 最大连接数；0 使用驱动默认值。
-    int32 max_conns = 2;
-    // min_conns 最小空闲连接数；0 使用驱动默认值。
-    int32 min_conns = 3;
-    // max_conn_idle_time 连接最大空闲时长；未设置使用驱动默认值。
-    google.protobuf.Duration max_conn_idle_time = 4;
-  }
   // database 数据库配置。
-  Database database = 1;
+  kitconf.Database database = 1;
 }
 
 // Engine 是执行引擎参数。全部 Duration 采用 protojson 秒格式（如 5s）；
@@ -120,12 +100,6 @@ message Runner {
 
 // Notify 是凭据解密配置（复用通知域主密钥：作业凭据与仓库令牌由 core 用同一密钥加密）。
 message Notify {
-  // Master 是主密钥配置。
-  message Master {
-    // key AES-256-GCM 主密钥；经 KRATOS_NOTIFY_MASTER_KEY 环境变量注入。
-    // 为空（或与 core 不一致）时：被领取的执行因凭据无法解密而记为失败。
-    string key = 1;
-  }
   // master 主密钥。
-  Master master = 1;
+  kitconf.Master master = 1;
 }

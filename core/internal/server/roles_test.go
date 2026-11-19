@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	monitorservice "github.com/lanyulei/reborn/backend/core/internal/service/monitor"
+	"github.com/lanyulei/reborn/backend/kit/kitconf"
 
 	"github.com/lanyulei/reborn/backend/core/internal/conf"
 )
@@ -35,7 +36,7 @@ func TestNewRoles(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			t.Setenv(rolesEnv, c.env)
+			t.Setenv("SERVER_ROLES", c.env)
 			roles, err := NewRoles(&conf.Server{Roles: c.conf}, logger)
 			if c.bad {
 				if err == nil {
@@ -58,7 +59,7 @@ func (p pingStub) Ping(context.Context) error { return p.err }
 func TestWorkerOnlyServerExposesNoBusinessRoutes(t *testing.T) {
 	svc := newTestServices(t)
 	build := func(roles Roles, pinger Pinger) *httptest.Server {
-		srv := NewHTTPServer(&conf.Server{Http: &conf.Server_HTTP{}}, slog.New(slog.NewTextHandler(io.Discard, nil)),
+		srv := NewHTTPServer(&conf.Server{Http: &kitconf.HTTP{}}, slog.New(slog.NewTextHandler(io.Discard, nil)),
 			svc.user, svc.role, svc.dept, svc.auth, svc.syscfg, svc.loginLog, svc.notify, svc.template, svc.route, svc.silence,
 			svc.subscription, svc.producer, svc.event, svc.dispatch, svc.deliveryLog, svc.deadLetter, svc.assistant, svc.assistantChat,
 			svc.cmdbModel, svc.cmdbCI, svc.cmdbRelation, svc.cmdbScope, svc.cmdbSync, svc.cmdbInsight, nil, nil, nil, svc.file,

@@ -1,4 +1,8 @@
 GOFLAGS?=
+# 本地环境变量：backend/.env（不入库，模板见 ../.env.example），全部服务共用一份；只导出 KRATOS_* 与 SERVER_ROLES。
+-include ../.env
+export $(filter KRATOS_% SERVER_ROLES,$(.VARIABLES))
+
 # 工具版本锁定：禁止 @latest（依赖治理，契约见 ../notify/AGENTS.md）。
 GOLANGCI_LINT_VERSION:=v2.15.0
 GOVULNCHECK_VERSION:=v1.9.0
@@ -56,7 +60,7 @@ test:
 	go test ./... -race -shuffle=on
 
 .PHONY: migrate
-# migrate 应用全部未执行的 migrations/*.up.sql（golang-migrate；DSN 读 configs/config.yaml，可重复执行）。
+# migrate 应用全部未执行的 migrations/*.up.sql（golang-migrate；DSN 取 KRATOS_DATA_DATABASE_SOURCE（../.env），可重复执行）。
 migrate:
 	go run ./cmd/migrate -conf configs up
 

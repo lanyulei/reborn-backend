@@ -23,6 +23,7 @@ import (
 	"github.com/lanyulei/reborn/backend/core/internal/pkg/txrun"
 	"github.com/lanyulei/reborn/backend/core/internal/testfake"
 	"github.com/lanyulei/reborn/backend/kit/idgen"
+	"github.com/lanyulei/reborn/backend/kit/kitconf"
 	mc "github.com/lanyulei/reborn/backend/kit/monitorcontract"
 
 	kerrors "github.com/go-kratos/kratos/v3/errors"
@@ -75,7 +76,7 @@ func testDSN(t *testing.T) string {
 
 func openData(t *testing.T, dsn string) *basedata.Data {
 	t.Helper()
-	d, cleanup, err := basedata.NewData(&conf.Data{Database: &conf.Data_Database{Source: dsn}})
+	d, cleanup, err := basedata.NewData(&conf.Data{Database: &kitconf.Database{Source: dsn}})
 	if err != nil {
 		t.Fatalf("NewData() error = %v", err)
 	}
@@ -386,7 +387,7 @@ func TestRuleWrite_RacesWithGroupDelete(t *testing.T) {
 func TestDatasourceRepo(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
-	box, err := NewSecretBox(&conf.Notify{Master: &conf.Notify_Master{Key: "integration-test-master-key"}})
+	box, err := NewSecretBox(&conf.Notify{Master: &kitconf.Master{Key: "integration-test-master-key"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -423,7 +424,7 @@ func TestDatasourceRepo(t *testing.T) {
 	if _, err := off.Open(stored); !kerrors.Is(err, biz.ErrSecretUnavailable) {
 		t.Fatalf("Open without master key: %v", err)
 	}
-	wrong, _ := NewSecretBox(&conf.Notify{Master: &conf.Notify_Master{Key: "another-key"}})
+	wrong, _ := NewSecretBox(&conf.Notify{Master: &kitconf.Master{Key: "another-key"}})
 	if _, err := wrong.Open(stored); err == nil || strings.Contains(err.Error(), "tok-plain") {
 		t.Fatalf("Open with a wrong key must fail without leaking: %v", err)
 	}

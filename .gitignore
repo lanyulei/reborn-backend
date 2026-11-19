@@ -20,6 +20,9 @@ go.work.sum
 bin/
 dist/
 
+# ===== 本地环境变量（含口令；模板见 .env.example）=====
+.env
+
 # ===== macOS =====
 .DS_Store
 .AppleDouble

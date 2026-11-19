@@ -1,7 +1,10 @@
 # 容器平台数据面（backend/k8s）配置。敏感项只走环境变量（KRATOS_ 前缀），不写进文件：
 #   export KRATOS_DATA_DATABASE_SOURCE='<DSN>'
-#   export KRATOS_PLANE_INTERNAL_KEY='<与 core 的 k8s.internal_key 相同，至少 32 字节>'
+#   export KRATOS_K8S_INTERNAL_KEY='<与 core 读同一个变量，至少 32 字节>'
 #   export KRATOS_NOTIFY_MASTER_KEY='<与 core 相同的加密主密钥>'
+# 数据库连接（data.database）与凭据加密主密钥（notify.master.key）全部服务一致，定义在共享基线
+# kit/bootstrap/shared.yaml，取值由环境变量注入（KRATOS_DATA_DATABASE_SOURCE / KRATOS_NOTIFY_MASTER_KEY，
+# 本地见 backend/.env.example）；这里只写本服务特有的段，以及要偏离基线的值。
 server:
   http:
     addr: 0.0.0.0:8060
@@ -14,14 +17,9 @@ server:
     key_file: ""
     # 隧道入口前面有负载均衡 / TLS 终结时，填它们的网段（CIDR），按 X-Forwarded-For 的最后一跳识别来源
     trusted_proxies: []
-data:
-  database:
-    source: ${DATA_DATABASE_SOURCE:}
-    max_conns: 16
-    min_conns: 2
-    max_conn_idle_time: 1800s
 plane:
-  internal_key: ${PLANE_INTERNAL_KEY:}
+  # 与 core 的 k8s.internal_key 是同一个密钥、同一个环境变量；启动时按指纹核对。
+  internal_key: ${K8S_INTERNAL_KEY:}
   lease: 30s
   probe_interval: 30s
   max_clusters: 0
@@ -38,6 +36,3 @@ plane:
   exec_record_max_mb: 8         # 单个会话录制的输出上限
   inspection_interval: 86400s   # 定时巡检间隔
   inspection_disabled: false    # true = 只保留手动触发
-notify:
-  master:
-    key: ${NOTIFY_MASTER_KEY:}

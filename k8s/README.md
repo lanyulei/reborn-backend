@@ -106,7 +106,7 @@ Secret 的值掩码，单个对象超过 256KB 置空并标记 `truncated`。审
 | 环境变量 | 说明 |
 |---|---|
 | `KRATOS_DATA_DATABASE_SOURCE` | PostgreSQL DSN（与 core 同库；生产环境的登录账号应是 `k8s_plane_role` 的成员） |
-| `KRATOS_PLANE_INTERNAL_KEY` | 与 core 一致的内部密钥，≥ 32 字节；缺失时所有内部请求都被拒绝 |
+| `KRATOS_K8S_INTERNAL_KEY` | 内部密钥，≥ 32 字节，与 core 读同一个环境变量（原 `KRATOS_PLANE_INTERNAL_KEY` 已改名）；缺失时所有内部请求都被拒绝，与 core 登记的指纹不一致时启动失败 |
 | `KRATOS_NOTIFY_MASTER_KEY` | 与 core 一致的加密主密钥（解密直连集群的凭据） |
 | `KRATOS_SERVER_HTTP_ADVERTISE_ADDR` | core 访问本实例的地址；多实例部署时每个实例填自己的可达地址 |
 | `K8S_PPROF=1` | 在内部接口监听上挂出 `/debug/pprof/*`，**只应答来自本机回环地址的请求**（堆里有集群令牌与内部密钥） |
@@ -115,7 +115,7 @@ Secret 的值掩码，单个对象超过 256KB 置空并标记 `truncated`。审
 ## 运行与检查
 
 ```bash
-export KRATOS_DATA_DATABASE_SOURCE='<DSN>' KRATOS_PLANE_INTERNAL_KEY='<32+ 字节>' KRATOS_NOTIFY_MASTER_KEY='<主密钥>'
+export KRATOS_DATA_DATABASE_SOURCE='<DSN>' KRATOS_K8S_INTERNAL_KEY='<32+ 字节>' KRATOS_NOTIFY_MASTER_KEY='<主密钥>'
 go run ./cmd/k8s -conf configs
 curl http://127.0.0.1:8060/healthz
 curl -s http://127.0.0.1:8060/metrics | grep '^k8s_'

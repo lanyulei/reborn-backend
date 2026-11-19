@@ -610,6 +610,189 @@ func (x *EvictPodRequest) GetRef() *ResourceRef {
 	return nil
 }
 
+// ResizePodRequest 原地调整 Pod 资源请求。
+type ResizePodRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// cluster_id 集群唯一标识。
+	ClusterId string `protobuf:"bytes,1,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
+	// ref 目标 Pod。
+	Ref *ResourceRef `protobuf:"bytes,2,opt,name=ref,proto3" json:"ref,omitempty"`
+	// containers 要调整的容器（普通容器，或 restartPolicy 为 Always 的初始化容器）；未列出的容器不变。
+	Containers    []*ContainerResize `protobuf:"bytes,3,rep,name=containers,proto3" json:"containers,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResizePodRequest) Reset() {
+	*x = ResizePodRequest{}
+	mi := &file_k8s_v1_workload_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResizePodRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResizePodRequest) ProtoMessage() {}
+
+func (x *ResizePodRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_k8s_v1_workload_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResizePodRequest.ProtoReflect.Descriptor instead.
+func (*ResizePodRequest) Descriptor() ([]byte, []int) {
+	return file_k8s_v1_workload_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *ResizePodRequest) GetClusterId() string {
+	if x != nil {
+		return x.ClusterId
+	}
+	return ""
+}
+
+func (x *ResizePodRequest) GetRef() *ResourceRef {
+	if x != nil {
+		return x.Ref
+	}
+	return nil
+}
+
+func (x *ResizePodRequest) GetContainers() []*ContainerResize {
+	if x != nil {
+		return x.Containers
+	}
+	return nil
+}
+
+// ContainerResize 一个容器的目标资源。
+type ContainerResize struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// name 容器名称。
+	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// requests 资源请求；不传 = 不改。
+	Requests *ResizeQuantity `protobuf:"bytes,2,opt,name=requests,proto3" json:"requests,omitempty"`
+	// limits 资源上限；不传 = 不改。
+	Limits        *ResizeQuantity `protobuf:"bytes,3,opt,name=limits,proto3" json:"limits,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ContainerResize) Reset() {
+	*x = ContainerResize{}
+	mi := &file_k8s_v1_workload_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ContainerResize) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ContainerResize) ProtoMessage() {}
+
+func (x *ContainerResize) ProtoReflect() protoreflect.Message {
+	mi := &file_k8s_v1_workload_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ContainerResize.ProtoReflect.Descriptor instead.
+func (*ContainerResize) Descriptor() ([]byte, []int) {
+	return file_k8s_v1_workload_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *ContainerResize) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *ContainerResize) GetRequests() *ResizeQuantity {
+	if x != nil {
+		return x.Requests
+	}
+	return nil
+}
+
+func (x *ContainerResize) GetLimits() *ResizeQuantity {
+	if x != nil {
+		return x.Limits
+	}
+	return nil
+}
+
+// ResizeQuantity CPU 与内存的数量（Kubernetes 数量写法，如 500m、256Mi）。不传 = 保持不变；不接受空串。
+type ResizeQuantity struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// cpu CPU 数量，如 500m、2。
+	Cpu *string `protobuf:"bytes,1,opt,name=cpu,proto3,oneof" json:"cpu,omitempty"`
+	// memory 内存数量，如 256Mi、1Gi。
+	Memory        *string `protobuf:"bytes,2,opt,name=memory,proto3,oneof" json:"memory,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResizeQuantity) Reset() {
+	*x = ResizeQuantity{}
+	mi := &file_k8s_v1_workload_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResizeQuantity) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResizeQuantity) ProtoMessage() {}
+
+func (x *ResizeQuantity) ProtoReflect() protoreflect.Message {
+	mi := &file_k8s_v1_workload_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResizeQuantity.ProtoReflect.Descriptor instead.
+func (*ResizeQuantity) Descriptor() ([]byte, []int) {
+	return file_k8s_v1_workload_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *ResizeQuantity) GetCpu() string {
+	if x != nil && x.Cpu != nil {
+		return *x.Cpu
+	}
+	return ""
+}
+
+func (x *ResizeQuantity) GetMemory() string {
+	if x != nil && x.Memory != nil {
+		return *x.Memory
+	}
+	return ""
+}
+
 // CordonNodeRequest 停止或恢复节点调度请求。
 type CordonNodeRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -625,7 +808,7 @@ type CordonNodeRequest struct {
 
 func (x *CordonNodeRequest) Reset() {
 	*x = CordonNodeRequest{}
-	mi := &file_k8s_v1_workload_proto_msgTypes[9]
+	mi := &file_k8s_v1_workload_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -637,7 +820,7 @@ func (x *CordonNodeRequest) String() string {
 func (*CordonNodeRequest) ProtoMessage() {}
 
 func (x *CordonNodeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_k8s_v1_workload_proto_msgTypes[9]
+	mi := &file_k8s_v1_workload_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -650,7 +833,7 @@ func (x *CordonNodeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CordonNodeRequest.ProtoReflect.Descriptor instead.
 func (*CordonNodeRequest) Descriptor() ([]byte, []int) {
-	return file_k8s_v1_workload_proto_rawDescGZIP(), []int{9}
+	return file_k8s_v1_workload_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *CordonNodeRequest) GetClusterId() string {
@@ -693,7 +876,7 @@ type PreviewDrainNodeRequest struct {
 
 func (x *PreviewDrainNodeRequest) Reset() {
 	*x = PreviewDrainNodeRequest{}
-	mi := &file_k8s_v1_workload_proto_msgTypes[10]
+	mi := &file_k8s_v1_workload_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -705,7 +888,7 @@ func (x *PreviewDrainNodeRequest) String() string {
 func (*PreviewDrainNodeRequest) ProtoMessage() {}
 
 func (x *PreviewDrainNodeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_k8s_v1_workload_proto_msgTypes[10]
+	mi := &file_k8s_v1_workload_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -718,7 +901,7 @@ func (x *PreviewDrainNodeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PreviewDrainNodeRequest.ProtoReflect.Descriptor instead.
 func (*PreviewDrainNodeRequest) Descriptor() ([]byte, []int) {
-	return file_k8s_v1_workload_proto_rawDescGZIP(), []int{10}
+	return file_k8s_v1_workload_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *PreviewDrainNodeRequest) GetClusterId() string {
@@ -775,7 +958,7 @@ type DrainNodeRequest struct {
 
 func (x *DrainNodeRequest) Reset() {
 	*x = DrainNodeRequest{}
-	mi := &file_k8s_v1_workload_proto_msgTypes[11]
+	mi := &file_k8s_v1_workload_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -787,7 +970,7 @@ func (x *DrainNodeRequest) String() string {
 func (*DrainNodeRequest) ProtoMessage() {}
 
 func (x *DrainNodeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_k8s_v1_workload_proto_msgTypes[11]
+	mi := &file_k8s_v1_workload_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -800,7 +983,7 @@ func (x *DrainNodeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DrainNodeRequest.ProtoReflect.Descriptor instead.
 func (*DrainNodeRequest) Descriptor() ([]byte, []int) {
-	return file_k8s_v1_workload_proto_rawDescGZIP(), []int{11}
+	return file_k8s_v1_workload_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *DrainNodeRequest) GetClusterId() string {
@@ -847,7 +1030,7 @@ type DrainNodeResponse struct {
 
 func (x *DrainNodeResponse) Reset() {
 	*x = DrainNodeResponse{}
-	mi := &file_k8s_v1_workload_proto_msgTypes[12]
+	mi := &file_k8s_v1_workload_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -859,7 +1042,7 @@ func (x *DrainNodeResponse) String() string {
 func (*DrainNodeResponse) ProtoMessage() {}
 
 func (x *DrainNodeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_k8s_v1_workload_proto_msgTypes[12]
+	mi := &file_k8s_v1_workload_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -872,7 +1055,7 @@ func (x *DrainNodeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DrainNodeResponse.ProtoReflect.Descriptor instead.
 func (*DrainNodeResponse) Descriptor() ([]byte, []int) {
-	return file_k8s_v1_workload_proto_rawDescGZIP(), []int{12}
+	return file_k8s_v1_workload_proto_rawDescGZIP(), []int{15}
 }
 
 // OpenExecTicketRequest 打开 Web 终端请求。
@@ -902,7 +1085,7 @@ type OpenExecTicketRequest struct {
 
 func (x *OpenExecTicketRequest) Reset() {
 	*x = OpenExecTicketRequest{}
-	mi := &file_k8s_v1_workload_proto_msgTypes[13]
+	mi := &file_k8s_v1_workload_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -914,7 +1097,7 @@ func (x *OpenExecTicketRequest) String() string {
 func (*OpenExecTicketRequest) ProtoMessage() {}
 
 func (x *OpenExecTicketRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_k8s_v1_workload_proto_msgTypes[13]
+	mi := &file_k8s_v1_workload_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -927,7 +1110,7 @@ func (x *OpenExecTicketRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpenExecTicketRequest.ProtoReflect.Descriptor instead.
 func (*OpenExecTicketRequest) Descriptor() ([]byte, []int) {
-	return file_k8s_v1_workload_proto_rawDescGZIP(), []int{13}
+	return file_k8s_v1_workload_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *OpenExecTicketRequest) GetClusterId() string {
@@ -1004,7 +1187,7 @@ type OpenExecTicketResponse struct {
 
 func (x *OpenExecTicketResponse) Reset() {
 	*x = OpenExecTicketResponse{}
-	mi := &file_k8s_v1_workload_proto_msgTypes[14]
+	mi := &file_k8s_v1_workload_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1016,7 +1199,7 @@ func (x *OpenExecTicketResponse) String() string {
 func (*OpenExecTicketResponse) ProtoMessage() {}
 
 func (x *OpenExecTicketResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_k8s_v1_workload_proto_msgTypes[14]
+	mi := &file_k8s_v1_workload_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1029,7 +1212,7 @@ func (x *OpenExecTicketResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpenExecTicketResponse.ProtoReflect.Descriptor instead.
 func (*OpenExecTicketResponse) Descriptor() ([]byte, []int) {
-	return file_k8s_v1_workload_proto_rawDescGZIP(), []int{14}
+	return file_k8s_v1_workload_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *OpenExecTicketResponse) GetTicket() string {
@@ -1058,7 +1241,7 @@ type WatchResourcesRequest struct {
 
 func (x *WatchResourcesRequest) Reset() {
 	*x = WatchResourcesRequest{}
-	mi := &file_k8s_v1_workload_proto_msgTypes[15]
+	mi := &file_k8s_v1_workload_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1070,7 +1253,7 @@ func (x *WatchResourcesRequest) String() string {
 func (*WatchResourcesRequest) ProtoMessage() {}
 
 func (x *WatchResourcesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_k8s_v1_workload_proto_msgTypes[15]
+	mi := &file_k8s_v1_workload_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1083,7 +1266,7 @@ func (x *WatchResourcesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchResourcesRequest.ProtoReflect.Descriptor instead.
 func (*WatchResourcesRequest) Descriptor() ([]byte, []int) {
-	return file_k8s_v1_workload_proto_rawDescGZIP(), []int{15}
+	return file_k8s_v1_workload_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *WatchResourcesRequest) GetClusterId() string {
@@ -1130,7 +1313,7 @@ type WatchResourcesResponse struct {
 
 func (x *WatchResourcesResponse) Reset() {
 	*x = WatchResourcesResponse{}
-	mi := &file_k8s_v1_workload_proto_msgTypes[16]
+	mi := &file_k8s_v1_workload_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1142,7 +1325,7 @@ func (x *WatchResourcesResponse) String() string {
 func (*WatchResourcesResponse) ProtoMessage() {}
 
 func (x *WatchResourcesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_k8s_v1_workload_proto_msgTypes[16]
+	mi := &file_k8s_v1_workload_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1155,7 +1338,7 @@ func (x *WatchResourcesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchResourcesResponse.ProtoReflect.Descriptor instead.
 func (*WatchResourcesResponse) Descriptor() ([]byte, []int) {
-	return file_k8s_v1_workload_proto_rawDescGZIP(), []int{16}
+	return file_k8s_v1_workload_proto_rawDescGZIP(), []int{19}
 }
 
 // StreamPodLogRequest 查看 Pod 日志请求。
@@ -1187,7 +1370,7 @@ type StreamPodLogRequest struct {
 
 func (x *StreamPodLogRequest) Reset() {
 	*x = StreamPodLogRequest{}
-	mi := &file_k8s_v1_workload_proto_msgTypes[17]
+	mi := &file_k8s_v1_workload_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1199,7 +1382,7 @@ func (x *StreamPodLogRequest) String() string {
 func (*StreamPodLogRequest) ProtoMessage() {}
 
 func (x *StreamPodLogRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_k8s_v1_workload_proto_msgTypes[17]
+	mi := &file_k8s_v1_workload_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1212,7 +1395,7 @@ func (x *StreamPodLogRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamPodLogRequest.ProtoReflect.Descriptor instead.
 func (*StreamPodLogRequest) Descriptor() ([]byte, []int) {
-	return file_k8s_v1_workload_proto_rawDescGZIP(), []int{17}
+	return file_k8s_v1_workload_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *StreamPodLogRequest) GetClusterId() string {
@@ -1294,7 +1477,7 @@ type StreamPodLogResponse struct {
 
 func (x *StreamPodLogResponse) Reset() {
 	*x = StreamPodLogResponse{}
-	mi := &file_k8s_v1_workload_proto_msgTypes[18]
+	mi := &file_k8s_v1_workload_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1306,7 +1489,7 @@ func (x *StreamPodLogResponse) String() string {
 func (*StreamPodLogResponse) ProtoMessage() {}
 
 func (x *StreamPodLogResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_k8s_v1_workload_proto_msgTypes[18]
+	mi := &file_k8s_v1_workload_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1319,7 +1502,7 @@ func (x *StreamPodLogResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamPodLogResponse.ProtoReflect.Descriptor instead.
 func (*StreamPodLogResponse) Descriptor() ([]byte, []int) {
-	return file_k8s_v1_workload_proto_rawDescGZIP(), []int{18}
+	return file_k8s_v1_workload_proto_rawDescGZIP(), []int{21}
 }
 
 // StreamWorkloadLogRequest 查看工作负载日志请求。
@@ -1345,7 +1528,7 @@ type StreamWorkloadLogRequest struct {
 
 func (x *StreamWorkloadLogRequest) Reset() {
 	*x = StreamWorkloadLogRequest{}
-	mi := &file_k8s_v1_workload_proto_msgTypes[19]
+	mi := &file_k8s_v1_workload_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1357,7 +1540,7 @@ func (x *StreamWorkloadLogRequest) String() string {
 func (*StreamWorkloadLogRequest) ProtoMessage() {}
 
 func (x *StreamWorkloadLogRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_k8s_v1_workload_proto_msgTypes[19]
+	mi := &file_k8s_v1_workload_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1370,7 +1553,7 @@ func (x *StreamWorkloadLogRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamWorkloadLogRequest.ProtoReflect.Descriptor instead.
 func (*StreamWorkloadLogRequest) Descriptor() ([]byte, []int) {
-	return file_k8s_v1_workload_proto_rawDescGZIP(), []int{19}
+	return file_k8s_v1_workload_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *StreamWorkloadLogRequest) GetClusterId() string {
@@ -1431,7 +1614,7 @@ type StreamWorkloadLogResponse struct {
 
 func (x *StreamWorkloadLogResponse) Reset() {
 	*x = StreamWorkloadLogResponse{}
-	mi := &file_k8s_v1_workload_proto_msgTypes[20]
+	mi := &file_k8s_v1_workload_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1443,7 +1626,7 @@ func (x *StreamWorkloadLogResponse) String() string {
 func (*StreamWorkloadLogResponse) ProtoMessage() {}
 
 func (x *StreamWorkloadLogResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_k8s_v1_workload_proto_msgTypes[20]
+	mi := &file_k8s_v1_workload_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1456,7 +1639,7 @@ func (x *StreamWorkloadLogResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamWorkloadLogResponse.ProtoReflect.Descriptor instead.
 func (*StreamWorkloadLogResponse) Descriptor() ([]byte, []int) {
-	return file_k8s_v1_workload_proto_rawDescGZIP(), []int{20}
+	return file_k8s_v1_workload_proto_rawDescGZIP(), []int{23}
 }
 
 var File_k8s_v1_workload_proto protoreflect.FileDescriptor
@@ -1514,7 +1697,25 @@ const file_k8s_v1_workload_proto_rawDesc = "" +
 	"\x0fEvictPodRequest\x12'\n" +
 	"\n" +
 	"cluster_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\tclusterId\x12-\n" +
-	"\x03ref\x18\x02 \x01(\v2\x13.k8s.v1.ResourceRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\"\x82\x01\n" +
+	"\x03ref\x18\x02 \x01(\v2\x13.k8s.v1.ResourceRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\"\xaf\x01\n" +
+	"\x10ResizePodRequest\x12'\n" +
+	"\n" +
+	"cluster_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\tclusterId\x12-\n" +
+	"\x03ref\x18\x02 \x01(\v2\x13.k8s.v1.ResourceRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\x12C\n" +
+	"\n" +
+	"containers\x18\x03 \x03(\v2\x17.k8s.v1.ContainerResizeB\n" +
+	"\xbaH\a\x92\x01\x04\b\x01\x102R\n" +
+	"containers\"\x95\x01\n" +
+	"\x0fContainerResize\x12\x1e\n" +
+	"\x04name\x18\x01 \x01(\tB\n" +
+	"\xbaH\ar\x05\x10\x01\x18\xfd\x01R\x04name\x122\n" +
+	"\brequests\x18\x02 \x01(\v2\x16.k8s.v1.ResizeQuantityR\brequests\x12.\n" +
+	"\x06limits\x18\x03 \x01(\v2\x16.k8s.v1.ResizeQuantityR\x06limits\"m\n" +
+	"\x0eResizeQuantity\x12 \n" +
+	"\x03cpu\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@H\x00R\x03cpu\x88\x01\x01\x12&\n" +
+	"\x06memory\x18\x02 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@H\x01R\x06memory\x88\x01\x01B\x06\n" +
+	"\x04_cpuB\t\n" +
+	"\a_memory\"\x82\x01\n" +
 	"\x11CordonNodeRequest\x12'\n" +
 	"\n" +
 	"cluster_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\tclusterId\x12\x1e\n" +
@@ -1594,7 +1795,7 @@ const file_k8s_v1_workload_proto_rawDesc = "" +
 	"\fCursorsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x1b\n" +
-	"\x19StreamWorkloadLogResponse2\xf9\x0e\n" +
+	"\x19StreamWorkloadLogResponse2\x84\x10\n" +
 	"\x12K8sWorkloadService\x12\x95\x01\n" +
 	"\rScaleWorkload\x12\x1c.k8s.v1.ScaleWorkloadRequest\x1a\x14.google.api.HttpBody\"P\xc2\xf3\x18\x12伸缩工作负载\x82\xd3\xe4\x93\x024:\x01*\"//api/v1/k8s/cluster/{cluster_id}/workload:scale\x12\x9b\x01\n" +
 	"\x0fRestartWorkload\x12\x1e.k8s.v1.RestartWorkloadRequest\x1a\x14.google.api.HttpBody\"R\xc2\xf3\x18\x12重启工作负载\x82\xd3\xe4\x93\x026:\x01*\"1/api/v1/k8s/cluster/{cluster_id}/workload:restart\x12\xa5\x01\n" +
@@ -1605,7 +1806,8 @@ const file_k8s_v1_workload_proto_rawDesc = "" +
 	"\x0eTriggerCronJob\x12\x1d.k8s.v1.TriggerCronJobRequest\x1a\x14.google.api.HttpBody\"S\xc2\xf3\x18\x14手动触发 CronJob\x82\xd3\xe4\x93\x025:\x01*\"0/api/v1/k8s/cluster/{cluster_id}/cronjob:trigger\x12\x9d\x01\n" +
 	"\x0eSuspendCronJob\x12\x1d.k8s.v1.SuspendCronJobRequest\x1a\x14.google.api.HttpBody\"V\xc2\xf3\x18\x17暂停或恢复 CronJob\x82\xd3\xe4\x93\x025:\x01*\"0/api/v1/k8s/cluster/{cluster_id}/cronjob:suspend\x12~\n" +
 	"\bEvictPod\x12\x17.k8s.v1.EvictPodRequest\x1a\x14.google.api.HttpBody\"C\xc2\xf3\x18\n" +
-	"驱逐 Pod\x82\xd3\xe4\x93\x02/:\x01*\"*/api/v1/k8s/cluster/{cluster_id}/pod:evict\x12\x95\x01\n" +
+	"驱逐 Pod\x82\xd3\xe4\x93\x02/:\x01*\"*/api/v1/k8s/cluster/{cluster_id}/pod:evict\x12\x88\x01\n" +
+	"\tResizePod\x12\x18.k8s.v1.ResizePodRequest\x1a\x14.google.api.HttpBody\"K\xc2\xf3\x18\x11调整 Pod 资源\x82\xd3\xe4\x93\x020:\x01*\"+/api/v1/k8s/cluster/{cluster_id}/pod:resize\x12\x95\x01\n" +
 	"\n" +
 	"CordonNode\x12\x19.k8s.v1.CordonNodeRequest\x1a\x14.google.api.HttpBody\"V\xc2\xf3\x18\x1b停止或恢复节点调度\x82\xd3\xe4\x93\x021:\x01*\",/api/v1/k8s/cluster/{cluster_id}/node:cordon\x12\x9f\x01\n" +
 	"\x10PreviewDrainNode\x12\x1f.k8s.v1.PreviewDrainNodeRequest\x1a\x14.google.api.HttpBody\"T\xc2\xf3\x18\x12预览节点排空\x82\xd3\xe4\x93\x028:\x01*\"3/api/v1/k8s/cluster/{cluster_id}/node/drain:preview\x12\x9d\x01\n" +
@@ -1628,7 +1830,7 @@ func file_k8s_v1_workload_proto_rawDescGZIP() []byte {
 	return file_k8s_v1_workload_proto_rawDescData
 }
 
-var file_k8s_v1_workload_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
+var file_k8s_v1_workload_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
 var file_k8s_v1_workload_proto_goTypes = []any{
 	(*ScaleWorkloadRequest)(nil),         // 0: k8s.v1.ScaleWorkloadRequest
 	(*RestartWorkloadRequest)(nil),       // 1: k8s.v1.RestartWorkloadRequest
@@ -1639,70 +1841,79 @@ var file_k8s_v1_workload_proto_goTypes = []any{
 	(*TriggerCronJobRequest)(nil),        // 6: k8s.v1.TriggerCronJobRequest
 	(*SuspendCronJobRequest)(nil),        // 7: k8s.v1.SuspendCronJobRequest
 	(*EvictPodRequest)(nil),              // 8: k8s.v1.EvictPodRequest
-	(*CordonNodeRequest)(nil),            // 9: k8s.v1.CordonNodeRequest
-	(*PreviewDrainNodeRequest)(nil),      // 10: k8s.v1.PreviewDrainNodeRequest
-	(*DrainNodeRequest)(nil),             // 11: k8s.v1.DrainNodeRequest
-	(*DrainNodeResponse)(nil),            // 12: k8s.v1.DrainNodeResponse
-	(*OpenExecTicketRequest)(nil),        // 13: k8s.v1.OpenExecTicketRequest
-	(*OpenExecTicketResponse)(nil),       // 14: k8s.v1.OpenExecTicketResponse
-	(*WatchResourcesRequest)(nil),        // 15: k8s.v1.WatchResourcesRequest
-	(*WatchResourcesResponse)(nil),       // 16: k8s.v1.WatchResourcesResponse
-	(*StreamPodLogRequest)(nil),          // 17: k8s.v1.StreamPodLogRequest
-	(*StreamPodLogResponse)(nil),         // 18: k8s.v1.StreamPodLogResponse
-	(*StreamWorkloadLogRequest)(nil),     // 19: k8s.v1.StreamWorkloadLogRequest
-	(*StreamWorkloadLogResponse)(nil),    // 20: k8s.v1.StreamWorkloadLogResponse
-	nil,                                  // 21: k8s.v1.StreamWorkloadLogRequest.CursorsEntry
-	(*ResourceRef)(nil),                  // 22: k8s.v1.ResourceRef
-	(*httpbody.HttpBody)(nil),            // 23: google.api.HttpBody
+	(*ResizePodRequest)(nil),             // 9: k8s.v1.ResizePodRequest
+	(*ContainerResize)(nil),              // 10: k8s.v1.ContainerResize
+	(*ResizeQuantity)(nil),               // 11: k8s.v1.ResizeQuantity
+	(*CordonNodeRequest)(nil),            // 12: k8s.v1.CordonNodeRequest
+	(*PreviewDrainNodeRequest)(nil),      // 13: k8s.v1.PreviewDrainNodeRequest
+	(*DrainNodeRequest)(nil),             // 14: k8s.v1.DrainNodeRequest
+	(*DrainNodeResponse)(nil),            // 15: k8s.v1.DrainNodeResponse
+	(*OpenExecTicketRequest)(nil),        // 16: k8s.v1.OpenExecTicketRequest
+	(*OpenExecTicketResponse)(nil),       // 17: k8s.v1.OpenExecTicketResponse
+	(*WatchResourcesRequest)(nil),        // 18: k8s.v1.WatchResourcesRequest
+	(*WatchResourcesResponse)(nil),       // 19: k8s.v1.WatchResourcesResponse
+	(*StreamPodLogRequest)(nil),          // 20: k8s.v1.StreamPodLogRequest
+	(*StreamPodLogResponse)(nil),         // 21: k8s.v1.StreamPodLogResponse
+	(*StreamWorkloadLogRequest)(nil),     // 22: k8s.v1.StreamWorkloadLogRequest
+	(*StreamWorkloadLogResponse)(nil),    // 23: k8s.v1.StreamWorkloadLogResponse
+	nil,                                  // 24: k8s.v1.StreamWorkloadLogRequest.CursorsEntry
+	(*ResourceRef)(nil),                  // 25: k8s.v1.ResourceRef
+	(*httpbody.HttpBody)(nil),            // 26: google.api.HttpBody
 }
 var file_k8s_v1_workload_proto_depIdxs = []int32{
-	22, // 0: k8s.v1.ScaleWorkloadRequest.ref:type_name -> k8s.v1.ResourceRef
-	22, // 1: k8s.v1.RestartWorkloadRequest.ref:type_name -> k8s.v1.ResourceRef
-	22, // 2: k8s.v1.SetWorkloadImageRequest.ref:type_name -> k8s.v1.ResourceRef
-	22, // 3: k8s.v1.RollbackWorkloadRequest.ref:type_name -> k8s.v1.ResourceRef
-	22, // 4: k8s.v1.PauseWorkloadRequest.ref:type_name -> k8s.v1.ResourceRef
-	22, // 5: k8s.v1.TriggerCronJobRequest.ref:type_name -> k8s.v1.ResourceRef
-	22, // 6: k8s.v1.SuspendCronJobRequest.ref:type_name -> k8s.v1.ResourceRef
-	22, // 7: k8s.v1.EvictPodRequest.ref:type_name -> k8s.v1.ResourceRef
-	22, // 8: k8s.v1.StreamWorkloadLogRequest.ref:type_name -> k8s.v1.ResourceRef
-	21, // 9: k8s.v1.StreamWorkloadLogRequest.cursors:type_name -> k8s.v1.StreamWorkloadLogRequest.CursorsEntry
-	0,  // 10: k8s.v1.K8sWorkloadService.ScaleWorkload:input_type -> k8s.v1.ScaleWorkloadRequest
-	1,  // 11: k8s.v1.K8sWorkloadService.RestartWorkload:input_type -> k8s.v1.RestartWorkloadRequest
-	2,  // 12: k8s.v1.K8sWorkloadService.SetWorkloadImage:input_type -> k8s.v1.SetWorkloadImageRequest
-	3,  // 13: k8s.v1.K8sWorkloadService.ListWorkloadRevisions:input_type -> k8s.v1.ListWorkloadRevisionsRequest
-	4,  // 14: k8s.v1.K8sWorkloadService.RollbackWorkload:input_type -> k8s.v1.RollbackWorkloadRequest
-	5,  // 15: k8s.v1.K8sWorkloadService.PauseWorkload:input_type -> k8s.v1.PauseWorkloadRequest
-	6,  // 16: k8s.v1.K8sWorkloadService.TriggerCronJob:input_type -> k8s.v1.TriggerCronJobRequest
-	7,  // 17: k8s.v1.K8sWorkloadService.SuspendCronJob:input_type -> k8s.v1.SuspendCronJobRequest
-	8,  // 18: k8s.v1.K8sWorkloadService.EvictPod:input_type -> k8s.v1.EvictPodRequest
-	9,  // 19: k8s.v1.K8sWorkloadService.CordonNode:input_type -> k8s.v1.CordonNodeRequest
-	10, // 20: k8s.v1.K8sWorkloadService.PreviewDrainNode:input_type -> k8s.v1.PreviewDrainNodeRequest
-	13, // 21: k8s.v1.K8sWorkloadService.OpenExecTicket:input_type -> k8s.v1.OpenExecTicketRequest
-	15, // 22: k8s.v1.K8sStreamService.WatchResources:input_type -> k8s.v1.WatchResourcesRequest
-	17, // 23: k8s.v1.K8sStreamService.StreamPodLog:input_type -> k8s.v1.StreamPodLogRequest
-	19, // 24: k8s.v1.K8sStreamService.StreamWorkloadLog:input_type -> k8s.v1.StreamWorkloadLogRequest
-	11, // 25: k8s.v1.K8sStreamService.DrainNode:input_type -> k8s.v1.DrainNodeRequest
-	23, // 26: k8s.v1.K8sWorkloadService.ScaleWorkload:output_type -> google.api.HttpBody
-	23, // 27: k8s.v1.K8sWorkloadService.RestartWorkload:output_type -> google.api.HttpBody
-	23, // 28: k8s.v1.K8sWorkloadService.SetWorkloadImage:output_type -> google.api.HttpBody
-	23, // 29: k8s.v1.K8sWorkloadService.ListWorkloadRevisions:output_type -> google.api.HttpBody
-	23, // 30: k8s.v1.K8sWorkloadService.RollbackWorkload:output_type -> google.api.HttpBody
-	23, // 31: k8s.v1.K8sWorkloadService.PauseWorkload:output_type -> google.api.HttpBody
-	23, // 32: k8s.v1.K8sWorkloadService.TriggerCronJob:output_type -> google.api.HttpBody
-	23, // 33: k8s.v1.K8sWorkloadService.SuspendCronJob:output_type -> google.api.HttpBody
-	23, // 34: k8s.v1.K8sWorkloadService.EvictPod:output_type -> google.api.HttpBody
-	23, // 35: k8s.v1.K8sWorkloadService.CordonNode:output_type -> google.api.HttpBody
-	23, // 36: k8s.v1.K8sWorkloadService.PreviewDrainNode:output_type -> google.api.HttpBody
-	14, // 37: k8s.v1.K8sWorkloadService.OpenExecTicket:output_type -> k8s.v1.OpenExecTicketResponse
-	16, // 38: k8s.v1.K8sStreamService.WatchResources:output_type -> k8s.v1.WatchResourcesResponse
-	18, // 39: k8s.v1.K8sStreamService.StreamPodLog:output_type -> k8s.v1.StreamPodLogResponse
-	20, // 40: k8s.v1.K8sStreamService.StreamWorkloadLog:output_type -> k8s.v1.StreamWorkloadLogResponse
-	12, // 41: k8s.v1.K8sStreamService.DrainNode:output_type -> k8s.v1.DrainNodeResponse
-	26, // [26:42] is the sub-list for method output_type
-	10, // [10:26] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	25, // 0: k8s.v1.ScaleWorkloadRequest.ref:type_name -> k8s.v1.ResourceRef
+	25, // 1: k8s.v1.RestartWorkloadRequest.ref:type_name -> k8s.v1.ResourceRef
+	25, // 2: k8s.v1.SetWorkloadImageRequest.ref:type_name -> k8s.v1.ResourceRef
+	25, // 3: k8s.v1.RollbackWorkloadRequest.ref:type_name -> k8s.v1.ResourceRef
+	25, // 4: k8s.v1.PauseWorkloadRequest.ref:type_name -> k8s.v1.ResourceRef
+	25, // 5: k8s.v1.TriggerCronJobRequest.ref:type_name -> k8s.v1.ResourceRef
+	25, // 6: k8s.v1.SuspendCronJobRequest.ref:type_name -> k8s.v1.ResourceRef
+	25, // 7: k8s.v1.EvictPodRequest.ref:type_name -> k8s.v1.ResourceRef
+	25, // 8: k8s.v1.ResizePodRequest.ref:type_name -> k8s.v1.ResourceRef
+	10, // 9: k8s.v1.ResizePodRequest.containers:type_name -> k8s.v1.ContainerResize
+	11, // 10: k8s.v1.ContainerResize.requests:type_name -> k8s.v1.ResizeQuantity
+	11, // 11: k8s.v1.ContainerResize.limits:type_name -> k8s.v1.ResizeQuantity
+	25, // 12: k8s.v1.StreamWorkloadLogRequest.ref:type_name -> k8s.v1.ResourceRef
+	24, // 13: k8s.v1.StreamWorkloadLogRequest.cursors:type_name -> k8s.v1.StreamWorkloadLogRequest.CursorsEntry
+	0,  // 14: k8s.v1.K8sWorkloadService.ScaleWorkload:input_type -> k8s.v1.ScaleWorkloadRequest
+	1,  // 15: k8s.v1.K8sWorkloadService.RestartWorkload:input_type -> k8s.v1.RestartWorkloadRequest
+	2,  // 16: k8s.v1.K8sWorkloadService.SetWorkloadImage:input_type -> k8s.v1.SetWorkloadImageRequest
+	3,  // 17: k8s.v1.K8sWorkloadService.ListWorkloadRevisions:input_type -> k8s.v1.ListWorkloadRevisionsRequest
+	4,  // 18: k8s.v1.K8sWorkloadService.RollbackWorkload:input_type -> k8s.v1.RollbackWorkloadRequest
+	5,  // 19: k8s.v1.K8sWorkloadService.PauseWorkload:input_type -> k8s.v1.PauseWorkloadRequest
+	6,  // 20: k8s.v1.K8sWorkloadService.TriggerCronJob:input_type -> k8s.v1.TriggerCronJobRequest
+	7,  // 21: k8s.v1.K8sWorkloadService.SuspendCronJob:input_type -> k8s.v1.SuspendCronJobRequest
+	8,  // 22: k8s.v1.K8sWorkloadService.EvictPod:input_type -> k8s.v1.EvictPodRequest
+	9,  // 23: k8s.v1.K8sWorkloadService.ResizePod:input_type -> k8s.v1.ResizePodRequest
+	12, // 24: k8s.v1.K8sWorkloadService.CordonNode:input_type -> k8s.v1.CordonNodeRequest
+	13, // 25: k8s.v1.K8sWorkloadService.PreviewDrainNode:input_type -> k8s.v1.PreviewDrainNodeRequest
+	16, // 26: k8s.v1.K8sWorkloadService.OpenExecTicket:input_type -> k8s.v1.OpenExecTicketRequest
+	18, // 27: k8s.v1.K8sStreamService.WatchResources:input_type -> k8s.v1.WatchResourcesRequest
+	20, // 28: k8s.v1.K8sStreamService.StreamPodLog:input_type -> k8s.v1.StreamPodLogRequest
+	22, // 29: k8s.v1.K8sStreamService.StreamWorkloadLog:input_type -> k8s.v1.StreamWorkloadLogRequest
+	14, // 30: k8s.v1.K8sStreamService.DrainNode:input_type -> k8s.v1.DrainNodeRequest
+	26, // 31: k8s.v1.K8sWorkloadService.ScaleWorkload:output_type -> google.api.HttpBody
+	26, // 32: k8s.v1.K8sWorkloadService.RestartWorkload:output_type -> google.api.HttpBody
+	26, // 33: k8s.v1.K8sWorkloadService.SetWorkloadImage:output_type -> google.api.HttpBody
+	26, // 34: k8s.v1.K8sWorkloadService.ListWorkloadRevisions:output_type -> google.api.HttpBody
+	26, // 35: k8s.v1.K8sWorkloadService.RollbackWorkload:output_type -> google.api.HttpBody
+	26, // 36: k8s.v1.K8sWorkloadService.PauseWorkload:output_type -> google.api.HttpBody
+	26, // 37: k8s.v1.K8sWorkloadService.TriggerCronJob:output_type -> google.api.HttpBody
+	26, // 38: k8s.v1.K8sWorkloadService.SuspendCronJob:output_type -> google.api.HttpBody
+	26, // 39: k8s.v1.K8sWorkloadService.EvictPod:output_type -> google.api.HttpBody
+	26, // 40: k8s.v1.K8sWorkloadService.ResizePod:output_type -> google.api.HttpBody
+	26, // 41: k8s.v1.K8sWorkloadService.CordonNode:output_type -> google.api.HttpBody
+	26, // 42: k8s.v1.K8sWorkloadService.PreviewDrainNode:output_type -> google.api.HttpBody
+	17, // 43: k8s.v1.K8sWorkloadService.OpenExecTicket:output_type -> k8s.v1.OpenExecTicketResponse
+	19, // 44: k8s.v1.K8sStreamService.WatchResources:output_type -> k8s.v1.WatchResourcesResponse
+	21, // 45: k8s.v1.K8sStreamService.StreamPodLog:output_type -> k8s.v1.StreamPodLogResponse
+	23, // 46: k8s.v1.K8sStreamService.StreamWorkloadLog:output_type -> k8s.v1.StreamWorkloadLogResponse
+	15, // 47: k8s.v1.K8sStreamService.DrainNode:output_type -> k8s.v1.DrainNodeResponse
+	31, // [31:48] is the sub-list for method output_type
+	14, // [14:31] is the sub-list for method input_type
+	14, // [14:14] is the sub-list for extension type_name
+	14, // [14:14] is the sub-list for extension extendee
+	0,  // [0:14] is the sub-list for field type_name
 }
 
 func init() { file_k8s_v1_workload_proto_init() }
@@ -1711,13 +1922,14 @@ func file_k8s_v1_workload_proto_init() {
 		return
 	}
 	file_k8s_v1_resource_proto_init()
+	file_k8s_v1_workload_proto_msgTypes[11].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_k8s_v1_workload_proto_rawDesc), len(file_k8s_v1_workload_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   22,
+			NumMessages:   25,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

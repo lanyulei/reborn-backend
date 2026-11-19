@@ -42,12 +42,7 @@ func (d *Data) Ping(ctx context.Context) error {
 // NewData 构造数据层资源：解析 DSN、应用连接池参数并 Ping 验证连通性，
 // 失败在装配阶段快速返回错误；cleanup 在进程退出时统一释放连接。
 func NewData(c *conf.Data) (*Data, func(), error) {
-	pool, err := dbx.NewPool(c.GetDatabase().GetSource(), dbx.PoolOptions{
-		MaxConns:    c.GetDatabase().GetMaxConns(),
-		MinConns:    c.GetDatabase().GetMinConns(),
-		MaxIdleTime: c.GetDatabase().GetMaxConnIdleTime().AsDuration(),
-		PingTimeout: dataPingTimeout,
-	})
+	pool, err := dbx.NewPoolFromConf(c.GetDatabase(), dataPingTimeout)
 	if err != nil {
 		return nil, nil, err
 	}

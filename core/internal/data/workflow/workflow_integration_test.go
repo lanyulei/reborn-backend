@@ -20,6 +20,7 @@ import (
 	datanotify "github.com/lanyulei/reborn/backend/core/internal/data/notify"
 	datasystem "github.com/lanyulei/reborn/backend/core/internal/data/system"
 	"github.com/lanyulei/reborn/backend/core/internal/pkg/txrun"
+	"github.com/lanyulei/reborn/backend/kit/kitconf"
 
 	"github.com/go-kratos/kratos/v3/errors"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -97,7 +98,7 @@ func newEnv(t *testing.T) *env {
 	} else if db := cfg.ConnConfig.Database; !strings.Contains(db, "test") {
 		t.Fatalf("TEST_DATABASE_SOURCE 指向库 %q：库名须含 \"test\"（集成测试会 TRUNCATE 业务表）", db)
 	}
-	d, cleanup, err := basedata.NewData(&conf.Data{Database: &conf.Data_Database{Source: dsn}})
+	d, cleanup, err := basedata.NewData(&conf.Data{Database: &kitconf.Database{Source: dsn}})
 	if err != nil {
 		t.Fatalf("NewData() error = %v", err)
 	}
@@ -130,7 +131,7 @@ func newEnv(t *testing.T) *env {
 	}
 	defRepo, instRepo := NewDefinitionRepo(d), NewInstanceRepo(d)
 	dir := bizsystem.NewDirectoryUsecase(datasystem.NewDirectoryRepo(d), datasystem.NewUserRepo(d), datasystem.NewDeptRepo(d))
-	cfg, err := NewConfigRepo(d, &conf.Notify{Master: &conf.Notify_Master{Key: "integration-test-master-key"}})
+	cfg, err := NewConfigRepo(d, &conf.Notify{Master: &kitconf.Master{Key: "integration-test-master-key"}})
 	if err != nil {
 		t.Fatalf("NewConfigRepo() error = %v", err)
 	}
@@ -543,7 +544,7 @@ func TestIntegration_IdempotencyAndPoolUsage(t *testing.T) {
 
 	// 连接池只有 3 条连接：24 条并发命令各自只占用事务那一条连接，全部能完成。
 	dsn := os.Getenv("TEST_DATABASE_SOURCE")
-	small, cleanup, err := basedata.NewData(&conf.Data{Database: &conf.Data_Database{Source: dsn, MaxConns: 3}})
+	small, cleanup, err := basedata.NewData(&conf.Data{Database: &kitconf.Database{Source: dsn, MaxConns: 3}})
 	if err != nil {
 		t.Fatalf("NewData(small pool) error = %v", err)
 	}

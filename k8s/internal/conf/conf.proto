@@ -3,6 +3,7 @@ syntax = "proto3";
 package conf;
 
 import "google/protobuf/duration.proto";
+import "kitconf/common.proto";
 
 option go_package = "github.com/lanyulei/reborn/backend/k8s/internal/conf;conf";
 
@@ -44,14 +45,7 @@ message Server {
 
 // Data 数据源配置。
 message Data {
-  message Database {
-    // source PostgreSQL DSN（与 core 同库，账号属于 k8s_plane_role）。
-    string source = 1;
-    int32 max_conns = 2;
-    int32 min_conns = 3;
-    google.protobuf.Duration max_conn_idle_time = 4;
-  }
-  Database database = 1;
+  kitconf.Database database = 1;
 }
 
 // Plane 数据面参数；未设置或 ≤0 取注明的缺省值。
@@ -91,8 +85,5 @@ message Plane {
 
 // Notify 与通知管道共享的加密主密钥（解密集群凭据）。
 message Notify {
-  message Master {
-    string key = 1;
-  }
-  Master master = 1;
+  kitconf.Master master = 1;
 }

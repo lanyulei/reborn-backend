@@ -13,6 +13,7 @@ import (
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
 	"github.com/lanyulei/reborn/backend/core/internal/conf"
 	"github.com/lanyulei/reborn/backend/core/internal/testfake"
+	"github.com/lanyulei/reborn/backend/kit/kitconf"
 )
 
 // e2eActorID 是既有 e2e 用例的固定操作者 ID；鉴权只校验令牌签名与有效期，
@@ -40,7 +41,7 @@ func newTestHTTPServerWithServices(t *testing.T) (*httptest.Server, testServices
 	t.Helper()
 	svc := newTestServices(t)
 	srv := NewHTTPServer(
-		&conf.Server{Http: &conf.Server_HTTP{}},
+		&conf.Server{Http: &kitconf.HTTP{}},
 		testLogger(),
 		svc.user,
 		svc.role,

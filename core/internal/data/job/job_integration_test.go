@@ -15,6 +15,7 @@ import (
 	basedata "github.com/lanyulei/reborn/backend/core/internal/data"
 	"github.com/lanyulei/reborn/backend/kit/idgen"
 	jc "github.com/lanyulei/reborn/backend/kit/jobcontract"
+	"github.com/lanyulei/reborn/backend/kit/kitconf"
 
 	kerrors "github.com/go-kratos/kratos/v3/errors"
 	"github.com/jackc/pgx/v5"
@@ -74,7 +75,7 @@ func reposOf(t *testing.T, d *basedata.Data) *env {
 // newEnv 真实连接池上的全部仓储；未配置 TEST_DATABASE_SOURCE 时跳过。会清空作业中心域的表。
 func newEnv(t *testing.T) *env {
 	t.Helper()
-	d, cleanup, err := basedata.NewData(&conf.Data{Database: &conf.Data_Database{Source: testDSN(t)}})
+	d, cleanup, err := basedata.NewData(&conf.Data{Database: &kitconf.Database{Source: testDSN(t)}})
 	if err != nil {
 		t.Fatalf("NewData() error = %v", err)
 	}

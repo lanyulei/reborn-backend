@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/lanyulei/reborn/backend/kit/idgen"
+	"github.com/lanyulei/reborn/backend/kit/kitconf"
 	"github.com/lanyulei/reborn/backend/kit/monitorcontract"
 	"github.com/lanyulei/reborn/backend/monitor/internal/biz"
 	"github.com/lanyulei/reborn/backend/monitor/internal/conf"
@@ -261,7 +262,7 @@ type engine struct {
 
 func (e *env) engine(masterKey string) *engine {
 	e.t.Helper()
-	box, err := NewSecretBox(&conf.Notify{Master: &conf.Notify_Master{Key: masterKey}})
+	box, err := NewSecretBox(&conf.Notify{Master: &kitconf.Master{Key: masterKey}})
 	if err != nil {
 		e.t.Fatal(err)
 	}

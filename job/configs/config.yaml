@@ -7,8 +7,8 @@
 #
 # 本地运行引擎（在 backend/job 目录）：
 #   1. 数据库先迁移到 0070 及以后（backend/core: make migrate）。
-#   2. export KRATOS_DATA_DATABASE_SOURCE='<DSN>'   # 本地与 core 相同
-#   3. export KRATOS_NOTIFY_MASTER_KEY=<与 core 相同的主密钥>
+#   2. backend/.env 里配好 KRATOS_DATA_DATABASE_SOURCE（见 backend/.env.example）
+#   3. 以及 KRATOS_NOTIFY_MASTER_KEY（与 core 相同；启动时按指纹核对）
 #   4. SERVER_ROLES=engine go run ./cmd/job -conf configs
 #   5. curl http://127.0.0.1:8050/healthz
 #
@@ -18,6 +18,10 @@
 #      export KRATOS_RUNNER_ENGINE_URL=http://127.0.0.1:8051
 #      export KRATOS_RUNNER_WORK_DIR=/dev/shm/reborn-job     # 建议 tmpfs
 #   3. SERVER_ROLES=runner go run ./cmd/job -conf configs
+# 数据库连接（data.database）与凭据加密主密钥（notify.master.key）全部服务一致，定义在共享基线
+# kit/bootstrap/shared.yaml，取值由环境变量注入（KRATOS_DATA_DATABASE_SOURCE / KRATOS_NOTIFY_MASTER_KEY，
+# 本地见 backend/.env.example）；这里只写本服务特有的段，以及要偏离基线的值。
+# 数据库与主密钥仅 engine 角色使用；生产环境的账号用 job_engine_role 成员（见 core/migrations/0070）。
 server:
   # roles 为空 = 全部角色（engine / runner）；部署时用 SERVER_ROLES=engine 或 SERVER_ROLES=runner 覆盖。
   roles: []
@@ -32,14 +36,6 @@ server:
     timeout: 15s
     cert_file: ""
     key_file: ""
-data:
-  database:
-    # 仅 engine 角色使用，与 core 同库。占位符由环境变量 KRATOS_DATA_DATABASE_SOURCE 填充；
-    # 生产环境使用 job_engine_role 成员账号（见 core/migrations/0070）。
-    source: ${DATA_DATABASE_SOURCE:}
-    max_conns: 16
-    min_conns: 2
-    max_conn_idle_time: 1800s
 engine:
   lease: 60s                    # 执行租约：节点失联超过它即判为结果未知
   sweep_interval: 5s
@@ -65,7 +61,3 @@ runner:
   cancel_grace: 30s
   drain_timeout: 600s
   git_allow_protocols: ""       # 空 = http:https:ssh
-notify:
-  master:
-    # 仅 engine 角色使用，与 core 同一主密钥：export KRATOS_NOTIFY_MASTER_KEY=...
-    key: ${NOTIFY_MASTER_KEY:}

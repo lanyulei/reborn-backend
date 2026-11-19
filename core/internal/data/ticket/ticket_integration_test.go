@@ -27,6 +27,7 @@ import (
 	dataworkflow "github.com/lanyulei/reborn/backend/core/internal/data/workflow"
 	"github.com/lanyulei/reborn/backend/core/internal/pkg/formschema"
 	"github.com/lanyulei/reborn/backend/core/internal/pkg/txrun"
+	"github.com/lanyulei/reborn/backend/kit/kitconf"
 
 	"github.com/go-kratos/kratos/v3/errors"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -141,7 +142,7 @@ func newEnv(t *testing.T) *env {
 	} else if db := cfg.ConnConfig.Database; !strings.Contains(db, "test") {
 		t.Fatalf("TEST_DATABASE_SOURCE 指向库 %q：库名须含 \"test\"（集成测试会 TRUNCATE 业务表）", db)
 	}
-	c := &conf.Data{Database: &conf.Data_Database{Source: dsn}, Upload: &conf.Data_Upload{Dir: t.TempDir()}}
+	c := &conf.Data{Database: &kitconf.Database{Source: dsn}, Upload: &conf.Data_Upload{Dir: t.TempDir()}}
 	d, cleanup, err := basedata.NewData(c)
 	if err != nil {
 		t.Fatalf("NewData() error = %v", err)
@@ -849,10 +850,14 @@ func TestIntegration_FieldExtras(t *testing.T) {
 	}
 	form := func() []biz.FormField {
 		return []biz.FormField{
-			{Code: "env", Name: "环境", Type: formschema.TypeEnum, EnumValues: []string{"prod", "test"}, Required: true,
-				EnumLabels: map[string]string{"prod": "生产"}, Default: "test", Group: "基本信息"},
-			{Code: "window", Name: "变更窗口", Type: formschema.TypeString, Required: true,
-				ShowWhen: &biz.ShowWhen{Field: "env", Values: []string{"prod"}}},
+			{
+				Code: "env", Name: "环境", Type: formschema.TypeEnum, EnumValues: []string{"prod", "test"}, Required: true,
+				EnumLabels: map[string]string{"prod": "生产"}, Default: "test", Group: "基本信息",
+			},
+			{
+				Code: "window", Name: "变更窗口", Type: formschema.TypeString, Required: true,
+				ShowWhen: &biz.ShowWhen{Field: "env", Values: []string{"prod"}},
+			},
 			{Code: "owners", Name: "负责人", Type: formschema.TypeUser, Multiple: true},
 			{Code: "mail", Name: "邮箱", Type: formschema.TypeString, Format: formschema.FormatEmail, Placeholder: "a@b.c"},
 		}

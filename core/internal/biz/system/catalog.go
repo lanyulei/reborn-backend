@@ -1857,8 +1857,10 @@ var permissionCatalog = []MenuSpec{
 			{
 				Code: "k8s.workload.scale",
 				Name: "伸缩",
+				// 含原地调整 Pod 的容器资源（纵向伸缩）。
 				Ops: []string{
 					"/k8s.v1.K8sWorkloadService/ScaleWorkload",
+					"/k8s.v1.K8sWorkloadService/ResizePod",
 				},
 			},
 			{

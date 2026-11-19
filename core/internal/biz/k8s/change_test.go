@@ -377,7 +377,7 @@ func TestChangeGatePassThrough(t *testing.T) {
 	// 每个写操作都拦截。
 	for _, op := range []string{
 		kc.OpApply, kc.OpDelete, kc.OpManifestApply, kc.OpScale, kc.OpRestart, kc.OpSetImage, kc.OpRollback, kc.OpPause,
-		kc.OpCronTrigger, kc.OpCronSuspend, kc.OpPodEvict, kc.OpNodeCordon, kc.OpHelmInstall, kc.OpHelmUpgrade, kc.OpHelmRollback, kc.OpHelmUninstall,
+		kc.OpCronTrigger, kc.OpCronSuspend, kc.OpPodEvict, kc.OpPodResize, kc.OpNodeCordon, kc.OpHelmInstall, kc.OpHelmUpgrade, kc.OpHelmRollback, kc.OpHelmUninstall,
 	} {
 		if _, err := planes.Call(ctx, alice, "c1", op, kc.Empty{}); kerrors.FromError(err).Reason != kc.ReasonChangeSubmitted {
 			t.Errorf("%s must be gated: %v", op, err)

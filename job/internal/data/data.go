@@ -48,12 +48,7 @@ func NewData(roles conf.Roles, c *conf.Data) (*Data, func(), error) {
 	if !roles.Has(conf.RoleEngine) {
 		return &Data{}, func() {}, nil
 	}
-	pool, err := dbx.NewPool(c.GetDatabase().GetSource(), dbx.PoolOptions{
-		MaxConns:    c.GetDatabase().GetMaxConns(),
-		MinConns:    c.GetDatabase().GetMinConns(),
-		MaxIdleTime: c.GetDatabase().GetMaxConnIdleTime().AsDuration(),
-		PingTimeout: dataPingTimeout,
-	})
+	pool, err := dbx.NewPoolFromConf(c.GetDatabase(), dataPingTimeout)
 	if err != nil {
 		return nil, nil, err
 	}

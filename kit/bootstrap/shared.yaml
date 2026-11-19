@@ -1,0 +1,19 @@
+# 全部服务共用的配置基线：编译进每个服务的二进制，是「各服务必须一致」的配置的唯一出处。
+# 加载顺序：本文件 → 服务自己的 configs/ → KRATOS_ 前缀环境变量（占位符的取值来源）；后者覆盖前者。
+# 服务的 config.yaml 里只写自己特有的段，以及确实要偏离基线的值（如 data.database.max_conns）。
+#
+# 取值一律由环境变量注入（本地开发见 backend/.env.example，部署时对应一份共享的 Secret）：
+#   KRATOS_DATA_DATABASE_SOURCE   全部服务同库。生产环境各服务使用各自的角色成员账号
+#                                 （notify_pipe_role / cmdb_sync_role / monitor_engine_role /
+#                                 job_engine_role / k8s_plane_role），主机与库名相同、账号不同。
+#   KRATOS_NOTIFY_MASTER_KEY      凭据加密主密钥，全部服务必须相同；启动时按
+#                                 system_key_check 表里的指纹核对，不一致直接启动失败。
+data:
+  database:
+    source: ${DATA_DATABASE_SOURCE:}
+    max_conns: 16
+    min_conns: 2
+    max_conn_idle_time: 1800s
+notify:
+  master:
+    key: ${NOTIFY_MASTER_KEY:}

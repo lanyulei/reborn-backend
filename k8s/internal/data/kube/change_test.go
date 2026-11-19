@@ -24,7 +24,8 @@ func TestQuickTouched(t *testing.T) {
 			t.Errorf("%s touches %v, want %s", op, got, path)
 		}
 	}
-	for _, op := range []string{k8scontract.OpRestart, k8scontract.OpCronTrigger, k8scontract.OpPodEvict, k8scontract.StreamDrain} {
+	// pod-resize 涉及的字段随请求而定（planResize），不在这张固定表里。
+	for _, op := range []string{k8scontract.OpRestart, k8scontract.OpCronTrigger, k8scontract.OpPodEvict, k8scontract.OpPodResize, k8scontract.StreamDrain} {
 		if QuickTouched(op, "", "") != nil {
 			t.Errorf("%s must not touch existing fields", op)
 		}
@@ -33,7 +34,7 @@ func TestQuickTouched(t *testing.T) {
 	u := &userClients{}
 	for _, op := range []string{
 		k8scontract.OpScale, k8scontract.OpRestart, k8scontract.OpSetImage, k8scontract.OpRollback, k8scontract.OpPause,
-		k8scontract.OpCronTrigger, k8scontract.OpCronSuspend, k8scontract.OpPodEvict, k8scontract.OpNodeCordon, k8scontract.StreamDrain,
+		k8scontract.OpCronTrigger, k8scontract.OpCronSuspend, k8scontract.OpPodEvict, k8scontract.OpPodResize, k8scontract.OpNodeCordon, k8scontract.StreamDrain,
 	} {
 		body := `{"ref":{"version":"v1","resource":"x","name":"n"},"container":"c","image":"i","name":"n"}`
 		if qp, err := u.quickPlanFor(op, []byte(body)); err != nil || qp == nil || qp.action == "" {

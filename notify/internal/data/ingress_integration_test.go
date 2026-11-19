@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lanyulei/reborn/backend/kit/kitconf"
 	"github.com/lanyulei/reborn/backend/notify/internal/biz"
 	"github.com/lanyulei/reborn/backend/notify/internal/conf"
 )
@@ -163,7 +164,7 @@ func TestIntegration_PartitionMaintenance(t *testing.T) {
 func TestIntegration_PartitionBoundsIgnoreSessionTimeZone(t *testing.T) {
 	newIntegrationData(t)
 	dsn := os.Getenv("TEST_DATABASE_SOURCE") + " TimeZone=Asia/Shanghai"
-	d, cleanup, err := NewData(&conf.Data{Database: &conf.Data_Database{Source: dsn}})
+	d, cleanup, err := NewData(&conf.Data{Database: &kitconf.Database{Source: dsn}})
 	if err != nil {
 		t.Fatal(err)
 	}

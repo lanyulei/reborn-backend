@@ -7513,6 +7513,46 @@
         ]
       }
     },
+    "/api/v1/k8s/cluster/{clusterId}/pod:resize": {
+      "post": {
+        "summary": "ResizePod 原地调整运行中 Pod 的容器资源（CPU / 内存的请求与上限），不重建 Pod。\n经 Pod 的 resize 子资源执行，需要 Kubernetes 1.33+；集群接受后由 kubelet 异步生效。",
+        "operationId": "K8sWorkloadService_ResizePod",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/HttpBody"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "clusterId",
+            "description": "cluster_id 集群唯一标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/ResizePodBody"
+            }
+          }
+        ],
+        "tags": [
+          "K8sWorkloadService"
+        ]
+      }
+    },
     "/api/v1/k8s/cluster/{clusterId}/relation": {
       "get": {
         "summary": "GetRelations 关联关系：Ingress → Service → Pod 的链路与每一段的健康状况；Service 的后端 Pod；ConfigMap / Secret 被哪些工作负载引用。响应：k8scontract.RelationsResponse。",
@@ -23216,6 +23256,24 @@
       "type": "object",
       "title": "ConfirmResponse 占位：实际响应为 SSE 事件流，本消息不会被序列化返回。"
     },
+    "ContainerResize": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "name 容器名称。"
+        },
+        "requests": {
+          "$ref": "#/definitions/ResizeQuantity",
+          "title": "requests 资源请求；不传 = 不改。"
+        },
+        "limits": {
+          "$ref": "#/definitions/ResizeQuantity",
+          "title": "limits 资源上限；不传 = 不改。"
+        }
+      },
+      "title": "ContainerResize 一个容器的目标资源。"
+    },
     "CordonNodeBody": {
       "type": "object",
       "properties": {
@@ -35037,6 +35095,38 @@
     "ResetUserPasswordResponse": {
       "type": "object",
       "title": "ResetUserPasswordResponse 重置用户密码响应。"
+    },
+    "ResizePodBody": {
+      "type": "object",
+      "properties": {
+        "ref": {
+          "$ref": "#/definitions/ResourceRef",
+          "title": "ref 目标 Pod。"
+        },
+        "containers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/ContainerResize"
+          },
+          "title": "containers 要调整的容器（普通容器，或 restartPolicy 为 Always 的初始化容器）；未列出的容器不变。"
+        }
+      },
+      "title": "ResizePodRequest 原地调整 Pod 资源请求。"
+    },
+    "ResizeQuantity": {
+      "type": "object",
+      "properties": {
+        "cpu": {
+          "type": "string",
+          "title": "cpu CPU 数量，如 500m、2。"
+        },
+        "memory": {
+          "type": "string",
+          "title": "memory 内存数量，如 256Mi、1Gi。"
+        }
+      },
+      "title": "ResizeQuantity CPU 与内存的数量（Kubernetes 数量写法，如 500m、256Mi）。不传 = 保持不变；不接受空串。"
     },
     "ResourceRef": {
       "type": "object",

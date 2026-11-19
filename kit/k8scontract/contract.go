@@ -147,6 +147,7 @@ const (
 	ActionSuspend      = "suspend"
 	ActionUnsuspend    = "unsuspend"
 	ActionEvict        = "evict"
+	ActionResize       = "resize"
 	ActionCordon       = "cordon"
 	ActionUncordon     = "uncordon"
 	ActionDrain        = "drain"

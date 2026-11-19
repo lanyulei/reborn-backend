@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+// 各服务 internal/conf/conf.proto 共用的配置结构；取值基线见 kit/bootstrap/shared.yaml。
+package kitconf;
+
+import "google/protobuf/duration.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/kit/kitconf;kitconf";
+
+// HTTP 监听。
+message HTTP {
+  string network = 1;
+  string addr = 2;
+  google.protobuf.Duration timeout = 3;
+}
+
+// Database PostgreSQL 连接（全部服务同库）。
+message Database {
+  // source DSN；由环境变量 KRATOS_DATA_DATABASE_SOURCE 注入。
+  string source = 1;
+  int32 max_conns = 2;
+  int32 min_conns = 3;
+  google.protobuf.Duration max_conn_idle_time = 4;
+}
+
+// Master 凭据加密主密钥（全部服务必须相同）。
+message Master {
+  // key 由环境变量 KRATOS_NOTIFY_MASTER_KEY 注入。
+  string key = 1;
+}

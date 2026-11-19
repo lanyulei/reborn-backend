@@ -126,6 +126,13 @@ func (u *userClients) dispatchWrite(op string, body []byte) (any, []*biz.AuditEv
 		err = u.evict(req.Ref.Namespace, req.Ref.Name, nil)
 		audit.Err = mapError(err)
 		return empty, []*biz.AuditEvent{audit}, err
+	case k8scontract.OpPodResize:
+		req, err := decode[k8scontract.ResizeRequest](body)
+		if err != nil {
+			return nil, nil, err
+		}
+		a, err := u.resize(req)
+		return empty, a, err
 	case k8scontract.OpNodeCordon:
 		req, err := decode[k8scontract.CordonRequest](body)
 		if err != nil {

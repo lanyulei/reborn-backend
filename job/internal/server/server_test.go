@@ -18,6 +18,7 @@ import (
 	"github.com/lanyulei/reborn/backend/job/internal/service"
 	"github.com/lanyulei/reborn/backend/job/internal/worker"
 	"github.com/lanyulei/reborn/backend/kit/jobcontract"
+	"github.com/lanyulei/reborn/backend/kit/kitconf"
 
 	"github.com/go-kratos/kratos/v3/transport"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -25,27 +26,35 @@ import (
 
 func TestNewRoles(t *testing.T) {
 	t.Setenv("SERVER_ROLES", "")
-	all := conf.NewRoles(&conf.Server{})
+	must := func(c *conf.Server) conf.Roles {
+		t.Helper()
+		roles, err := conf.NewRoles(c)
+		if err != nil {
+			t.Fatalf("NewRoles() error = %v", err)
+		}
+		return roles
+	}
+	all := must(&conf.Server{})
 	if !all.Has(conf.RoleEngine) || !all.Has(conf.RoleRunner) || len(all.List()) != 2 {
 		t.Fatalf("empty config must enable all roles: %v", all.List())
 	}
-	if nilConf := conf.NewRoles(nil); len(nilConf.List()) != 2 {
+	if nilConf := must(nil); len(nilConf.List()) != 2 {
 		t.Fatalf("nil config must enable all roles: %v", nilConf.List())
 	}
-	only := conf.NewRoles(&conf.Server{Roles: []string{" Runner ", "bogus"}})
-	if only.Has(conf.RoleEngine) || !only.Has(conf.RoleRunner) {
+	only := must(&conf.Server{Roles: []string{" Runner "}})
+	if only.Has("engine") || !only.Has("runner") {
 		t.Fatalf("roles = %v", only.List())
 	}
-	if bogus := conf.NewRoles(&conf.Server{Roles: []string{"bogus"}}); len(bogus.List()) != 2 {
-		t.Fatalf("only unknown roles must fall back to all: %v", bogus.List())
+	if _, err := conf.NewRoles(&conf.Server{Roles: []string{"runner", "bogus"}}); err == nil {
+		t.Fatal("unknown role must fail assembly instead of being silently dropped")
 	}
 	t.Setenv("SERVER_ROLES", "engine")
-	env := conf.NewRoles(&conf.Server{Roles: []string{"runner"}})
-	if !env.Has(conf.RoleEngine) || env.Has(conf.RoleRunner) {
+	env := must(&conf.Server{Roles: []string{"runner"}})
+	if !env.Has("engine") || env.Has("runner") {
 		t.Fatalf("env must take precedence: %v", env.List())
 	}
 	t.Setenv("SERVER_ROLES", "runner, engine")
-	if got := conf.NewRoles(nil).List(); !slices.Equal(got, []string{conf.RoleEngine, conf.RoleRunner}) {
+	if got := must(nil).List(); !slices.Equal(got, []string{"engine", "runner"}) {
 		t.Fatalf("list order = %v", got)
 	}
 }
@@ -89,7 +98,7 @@ func TestHTTPServerHealthAndMetrics(t *testing.T) {
 	metrics.AddExecutions(ctx, biz.EventLeaseExpired, 2)
 
 	p := &pinger{}
-	ts := httptest.NewServer(NewHTTPServer(&conf.Server{Http: &conf.Server_HTTP{Timeout: durationpb.New(time.Second)}}, testLogger(), p))
+	ts := httptest.NewServer(NewHTTPServer(&conf.Server{Http: &kitconf.HTTP{Timeout: durationpb.New(time.Second)}}, testLogger(), p))
 	defer ts.Close()
 	if code, body := do(t, http.MethodGet, ts.URL+"/healthz", ""); code != http.StatusOK || body != "ok" {
 		t.Fatalf("healthz = %d %q", code, body)

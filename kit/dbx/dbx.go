@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lanyulei/reborn/backend/kit/kitconf"
 	"github.com/lanyulei/reborn/backend/kit/loop"
 
 	"github.com/jackc/pgx/v5"
@@ -54,6 +55,16 @@ type PoolOptions struct {
 	MinConns    int32
 	MaxIdleTime time.Duration
 	PingTimeout time.Duration // 启动连通性检查超时，零值 3s
+}
+
+// NewPoolFromConf 按各服务共用的数据库配置（kitconf.Database）构造连接池。
+func NewPoolFromConf(c *kitconf.Database, pingTimeout time.Duration) (*pgxpool.Pool, error) {
+	return NewPool(c.GetSource(), PoolOptions{
+		MaxConns:    c.GetMaxConns(),
+		MinConns:    c.GetMinConns(),
+		MaxIdleTime: c.GetMaxConnIdleTime().AsDuration(),
+		PingTimeout: pingTimeout,
+	})
 }
 
 // NewPool 解析 DSN、应用参数并 Ping 验证；失败在装配阶段快速返回。

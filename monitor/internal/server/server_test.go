@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lanyulei/reborn/backend/kit/kitconf"
 	"github.com/lanyulei/reborn/backend/kit/loop"
 	"github.com/lanyulei/reborn/backend/monitor/internal/conf"
 	"github.com/lanyulei/reborn/backend/monitor/internal/worker"
@@ -19,27 +20,35 @@ import (
 
 func TestNewRoles(t *testing.T) {
 	t.Setenv("SERVER_ROLES", "")
-	all := NewRoles(&conf.Engine{})
+	must := func(c *conf.Engine) Roles {
+		t.Helper()
+		roles, err := NewRoles(c)
+		if err != nil {
+			t.Fatalf("NewRoles() error = %v", err)
+		}
+		return roles
+	}
+	all := must(&conf.Engine{})
 	if !all.Has(RolePlanner) || !all.Has(RoleEvaluator) || len(all.List()) != 2 {
 		t.Fatalf("empty config must enable all roles: %v", all.List())
 	}
-	if nilConf := NewRoles(nil); len(nilConf.List()) != 2 {
+	if nilConf := must(nil); len(nilConf.List()) != 2 {
 		t.Fatalf("nil config must enable all roles: %v", nilConf.List())
 	}
-	only := NewRoles(&conf.Engine{Roles: []string{" Evaluator ", "bogus"}})
-	if only.Has(RolePlanner) || !only.Has(RoleEvaluator) {
+	only := must(&conf.Engine{Roles: []string{" Evaluator "}})
+	if only.Has("planner") || !only.Has("evaluator") {
 		t.Fatalf("roles = %v", only.List())
 	}
-	if bogus := NewRoles(&conf.Engine{Roles: []string{"bogus"}}); len(bogus.List()) != 2 {
-		t.Fatalf("only unknown roles must fall back to all: %v", bogus.List())
+	if _, err := NewRoles(&conf.Engine{Roles: []string{"evaluator", "bogus"}}); err == nil {
+		t.Fatal("unknown role must fail assembly instead of being silently dropped")
 	}
 	t.Setenv("SERVER_ROLES", "planner")
-	env := NewRoles(&conf.Engine{Roles: []string{"evaluator"}})
-	if !env.Has(RolePlanner) || env.Has(RoleEvaluator) {
+	env := must(&conf.Engine{Roles: []string{"evaluator"}})
+	if !env.Has("planner") || env.Has("evaluator") {
 		t.Fatalf("env must take precedence: %v", env.List())
 	}
 	t.Setenv("SERVER_ROLES", "evaluator, planner")
-	if got := NewRoles(nil).List(); !slices.Equal(got, []string{RolePlanner, RoleEvaluator}) {
+	if got := must(nil).List(); !slices.Equal(got, []string{"planner", "evaluator"}) {
 		t.Fatalf("list order = %v", got)
 	}
 }
@@ -90,7 +99,7 @@ func TestHTTPServer_HealthzAndMetrics(t *testing.T) {
 	m.AddCommand(context.Background(), "done")
 	m.AddEngineEvents(context.Background(), "monitor.engine.datasource_down", 1)
 
-	ts := httptest.NewServer(NewHTTPServer(&conf.Server{Http: &conf.Server_HTTP{}}, testLogger(), pinger{}))
+	ts := httptest.NewServer(NewHTTPServer(&conf.Server{Http: &kitconf.HTTP{}}, testLogger(), pinger{}))
 	defer ts.Close()
 	if code, body := get(t, ts.URL+"/healthz"); code != http.StatusOK || body != "ok" {
 		t.Fatalf("healthz = %d %q", code, body)
@@ -115,7 +124,7 @@ func TestHTTPServer_HealthzAndMetrics(t *testing.T) {
 		t.Fatalf("engine must not expose business routes, got %d", code)
 	}
 
-	bad := httptest.NewServer(NewHTTPServer(&conf.Server{Http: &conf.Server_HTTP{}}, testLogger(), pinger{err: http.ErrServerClosed}))
+	bad := httptest.NewServer(NewHTTPServer(&conf.Server{Http: &kitconf.HTTP{}}, testLogger(), pinger{err: http.ErrServerClosed}))
 	defer bad.Close()
 	if code, _ := get(t, bad.URL+"/healthz"); code != http.StatusServiceUnavailable {
 		t.Fatalf("unhealthy = %d", code)

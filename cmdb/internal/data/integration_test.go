@@ -15,6 +15,7 @@ import (
 	"github.com/lanyulei/reborn/backend/cmdb/internal/conf"
 	"github.com/lanyulei/reborn/backend/kit/cmdbcontract"
 	"github.com/lanyulei/reborn/backend/kit/idgen"
+	"github.com/lanyulei/reborn/backend/kit/kitconf"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -33,7 +34,7 @@ func newIntegrationData(t *testing.T) *Data {
 	if db := cfg.ConnConfig.Database; !strings.Contains(db, "test") {
 		t.Fatalf("TEST_DATABASE_SOURCE 指向库 %q：库名须含 \"test\"", db)
 	}
-	d, cleanup, err := NewData(&conf.Data{Database: &conf.Data_Database{Source: dsn}})
+	d, cleanup, err := NewData(&conf.Data{Database: &kitconf.Database{Source: dsn}})
 	if err != nil {
 		t.Fatalf("NewData() error = %v", err)
 	}

@@ -16,6 +16,7 @@ import (
 	"github.com/lanyulei/reborn/backend/core/internal/conf"
 	basedata "github.com/lanyulei/reborn/backend/core/internal/data"
 	"github.com/lanyulei/reborn/backend/core/internal/pkg/operator"
+	"github.com/lanyulei/reborn/backend/kit/kitconf"
 
 	"github.com/go-kratos/kratos/v3/errors"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -37,7 +38,7 @@ func newIntegrationNotifyData(t *testing.T) *basedata.Data {
 	} else if db := cfg.ConnConfig.Database; !strings.Contains(db, "test") {
 		t.Fatalf("TEST_DATABASE_SOURCE 指向库 %q：库名须含 \"test\"（集成测试会 TRUNCATE 业务表，禁止指向开发/生产库；请用 reborn_test）", db)
 	}
-	d, cleanup, err := basedata.NewData(&conf.Data{Database: &conf.Data_Database{Source: dsn}})
+	d, cleanup, err := basedata.NewData(&conf.Data{Database: &kitconf.Database{Source: dsn}})
 	if err != nil {
 		t.Fatalf("NewData() error = %v", err)
 	}
@@ -54,7 +55,7 @@ func newIntegrationNotifyData(t *testing.T) *basedata.Data {
 // newTestSecretBox 返回固定主密钥的加密器（仅测试脚手架，非真实凭据）。
 func newTestSecretBox(t *testing.T) *SecretBox {
 	t.Helper()
-	box, err := NewSecretBox(&conf.Notify{Master: &conf.Notify_Master{Key: "integration-test-master-key"}})
+	box, err := NewSecretBox(&conf.Notify{Master: &kitconf.Master{Key: "integration-test-master-key"}})
 	if err != nil {
 		t.Fatalf("NewSecretBox() error = %v", err)
 	}
@@ -113,7 +114,7 @@ func TestIntegration_SecretBox(t *testing.T) {
 	}
 
 	// 正常加密：随机 nonce 两次密文不同；布局 = nonce(12) + 明文 + GCM tag(16)。
-	box, err := NewSecretBox(&conf.Notify{Master: &conf.Notify_Master{Key: "k1"}})
+	box, err := NewSecretBox(&conf.Notify{Master: &kitconf.Master{Key: "k1"}})
 	if err != nil {
 		t.Fatalf("NewSecretBox() error = %v", err)
 	}
@@ -143,7 +144,7 @@ func TestIntegration_SecretBox(t *testing.T) {
 	}
 
 	// 同主密钥的另一实例（跨进程场景）密文亦可被同一派生密钥解开。
-	peer, err := NewSecretBox(&conf.Notify{Master: &conf.Notify_Master{Key: "k1"}})
+	peer, err := NewSecretBox(&conf.Notify{Master: &kitconf.Master{Key: "k1"}})
 	if err != nil {
 		t.Fatalf("NewSecretBox(peer) error = %v", err)
 	}

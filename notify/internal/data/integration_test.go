@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/lanyulei/reborn/backend/kit/dbx"
+	"github.com/lanyulei/reborn/backend/kit/kitconf"
 	"github.com/lanyulei/reborn/backend/kit/notifycontract"
 	"github.com/lanyulei/reborn/backend/notify/internal/biz"
 	"github.com/lanyulei/reborn/backend/notify/internal/conf"
@@ -35,7 +36,7 @@ func newIntegrationData(t *testing.T) *Data {
 	if db := cfg.ConnConfig.Database; !strings.Contains(db, "test") {
 		t.Fatalf("TEST_DATABASE_SOURCE 指向库 %q：库名须含 \"test\"（集成测试会 TRUNCATE 业务表，禁止指向开发库）", db)
 	}
-	d, cleanup, err := NewData(&conf.Data{Database: &conf.Data_Database{Source: dsn}})
+	d, cleanup, err := NewData(&conf.Data{Database: &kitconf.Database{Source: dsn}})
 	if err != nil {
 		t.Fatalf("NewData() error = %v", err)
 	}
@@ -55,7 +56,7 @@ const testMasterKey = "contract-master-key"
 
 func testBox(t *testing.T) *SecretBox {
 	t.Helper()
-	box, err := NewSecretBox(&conf.Notify{Master: &conf.Notify_Master{Key: testMasterKey}})
+	box, err := NewSecretBox(&conf.Notify{Master: &kitconf.Master{Key: testMasterKey}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +219,7 @@ func TestIntegration_ConfigSnapshot(t *testing.T) {
 		t.Fatalf("sealed producer key: err=%v producer=%+v", err, sealedSnap.Producers[idProducer])
 	}
 	// 主密钥错误：secret 渠道标记不健康，其余正常（快照不整体失败）。
-	badBox, _ := NewSecretBox(&conf.Notify{Master: &conf.Notify_Master{Key: "wrong"}})
+	badBox, _ := NewSecretBox(&conf.Notify{Master: &kitconf.Master{Key: "wrong"}})
 	snap2, err := NewConfigRepo(d, badBox).LoadSnapshot(ctx)
 	if err != nil || snap2.Channel(idChanHook).SecretErr == nil || snap2.Channel(idChanEmail).SecretErr != nil {
 		t.Fatalf("wrong key snapshot: err=%v hook=%+v", err, snap2.Channel(idChanHook))

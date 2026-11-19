@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log/slog"
 	"os"
@@ -11,12 +12,11 @@ import (
 	"github.com/lanyulei/reborn/backend/core/internal/conf"
 	"github.com/lanyulei/reborn/backend/core/internal/server"
 	"github.com/lanyulei/reborn/backend/core/internal/worker"
+	"github.com/lanyulei/reborn/backend/kit/bootstrap"
 	"github.com/lanyulei/reborn/backend/kit/httpx"
+	"github.com/lanyulei/reborn/backend/kit/keycheck"
 
 	"github.com/go-kratos/kratos/v3"
-	"github.com/go-kratos/kratos/v3/config"
-	"github.com/go-kratos/kratos/v3/config/env"
-	"github.com/go-kratos/kratos/v3/config/file"
 	"github.com/go-kratos/kratos/v3/log"
 	"github.com/go-kratos/kratos/v3/transport"
 	"github.com/go-kratos/kratos/v3/transport/http"
@@ -68,24 +68,16 @@ func main() {
 	logger := httpx.NewLogger(httpx.JSONHandler(os.Stdout), id, Name, Version)
 	log.SetDefault(logger)
 
-	c := config.New(
-		config.WithSource(
-			file.NewSource(flagconf),
-			env.NewSource("KRATOS"),
-		),
-	)
-	defer func() {
-		if err := c.Close(); err != nil {
-			logger.Error("close config source failed", "err", err)
-		}
-	}()
-
-	if err := c.Load(); err != nil {
+	// 配置：kit 内嵌的共享基线 → 本服务 configs → KRATOS_ 环境变量（后者覆盖前者）。
+	var bc conf.Bootstrap
+	if err := bootstrap.Load(flagconf, &bc); err != nil {
 		panic(err)
 	}
-
-	var bc conf.Bootstrap
-	if err := c.Scan(&bc); err != nil {
+	// 共享密钥核对：core 负责登记指纹（首次写入为准），其余服务启动时比对；不一致直接中止启动。
+	if err := keycheck.Startup(context.Background(), logger, bc.GetData().GetDatabase().GetSource(), true,
+		keycheck.Key{Name: keycheck.Master, Secret: bc.GetNotify().GetMaster().GetKey()},
+		keycheck.Key{Name: keycheck.K8sInternal, Secret: bc.GetK8S().GetInternalKey()},
+	); err != nil {
 		panic(err)
 	}
 

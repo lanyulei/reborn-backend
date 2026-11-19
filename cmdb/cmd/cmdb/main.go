@@ -2,17 +2,17 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log/slog"
 	"os"
 
 	"github.com/lanyulei/reborn/backend/cmdb/internal/conf"
+	"github.com/lanyulei/reborn/backend/kit/bootstrap"
 	"github.com/lanyulei/reborn/backend/kit/httpx"
+	"github.com/lanyulei/reborn/backend/kit/keycheck"
 
 	"github.com/go-kratos/kratos/v3"
-	"github.com/go-kratos/kratos/v3/config"
-	"github.com/go-kratos/kratos/v3/config/env"
-	"github.com/go-kratos/kratos/v3/config/file"
 	"github.com/go-kratos/kratos/v3/log"
 	"github.com/go-kratos/kratos/v3/transport"
 
@@ -53,17 +53,13 @@ func main() {
 	logger := httpx.NewLogger(httpx.JSONHandler(os.Stdout), id, Name, Version)
 	log.SetDefault(logger)
 
-	c := config.New(config.WithSource(file.NewSource(flagconf), env.NewSource("KRATOS")))
-	defer func() {
-		if err := c.Close(); err != nil {
-			logger.Error("close config source failed", "err", err)
-		}
-	}()
-	if err := c.Load(); err != nil {
+	// 配置：kit 内嵌的共享基线 → 本服务 configs → KRATOS_ 环境变量（后者覆盖前者）。
+	var bc conf.Bootstrap
+	if err := bootstrap.Load(flagconf, &bc); err != nil {
 		panic(err)
 	}
-	var bc conf.Bootstrap
-	if err := c.Scan(&bc); err != nil {
+	// 共享密钥核对：与 core 登记的指纹比对，不一致直接中止启动。
+	if err := keycheck.Startup(context.Background(), logger, bc.GetData().GetDatabase().GetSource(), false, keycheck.Key{Name: keycheck.Master, Secret: bc.GetNotify().GetMaster().GetKey()}); err != nil {
 		panic(err)
 	}
 	app, cleanup, err := wireApp(bc.Server, bc.Data, bc.Sync, bc.Notify, logger)

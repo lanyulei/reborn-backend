@@ -7,12 +7,14 @@
 package conf
 
 import (
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
-	durationpb "google.golang.org/protobuf/types/known/durationpb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
+
+	kitconf "github.com/lanyulei/reborn/backend/kit/kitconf"
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	durationpb "google.golang.org/protobuf/types/known/durationpb"
 )
 
 const (
@@ -108,7 +110,7 @@ func (x *Bootstrap) GetNotify() *Notify {
 type Server struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// http 健康检查 / 指标监听。
-	Http *Server_HTTP `protobuf:"bytes,1,opt,name=http,proto3" json:"http,omitempty"`
+	Http *kitconf.HTTP `protobuf:"bytes,1,opt,name=http,proto3" json:"http,omitempty"`
 	// runner 执行节点协议监听。
 	Runner *Server_RunnerAPI `protobuf:"bytes,2,opt,name=runner,proto3" json:"runner,omitempty"`
 	// roles 启用的角色：engine / runner；环境变量 SERVER_ROLES（逗号分隔）优先；两者皆空 = 全部角色。
@@ -147,7 +149,7 @@ func (*Server) Descriptor() ([]byte, []int) {
 	return file_conf_conf_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *Server) GetHttp() *Server_HTTP {
+func (x *Server) GetHttp() *kitconf.HTTP {
 	if x != nil {
 		return x.Http
 	}
@@ -172,7 +174,7 @@ func (x *Server) GetRoles() []string {
 type Data struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// database 数据库配置。
-	Database      *Data_Database `protobuf:"bytes,1,opt,name=database,proto3" json:"database,omitempty"`
+	Database      *kitconf.Database `protobuf:"bytes,1,opt,name=database,proto3" json:"database,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -207,7 +209,7 @@ func (*Data) Descriptor() ([]byte, []int) {
 	return file_conf_conf_proto_rawDescGZIP(), []int{2}
 }
 
-func (x *Data) GetDatabase() *Data_Database {
+func (x *Data) GetDatabase() *kitconf.Database {
 	if x != nil {
 		return x.Database
 	}
@@ -473,7 +475,7 @@ func (x *Runner) GetGitAllowProtocols() string {
 type Notify struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// master 主密钥。
-	Master        *Notify_Master `protobuf:"bytes,1,opt,name=master,proto3" json:"master,omitempty"`
+	Master        *kitconf.Master `protobuf:"bytes,1,opt,name=master,proto3" json:"master,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -508,73 +510,9 @@ func (*Notify) Descriptor() ([]byte, []int) {
 	return file_conf_conf_proto_rawDescGZIP(), []int{5}
 }
 
-func (x *Notify) GetMaster() *Notify_Master {
+func (x *Notify) GetMaster() *kitconf.Master {
 	if x != nil {
 		return x.Master
-	}
-	return nil
-}
-
-// HTTP 是健康检查 / 指标监听（/healthz /metrics），两种角色都启动。
-type Server_HTTP struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// network 监听网络类型，如 tcp；留空使用默认值。
-	Network string `protobuf:"bytes,1,opt,name=network,proto3" json:"network,omitempty"`
-	// addr 监听地址，缺省端口 8050（8010 core / 8020 通知管道 / 8030 CMDB 数据面 / 8040 评估引擎）。
-	Addr string `protobuf:"bytes,2,opt,name=addr,proto3" json:"addr,omitempty"`
-	// timeout 请求处理超时。
-	Timeout       *durationpb.Duration `protobuf:"bytes,3,opt,name=timeout,proto3" json:"timeout,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *Server_HTTP) Reset() {
-	*x = Server_HTTP{}
-	mi := &file_conf_conf_proto_msgTypes[6]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *Server_HTTP) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*Server_HTTP) ProtoMessage() {}
-
-func (x *Server_HTTP) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[6]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use Server_HTTP.ProtoReflect.Descriptor instead.
-func (*Server_HTTP) Descriptor() ([]byte, []int) {
-	return file_conf_conf_proto_rawDescGZIP(), []int{1, 0}
-}
-
-func (x *Server_HTTP) GetNetwork() string {
-	if x != nil {
-		return x.Network
-	}
-	return ""
-}
-
-func (x *Server_HTTP) GetAddr() string {
-	if x != nil {
-		return x.Addr
-	}
-	return ""
-}
-
-func (x *Server_HTTP) GetTimeout() *durationpb.Duration {
-	if x != nil {
-		return x.Timeout
 	}
 	return nil
 }
@@ -597,7 +535,7 @@ type Server_RunnerAPI struct {
 
 func (x *Server_RunnerAPI) Reset() {
 	*x = Server_RunnerAPI{}
-	mi := &file_conf_conf_proto_msgTypes[7]
+	mi := &file_conf_conf_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -609,7 +547,7 @@ func (x *Server_RunnerAPI) String() string {
 func (*Server_RunnerAPI) ProtoMessage() {}
 
 func (x *Server_RunnerAPI) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[7]
+	mi := &file_conf_conf_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -622,7 +560,7 @@ func (x *Server_RunnerAPI) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Server_RunnerAPI.ProtoReflect.Descriptor instead.
 func (*Server_RunnerAPI) Descriptor() ([]byte, []int) {
-	return file_conf_conf_proto_rawDescGZIP(), []int{1, 1}
+	return file_conf_conf_proto_rawDescGZIP(), []int{1, 0}
 }
 
 func (x *Server_RunnerAPI) GetNetwork() string {
@@ -660,160 +598,30 @@ func (x *Server_RunnerAPI) GetKeyFile() string {
 	return ""
 }
 
-// Database 是 PostgreSQL 连接池配置（pgx）。
-type Data_Database struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// source 数据源 DSN；一律经环境变量 KRATOS_DATA_DATABASE_SOURCE 注入，
-	// 配置文件里只写占位符 ${DATA_DATABASE_SOURCE}。engine 角色下为空时启动失败；runner 角色不使用。
-	Source string `protobuf:"bytes,1,opt,name=source,proto3" json:"source,omitempty"`
-	// max_conns 最大连接数；0 使用驱动默认值。
-	MaxConns int32 `protobuf:"varint,2,opt,name=max_conns,json=maxConns,proto3" json:"max_conns,omitempty"`
-	// min_conns 最小空闲连接数；0 使用驱动默认值。
-	MinConns int32 `protobuf:"varint,3,opt,name=min_conns,json=minConns,proto3" json:"min_conns,omitempty"`
-	// max_conn_idle_time 连接最大空闲时长；未设置使用驱动默认值。
-	MaxConnIdleTime *durationpb.Duration `protobuf:"bytes,4,opt,name=max_conn_idle_time,json=maxConnIdleTime,proto3" json:"max_conn_idle_time,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
-}
-
-func (x *Data_Database) Reset() {
-	*x = Data_Database{}
-	mi := &file_conf_conf_proto_msgTypes[8]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *Data_Database) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*Data_Database) ProtoMessage() {}
-
-func (x *Data_Database) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[8]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use Data_Database.ProtoReflect.Descriptor instead.
-func (*Data_Database) Descriptor() ([]byte, []int) {
-	return file_conf_conf_proto_rawDescGZIP(), []int{2, 0}
-}
-
-func (x *Data_Database) GetSource() string {
-	if x != nil {
-		return x.Source
-	}
-	return ""
-}
-
-func (x *Data_Database) GetMaxConns() int32 {
-	if x != nil {
-		return x.MaxConns
-	}
-	return 0
-}
-
-func (x *Data_Database) GetMinConns() int32 {
-	if x != nil {
-		return x.MinConns
-	}
-	return 0
-}
-
-func (x *Data_Database) GetMaxConnIdleTime() *durationpb.Duration {
-	if x != nil {
-		return x.MaxConnIdleTime
-	}
-	return nil
-}
-
-// Master 是主密钥配置。
-type Notify_Master struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// key AES-256-GCM 主密钥；经 KRATOS_NOTIFY_MASTER_KEY 环境变量注入。
-	// 为空（或与 core 不一致）时：被领取的执行因凭据无法解密而记为失败。
-	Key           string `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *Notify_Master) Reset() {
-	*x = Notify_Master{}
-	mi := &file_conf_conf_proto_msgTypes[9]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *Notify_Master) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*Notify_Master) ProtoMessage() {}
-
-func (x *Notify_Master) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[9]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use Notify_Master.ProtoReflect.Descriptor instead.
-func (*Notify_Master) Descriptor() ([]byte, []int) {
-	return file_conf_conf_proto_rawDescGZIP(), []int{5, 0}
-}
-
-func (x *Notify_Master) GetKey() string {
-	if x != nil {
-		return x.Key
-	}
-	return ""
-}
-
 var File_conf_conf_proto protoreflect.FileDescriptor
 
 const file_conf_conf_proto_rawDesc = "" +
 	"\n" +
-	"\x0fconf/conf.proto\x12\x04conf\x1a\x1egoogle/protobuf/duration.proto\"\xc3\x01\n" +
+	"\x0fconf/conf.proto\x12\x04conf\x1a\x1egoogle/protobuf/duration.proto\x1a\x14kitconf/common.proto\"\xc3\x01\n" +
 	"\tBootstrap\x12$\n" +
 	"\x06server\x18\x01 \x01(\v2\f.conf.ServerR\x06server\x12\x1e\n" +
 	"\x04data\x18\x02 \x01(\v2\n" +
 	".conf.DataR\x04data\x12$\n" +
 	"\x06engine\x18\x03 \x01(\v2\f.conf.EngineR\x06engine\x12$\n" +
 	"\x06runner\x18\x04 \x01(\v2\f.conf.RunnerR\x06runner\x12$\n" +
-	"\x06notify\x18\x05 \x01(\v2\f.conf.NotifyR\x06notify\"\x89\x03\n" +
-	"\x06Server\x12%\n" +
-	"\x04http\x18\x01 \x01(\v2\x11.conf.Server.HTTPR\x04http\x12.\n" +
+	"\x06notify\x18\x05 \x01(\v2\f.conf.NotifyR\x06notify\"\x9a\x02\n" +
+	"\x06Server\x12!\n" +
+	"\x04http\x18\x01 \x01(\v2\r.kitconf.HTTPR\x04http\x12.\n" +
 	"\x06runner\x18\x02 \x01(\v2\x16.conf.Server.RunnerAPIR\x06runner\x12\x14\n" +
-	"\x05roles\x18\x03 \x03(\tR\x05roles\x1ai\n" +
-	"\x04HTTP\x12\x18\n" +
-	"\anetwork\x18\x01 \x01(\tR\anetwork\x12\x12\n" +
-	"\x04addr\x18\x02 \x01(\tR\x04addr\x123\n" +
-	"\atimeout\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\atimeout\x1a\xa6\x01\n" +
+	"\x05roles\x18\x03 \x03(\tR\x05roles\x1a\xa6\x01\n" +
 	"\tRunnerAPI\x12\x18\n" +
 	"\anetwork\x18\x01 \x01(\tR\anetwork\x12\x12\n" +
 	"\x04addr\x18\x02 \x01(\tR\x04addr\x123\n" +
 	"\atimeout\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\atimeout\x12\x1b\n" +
 	"\tcert_file\x18\x04 \x01(\tR\bcertFile\x12\x19\n" +
-	"\bkey_file\x18\x05 \x01(\tR\akeyFile\"\xde\x01\n" +
-	"\x04Data\x12/\n" +
-	"\bdatabase\x18\x01 \x01(\v2\x13.conf.Data.DatabaseR\bdatabase\x1a\xa4\x01\n" +
-	"\bDatabase\x12\x16\n" +
-	"\x06source\x18\x01 \x01(\tR\x06source\x12\x1b\n" +
-	"\tmax_conns\x18\x02 \x01(\x05R\bmaxConns\x12\x1b\n" +
-	"\tmin_conns\x18\x03 \x01(\x05R\bminConns\x12F\n" +
-	"\x12max_conn_idle_time\x18\x04 \x01(\v2\x19.google.protobuf.DurationR\x0fmaxConnIdleTime\"\x84\x02\n" +
+	"\bkey_file\x18\x05 \x01(\tR\akeyFile\"5\n" +
+	"\x04Data\x12-\n" +
+	"\bdatabase\x18\x01 \x01(\v2\x11.kitconf.DatabaseR\bdatabase\"\x84\x02\n" +
 	"\x06Engine\x12/\n" +
 	"\x05lease\x18\x01 \x01(\v2\x19.google.protobuf.DurationR\x05lease\x12@\n" +
 	"\x0esweep_interval\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\rsweepInterval\x12>\n" +
@@ -838,11 +646,9 @@ const file_conf_conf_proto_rawDesc = "" +
 	"\x12heartbeat_interval\x18\r \x01(\v2\x19.google.protobuf.DurationR\x11heartbeatInterval\x12<\n" +
 	"\fcancel_grace\x18\x0e \x01(\v2\x19.google.protobuf.DurationR\vcancelGrace\x12>\n" +
 	"\rdrain_timeout\x18\x0f \x01(\v2\x19.google.protobuf.DurationR\fdrainTimeout\x12.\n" +
-	"\x13git_allow_protocols\x18\x10 \x01(\tR\x11gitAllowProtocols\"Q\n" +
-	"\x06Notify\x12+\n" +
-	"\x06master\x18\x01 \x01(\v2\x13.conf.Notify.MasterR\x06master\x1a\x1a\n" +
-	"\x06Master\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03keyB;Z9github.com/lanyulei/reborn/backend/job/internal/conf;confb\x06proto3"
+	"\x13git_allow_protocols\x18\x10 \x01(\tR\x11gitAllowProtocols\"1\n" +
+	"\x06Notify\x12'\n" +
+	"\x06master\x18\x01 \x01(\v2\x0f.kitconf.MasterR\x06masterB;Z9github.com/lanyulei/reborn/backend/job/internal/conf;confb\x06proto3"
 
 var (
 	file_conf_conf_proto_rawDescOnce sync.Once
@@ -856,46 +662,47 @@ func file_conf_conf_proto_rawDescGZIP() []byte {
 	return file_conf_conf_proto_rawDescData
 }
 
-var file_conf_conf_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
-var file_conf_conf_proto_goTypes = []any{
-	(*Bootstrap)(nil),           // 0: conf.Bootstrap
-	(*Server)(nil),              // 1: conf.Server
-	(*Data)(nil),                // 2: conf.Data
-	(*Engine)(nil),              // 3: conf.Engine
-	(*Runner)(nil),              // 4: conf.Runner
-	(*Notify)(nil),              // 5: conf.Notify
-	(*Server_HTTP)(nil),         // 6: conf.Server.HTTP
-	(*Server_RunnerAPI)(nil),    // 7: conf.Server.RunnerAPI
-	(*Data_Database)(nil),       // 8: conf.Data.Database
-	(*Notify_Master)(nil),       // 9: conf.Notify.Master
-	(*durationpb.Duration)(nil), // 10: google.protobuf.Duration
-}
+var (
+	file_conf_conf_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+	file_conf_conf_proto_goTypes  = []any{
+		(*Bootstrap)(nil),           // 0: conf.Bootstrap
+		(*Server)(nil),              // 1: conf.Server
+		(*Data)(nil),                // 2: conf.Data
+		(*Engine)(nil),              // 3: conf.Engine
+		(*Runner)(nil),              // 4: conf.Runner
+		(*Notify)(nil),              // 5: conf.Notify
+		(*Server_RunnerAPI)(nil),    // 6: conf.Server.RunnerAPI
+		(*kitconf.HTTP)(nil),        // 7: kitconf.HTTP
+		(*kitconf.Database)(nil),    // 8: kitconf.Database
+		(*durationpb.Duration)(nil), // 9: google.protobuf.Duration
+		(*kitconf.Master)(nil),      // 10: kitconf.Master
+	}
+)
+
 var file_conf_conf_proto_depIdxs = []int32{
 	1,  // 0: conf.Bootstrap.server:type_name -> conf.Server
 	2,  // 1: conf.Bootstrap.data:type_name -> conf.Data
 	3,  // 2: conf.Bootstrap.engine:type_name -> conf.Engine
 	4,  // 3: conf.Bootstrap.runner:type_name -> conf.Runner
 	5,  // 4: conf.Bootstrap.notify:type_name -> conf.Notify
-	6,  // 5: conf.Server.http:type_name -> conf.Server.HTTP
-	7,  // 6: conf.Server.runner:type_name -> conf.Server.RunnerAPI
-	8,  // 7: conf.Data.database:type_name -> conf.Data.Database
-	10, // 8: conf.Engine.lease:type_name -> google.protobuf.Duration
-	10, // 9: conf.Engine.sweep_interval:type_name -> google.protobuf.Duration
-	10, // 10: conf.Engine.log_retention:type_name -> google.protobuf.Duration
-	10, // 11: conf.Engine.log_purge_interval:type_name -> google.protobuf.Duration
-	10, // 12: conf.Runner.poll_interval:type_name -> google.protobuf.Duration
-	10, // 13: conf.Runner.heartbeat_interval:type_name -> google.protobuf.Duration
-	10, // 14: conf.Runner.cancel_grace:type_name -> google.protobuf.Duration
-	10, // 15: conf.Runner.drain_timeout:type_name -> google.protobuf.Duration
-	9,  // 16: conf.Notify.master:type_name -> conf.Notify.Master
-	10, // 17: conf.Server.HTTP.timeout:type_name -> google.protobuf.Duration
-	10, // 18: conf.Server.RunnerAPI.timeout:type_name -> google.protobuf.Duration
-	10, // 19: conf.Data.Database.max_conn_idle_time:type_name -> google.protobuf.Duration
-	20, // [20:20] is the sub-list for method output_type
-	20, // [20:20] is the sub-list for method input_type
-	20, // [20:20] is the sub-list for extension type_name
-	20, // [20:20] is the sub-list for extension extendee
-	0,  // [0:20] is the sub-list for field type_name
+	7,  // 5: conf.Server.http:type_name -> kitconf.HTTP
+	6,  // 6: conf.Server.runner:type_name -> conf.Server.RunnerAPI
+	8,  // 7: conf.Data.database:type_name -> kitconf.Database
+	9,  // 8: conf.Engine.lease:type_name -> google.protobuf.Duration
+	9,  // 9: conf.Engine.sweep_interval:type_name -> google.protobuf.Duration
+	9,  // 10: conf.Engine.log_retention:type_name -> google.protobuf.Duration
+	9,  // 11: conf.Engine.log_purge_interval:type_name -> google.protobuf.Duration
+	9,  // 12: conf.Runner.poll_interval:type_name -> google.protobuf.Duration
+	9,  // 13: conf.Runner.heartbeat_interval:type_name -> google.protobuf.Duration
+	9,  // 14: conf.Runner.cancel_grace:type_name -> google.protobuf.Duration
+	9,  // 15: conf.Runner.drain_timeout:type_name -> google.protobuf.Duration
+	10, // 16: conf.Notify.master:type_name -> kitconf.Master
+	9,  // 17: conf.Server.RunnerAPI.timeout:type_name -> google.protobuf.Duration
+	18, // [18:18] is the sub-list for method output_type
+	18, // [18:18] is the sub-list for method input_type
+	18, // [18:18] is the sub-list for extension type_name
+	18, // [18:18] is the sub-list for extension extendee
+	0,  // [0:18] is the sub-list for field type_name
 }
 
 func init() { file_conf_conf_proto_init() }
@@ -909,7 +716,7 @@ func file_conf_conf_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_conf_conf_proto_rawDesc), len(file_conf_conf_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   10,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

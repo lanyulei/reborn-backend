@@ -3,6 +3,7 @@ syntax = "proto3";
 package conf;
 
 import "google/protobuf/duration.proto";
+import "kitconf/common.proto";
 
 option go_package = "github.com/lanyulei/reborn/backend/notify/internal/conf;conf";
 
@@ -21,34 +22,14 @@ message Bootstrap {
 // Server 是 HTTP 服务器配置（数据面只暴露 HTTP：HMAC 签名绑定请求体；
 // /healthz /metrics 同端口）。
 message Server {
-  // HTTP 是 HTTP 服务器配置。
-  message HTTP {
-    // network 监听网络类型，如 tcp；留空使用默认值。
-    string network = 1;
-    // addr 监听地址。
-    string addr = 2;
-    // timeout 请求处理超时。
-    google.protobuf.Duration timeout = 3;
-  }
   // http HTTP 配置。
-  HTTP http = 1;
+  kitconf.HTTP http = 1;
 }
 
 // Data 是数据层资源配置；密钥类字段一律从环境变量注入。
 message Data {
-  // Database 是 PostgreSQL 连接池配置（pgx）。
-  message Database {
-    // source 数据源 DSN；生产环境通过环境变量注入（KRATOS_DATA_DATABASE_SOURCE）。
-    string source = 1;
-    // max_conns 最大连接数；0 使用驱动默认值。
-    int32 max_conns = 2;
-    // min_conns 最小空闲连接数；0 使用驱动默认值。
-    int32 min_conns = 3;
-    // max_conn_idle_time 连接最大空闲时长；未设置使用驱动默认值。
-    google.protobuf.Duration max_conn_idle_time = 4;
-  }
   // database 数据库配置。
-  Database database = 1;
+  kitconf.Database database = 1;
 }
 
 // Pipeline 是管道组件参数。全部 Duration 采用 protojson 秒格式（如 0.2s）。
@@ -168,14 +149,6 @@ message Pipeline {
 
 // Notify 是渠道凭据解密配置。
 message Notify {
-  // Master 是渠道凭据加密主密钥配置（与 core 完全一致）。
-  message Master {
-    // key AES-256-GCM 主密钥（任意非空字节串，内部 SHA-256 派生 32 字节密钥）；
-    // 经 KRATOS_NOTIFY_MASTER_KEY 环境变量注入（占位符 ${NOTIFY_MASTER_KEY}）。
-    // 为空时：带 secret 的渠道解密失败→标记不健康（发送转不可重试死信），
-    // 无 secret 渠道不受影响。
-    string key = 1;
-  }
   // master 渠道凭据加密主密钥。
-  Master master = 1;
+  kitconf.Master master = 1;
 }

@@ -1,4 +1,7 @@
 # 管道服务启动配置；密钥类字段从环境变量注入，禁止在本文件写入明文口令。
+# 数据库连接（data.database）与凭据加密主密钥（notify.master.key）全部服务一致，定义在共享基线
+# kit/bootstrap/shared.yaml，取值由环境变量注入（KRATOS_DATA_DATABASE_SOURCE / KRATOS_NOTIFY_MASTER_KEY，
+# 本地见 backend/.env.example）；这里只写本服务特有的段，以及要偏离基线的值。
 server:
   http:
     # 8010 为 core；管道走 8020。HTTP 恒启动（/healthz /metrics），ingress 接口
@@ -7,12 +10,10 @@ server:
     timeout: 5s
 data:
   database:
-    # 与 core 同库（配置表只读、运行表读写）；生产环境经 KRATOS_DATA_DATABASE_SOURCE
-    # 注入，并使用 notify_pipe_role 成员账号（见 core/migrations/0021）。
-    source: "host=127.0.0.1 user=postgres password=ekgGZebuZgCmyzv2WW5V dbname=reborn port=5432 sslmode=disable TimeZone=Asia/Shanghai"
+    # 与 core 同库（配置表只读、运行表读写）；生产环境的账号用 notify_pipe_role 成员（见 core/migrations/0021）。
+    # 管道并发高于其它服务，连接池大于共享基线（16 / 2）。
     max_conns: 32
     min_conns: 4
-    max_conn_idle_time: 1800s
 pipeline:
   # roles 为空 = 全部角色；部署时用 SERVER_ROLES=api,router 等覆盖。
   roles: []
@@ -59,7 +60,3 @@ pipeline:
       agg_group: 604800s      # 7d
   ingress:
     clock_skew: 300s
-notify:
-  master:
-    # 与 core 同一主密钥：export KRATOS_NOTIFY_MASTER_KEY=...
-    key: ${NOTIFY_MASTER_KEY}

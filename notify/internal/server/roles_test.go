@@ -6,16 +6,16 @@ import (
 	"github.com/lanyulei/reborn/backend/notify/internal/conf"
 )
 
-func TestParseRoles(t *testing.T) {
-	t.Parallel()
-	roles, err := ParseRoles([]string{" API", "sender "})
+func TestNewRoles(t *testing.T) {
+	t.Setenv("SERVER_ROLES", "")
+	roles, err := NewRoles(&conf.Pipeline{Roles: []string{" API", "sender "}})
 	if err != nil || !roles.Has(RoleAPI) || !roles.Has(RoleSender) || roles.Has(RoleRouter) {
-		t.Fatalf("ParseRoles = %v, %v", roles, err)
+		t.Fatalf("NewRoles = %v, %v", roles, err)
 	}
-	if roles, err := ParseRoles(nil); err != nil || len(roles) != 5 || roles.Has(RoleRelay) {
+	if roles, err := NewRoles(&conf.Pipeline{}); err != nil || len(roles) != 5 || roles.Has(RoleRelay) {
 		t.Fatalf("empty list must enable all non-relay roles, got %v, %v", roles, err)
 	}
-	if _, err := ParseRoles([]string{"sendr"}); err == nil {
+	if _, err := NewRoles(&conf.Pipeline{Roles: []string{"sendr"}}); err == nil {
 		t.Fatal("unknown role must fail assembly, not silently start an HTTP-only process")
 	}
 }

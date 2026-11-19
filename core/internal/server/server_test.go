@@ -18,6 +18,7 @@ import (
 	notifyservice "github.com/lanyulei/reborn/backend/core/internal/service/notify"
 	service "github.com/lanyulei/reborn/backend/core/internal/service/system"
 	"github.com/lanyulei/reborn/backend/core/internal/testfake"
+	"github.com/lanyulei/reborn/backend/kit/kitconf"
 
 	"google.golang.org/protobuf/types/known/durationpb"
 )
@@ -187,7 +188,7 @@ func TestNewHTTPServerWithOptions(t *testing.T) {
 	t.Parallel()
 	svc := newTestServices(t)
 	srv := NewHTTPServer(
-		&conf.Server{Http: &conf.Server_HTTP{
+		&conf.Server{Http: &kitconf.HTTP{
 			Network: "tcp",
 			Addr:    "127.0.0.1:0",
 			Timeout: durationpb.New(time.Second),

@@ -182,6 +182,15 @@ func (s *sseWriter) isStarted() bool {
 	return s.started
 }
 
+// close 由 handler 在返回前调用。handler 返回后 net/http 会回收 ResponseWriter
+// （内部缓冲置 nil），迟到的写（如并发中的心跳事件）会触发 panic：在锁内标记关闭，
+// 之后 event 一律失败，不再触碰 ResponseWriter。
+func (s *sseWriter) close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failed = true
+}
+
 // ssePing 心跳间隔：让中间层不因空闲断开连接，也让本端及时发现对端已断开。
 const ssePing = 20 * time.Second
 
@@ -208,6 +217,9 @@ func (s *InternalService) serveStream(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	sw := &sseWriter{w: w, rc: rc}
+	// 必须先于 handler 返回把流标记为关闭：心跳 goroutine 可能正持有锁在写，
+	// 等它落地后 handler 才能返回，否则写会打到已回收的 ResponseWriter 上（panic）。
+	defer sw.close()
 	emit := func(event, id string, data any) error {
 		if err := sw.event(event, id, data); err != nil {
 			cancel()

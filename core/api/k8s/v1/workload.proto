@@ -82,6 +82,15 @@ service K8sWorkloadService {
     };
     option (system.v1.title) = "驱逐 Pod";
   }
+  // ResizePod 原地调整运行中 Pod 的容器资源（CPU / 内存的请求与上限），不重建 Pod。
+  // 经 Pod 的 resize 子资源执行，需要 Kubernetes 1.33+；集群接受后由 kubelet 异步生效。
+  rpc ResizePod(ResizePodRequest) returns (google.api.HttpBody) {
+    option (google.api.http) = {
+      post: "/api/v1/k8s/cluster/{cluster_id}/pod:resize"
+      body: "*"
+    };
+    option (system.v1.title) = "调整 Pod 资源";
+  }
   // CordonNode 停止 / 恢复节点调度。
   rpc CordonNode(CordonNodeRequest) returns (google.api.HttpBody) {
     option (google.api.http) = {
@@ -253,6 +262,46 @@ message EvictPodRequest {
   string cluster_id = 1 [(buf.validate.field).string.uuid = true];
   // ref 目标对象。
   ResourceRef ref = 2 [(buf.validate.field).required = true];
+}
+
+// ResizePodRequest 原地调整 Pod 资源请求。
+message ResizePodRequest {
+  // cluster_id 集群唯一标识。
+  string cluster_id = 1 [(buf.validate.field).string.uuid = true];
+  // ref 目标 Pod。
+  ResourceRef ref = 2 [(buf.validate.field).required = true];
+  // containers 要调整的容器（普通容器，或 restartPolicy 为 Always 的初始化容器）；未列出的容器不变。
+  repeated ContainerResize containers = 3 [(buf.validate.field).repeated = {
+    min_items: 1
+    max_items: 50
+  }];
+}
+
+// ContainerResize 一个容器的目标资源。
+message ContainerResize {
+  // name 容器名称。
+  string name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 253
+  }];
+  // requests 资源请求；不传 = 不改。
+  ResizeQuantity requests = 2;
+  // limits 资源上限；不传 = 不改。
+  ResizeQuantity limits = 3;
+}
+
+// ResizeQuantity CPU 与内存的数量（Kubernetes 数量写法，如 500m、256Mi）。不传 = 保持不变；不接受空串。
+message ResizeQuantity {
+  // cpu CPU 数量，如 500m、2。
+  optional string cpu = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // memory 内存数量，如 256Mi、1Gi。
+  optional string memory = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
 }
 
 // CordonNodeRequest 停止或恢复节点调度请求。

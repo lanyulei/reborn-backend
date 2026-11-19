@@ -14,6 +14,7 @@ import (
 	"github.com/lanyulei/reborn/backend/cmdb/internal/conf"
 	"github.com/lanyulei/reborn/backend/cmdb/internal/service"
 	"github.com/lanyulei/reborn/backend/kit/cmdbcontract"
+	"github.com/lanyulei/reborn/backend/kit/kitconf"
 )
 
 type fakeWebhookRepo struct {
@@ -61,7 +62,7 @@ func TestWebhook_Trigger(t *testing.T) {
 		touched: map[string]time.Time{}, active: map[string]string{},
 	}
 	svc := service.NewWebhookService(biz.NewWebhookUsecase(repo))
-	srv := NewHTTPServer(&conf.Server{Http: &conf.Server_HTTP{}}, Roles{RoleWebhook: {}}, testLogger(), pinger{}, svc)
+	srv := NewHTTPServer(&conf.Server{Http: &kitconf.HTTP{}}, Roles{RoleWebhook: {}}, testLogger(), pinger{}, svc)
 	ts := httptest.NewServer(srv)
 	defer ts.Close()
 	call := func(id, tok, body string) (int, string) {
@@ -108,7 +109,7 @@ func TestWebhook_Trigger(t *testing.T) {
 		t.Fatalf("already active: %d %s", code, body)
 	}
 	// 未启用 webhook 角色：路由不存在。
-	noRole := httptest.NewServer(NewHTTPServer(&conf.Server{Http: &conf.Server_HTTP{}}, Roles{RoleWorker: {}}, testLogger(), pinger{}, svc))
+	noRole := httptest.NewServer(NewHTTPServer(&conf.Server{Http: &kitconf.HTTP{}}, Roles{RoleWorker: {}}, testLogger(), pinger{}, svc))
 	defer noRole.Close()
 	req, _ := http.NewRequest(http.MethodPost, noRole.URL+cmdbcontract.WebhookPath(src), strings.NewReader(`{}`))
 	req.Header.Set(cmdbcontract.WebhookTokenHeader, token)

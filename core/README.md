@@ -134,10 +134,14 @@ go test ./...               -race -shuffle=on
 
 ## 配置与密钥
 
-- 配置入口：`configs/config.yaml`，可用 `KRATOS_` 前缀环境变量覆盖（如
-  `KRATOS_DATA_DATABASE_SOURCE` 覆盖数据库 DSN）。
-- 当前 `config.yaml` 中的 DSN 为本地开发环境配置；**生产环境一律通过环境变量注入**，
-  禁止将口令提交进仓库。
+- 配置按三层合并，后者覆盖前者：`../kit/bootstrap/shared.yaml`（全部服务共用的基线：数据库连接、
+  凭据加密主密钥，编译进二进制）→ `configs/config.yaml`（本服务特有的段）→ `KRATOS_` 前缀环境变量
+  （占位符 `${FOO_BAR}` 的取值，如 `KRATOS_DATA_DATABASE_SOURCE`）。
+- 口令与密钥只走环境变量，**禁止提交进仓库**：本地写在 `backend/.env`（不入库，模板
+  `backend/.env.example`，各服务 Makefile 自动读取），部署时对应一份共享的 Secret。
+- 必须与其它服务一致的密钥（主密钥、与容器平台数据面的内部签名密钥）在启动时核对：core 把指纹登记进
+  `system_key_check`（迁移 0079，首次写入为准），其余服务比对，不一致直接启动失败。轮换密钥时先停服务、
+  删除对应行，再用新密钥启动 core。
 - 日志侧由 `log.WithFilter(log.FilterKey("password", "token", "secret", "authorization"))`
   在 handler 构建处统一脱敏。
 - 通知渠道凭据主密钥经 `KRATOS_NOTIFY_MASTER_KEY` 注入（config.yaml 占位

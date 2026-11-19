@@ -693,6 +693,10 @@ spec:
 		// 驱逐 nsB 的 Pod（会被 Deployment 重建）。
 		var pods k8scontract.ListResponse
 		e.ok(e.admin, k8scontract.OpList, listReq(k8scontract.GVRPod, nsB), &pods)
+		// 原地调整资源：不存在的容器在到达集群之前就被拒绝（真正的调整依赖集群版本，这里不做）。
+		e.deny(e.admin, k8scontract.OpPodResize, k8scontract.ResizeRequest{
+			Ref: ref(k8scontract.GVRPod, nsB, pods.Rows[0].Name), Containers: []k8scontract.ContainerResize{{Name: "nope"}},
+		}, http.StatusBadRequest)
 		e.ok(e.admin, k8scontract.OpPodEvict, k8scontract.ObjectRequest{Ref: ref(k8scontract.GVRPod, nsB, pods.Rows[0].Name)}, nil)
 	})
 

@@ -3,10 +3,9 @@
 package server
 
 import (
-	"fmt"
-	"os"
 	"strings"
 
+	kitroles "github.com/lanyulei/reborn/backend/kit/roles"
 	"github.com/lanyulei/reborn/backend/notify/internal/conf"
 )
 
@@ -23,57 +22,19 @@ const (
 // Roles 启用的角色集合。
 type Roles map[string]struct{}
 
-// knownRoles 合法角色名。
-var knownRoles = map[string]struct{}{
-	RoleAPI: {}, RoleRelay: {}, RoleRouter: {}, RoleSender: {}, RoleDlqWorker: {}, RoleMaintenance: {},
-}
-
 // NewRoles 解析角色：环境变量 SERVER_ROLES 优先，其次 conf.pipeline.roles，
 // 两者皆空 = 全部角色。未知角色名直接装配失败（此前静默忽略：`SERVER_ROLES=sendr`
 // 会起一个只有 HTTP 的进程，看似健康却不发送）。
 func NewRoles(c *conf.Pipeline) (Roles, error) {
-	list := c.GetRoles()
-	if env := strings.TrimSpace(os.Getenv("SERVER_ROLES")); env != "" {
-		list = strings.Split(env, ",")
-	}
-	roles, err := ParseRoles(list)
+	set, explicit, err := kitroles.Resolve(c.GetRoles(),
+		RoleAPI, RoleRelay, RoleRouter, RoleSender, RoleDlqWorker, RoleMaintenance)
 	if err != nil {
 		return nil, err
 	}
-	// 缺省全角色在 nats 骨干下含 relay（pg 下 relay 为 no-op，不加）。
-	if len(trimmed(list)) == 0 && strings.EqualFold(strings.TrimSpace(c.GetBackbone()), "nats") {
-		roles[RoleRelay] = struct{}{}
-	}
-	return roles, nil
-}
-
-func trimmed(list []string) []string {
-	var out []string
-	for _, r := range list {
-		if strings.TrimSpace(r) != "" {
-			out = append(out, r)
-		}
-	}
-	return out
-}
-
-// ParseRoles 解析角色名列表（大小写不敏感、忽略空白；空 = 全部角色）。
-func ParseRoles(list []string) (Roles, error) {
-	roles := Roles{}
-	for _, r := range list {
-		r = strings.TrimSpace(strings.ToLower(r))
-		if r == "" {
-			continue
-		}
-		if _, ok := knownRoles[r]; !ok {
-			return nil, fmt.Errorf("unknown pipeline role %q (known: api, relay, router, sender, dlqworker, maintenance)", r)
-		}
-		roles[r] = struct{}{}
-	}
-	if len(roles) == 0 {
-		for _, r := range []string{RoleAPI, RoleRouter, RoleSender, RoleDlqWorker, RoleMaintenance} {
-			roles[r] = struct{}{}
-		}
+	roles := Roles(set)
+	// 缺省全角色只在 nats 骨干下含 relay（pg 下 relay 为 no-op，不加）。
+	if !explicit && !strings.EqualFold(strings.TrimSpace(c.GetBackbone()), "nats") {
+		delete(roles, RoleRelay)
 	}
 	return roles, nil
 }

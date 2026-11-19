@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
-	"strings"
 
 	webhookv1 "github.com/lanyulei/reborn/backend/cmdb/api/webhook/v1"
 	"github.com/lanyulei/reborn/backend/cmdb/internal/biz"
@@ -17,6 +15,7 @@ import (
 	"github.com/lanyulei/reborn/backend/cmdb/internal/worker"
 	"github.com/lanyulei/reborn/backend/kit/httpx"
 	"github.com/lanyulei/reborn/backend/kit/loop"
+	kitroles "github.com/lanyulei/reborn/backend/kit/roles"
 
 	"github.com/go-kratos/kratos/v3/middleware/logging"
 	"github.com/go-kratos/kratos/v3/middleware/ratelimit"
@@ -45,22 +44,14 @@ const (
 // Roles 启用的角色集合。
 type Roles map[string]struct{}
 
-// NewRoles 解析角色：环境变量 SERVER_ROLES 优先，其次 conf.sync.roles，两者皆空 = 全部角色。
-func NewRoles(c *conf.Sync) Roles {
-	list := c.GetRoles()
-	if env := strings.TrimSpace(os.Getenv("SERVER_ROLES")); env != "" {
-		list = strings.Split(env, ",")
+// NewRoles 解析角色：环境变量 SERVER_ROLES 优先，其次 conf.sync.roles，两者皆空 = 全部角色；
+// 未知角色名直接装配失败。
+func NewRoles(c *conf.Sync) (Roles, error) {
+	set, _, err := kitroles.Resolve(c.GetRoles(), RoleScheduler, RoleWorker, RoleWebhook)
+	if err != nil {
+		return nil, err
 	}
-	roles := Roles{}
-	for _, r := range list {
-		if r = strings.TrimSpace(strings.ToLower(r)); r != "" {
-			roles[r] = struct{}{}
-		}
-	}
-	if len(roles) == 0 {
-		roles[RoleScheduler], roles[RoleWorker], roles[RoleWebhook] = struct{}{}, struct{}{}, struct{}{}
-	}
-	return roles
+	return Roles(set), nil
 }
 
 // Has 报告角色是否启用。

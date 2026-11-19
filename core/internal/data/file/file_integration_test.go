@@ -18,6 +18,7 @@ import (
 	basedata "github.com/lanyulei/reborn/backend/core/internal/data"
 	"github.com/lanyulei/reborn/backend/core/internal/pkg/storage"
 	"github.com/lanyulei/reborn/backend/core/internal/pkg/txrun"
+	"github.com/lanyulei/reborn/backend/kit/kitconf"
 
 	"github.com/go-kratos/kratos/v3/errors"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -43,7 +44,7 @@ func newIntegration(t *testing.T) (*biz.Usecase, *fileRepo, *basedata.TxManager,
 		t.Fatalf("TEST_DATABASE_SOURCE 指向库 %q：库名须含 \"test\"（集成测试会 TRUNCATE 业务表）", db)
 	}
 	root := t.TempDir()
-	c := &conf.Data{Database: &conf.Data_Database{Source: dsn}, Upload: &conf.Data_Upload{Dir: root}}
+	c := &conf.Data{Database: &kitconf.Database{Source: dsn}, Upload: &conf.Data_Upload{Dir: root}}
 	d, cleanup, err := basedata.NewData(c)
 	if err != nil {
 		t.Fatalf("NewData() error = %v", err)

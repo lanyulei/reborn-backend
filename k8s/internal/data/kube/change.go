@@ -268,6 +268,7 @@ func QuickTouched(op, listField, container string) [][]string {
 		return [][]string{{"spec", "unschedulable"}}
 	}
 	// restart / cronjob-trigger / pod-evict / node-drain：不改已有字段，只要求对象仍是原来那个。
+	// pod-resize：涉及的字段随请求而定，读到 Pod 后由 planResize 得出（见 planQuick）。
 	return nil
 }
 
@@ -357,6 +358,10 @@ func (u *userClients) quickPlanFor(op string, body []byte) (*quickPlan, error) {
 	case k8scontract.OpPodEvict:
 		req, err := decode[k8scontract.ObjectRequest](body)
 		return &quickPlan{ref: podRef(req.Ref.Namespace, req.Ref.Name), action: k8scontract.ActionEvict, summary: func(map[string]any) string { return "驱逐 Pod" }}, err
+	case k8scontract.OpPodResize:
+		req, err := decode[k8scontract.ResizeRequest](body)
+		// 涉及的字段与说明在读到 Pod 后确定（要与现状比对），见 planQuick。
+		return &quickPlan{ref: podRef(req.Ref.Namespace, req.Ref.Name), action: k8scontract.ActionResize, summary: func(map[string]any) string { return "调整资源" }}, err
 	case k8scontract.OpNodeCordon:
 		req, err := decode[k8scontract.CordonRequest](body)
 		act, text := k8scontract.ActionUncordon, "恢复调度"
@@ -398,6 +403,17 @@ func (u *userClients) planQuick(op string, body []byte, out *k8scontract.ChangeP
 			return biz.ErrInvalid("container %q not found in %s", container, qp.ref.Name)
 		}
 		qp.fields[0].path = QuickTouched(op, listField, container)[0]
+	}
+	if op == k8scontract.OpPodResize {
+		req, _ := decode[k8scontract.ResizeRequest](body)
+		changes, err := planResize(cur.Object, req)
+		if err != nil {
+			return err
+		}
+		for _, c := range changes {
+			qp.fields = append(qp.fields, quickField{path: c.path(), after: c.after})
+		}
+		qp.summary = func(map[string]any) string { return resizeSummary(changes) }
 	}
 	if op == k8scontract.StreamDrain {
 		req, _ := decode[k8scontract.DrainRequest](body)
@@ -935,6 +951,7 @@ var opActions = map[string]string{
 	k8scontract.OpRollback: k8scontract.ActionRollback, k8scontract.OpPause: k8scontract.ActionPause,
 	k8scontract.OpCronTrigger: k8scontract.ActionTrigger, k8scontract.OpCronSuspend: k8scontract.ActionSuspend,
 	k8scontract.OpPodEvict: k8scontract.ActionEvict, k8scontract.OpNodeCordon: k8scontract.ActionCordon,
+	k8scontract.OpPodResize:   k8scontract.ActionResize,
 	k8scontract.StreamDrain:   k8scontract.ActionDrain,
 	k8scontract.OpHelmInstall: k8scontract.ActionHelmInstall, k8scontract.OpHelmUpgrade: k8scontract.ActionHelmUpgrade,
 	k8scontract.OpHelmRollback: k8scontract.ActionHelmRollback, k8scontract.OpHelmUninstall: k8scontract.ActionHelmUninstall,

@@ -7,12 +7,14 @@
 package conf
 
 import (
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
-	durationpb "google.golang.org/protobuf/types/known/durationpb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
+
+	kitconf "github.com/lanyulei/reborn/backend/kit/kitconf"
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	durationpb "google.golang.org/protobuf/types/known/durationpb"
 )
 
 const (
@@ -100,7 +102,7 @@ func (x *Bootstrap) GetNotify() *Notify {
 type Server struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// http HTTP 配置。
-	Http          *Server_HTTP `protobuf:"bytes,1,opt,name=http,proto3" json:"http,omitempty"`
+	Http          *kitconf.HTTP `protobuf:"bytes,1,opt,name=http,proto3" json:"http,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -135,7 +137,7 @@ func (*Server) Descriptor() ([]byte, []int) {
 	return file_conf_conf_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *Server) GetHttp() *Server_HTTP {
+func (x *Server) GetHttp() *kitconf.HTTP {
 	if x != nil {
 		return x.Http
 	}
@@ -146,7 +148,7 @@ func (x *Server) GetHttp() *Server_HTTP {
 type Data struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// database 数据库配置。
-	Database      *Data_Database `protobuf:"bytes,1,opt,name=database,proto3" json:"database,omitempty"`
+	Database      *kitconf.Database `protobuf:"bytes,1,opt,name=database,proto3" json:"database,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -181,7 +183,7 @@ func (*Data) Descriptor() ([]byte, []int) {
 	return file_conf_conf_proto_rawDescGZIP(), []int{2}
 }
 
-func (x *Data) GetDatabase() *Data_Database {
+func (x *Data) GetDatabase() *kitconf.Database {
 	if x != nil {
 		return x.Database
 	}
@@ -304,7 +306,7 @@ func (x *Pipeline) GetNats() *Pipeline_Nats {
 type Notify struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// master 渠道凭据加密主密钥。
-	Master        *Notify_Master `protobuf:"bytes,1,opt,name=master,proto3" json:"master,omitempty"`
+	Master        *kitconf.Master `protobuf:"bytes,1,opt,name=master,proto3" json:"master,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -339,146 +341,9 @@ func (*Notify) Descriptor() ([]byte, []int) {
 	return file_conf_conf_proto_rawDescGZIP(), []int{4}
 }
 
-func (x *Notify) GetMaster() *Notify_Master {
+func (x *Notify) GetMaster() *kitconf.Master {
 	if x != nil {
 		return x.Master
-	}
-	return nil
-}
-
-// HTTP 是 HTTP 服务器配置。
-type Server_HTTP struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// network 监听网络类型，如 tcp；留空使用默认值。
-	Network string `protobuf:"bytes,1,opt,name=network,proto3" json:"network,omitempty"`
-	// addr 监听地址。
-	Addr string `protobuf:"bytes,2,opt,name=addr,proto3" json:"addr,omitempty"`
-	// timeout 请求处理超时。
-	Timeout       *durationpb.Duration `protobuf:"bytes,3,opt,name=timeout,proto3" json:"timeout,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *Server_HTTP) Reset() {
-	*x = Server_HTTP{}
-	mi := &file_conf_conf_proto_msgTypes[5]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *Server_HTTP) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*Server_HTTP) ProtoMessage() {}
-
-func (x *Server_HTTP) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[5]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use Server_HTTP.ProtoReflect.Descriptor instead.
-func (*Server_HTTP) Descriptor() ([]byte, []int) {
-	return file_conf_conf_proto_rawDescGZIP(), []int{1, 0}
-}
-
-func (x *Server_HTTP) GetNetwork() string {
-	if x != nil {
-		return x.Network
-	}
-	return ""
-}
-
-func (x *Server_HTTP) GetAddr() string {
-	if x != nil {
-		return x.Addr
-	}
-	return ""
-}
-
-func (x *Server_HTTP) GetTimeout() *durationpb.Duration {
-	if x != nil {
-		return x.Timeout
-	}
-	return nil
-}
-
-// Database 是 PostgreSQL 连接池配置（pgx）。
-type Data_Database struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// source 数据源 DSN；生产环境通过环境变量注入（KRATOS_DATA_DATABASE_SOURCE）。
-	Source string `protobuf:"bytes,1,opt,name=source,proto3" json:"source,omitempty"`
-	// max_conns 最大连接数；0 使用驱动默认值。
-	MaxConns int32 `protobuf:"varint,2,opt,name=max_conns,json=maxConns,proto3" json:"max_conns,omitempty"`
-	// min_conns 最小空闲连接数；0 使用驱动默认值。
-	MinConns int32 `protobuf:"varint,3,opt,name=min_conns,json=minConns,proto3" json:"min_conns,omitempty"`
-	// max_conn_idle_time 连接最大空闲时长；未设置使用驱动默认值。
-	MaxConnIdleTime *durationpb.Duration `protobuf:"bytes,4,opt,name=max_conn_idle_time,json=maxConnIdleTime,proto3" json:"max_conn_idle_time,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
-}
-
-func (x *Data_Database) Reset() {
-	*x = Data_Database{}
-	mi := &file_conf_conf_proto_msgTypes[6]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *Data_Database) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*Data_Database) ProtoMessage() {}
-
-func (x *Data_Database) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[6]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use Data_Database.ProtoReflect.Descriptor instead.
-func (*Data_Database) Descriptor() ([]byte, []int) {
-	return file_conf_conf_proto_rawDescGZIP(), []int{2, 0}
-}
-
-func (x *Data_Database) GetSource() string {
-	if x != nil {
-		return x.Source
-	}
-	return ""
-}
-
-func (x *Data_Database) GetMaxConns() int32 {
-	if x != nil {
-		return x.MaxConns
-	}
-	return 0
-}
-
-func (x *Data_Database) GetMinConns() int32 {
-	if x != nil {
-		return x.MinConns
-	}
-	return 0
-}
-
-func (x *Data_Database) GetMaxConnIdleTime() *durationpb.Duration {
-	if x != nil {
-		return x.MaxConnIdleTime
 	}
 	return nil
 }
@@ -504,7 +369,7 @@ type Pipeline_Router struct {
 
 func (x *Pipeline_Router) Reset() {
 	*x = Pipeline_Router{}
-	mi := &file_conf_conf_proto_msgTypes[7]
+	mi := &file_conf_conf_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -516,7 +381,7 @@ func (x *Pipeline_Router) String() string {
 func (*Pipeline_Router) ProtoMessage() {}
 
 func (x *Pipeline_Router) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[7]
+	mi := &file_conf_conf_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -602,7 +467,7 @@ type Pipeline_Sender struct {
 
 func (x *Pipeline_Sender) Reset() {
 	*x = Pipeline_Sender{}
-	mi := &file_conf_conf_proto_msgTypes[8]
+	mi := &file_conf_conf_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -614,7 +479,7 @@ func (x *Pipeline_Sender) String() string {
 func (*Pipeline_Sender) ProtoMessage() {}
 
 func (x *Pipeline_Sender) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[8]
+	mi := &file_conf_conf_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -706,7 +571,7 @@ type Pipeline_Dlq struct {
 
 func (x *Pipeline_Dlq) Reset() {
 	*x = Pipeline_Dlq{}
-	mi := &file_conf_conf_proto_msgTypes[9]
+	mi := &file_conf_conf_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -718,7 +583,7 @@ func (x *Pipeline_Dlq) String() string {
 func (*Pipeline_Dlq) ProtoMessage() {}
 
 func (x *Pipeline_Dlq) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[9]
+	mi := &file_conf_conf_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -769,7 +634,7 @@ type Pipeline_Retention struct {
 
 func (x *Pipeline_Retention) Reset() {
 	*x = Pipeline_Retention{}
-	mi := &file_conf_conf_proto_msgTypes[10]
+	mi := &file_conf_conf_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -781,7 +646,7 @@ func (x *Pipeline_Retention) String() string {
 func (*Pipeline_Retention) ProtoMessage() {}
 
 func (x *Pipeline_Retention) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[10]
+	mi := &file_conf_conf_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -854,7 +719,7 @@ type Pipeline_Maintenance struct {
 
 func (x *Pipeline_Maintenance) Reset() {
 	*x = Pipeline_Maintenance{}
-	mi := &file_conf_conf_proto_msgTypes[11]
+	mi := &file_conf_conf_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -866,7 +731,7 @@ func (x *Pipeline_Maintenance) String() string {
 func (*Pipeline_Maintenance) ProtoMessage() {}
 
 func (x *Pipeline_Maintenance) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[11]
+	mi := &file_conf_conf_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -914,7 +779,7 @@ type Pipeline_Ingress struct {
 
 func (x *Pipeline_Ingress) Reset() {
 	*x = Pipeline_Ingress{}
-	mi := &file_conf_conf_proto_msgTypes[12]
+	mi := &file_conf_conf_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -926,7 +791,7 @@ func (x *Pipeline_Ingress) String() string {
 func (*Pipeline_Ingress) ProtoMessage() {}
 
 func (x *Pipeline_Ingress) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[12]
+	mi := &file_conf_conf_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -974,7 +839,7 @@ type Pipeline_Nats struct {
 
 func (x *Pipeline_Nats) Reset() {
 	*x = Pipeline_Nats{}
-	mi := &file_conf_conf_proto_msgTypes[13]
+	mi := &file_conf_conf_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -986,7 +851,7 @@ func (x *Pipeline_Nats) String() string {
 func (*Pipeline_Nats) ProtoMessage() {}
 
 func (x *Pipeline_Nats) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[13]
+	mi := &file_conf_conf_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1058,79 +923,21 @@ func (x *Pipeline_Nats) GetReplicas() int32 {
 	return 0
 }
 
-// Master 是渠道凭据加密主密钥配置（与 core 完全一致）。
-type Notify_Master struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// key AES-256-GCM 主密钥（任意非空字节串，内部 SHA-256 派生 32 字节密钥）；
-	// 经 KRATOS_NOTIFY_MASTER_KEY 环境变量注入（占位符 ${NOTIFY_MASTER_KEY}）。
-	// 为空时：带 secret 的渠道解密失败→标记不健康（发送转不可重试死信），
-	// 无 secret 渠道不受影响。
-	Key           string `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *Notify_Master) Reset() {
-	*x = Notify_Master{}
-	mi := &file_conf_conf_proto_msgTypes[14]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *Notify_Master) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*Notify_Master) ProtoMessage() {}
-
-func (x *Notify_Master) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[14]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use Notify_Master.ProtoReflect.Descriptor instead.
-func (*Notify_Master) Descriptor() ([]byte, []int) {
-	return file_conf_conf_proto_rawDescGZIP(), []int{4, 0}
-}
-
-func (x *Notify_Master) GetKey() string {
-	if x != nil {
-		return x.Key
-	}
-	return ""
-}
-
 var File_conf_conf_proto protoreflect.FileDescriptor
 
 const file_conf_conf_proto_rawDesc = "" +
 	"\n" +
-	"\x0fconf/conf.proto\x12\x04conf\x1a\x1egoogle/protobuf/duration.proto\"\xa3\x01\n" +
+	"\x0fconf/conf.proto\x12\x04conf\x1a\x1egoogle/protobuf/duration.proto\x1a\x14kitconf/common.proto\"\xa3\x01\n" +
 	"\tBootstrap\x12$\n" +
 	"\x06server\x18\x01 \x01(\v2\f.conf.ServerR\x06server\x12\x1e\n" +
 	"\x04data\x18\x02 \x01(\v2\n" +
 	".conf.DataR\x04data\x12*\n" +
 	"\bpipeline\x18\x03 \x01(\v2\x0e.conf.PipelineR\bpipeline\x12$\n" +
-	"\x06notify\x18\x04 \x01(\v2\f.conf.NotifyR\x06notify\"\x9a\x01\n" +
-	"\x06Server\x12%\n" +
-	"\x04http\x18\x01 \x01(\v2\x11.conf.Server.HTTPR\x04http\x1ai\n" +
-	"\x04HTTP\x12\x18\n" +
-	"\anetwork\x18\x01 \x01(\tR\anetwork\x12\x12\n" +
-	"\x04addr\x18\x02 \x01(\tR\x04addr\x123\n" +
-	"\atimeout\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\atimeout\"\xde\x01\n" +
-	"\x04Data\x12/\n" +
-	"\bdatabase\x18\x01 \x01(\v2\x13.conf.Data.DatabaseR\bdatabase\x1a\xa4\x01\n" +
-	"\bDatabase\x12\x16\n" +
-	"\x06source\x18\x01 \x01(\tR\x06source\x12\x1b\n" +
-	"\tmax_conns\x18\x02 \x01(\x05R\bmaxConns\x12\x1b\n" +
-	"\tmin_conns\x18\x03 \x01(\x05R\bminConns\x12F\n" +
-	"\x12max_conn_idle_time\x18\x04 \x01(\v2\x19.google.protobuf.DurationR\x0fmaxConnIdleTime\"\xe4\x10\n" +
+	"\x06notify\x18\x04 \x01(\v2\f.conf.NotifyR\x06notify\"+\n" +
+	"\x06Server\x12!\n" +
+	"\x04http\x18\x01 \x01(\v2\r.kitconf.HTTPR\x04http\"5\n" +
+	"\x04Data\x12-\n" +
+	"\bdatabase\x18\x01 \x01(\v2\x11.kitconf.DatabaseR\bdatabase\"\xe4\x10\n" +
 	"\bPipeline\x12\x14\n" +
 	"\x05roles\x18\x01 \x03(\tR\x05roles\x12\x1a\n" +
 	"\bbackbone\x18\x02 \x01(\tR\bbackbone\x12-\n" +
@@ -1189,11 +996,9 @@ const file_conf_conf_proto_rawDesc = "" +
 	"relay_poll\x18\x06 \x01(\v2\x19.google.protobuf.DurationR\trelayPoll\x12\x1f\n" +
 	"\vrelay_batch\x18\a \x01(\x05R\n" +
 	"relayBatch\x12\x1a\n" +
-	"\breplicas\x18\b \x01(\x05R\breplicas\"Q\n" +
-	"\x06Notify\x12+\n" +
-	"\x06master\x18\x01 \x01(\v2\x13.conf.Notify.MasterR\x06master\x1a\x1a\n" +
-	"\x06Master\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03keyB>Z<github.com/lanyulei/reborn/backend/notify/internal/conf;confb\x06proto3"
+	"\breplicas\x18\b \x01(\x05R\breplicas\"1\n" +
+	"\x06Notify\x12'\n" +
+	"\x06master\x18\x01 \x01(\v2\x0f.kitconf.MasterR\x06masterB>Z<github.com/lanyulei/reborn/backend/notify/internal/conf;confb\x06proto3"
 
 var (
 	file_conf_conf_proto_rawDescOnce sync.Once
@@ -1207,68 +1012,69 @@ func file_conf_conf_proto_rawDescGZIP() []byte {
 	return file_conf_conf_proto_rawDescData
 }
 
-var file_conf_conf_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
-var file_conf_conf_proto_goTypes = []any{
-	(*Bootstrap)(nil),            // 0: conf.Bootstrap
-	(*Server)(nil),               // 1: conf.Server
-	(*Data)(nil),                 // 2: conf.Data
-	(*Pipeline)(nil),             // 3: conf.Pipeline
-	(*Notify)(nil),               // 4: conf.Notify
-	(*Server_HTTP)(nil),          // 5: conf.Server.HTTP
-	(*Data_Database)(nil),        // 6: conf.Data.Database
-	(*Pipeline_Router)(nil),      // 7: conf.Pipeline.Router
-	(*Pipeline_Sender)(nil),      // 8: conf.Pipeline.Sender
-	(*Pipeline_Dlq)(nil),         // 9: conf.Pipeline.Dlq
-	(*Pipeline_Retention)(nil),   // 10: conf.Pipeline.Retention
-	(*Pipeline_Maintenance)(nil), // 11: conf.Pipeline.Maintenance
-	(*Pipeline_Ingress)(nil),     // 12: conf.Pipeline.Ingress
-	(*Pipeline_Nats)(nil),        // 13: conf.Pipeline.Nats
-	(*Notify_Master)(nil),        // 14: conf.Notify.Master
-	(*durationpb.Duration)(nil),  // 15: google.protobuf.Duration
-}
+var (
+	file_conf_conf_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+	file_conf_conf_proto_goTypes  = []any{
+		(*Bootstrap)(nil),            // 0: conf.Bootstrap
+		(*Server)(nil),               // 1: conf.Server
+		(*Data)(nil),                 // 2: conf.Data
+		(*Pipeline)(nil),             // 3: conf.Pipeline
+		(*Notify)(nil),               // 4: conf.Notify
+		(*Pipeline_Router)(nil),      // 5: conf.Pipeline.Router
+		(*Pipeline_Sender)(nil),      // 6: conf.Pipeline.Sender
+		(*Pipeline_Dlq)(nil),         // 7: conf.Pipeline.Dlq
+		(*Pipeline_Retention)(nil),   // 8: conf.Pipeline.Retention
+		(*Pipeline_Maintenance)(nil), // 9: conf.Pipeline.Maintenance
+		(*Pipeline_Ingress)(nil),     // 10: conf.Pipeline.Ingress
+		(*Pipeline_Nats)(nil),        // 11: conf.Pipeline.Nats
+		(*kitconf.HTTP)(nil),         // 12: kitconf.HTTP
+		(*kitconf.Database)(nil),     // 13: kitconf.Database
+		(*kitconf.Master)(nil),       // 14: kitconf.Master
+		(*durationpb.Duration)(nil),  // 15: google.protobuf.Duration
+	}
+)
+
 var file_conf_conf_proto_depIdxs = []int32{
 	1,  // 0: conf.Bootstrap.server:type_name -> conf.Server
 	2,  // 1: conf.Bootstrap.data:type_name -> conf.Data
 	3,  // 2: conf.Bootstrap.pipeline:type_name -> conf.Pipeline
 	4,  // 3: conf.Bootstrap.notify:type_name -> conf.Notify
-	5,  // 4: conf.Server.http:type_name -> conf.Server.HTTP
-	6,  // 5: conf.Data.database:type_name -> conf.Data.Database
-	7,  // 6: conf.Pipeline.router:type_name -> conf.Pipeline.Router
-	8,  // 7: conf.Pipeline.sender:type_name -> conf.Pipeline.Sender
-	9,  // 8: conf.Pipeline.dlq:type_name -> conf.Pipeline.Dlq
-	11, // 9: conf.Pipeline.maintenance:type_name -> conf.Pipeline.Maintenance
-	12, // 10: conf.Pipeline.ingress:type_name -> conf.Pipeline.Ingress
-	13, // 11: conf.Pipeline.nats:type_name -> conf.Pipeline.Nats
-	14, // 12: conf.Notify.master:type_name -> conf.Notify.Master
-	15, // 13: conf.Server.HTTP.timeout:type_name -> google.protobuf.Duration
-	15, // 14: conf.Data.Database.max_conn_idle_time:type_name -> google.protobuf.Duration
-	15, // 15: conf.Pipeline.Router.poll_interval:type_name -> google.protobuf.Duration
-	15, // 16: conf.Pipeline.Router.config_poll:type_name -> google.protobuf.Duration
-	15, // 17: conf.Pipeline.Router.sweep_interval:type_name -> google.protobuf.Duration
-	15, // 18: conf.Pipeline.Router.max_aggregate_window:type_name -> google.protobuf.Duration
-	15, // 19: conf.Pipeline.Sender.poll_interval:type_name -> google.protobuf.Duration
-	15, // 20: conf.Pipeline.Sender.lease:type_name -> google.protobuf.Duration
-	15, // 21: conf.Pipeline.Sender.send_timeout:type_name -> google.protobuf.Duration
-	15, // 22: conf.Pipeline.Sender.render_timeout:type_name -> google.protobuf.Duration
-	15, // 23: conf.Pipeline.Sender.reap_interval:type_name -> google.protobuf.Duration
-	15, // 24: conf.Pipeline.Sender.max_send_timeout:type_name -> google.protobuf.Duration
-	15, // 25: conf.Pipeline.Dlq.poll_interval:type_name -> google.protobuf.Duration
-	15, // 26: conf.Pipeline.Retention.event:type_name -> google.protobuf.Duration
-	15, // 27: conf.Pipeline.Retention.dispatch:type_name -> google.protobuf.Duration
-	15, // 28: conf.Pipeline.Retention.delivery_log:type_name -> google.protobuf.Duration
-	15, // 29: conf.Pipeline.Retention.dlq:type_name -> google.protobuf.Duration
-	15, // 30: conf.Pipeline.Retention.dedup:type_name -> google.protobuf.Duration
-	15, // 31: conf.Pipeline.Retention.agg_group:type_name -> google.protobuf.Duration
-	15, // 32: conf.Pipeline.Maintenance.interval:type_name -> google.protobuf.Duration
-	10, // 33: conf.Pipeline.Maintenance.retention:type_name -> conf.Pipeline.Retention
-	15, // 34: conf.Pipeline.Ingress.clock_skew:type_name -> google.protobuf.Duration
-	15, // 35: conf.Pipeline.Nats.ack_wait:type_name -> google.protobuf.Duration
-	15, // 36: conf.Pipeline.Nats.relay_poll:type_name -> google.protobuf.Duration
-	37, // [37:37] is the sub-list for method output_type
-	37, // [37:37] is the sub-list for method input_type
-	37, // [37:37] is the sub-list for extension type_name
-	37, // [37:37] is the sub-list for extension extendee
-	0,  // [0:37] is the sub-list for field type_name
+	12, // 4: conf.Server.http:type_name -> kitconf.HTTP
+	13, // 5: conf.Data.database:type_name -> kitconf.Database
+	5,  // 6: conf.Pipeline.router:type_name -> conf.Pipeline.Router
+	6,  // 7: conf.Pipeline.sender:type_name -> conf.Pipeline.Sender
+	7,  // 8: conf.Pipeline.dlq:type_name -> conf.Pipeline.Dlq
+	9,  // 9: conf.Pipeline.maintenance:type_name -> conf.Pipeline.Maintenance
+	10, // 10: conf.Pipeline.ingress:type_name -> conf.Pipeline.Ingress
+	11, // 11: conf.Pipeline.nats:type_name -> conf.Pipeline.Nats
+	14, // 12: conf.Notify.master:type_name -> kitconf.Master
+	15, // 13: conf.Pipeline.Router.poll_interval:type_name -> google.protobuf.Duration
+	15, // 14: conf.Pipeline.Router.config_poll:type_name -> google.protobuf.Duration
+	15, // 15: conf.Pipeline.Router.sweep_interval:type_name -> google.protobuf.Duration
+	15, // 16: conf.Pipeline.Router.max_aggregate_window:type_name -> google.protobuf.Duration
+	15, // 17: conf.Pipeline.Sender.poll_interval:type_name -> google.protobuf.Duration
+	15, // 18: conf.Pipeline.Sender.lease:type_name -> google.protobuf.Duration
+	15, // 19: conf.Pipeline.Sender.send_timeout:type_name -> google.protobuf.Duration
+	15, // 20: conf.Pipeline.Sender.render_timeout:type_name -> google.protobuf.Duration
+	15, // 21: conf.Pipeline.Sender.reap_interval:type_name -> google.protobuf.Duration
+	15, // 22: conf.Pipeline.Sender.max_send_timeout:type_name -> google.protobuf.Duration
+	15, // 23: conf.Pipeline.Dlq.poll_interval:type_name -> google.protobuf.Duration
+	15, // 24: conf.Pipeline.Retention.event:type_name -> google.protobuf.Duration
+	15, // 25: conf.Pipeline.Retention.dispatch:type_name -> google.protobuf.Duration
+	15, // 26: conf.Pipeline.Retention.delivery_log:type_name -> google.protobuf.Duration
+	15, // 27: conf.Pipeline.Retention.dlq:type_name -> google.protobuf.Duration
+	15, // 28: conf.Pipeline.Retention.dedup:type_name -> google.protobuf.Duration
+	15, // 29: conf.Pipeline.Retention.agg_group:type_name -> google.protobuf.Duration
+	15, // 30: conf.Pipeline.Maintenance.interval:type_name -> google.protobuf.Duration
+	8,  // 31: conf.Pipeline.Maintenance.retention:type_name -> conf.Pipeline.Retention
+	15, // 32: conf.Pipeline.Ingress.clock_skew:type_name -> google.protobuf.Duration
+	15, // 33: conf.Pipeline.Nats.ack_wait:type_name -> google.protobuf.Duration
+	15, // 34: conf.Pipeline.Nats.relay_poll:type_name -> google.protobuf.Duration
+	35, // [35:35] is the sub-list for method output_type
+	35, // [35:35] is the sub-list for method input_type
+	35, // [35:35] is the sub-list for extension type_name
+	35, // [35:35] is the sub-list for extension extendee
+	0,  // [0:35] is the sub-list for field type_name
 }
 
 func init() { file_conf_conf_proto_init() }
@@ -1282,7 +1088,7 @@ func file_conf_conf_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_conf_conf_proto_rawDesc), len(file_conf_conf_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   15,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

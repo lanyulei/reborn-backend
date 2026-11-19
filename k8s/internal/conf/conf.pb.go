@@ -7,12 +7,14 @@
 package conf
 
 import (
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
-	durationpb "google.golang.org/protobuf/types/known/durationpb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
+
+	kitconf "github.com/lanyulei/reborn/backend/kit/kitconf"
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	durationpb "google.golang.org/protobuf/types/known/durationpb"
 )
 
 const (
@@ -147,7 +149,7 @@ func (x *Server) GetTunnel() *Server_Tunnel {
 // Data 数据源配置。
 type Data struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Database      *Data_Database         `protobuf:"bytes,1,opt,name=database,proto3" json:"database,omitempty"`
+	Database      *kitconf.Database      `protobuf:"bytes,1,opt,name=database,proto3" json:"database,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -182,7 +184,7 @@ func (*Data) Descriptor() ([]byte, []int) {
 	return file_conf_conf_proto_rawDescGZIP(), []int{2}
 }
 
-func (x *Data) GetDatabase() *Data_Database {
+func (x *Data) GetDatabase() *kitconf.Database {
 	if x != nil {
 		return x.Database
 	}
@@ -372,7 +374,7 @@ func (x *Plane) GetInspectionDisabled() bool {
 // Notify 与通知管道共享的加密主密钥（解密集群凭据）。
 type Notify struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Master        *Notify_Master         `protobuf:"bytes,1,opt,name=master,proto3" json:"master,omitempty"`
+	Master        *kitconf.Master        `protobuf:"bytes,1,opt,name=master,proto3" json:"master,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -407,7 +409,7 @@ func (*Notify) Descriptor() ([]byte, []int) {
 	return file_conf_conf_proto_rawDescGZIP(), []int{4}
 }
 
-func (x *Notify) GetMaster() *Notify_Master {
+func (x *Notify) GetMaster() *kitconf.Master {
 	if x != nil {
 		return x.Master
 	}
@@ -567,124 +569,11 @@ func (x *Server_Tunnel) GetTrustedProxies() []string {
 	return nil
 }
 
-type Data_Database struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// source PostgreSQL DSN（与 core 同库，账号属于 k8s_plane_role）。
-	Source          string               `protobuf:"bytes,1,opt,name=source,proto3" json:"source,omitempty"`
-	MaxConns        int32                `protobuf:"varint,2,opt,name=max_conns,json=maxConns,proto3" json:"max_conns,omitempty"`
-	MinConns        int32                `protobuf:"varint,3,opt,name=min_conns,json=minConns,proto3" json:"min_conns,omitempty"`
-	MaxConnIdleTime *durationpb.Duration `protobuf:"bytes,4,opt,name=max_conn_idle_time,json=maxConnIdleTime,proto3" json:"max_conn_idle_time,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
-}
-
-func (x *Data_Database) Reset() {
-	*x = Data_Database{}
-	mi := &file_conf_conf_proto_msgTypes[7]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *Data_Database) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*Data_Database) ProtoMessage() {}
-
-func (x *Data_Database) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[7]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use Data_Database.ProtoReflect.Descriptor instead.
-func (*Data_Database) Descriptor() ([]byte, []int) {
-	return file_conf_conf_proto_rawDescGZIP(), []int{2, 0}
-}
-
-func (x *Data_Database) GetSource() string {
-	if x != nil {
-		return x.Source
-	}
-	return ""
-}
-
-func (x *Data_Database) GetMaxConns() int32 {
-	if x != nil {
-		return x.MaxConns
-	}
-	return 0
-}
-
-func (x *Data_Database) GetMinConns() int32 {
-	if x != nil {
-		return x.MinConns
-	}
-	return 0
-}
-
-func (x *Data_Database) GetMaxConnIdleTime() *durationpb.Duration {
-	if x != nil {
-		return x.MaxConnIdleTime
-	}
-	return nil
-}
-
-type Notify_Master struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Key           string                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *Notify_Master) Reset() {
-	*x = Notify_Master{}
-	mi := &file_conf_conf_proto_msgTypes[8]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *Notify_Master) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*Notify_Master) ProtoMessage() {}
-
-func (x *Notify_Master) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[8]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use Notify_Master.ProtoReflect.Descriptor instead.
-func (*Notify_Master) Descriptor() ([]byte, []int) {
-	return file_conf_conf_proto_rawDescGZIP(), []int{4, 0}
-}
-
-func (x *Notify_Master) GetKey() string {
-	if x != nil {
-		return x.Key
-	}
-	return ""
-}
-
 var File_conf_conf_proto protoreflect.FileDescriptor
 
 const file_conf_conf_proto_rawDesc = "" +
 	"\n" +
-	"\x0fconf/conf.proto\x12\x04conf\x1a\x1egoogle/protobuf/duration.proto\"\x9a\x01\n" +
+	"\x0fconf/conf.proto\x12\x04conf\x1a\x1egoogle/protobuf/duration.proto\x1a\x14kitconf/common.proto\"\x9a\x01\n" +
 	"\tBootstrap\x12$\n" +
 	"\x06server\x18\x01 \x01(\v2\f.conf.ServerR\x06server\x12\x1e\n" +
 	"\x04data\x18\x02 \x01(\v2\n" +
@@ -704,14 +593,9 @@ const file_conf_conf_proto_rawDesc = "" +
 	"\x04addr\x18\x02 \x01(\tR\x04addr\x12\x1b\n" +
 	"\tcert_file\x18\x03 \x01(\tR\bcertFile\x12\x19\n" +
 	"\bkey_file\x18\x04 \x01(\tR\akeyFile\x12'\n" +
-	"\x0ftrusted_proxies\x18\x05 \x03(\tR\x0etrustedProxies\"\xde\x01\n" +
-	"\x04Data\x12/\n" +
-	"\bdatabase\x18\x01 \x01(\v2\x13.conf.Data.DatabaseR\bdatabase\x1a\xa4\x01\n" +
-	"\bDatabase\x12\x16\n" +
-	"\x06source\x18\x01 \x01(\tR\x06source\x12\x1b\n" +
-	"\tmax_conns\x18\x02 \x01(\x05R\bmaxConns\x12\x1b\n" +
-	"\tmin_conns\x18\x03 \x01(\x05R\bminConns\x12F\n" +
-	"\x12max_conn_idle_time\x18\x04 \x01(\v2\x19.google.protobuf.DurationR\x0fmaxConnIdleTime\"\xf6\x05\n" +
+	"\x0ftrusted_proxies\x18\x05 \x03(\tR\x0etrustedProxies\"5\n" +
+	"\x04Data\x12-\n" +
+	"\bdatabase\x18\x01 \x01(\v2\x11.kitconf.DatabaseR\bdatabase\"\xf6\x05\n" +
 	"\x05Plane\x12!\n" +
 	"\finternal_key\x18\x01 \x01(\tR\vinternalKey\x12/\n" +
 	"\x05lease\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\x05lease\x12@\n" +
@@ -730,11 +614,9 @@ const file_conf_conf_proto_rawDesc = "" +
 	"\x14exec_record_disabled\x18\r \x01(\bR\x12execRecordDisabled\x12+\n" +
 	"\x12exec_record_max_mb\x18\x0e \x01(\x05R\x0fexecRecordMaxMb\x12J\n" +
 	"\x13inspection_interval\x18\x0f \x01(\v2\x19.google.protobuf.DurationR\x12inspectionInterval\x12/\n" +
-	"\x13inspection_disabled\x18\x10 \x01(\bR\x12inspectionDisabled\"Q\n" +
-	"\x06Notify\x12+\n" +
-	"\x06master\x18\x01 \x01(\v2\x13.conf.Notify.MasterR\x06master\x1a\x1a\n" +
-	"\x06Master\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03keyB;Z9github.com/lanyulei/reborn/backend/k8s/internal/conf;confb\x06proto3"
+	"\x13inspection_disabled\x18\x10 \x01(\bR\x12inspectionDisabled\"1\n" +
+	"\x06Notify\x12'\n" +
+	"\x06master\x18\x01 \x01(\v2\x0f.kitconf.MasterR\x06masterB;Z9github.com/lanyulei/reborn/backend/k8s/internal/conf;confb\x06proto3"
 
 var (
 	file_conf_conf_proto_rawDescOnce sync.Once
@@ -748,19 +630,22 @@ func file_conf_conf_proto_rawDescGZIP() []byte {
 	return file_conf_conf_proto_rawDescData
 }
 
-var file_conf_conf_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
-var file_conf_conf_proto_goTypes = []any{
-	(*Bootstrap)(nil),           // 0: conf.Bootstrap
-	(*Server)(nil),              // 1: conf.Server
-	(*Data)(nil),                // 2: conf.Data
-	(*Plane)(nil),               // 3: conf.Plane
-	(*Notify)(nil),              // 4: conf.Notify
-	(*Server_HTTP)(nil),         // 5: conf.Server.HTTP
-	(*Server_Tunnel)(nil),       // 6: conf.Server.Tunnel
-	(*Data_Database)(nil),       // 7: conf.Data.Database
-	(*Notify_Master)(nil),       // 8: conf.Notify.Master
-	(*durationpb.Duration)(nil), // 9: google.protobuf.Duration
-}
+var (
+	file_conf_conf_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+	file_conf_conf_proto_goTypes  = []any{
+		(*Bootstrap)(nil),           // 0: conf.Bootstrap
+		(*Server)(nil),              // 1: conf.Server
+		(*Data)(nil),                // 2: conf.Data
+		(*Plane)(nil),               // 3: conf.Plane
+		(*Notify)(nil),              // 4: conf.Notify
+		(*Server_HTTP)(nil),         // 5: conf.Server.HTTP
+		(*Server_Tunnel)(nil),       // 6: conf.Server.Tunnel
+		(*kitconf.Database)(nil),    // 7: kitconf.Database
+		(*durationpb.Duration)(nil), // 8: google.protobuf.Duration
+		(*kitconf.Master)(nil),      // 9: kitconf.Master
+	}
+)
+
 var file_conf_conf_proto_depIdxs = []int32{
 	1,  // 0: conf.Bootstrap.server:type_name -> conf.Server
 	2,  // 1: conf.Bootstrap.data:type_name -> conf.Data
@@ -768,21 +653,20 @@ var file_conf_conf_proto_depIdxs = []int32{
 	4,  // 3: conf.Bootstrap.notify:type_name -> conf.Notify
 	5,  // 4: conf.Server.http:type_name -> conf.Server.HTTP
 	6,  // 5: conf.Server.tunnel:type_name -> conf.Server.Tunnel
-	7,  // 6: conf.Data.database:type_name -> conf.Data.Database
-	9,  // 7: conf.Plane.lease:type_name -> google.protobuf.Duration
-	9,  // 8: conf.Plane.probe_interval:type_name -> google.protobuf.Duration
-	9,  // 9: conf.Plane.cache_idle:type_name -> google.protobuf.Duration
-	9,  // 10: conf.Plane.cache_sync_timeout:type_name -> google.protobuf.Duration
-	9,  // 11: conf.Plane.audit_retention:type_name -> google.protobuf.Duration
-	9,  // 12: conf.Plane.inspection_interval:type_name -> google.protobuf.Duration
-	8,  // 13: conf.Notify.master:type_name -> conf.Notify.Master
-	9,  // 14: conf.Server.HTTP.timeout:type_name -> google.protobuf.Duration
-	9,  // 15: conf.Data.Database.max_conn_idle_time:type_name -> google.protobuf.Duration
-	16, // [16:16] is the sub-list for method output_type
-	16, // [16:16] is the sub-list for method input_type
-	16, // [16:16] is the sub-list for extension type_name
-	16, // [16:16] is the sub-list for extension extendee
-	0,  // [0:16] is the sub-list for field type_name
+	7,  // 6: conf.Data.database:type_name -> kitconf.Database
+	8,  // 7: conf.Plane.lease:type_name -> google.protobuf.Duration
+	8,  // 8: conf.Plane.probe_interval:type_name -> google.protobuf.Duration
+	8,  // 9: conf.Plane.cache_idle:type_name -> google.protobuf.Duration
+	8,  // 10: conf.Plane.cache_sync_timeout:type_name -> google.protobuf.Duration
+	8,  // 11: conf.Plane.audit_retention:type_name -> google.protobuf.Duration
+	8,  // 12: conf.Plane.inspection_interval:type_name -> google.protobuf.Duration
+	9,  // 13: conf.Notify.master:type_name -> kitconf.Master
+	8,  // 14: conf.Server.HTTP.timeout:type_name -> google.protobuf.Duration
+	15, // [15:15] is the sub-list for method output_type
+	15, // [15:15] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_conf_conf_proto_init() }
@@ -796,7 +680,7 @@ func file_conf_conf_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_conf_conf_proto_rawDesc), len(file_conf_conf_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   9,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
