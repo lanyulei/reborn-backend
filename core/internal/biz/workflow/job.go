@@ -148,8 +148,18 @@ func (uc *JobUsecase) RunDue(ctx context.Context) (int, error) {
 			break
 		}
 		// 同批靠后的作业开始前先续租：前面的作业若耗时很长（数据库抖动、锁等待），租约可能已
-		// 过期并被别的执行器领走——续租失败就不再碰它，避免同一条作业被两边同时执行。
-		if ok, err := uc.queue.Renew(ctx, j, jobLease); err != nil || !ok {
+		// 过期并被别的执行器领走——续租未命中（ok=false）就不再碰它，避免同一条作业被两边同时执行。
+		// 续租本身出错（数据库故障）时不知道租约还在不在：记日志并放回队列（本次领取不计入尝试
+		// 次数），而不是悄悄跳过让它一直占着租约等到过期。
+		ok, err := uc.queue.Renew(ctx, j, jobLease)
+		if err != nil {
+			uc.log.WarnContext(ctx, "workflow job lease renewal failed; releasing the job", "job", j.ID, "kind", j.Kind, "instance", j.InstanceID, "error", err)
+			if rerr := uc.queue.Release(context.WithoutCancel(ctx), j); rerr != nil {
+				uc.log.ErrorContext(ctx, "workflow job could not be released after a failed renewal", "job", j.ID, "instance", j.InstanceID, "error", rerr)
+			}
+			continue
+		}
+		if !ok {
 			continue
 		}
 		uc.process(ctx, j)

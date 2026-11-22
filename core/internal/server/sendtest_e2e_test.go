@@ -90,13 +90,21 @@ func TestHTTPServer_NotifySendTestEventEndToEnd(t *testing.T) {
 		t.Fatalf("list events(notify.test): status = %d body = %s", code, body)
 	}
 
-	// 自定义 spec 往返：类型/标题/收件/载荷。
+	// 显式收件只允许操作者本人 / 绑定路由的固定收件人 / 群机器人的 $bot：任意邮箱 400。
 	code, body = doRequestWithToken(t, http.MethodPost,
 		ts.URL+"/api/v1/notify/channel/"+channelID+":test", bearer,
-		`{"eventType":"monitor.alert.test","title":"自定义测试","recipients":["ops@example.com"],`+
+		`{"recipients":["ops@example.com"]}`)
+	if code != http.StatusBadRequest {
+		t.Fatalf("send test event to an arbitrary address: status = %d body = %s, want 400", code, body)
+	}
+
+	// 自定义 spec 往返：类型/标题/收件（本人）/载荷。
+	code, body = doRequestWithToken(t, http.MethodPost,
+		ts.URL+"/api/v1/notify/channel/"+channelID+":test", bearer,
+		`{"eventType":"monitor.alert.test","title":"自定义测试","recipients":["`+e2eActorID+`"],`+
 			`"payload":{"order":"A-1"}}`)
 	if code != http.StatusOK || !strings.Contains(body, `"eventType":"monitor.alert.test"`) ||
-		!strings.Contains(body, `"recipients":["ops@example.com"]`) ||
+		!strings.Contains(body, `"recipients":["`+e2eActorID+`"]`) ||
 		!strings.Contains(body, `"order":"A-1"`) {
 		t.Fatalf("send custom test event: status = %d body = %s", code, body)
 	}

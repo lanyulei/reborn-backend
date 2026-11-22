@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 
+	incidentv1 "github.com/lanyulei/reborn/backend/core/api/incident/v1"
 	oncallv1 "github.com/lanyulei/reborn/backend/core/api/oncall/v1"
 	v1 "github.com/lanyulei/reborn/backend/core/api/system/v1"
 	workflowv1 "github.com/lanyulei/reborn/backend/core/api/workflow/v1"
@@ -45,6 +46,15 @@ var authExempt = map[string]struct{}{
 	// 作业中心的开放触发接口：供流程服务节点 / 外部系统调用，不走用户登录——凭调用令牌或流程 Webhook
 	// 的签名认证（库内只存哈希与密文，可重置可停用），校验在用例层完成；触发器的管理接口不免检。
 	systemservice.OperationJobOpenFire: {},
+	// 故障的匿名状态页：凭地址里不可猜测的分享令牌访问（库内只存哈希，可过期可作废），免登录页面不携带
+	// Authorization 头；分享链接的管理接口不免检。
+	incidentv1.OperationIncidentUpdateServiceGetPublicIncident: {},
+	// 故障管理的开放接口：供外部系统接入，凭请求头里的接入令牌认证（库内只存哈希，可停用可重置、可限来源 IP），
+	// 校验在用例层完成；接入源的管理接口不免检。
+	incidentv1.OperationIncidentOpenServiceOpenCreateIncident:  {},
+	incidentv1.OperationIncidentOpenServiceOpenGetIncident:     {},
+	incidentv1.OperationIncidentOpenServiceOpenAppendNote:      {},
+	incidentv1.OperationIncidentOpenServiceOpenResolveIncident: {},
 }
 
 // authMiddleware 组装鉴权中间件：白名单外的全部方法要求 Authorization: Bearer

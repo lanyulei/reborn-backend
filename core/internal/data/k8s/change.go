@@ -17,11 +17,13 @@ import (
 )
 
 var (
-	_ biz.ChangeStore  = (*changeRepo)(nil)
-	_ biz.ChangeReader = (*changeRepo)(nil)
-	_ biz.ChangeFlow   = (*changeRepo)(nil)
-	_ biz.ChangeQueue  = (*changeRepo)(nil)
-	_ biz.SettingRepo  = (*settingRepo)(nil)
+	_ biz.ChangeStore     = (*changeRepo)(nil)
+	_ biz.ChangeReader    = (*changeRepo)(nil)
+	_ biz.ChangeFlow      = (*changeRepo)(nil)
+	_ biz.ChangeQueue     = (*changeRepo)(nil)
+	_ biz.ChangeRefresher = (*changeRepo)(nil)
+	_ biz.OrphanSweeper   = (*changeRepo)(nil)
+	_ biz.SettingRepo     = (*settingRepo)(nil)
 )
 
 // changeRepo 变更单（k8s_change）。exec 列（加密的执行计划）本包只写入、从不读出。
@@ -113,6 +115,12 @@ func (r *changeRepo) List(ctx context.Context, f biz.ChangeFilter, page, pageSiz
 	}
 	if f.Status != nil {
 		where += " AND status = " + a.add(*f.Status)
+	}
+	if f.Start != nil {
+		where += " AND create_time >= " + a.add(*f.Start)
+	}
+	if f.End != nil {
+		where += " AND create_time < " + a.add(*f.End)
 	}
 	if f.Keyword != "" {
 		k := a.add(dbx.LikeContains(f.Keyword))
@@ -314,6 +322,27 @@ func (r *changeRepo) Approved(ctx context.Context, limit int) ([]biz.ApprovedCha
 		var c biz.ApprovedChange
 		return c, row.Scan(&c.ID, &c.RequesterID)
 	})
+}
+
+// FailApproved implements biz.ChangeRefresher：状态栅栏只认已批准（Finish 还接受执行中，这里不能用它）。
+func (r *changeRepo) FailApproved(ctx context.Context, id, message string) error {
+	if _, err := r.data.Pool.Exec(ctx,
+		"UPDATE k8s_change SET status = $2, message = $3, finish_time = now() WHERE id = $1 AND status = $4",
+		id, kc.ChangeFailed, message, kc.ChangeApproved); err != nil {
+		return fmt.Errorf("fail approved k8s change: %w", err)
+	}
+	return nil
+}
+
+// SweepOrphans implements biz.OrphanSweeper.
+func (r *changeRepo) SweepOrphans(ctx context.Context, olderThan time.Duration) (int, error) {
+	tag, err := r.data.Pool.Exec(ctx,
+		"DELETE FROM k8s_change WHERE status = $1 AND ticket_id IS NULL AND create_time < now() - make_interval(secs => $2)",
+		kc.ChangePending, olderThan.Seconds())
+	if err != nil {
+		return 0, fmt.Errorf("sweep orphan k8s changes: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
 }
 
 // RefreshRequester implements biz.ChangeRefresher。保留快照里的用户名（展示用），只换角色与超管标记。

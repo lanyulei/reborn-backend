@@ -47,7 +47,11 @@ type ImportRelation struct {
 	TargetName  string
 }
 
-// importTimeout 单次导入的总时限（最多 1000 行，逐行校验 + 写入）。
+// ImportMaxRows 单次导入的行数上限（与 proto 的 max_items 一致）：导入脱离请求时限独立运行
+// （见 Import），行数再多就该拆成多个请求。
+const ImportMaxRows = 1000
+
+// importTimeout 单次导入的总时限（最多 ImportMaxRows 行，逐行校验 + 写入）。
 const importTimeout = 3 * time.Minute
 
 // ImportRowResult 单行结果。
@@ -76,6 +80,9 @@ type ImportResult struct {
 // （试运行与正式导入同一口径）。
 // scope 为调用者数据范围：已存在资源、新环境与关系对端都须在范围内。
 func (uc *CIUsecase) Import(ctx context.Context, actor Actor, scope Scope, modelCode string, rows []ImportRow, dryRun bool) (*ImportResult, error) {
+	if len(rows) > ImportMaxRows {
+		return nil, detail(ErrCIInvalid, "at most %d rows per import request (got %d); split the file into smaller batches", ImportMaxRows, len(rows))
+	}
 	m, err := uc.models.Get(ctx, modelCode)
 	if err != nil {
 		return nil, err

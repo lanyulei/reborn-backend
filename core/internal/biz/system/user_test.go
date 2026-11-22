@@ -329,6 +329,51 @@ func TestUserUsecase_ResetPassword(t *testing.T) {
 	}
 }
 
+// 自助改密码：现密码错误拒绝（密码不变、会话不吊销）；新密码长度越界拒绝；核对通过则哈希落库并吊销会话；
+// 机器账号与不存在的用户拒绝。
+func TestUserUsecase_ChangeMyPassword(t *testing.T) {
+	t.Parallel()
+	uc, stub := newUserUsecase(t)
+	ctx := context.Background()
+	user, err := uc.Create(ctx, &User{Username: "alice", Password: "plain-secret", Gender: GenderUnknown})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	// 桩与用例共享同一个 User 指针，Create 的出参清空了密码：把建号时的哈希放回去。
+	stub.users[user.ID].Password = stub.lastHash
+	before := stub.users[user.ID].Password
+
+	if err := uc.ChangeMyPassword(ctx, user.ID, "wrong-secret", "new-secret-123"); !errors.Is(err, ErrPasswordMismatch) {
+		t.Fatalf("ChangeMyPassword(wrong current) error = %v, want ErrPasswordMismatch", err)
+	}
+	if stub.users[user.ID].Password != before || len(stub.revoked) != 0 {
+		t.Fatal("a rejected change must not touch the stored hash or revoke sessions")
+	}
+	if err := uc.ChangeMyPassword(ctx, user.ID, "plain-secret", "short"); !errors.Is(err, ErrPasswordLength) {
+		t.Fatalf("ChangeMyPassword(short new) error = %v, want ErrPasswordLength", err)
+	}
+	if err := uc.ChangeMyPassword(ctx, user.ID, "plain-secret", "b64$"+base64.StdEncoding.EncodeToString([]byte("new-secret-123"))); err != nil {
+		t.Fatalf("ChangeMyPassword() error = %v", err)
+	}
+	if got := stub.users[user.ID].Password; got == before || got == "new-secret-123" || !uc.hasher.Verify("new-secret-123", got) {
+		t.Fatalf("stored hash = %q, want argon2id of the new password", got)
+	}
+	if !slices.Contains(stub.revoked, user.ID) {
+		t.Fatal("changing the password must revoke the user's refresh tokens")
+	}
+	if err := uc.ChangeMyPassword(ctx, user.ID, "plain-secret", "new-secret-123"); !errors.Is(err, ErrPasswordMismatch) {
+		t.Fatalf("old password must no longer verify, error = %v", err)
+	}
+
+	stub.users[user.ID].Kind = UserKindMachine
+	if err := uc.ChangeMyPassword(ctx, user.ID, "new-secret-123", "another-secret-1"); !errors.Is(err, ErrMachineAccount) {
+		t.Fatalf("ChangeMyPassword(machine) error = %v, want ErrMachineAccount", err)
+	}
+	if err := uc.ChangeMyPassword(ctx, "missing", "x", "another-secret-1"); !errors.Is(err, ErrUserNotFound) {
+		t.Fatalf("ChangeMyPassword(missing) error = %v, want ErrUserNotFound", err)
+	}
+}
+
 func TestUserUsecase_UpdateStatus(t *testing.T) {
 	t.Parallel()
 	uc, stub := newUserUsecase(t)

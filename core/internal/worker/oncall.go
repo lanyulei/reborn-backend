@@ -14,7 +14,7 @@ import (
 )
 
 // ProviderSet is worker providers.
-var ProviderSet = wire.NewSet(NewOncallLoops, NewFileLoops, NewWorkflowLoops, NewTicketLoops, NewMonitorLoops, wire.Struct(new(MonitorP2Usecases), "*"), NewK8sLoops, NewJobLoops)
+var ProviderSet = wire.NewSet(NewOncallLoops, NewFileLoops, NewWorkflowLoops, NewTicketLoops, NewMonitorLoops, wire.Struct(new(MonitorP2Usecases), "*"), NewK8sLoops, NewJobLoops, NewKnowledgeLoops, NewIncidentLoops, NewAgentLoops)
 
 // 值班后台循环的轮询周期。各任务自身并发安全（行锁 / SKIP LOCKED / 去重键），
 // 多实例部署无需选主。

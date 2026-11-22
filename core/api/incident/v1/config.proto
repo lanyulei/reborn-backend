@@ -1,0 +1,908 @@
+syntax = "proto3";
+
+package incident.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "incident/v1/common.proto";
+import "incident/v1/incident.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/incident/v1;v1";
+
+// IncidentConfigService 故障管理的配置：触发规则、业务字典、预案、接入源、Webhook 订阅、设置。
+// 均为管理类接口，按接口权限授权。
+service IncidentConfigService {
+  // ---- 触发规则 ----
+  rpc ListRules(ListRulesRequest) returns (ListRulesResponse) {
+    option (google.api.http) = {get: "/api/v1/incident-rule"};
+    option (system.v1.title) = "查询故障触发规则";
+  }
+  rpc GetRule(GetRuleRequest) returns (RuleResponse) {
+    option (google.api.http) = {get: "/api/v1/incident-rule/{id}"};
+    option (system.v1.title) = "查询故障触发规则详情";
+  }
+  rpc CreateRule(CreateRuleRequest) returns (RuleResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident-rule"
+      body: "*"
+    };
+    option (system.v1.title) = "新建故障触发规则";
+  }
+  rpc UpdateRule(UpdateRuleRequest) returns (RuleResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/incident-rule/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "编辑故障触发规则";
+  }
+  rpc DeleteRule(DeleteRuleRequest) returns (EmptyResponse) {
+    option (google.api.http) = {delete: "/api/v1/incident-rule/{id}"};
+    option (system.v1.title) = "删除故障触发规则";
+  }
+  // TestRule 用近期历史告警试算：命中哪些告警、会归并成几个故障（不落库）。
+  rpc TestRule(TestRuleRequest) returns (TestRuleResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident-rule:test"
+      body: "*"
+    };
+    option (system.v1.title) = "试算故障触发规则";
+  }
+
+  // ---- 业务字典 ----
+  rpc ListBusinesses(ListBusinessesRequest) returns (ListBusinessesResponse) {
+    option (google.api.http) = {get: "/api/v1/incident-business"};
+    option (system.v1.title) = "查询故障业务字典";
+  }
+  rpc CreateBusiness(CreateBusinessRequest) returns (BusinessResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident-business"
+      body: "*"
+    };
+    option (system.v1.title) = "新建故障业务";
+  }
+  rpc UpdateBusiness(UpdateBusinessRequest) returns (BusinessResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/incident-business/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "编辑故障业务";
+  }
+  rpc DeleteBusiness(DeleteBusinessRequest) returns (EmptyResponse) {
+    option (google.api.http) = {delete: "/api/v1/incident-business/{id}"};
+    option (system.v1.title) = "删除故障业务";
+  }
+
+  // ---- 预案 ----
+  rpc ListPlaybooks(ListPlaybooksRequest) returns (ListPlaybooksResponse) {
+    option (google.api.http) = {get: "/api/v1/incident-playbook"};
+    option (system.v1.title) = "查询故障预案";
+  }
+  rpc GetPlaybook(GetPlaybookRequest) returns (PlaybookResponse) {
+    option (google.api.http) = {get: "/api/v1/incident-playbook/{id}"};
+    option (system.v1.title) = "查询故障预案详情";
+  }
+  rpc CreatePlaybook(CreatePlaybookRequest) returns (PlaybookResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident-playbook"
+      body: "*"
+    };
+    option (system.v1.title) = "新建故障预案";
+  }
+  rpc UpdatePlaybook(UpdatePlaybookRequest) returns (PlaybookResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/incident-playbook/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "编辑故障预案";
+  }
+  rpc DeletePlaybook(DeletePlaybookRequest) returns (EmptyResponse) {
+    option (google.api.http) = {delete: "/api/v1/incident-playbook/{id}"};
+    option (system.v1.title) = "删除故障预案";
+  }
+  // ListPlaybookTargets 预案步骤可引用的对象：启用的作业模板与可发起的流程定义。
+  rpc ListPlaybookTargets(ListPlaybookTargetsRequest) returns (ListPlaybookTargetsResponse) {
+    option (google.api.http) = {get: "/api/v1/incident-playbook-target"};
+    option (system.v1.title) = "查询预案可引用对象";
+  }
+
+  // ---- 接入源 ----
+  rpc ListSources(ListSourcesRequest) returns (ListSourcesResponse) {
+    option (google.api.http) = {get: "/api/v1/incident-source"};
+    option (system.v1.title) = "查询故障接入源";
+  }
+  rpc CreateSource(CreateSourceRequest) returns (SourceTokenResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident-source"
+      body: "*"
+    };
+    option (system.v1.title) = "新建故障接入源";
+  }
+  rpc UpdateSource(UpdateSourceRequest) returns (SourceResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/incident-source/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "编辑故障接入源";
+  }
+  rpc ResetSourceToken(ResetSourceTokenRequest) returns (SourceTokenResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident-source/{id}:token"
+      body: "*"
+    };
+    option (system.v1.title) = "重置故障接入源令牌";
+  }
+  rpc DeleteSource(DeleteSourceRequest) returns (EmptyResponse) {
+    option (google.api.http) = {delete: "/api/v1/incident-source/{id}"};
+    option (system.v1.title) = "删除故障接入源";
+  }
+
+  // ---- Webhook 订阅 ----
+  rpc ListWebhooks(ListWebhooksRequest) returns (ListWebhooksResponse) {
+    option (google.api.http) = {get: "/api/v1/incident-webhook"};
+    option (system.v1.title) = "查询故障 Webhook 订阅";
+  }
+  rpc CreateWebhook(CreateWebhookRequest) returns (WebhookResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident-webhook"
+      body: "*"
+    };
+    option (system.v1.title) = "新建故障 Webhook 订阅";
+  }
+  rpc UpdateWebhook(UpdateWebhookRequest) returns (WebhookResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/incident-webhook/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "编辑故障 Webhook 订阅";
+  }
+  rpc DeleteWebhook(DeleteWebhookRequest) returns (EmptyResponse) {
+    option (google.api.http) = {delete: "/api/v1/incident-webhook/{id}"};
+    option (system.v1.title) = "删除故障 Webhook 订阅";
+  }
+
+  // ---- 设置 ----
+  rpc GetSettings(GetSettingsRequest) returns (SettingsResponse) {
+    option (google.api.http) = {get: "/api/v1/incident-setting"};
+    option (system.v1.title) = "查询故障管理设置";
+  }
+  rpc UpdateSettings(UpdateSettingsRequest) returns (SettingsResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/incident-setting"
+      body: "*"
+    };
+    option (system.v1.title) = "更新故障管理设置";
+  }
+}
+
+// EmptyResponse 空响应。
+message EmptyResponse {}
+
+// RuleMatch 触发规则的匹配条件（各项之间是「并且」，留空不限）。
+message RuleMatch {
+  // min_severity 告警级别下限（监控域 1-4，4 最严重）；0 = 不限。
+  int32 min_severity = 1 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 4
+  }];
+  // 只匹配这些监控规则分组下的告警（空 = 不限）。
+  repeated string group_ids = 2 [(buf.validate.field).repeated = {
+    max_items: 50
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+  // 只匹配这些监控规则的告警（空 = 不限）。
+  repeated string rule_ids = 3 [(buf.validate.field).repeated = {
+    max_items: 200
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+  // 标签匹配器（全部满足才算匹配）。
+  repeated LabelMatcher matchers = 4 [(buf.validate.field).repeated.max_items = 20];
+  // model_codes 告警关联资源的 CMDB 模型。
+  repeated string model_codes = 5 [(buf.validate.field).repeated = {
+    max_items: 20
+    unique: true
+    items: {
+      string: {max_len: 64}
+    }
+  }];
+}
+
+// RuleCorrelation 归并方式。
+message RuleCorrelation {
+  // keys 归并键：business / group / rule / ci / label:<标签名>，至多 5 项；为空 = 全部归并到一个故障。
+  repeated string keys = 1 [(buf.validate.field).repeated = {
+    max_items: 5
+    items: {
+      string: {
+        pattern: "^(business|group|rule|ci|label:[a-zA-Z_][a-zA-Z0-9_]*)$"
+      }
+    }
+  }];
+  // window_m 归并窗口（分钟）：故障恢复后多久内的同键告警仍归并。
+  int32 window_m = 2 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 1440
+  }];
+  // min_alerts / min_cis 开启门槛。
+  int32 min_alerts = 3 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 1000
+  }];
+  // 窗口内至少涉及多少个不同资源才开故障（0 = 不限）。
+  int32 min_cis = 4 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 500
+  }];
+}
+
+// RuleIncident 开出故障的属性。
+message RuleIncident {
+  // severity 固定等级 1-4；0 = 按告警级别映射（致命→S2、严重→S3、其余→S4）。
+  int32 severity = 1 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 4
+  }];
+  // title_template 标题模板，可引用 {{rule}} {{labels.xxx}} {{business}} {{count}}。
+  string title_template = 2 [(buf.validate.field).string.max_len = 255];
+  // business_id 固定业务；为空时按 business_label 的标签值匹配业务字典。
+  string business_id = 3 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+  // 从告警标签取业务的标签键（优先于固定 business_id）。
+  string business_label = 4 [(buf.validate.field).string.max_len = 128];
+  // is_drill 开出的是演练故障。
+  bool is_drill = 5;
+}
+
+// RuleResponse 响应配置。
+message RuleResponseSpec {
+  // commander_schedule_id 指挥来源值班表；为空取业务字典 / 兜底。
+  string commander_schedule_id = 1 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+  // 固定指挥官用户 ID（与值班表二选一）。
+  string commander_user_id = 2 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+  // responder_backup 值班表备班加为处理人。
+  bool responder_backup = 3;
+  // 把该值班组当前值班人加为处理人。
+  string responder_oncall_group_id = 4 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+  // 把受影响资源的负责人加为处理人。
+  bool responder_ci_owner = 5;
+  // 固定处理人用户 ID 列表。
+  repeated string responder_user_ids = 6 [(buf.validate.field).repeated = {
+    max_items: 20
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+  // groups 通知群标识（$ 开头，如 $group:ops；对应通知管理里群机器人渠道的群），至多 10 个。
+  repeated string groups = 7 [(buf.validate.field).repeated = {
+    max_items: 10
+    unique: true
+    items: {
+      string: {pattern: "^\\$[A-Za-z0-9:_.-]{1,63}$"}
+    }
+  }];
+}
+
+// RuleAction 自动处置与自动恢复。
+message RuleAction {
+  // 开故障时推荐 / 自动提出的预案 ID。
+  string playbook_id = 1 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+  // playbook_mode 1=仅推荐 2=自动提出动作建议 3=按预案审批策略自动执行。
+  int32 playbook_mode = 2 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 3
+  }];
+  // auto_resolve 关联告警全部恢复后：1=仅提示 2=自动缓解 3=自动恢复（S1/S2 恒为仅提示）。
+  int32 auto_resolve = 3 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 3
+  }];
+  // ai_summary 开启后自动生成 AI 摘要。
+  bool ai_summary = 4;
+  // agent 开启后故障开出与等级上调时入队一次运维 Agent 诊断任务。
+  bool agent = 5;
+}
+
+// RuleSpec 触发规则内容。
+message RuleSpec {
+  // 规则名称（唯一）。
+  string name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+  // 说明。
+  string description = 2 [(buf.validate.field).string.max_len = 255];
+  // 排序值（小的先匹配）。
+  int32 sort = 3 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 100000
+  }];
+  // 是否启用。
+  bool enabled = 4;
+  // 告警匹配条件。
+  RuleMatch match = 5;
+  // 聚合与开故障阈值。
+  RuleCorrelation correlation = 6;
+  // 生成故障的字段。
+  RuleIncident incident = 7;
+  // 响应人选。
+  RuleResponseSpec response = 8;
+  // 开故障后的动作。
+  RuleAction action = 9;
+}
+
+// Rule 触发规则。
+message Rule {
+  // 规则 ID。
+  string id = 1;
+  // 规则内容。
+  RuleSpec spec = 2;
+  // refs 展示名。
+  repeated NamedRef group_refs = 3;
+  // 引用的监控规则（含是否已失效）。
+  repeated NamedRef rule_refs = 4;
+  // 固定业务。
+  NamedRef business = 5;
+  // 推荐预案。
+  NamedRef playbook = 6;
+  // 指挥官值班表。
+  NamedRef commander_schedule = 7;
+  // 固定指挥官。
+  NamedRef commander_user = 8;
+  // incident_count 由它开出的故障数（近 30 天）。
+  int32 incident_count = 9;
+  // 乐观锁版本。
+  int32 version = 10;
+  // 创建时间。
+  google.protobuf.Timestamp create_time = 11;
+  // 更新时间。
+  google.protobuf.Timestamp update_time = 12;
+  // 最后修改人。
+  NamedRef update_user = 13;
+}
+
+message ListRulesRequest {
+  // 页码（从 1 起）。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // 每页条数（最多 100）。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // 按名称 / 说明模糊匹配。
+  optional string keyword = 3 [(buf.validate.field).string.max_len = 128];
+  // 只看启用或停用的规则。
+  optional bool enabled = 4;
+}
+
+message ListRulesResponse {
+  // 规则列表。
+  repeated Rule items = 1;
+  // 总数。
+  int64 total = 2;
+}
+
+message GetRuleRequest {
+  // 规则 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+message RuleResponse {
+  // 规则。
+  Rule rule = 1;
+}
+
+message CreateRuleRequest {
+  // 规则内容。
+  RuleSpec spec = 1 [(buf.validate.field).required = true];
+}
+
+message UpdateRuleRequest {
+  // 规则 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // 规则内容（整体替换）。
+  RuleSpec spec = 2 [(buf.validate.field).required = true];
+  // 乐观锁版本（须与当前一致）。
+  int32 version = 3 [(buf.validate.field).int32.gte = 1];
+}
+
+message DeleteRuleRequest {
+  // 规则 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// TestRuleRequest 用历史告警试算。
+message TestRuleRequest {
+  // 待回放的规则内容（可以是未保存的）。
+  RuleSpec spec = 1 [(buf.validate.field).required = true];
+  // hours 回看小时数，1-168，缺省 24。
+  int32 hours = 2 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 168
+  }];
+}
+
+// TestRuleGroup 试算出的一个归并组。
+message TestRuleGroup {
+  // 聚合键。
+  string correlation_key = 1;
+  // 告警数。
+  int32 alert_count = 2;
+  // 涉及资源数。
+  int32 ci_count = 3;
+  // would_open 是否达到开启门槛。
+  bool would_open = 4;
+  // 渲染后的故障标题。
+  string title = 5;
+  // 推算的等级。
+  int32 severity = 6;
+  // 命中的告警（最多 20 条）。
+  repeated IncidentAlert alerts = 7;
+}
+
+message TestRuleResponse {
+  // 扫描的告警数。
+  int32 scanned = 1;
+  // 匹配的告警数。
+  int32 matched = 2;
+  // 按聚合键分组的结果。
+  repeated TestRuleGroup groups = 3;
+}
+
+message ListBusinessesRequest {
+  // 页码（从 1 起）。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // 每页条数（最多 100）。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // 按编码 / 名称模糊匹配。
+  optional string keyword = 3 [(buf.validate.field).string.max_len = 128];
+  // 只看启用或停用的业务。
+  optional bool enabled = 4;
+}
+
+message ListBusinessesResponse {
+  // 业务列表。
+  repeated Business items = 1;
+  // 总数。
+  int64 total = 2;
+}
+
+message CreateBusinessRequest {
+  // 业务内容。
+  BusinessSpec spec = 1 [(buf.validate.field).required = true];
+}
+
+message UpdateBusinessRequest {
+  // 业务 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // 业务内容（整体替换）。
+  BusinessSpec spec = 2 [(buf.validate.field).required = true];
+  // 乐观锁版本。
+  int32 version = 3 [(buf.validate.field).int32.gte = 1];
+}
+
+message DeleteBusinessRequest {
+  // 业务 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+message BusinessResponse {
+  // 业务。
+  Business business = 1;
+}
+
+// PlaybookStep 预案的一个可执行步骤。
+message PlaybookStep {
+  // 步骤名称。
+  string name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+  // kind job（作业模板）/ workflow（流程定义）。
+  string kind = 2 [(buf.validate.field).string = {
+    in: [
+      "job",
+      "workflow"
+    ]
+  }];
+  // ref 作业模板 ID / 流程定义标识。
+  string ref = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+  // params 参数映射：参数名 → 值或引用（{{severity}} {{business}} {{labels.xxx}} {{ci.attrs.xxx}}）。
+  map<string, string> params = 4 [(buf.validate.field).map = {
+    max_pairs: 50
+    values: {
+      string: {max_len: 1024}
+    }
+  }];
+  // approval 1=直接执行 2=指挥批准后执行 3=走既有审批（提交即由作业 / 流程自身的审批决定）。
+  int32 approval = 5 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 3
+  }];
+  // risk 1=低 2=中 3=高。
+  int32 risk = 6 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 3
+  }];
+  // target_mode 作业靶标：1=受影响资源 2=受影响资源的上游 3=模板缺省靶标。
+  int32 target_mode = 7 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 3
+  }];
+}
+
+// PlaybookMatch 适用条件。
+message PlaybookMatch {
+  // 告警标签匹配器（任一满足即推荐）。
+  repeated LabelMatcher matchers = 1 [(buf.validate.field).repeated.max_items = 20];
+  // 适用的资源类型编码。
+  repeated string model_codes = 2 [(buf.validate.field).repeated = {
+    max_items: 20
+    unique: true
+    items: {
+      string: {max_len: 64}
+    }
+  }];
+  // 适用的业务 ID。
+  repeated string business_ids = 3 [(buf.validate.field).repeated = {
+    max_items: 50
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+}
+
+// PlaybookSpec 预案内容。
+message PlaybookSpec {
+  // 预案名称（唯一）。
+  string name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+  // 说明。
+  string description = 2 [(buf.validate.field).string.max_len = 255];
+  // doc 处置手册（Markdown），至多 64 KiB。
+  string doc = 3 [(buf.validate.field).string.max_bytes = 65536];
+  // 步骤（按顺序）。
+  repeated PlaybookStep steps = 4 [(buf.validate.field).repeated.max_items = 20];
+  // 推荐条件。
+  PlaybookMatch match = 5;
+  // agent_user_id 代理执行人（有可执行步骤时必填）。
+  string agent_user_id = 6 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+  // 是否启用。
+  bool enabled = 7;
+}
+
+// Playbook 预案。
+message Playbook {
+  // 预案 ID。
+  string id = 1;
+  // 预案内容。
+  PlaybookSpec spec = 2;
+  // 各步骤引用的作业模板 / 流程（含是否已失效）。
+  repeated NamedRef step_refs = 3;
+  // 代理执行人。
+  NamedRef agent_user = 4;
+  // 适用业务。
+  repeated NamedRef business_refs = 5;
+  // exec_count 近 30 天执行次数。
+  int32 exec_count = 6;
+  // 乐观锁版本。
+  int32 version = 7;
+  // 创建时间。
+  google.protobuf.Timestamp create_time = 8;
+  // 更新时间。
+  google.protobuf.Timestamp update_time = 9;
+  // 最后修改人。
+  NamedRef update_user = 10;
+}
+
+message ListPlaybooksRequest {
+  // 页码（从 1 起）。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // 每页条数（最多 100）。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // 按名称 / 说明模糊匹配。
+  optional string keyword = 3 [(buf.validate.field).string.max_len = 128];
+  // 只看启用或停用的预案。
+  optional bool enabled = 4;
+}
+
+message ListPlaybooksResponse {
+  // 预案列表。
+  repeated Playbook items = 1;
+  // 总数。
+  int64 total = 2;
+}
+
+message GetPlaybookRequest {
+  // 预案 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+message PlaybookResponse {
+  // 预案。
+  Playbook playbook = 1;
+}
+
+message CreatePlaybookRequest {
+  // 预案内容。
+  PlaybookSpec spec = 1 [(buf.validate.field).required = true];
+}
+
+message UpdatePlaybookRequest {
+  // 预案 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // 预案内容（整体替换）。
+  PlaybookSpec spec = 2 [(buf.validate.field).required = true];
+  // 乐观锁版本。
+  int32 version = 3 [(buf.validate.field).int32.gte = 1];
+}
+
+message DeletePlaybookRequest {
+  // 预案 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+message ListPlaybookTargetsRequest {}
+
+// PlaybookTarget 可引用对象。
+message PlaybookTarget {
+  // 目标类型：job=作业模板 workflow=流程定义。
+  string kind = 1;
+  // 目标 ID。
+  string ref = 2;
+  // 名称。
+  string name = 3;
+  // 说明。
+  string description = 4;
+  // param_names 作业模板的参数名（供参数映射表单提示）。
+  repeated string param_names = 5;
+}
+
+message ListPlaybookTargetsResponse {
+  // 可选目标。
+  repeated PlaybookTarget items = 1;
+}
+
+// Source 接入源。
+message Source {
+  // 接入源 ID。
+  string id = 1;
+  // 名称。
+  string name = 2;
+  // 说明。
+  string description = 3;
+  // 令牌前缀（用于辨认，不是令牌本身）。
+  string token_prefix = 4;
+  // 默认等级 1-4。
+  int32 default_severity = 5;
+  // 默认业务。
+  NamedRef business = 6;
+  // 默认通知组。
+  repeated string groups = 7;
+  // 来源 IP 白名单（CIDR）。
+  repeated string allowed_ips = 8;
+  // 是否启用。
+  bool enabled = 9;
+  // 最近一次调用时间。
+  google.protobuf.Timestamp last_used_time = 10;
+  // 乐观锁版本。
+  int32 version = 11;
+  // 创建时间。
+  google.protobuf.Timestamp create_time = 12;
+  // 更新时间。
+  google.protobuf.Timestamp update_time = 13;
+}
+
+// SourceSpec 接入源的可编辑内容。
+message SourceSpec {
+  // 名称（唯一）。
+  string name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+  // 说明。
+  string description = 2 [(buf.validate.field).string.max_len = 255];
+  // default_severity 缺省等级 2-4（接入源不得开 S1）。
+  int32 default_severity = 3 [(buf.validate.field).int32 = {
+    gte: 2
+    lte: 4
+  }];
+  // 默认业务 ID。
+  string business_id = 4 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+  // groups 通知群标识（$ 开头，如 $group:ops；对应通知管理里群机器人渠道的群），至多 10 个。
+  repeated string groups = 5 [(buf.validate.field).repeated = {
+    max_items: 10
+    unique: true
+    items: {
+      string: {pattern: "^\\$[A-Za-z0-9:_.-]{1,63}$"}
+    }
+  }];
+  // allowed_ips 来源 IP 或 CIDR 白名单，至多 50 条；为空不限。
+  repeated string allowed_ips = 6 [(buf.validate.field).repeated = {
+    max_items: 50
+    items: {
+      string: {max_len: 64}
+    }
+  }];
+  // 是否启用。
+  bool enabled = 7;
+}
+
+message ListSourcesRequest {}
+
+message ListSourcesResponse {
+  // 接入源列表。
+  repeated Source items = 1;
+}
+
+message CreateSourceRequest {
+  // 接入源内容。
+  SourceSpec spec = 1 [(buf.validate.field).required = true];
+}
+
+message UpdateSourceRequest {
+  // 接入源 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // 接入源内容（整体替换）。
+  SourceSpec spec = 2 [(buf.validate.field).required = true];
+  // 乐观锁版本。
+  int32 version = 3 [(buf.validate.field).int32.gte = 1];
+}
+
+message ResetSourceTokenRequest {
+  // 接入源 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+message DeleteSourceRequest {
+  // 接入源 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+message SourceResponse {
+  // 接入源。
+  Source source = 1;
+}
+
+// SourceTokenResponse 带令牌明文（只在创建 / 重置时返回一次）。
+message SourceTokenResponse {
+  // 接入源。
+  Source source = 1;
+  // 明文令牌（只在此刻返回一次）。
+  string token = 2;
+}
+
+// Webhook 订阅。
+message Webhook {
+  // Webhook ID。
+  string id = 1;
+  // 名称。
+  string name = 2;
+  // 回调地址。
+  string url = 3;
+  // 是否配置了签名密钥。
+  bool has_secret = 4;
+  // 订阅的事件（空 = 全部）。
+  repeated string events = 5;
+  // 是否启用。
+  bool enabled = 6;
+  // 乐观锁版本。
+  int32 version = 7;
+  // 创建时间。
+  google.protobuf.Timestamp create_time = 8;
+  // 更新时间。
+  google.protobuf.Timestamp update_time = 9;
+  // pending / failed 出站箱里待投递 / 已丢弃的数量。
+  int32 pending = 10;
+  // 投递失败（已放弃）条数。
+  int32 failed = 11;
+}
+
+// WebhookSpec 订阅的可编辑内容。
+message WebhookSpec {
+  // 名称（唯一）。
+  string name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+  // url 回调地址，须为 https（本地开发可配置放开）。
+  string url = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 512
+  }];
+  // secret 签名密钥：创建必填；编辑时不传 = 保留，传新值 = 轮换。
+  string secret = 3 [(buf.validate.field).string.max_len = 256];
+  // events 订阅的事件类型（opened / severity / status / alert / proposal / update / merged / finding…）；空 = 全部。
+  repeated string events = 4 [(buf.validate.field).repeated = {
+    max_items: 20
+    items: {
+      string: {max_len: 32}
+    }
+  }];
+  // 是否启用。
+  bool enabled = 5;
+}
+
+message ListWebhooksRequest {}
+
+message ListWebhooksResponse {
+  // Webhook 列表。
+  repeated Webhook items = 1;
+}
+
+message CreateWebhookRequest {
+  // Webhook 内容。
+  WebhookSpec spec = 1 [(buf.validate.field).required = true];
+}
+
+message UpdateWebhookRequest {
+  // Webhook ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // Webhook 内容（整体替换；secret 留空表示不改）。
+  WebhookSpec spec = 2 [(buf.validate.field).required = true];
+  // 乐观锁版本。
+  int32 version = 3 [(buf.validate.field).int32.gte = 1];
+}
+
+message DeleteWebhookRequest {
+  // Webhook ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+message WebhookResponse {
+  // Webhook。
+  Webhook webhook = 1;
+}
+
+message GetSettingsRequest {}
+
+message UpdateSettingsRequest {
+  // 设置内容（整体替换，version 须与当前一致）。
+  Settings settings = 1 [(buf.validate.field).required = true];
+}
+
+message SettingsResponse {
+  // 设置。
+  Settings settings = 1;
+  // 兜底值班表。
+  NamedRef fallback_schedule = 2;
+}

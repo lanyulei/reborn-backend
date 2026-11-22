@@ -7,6 +7,9 @@ import (
 	"testing"
 	"time"
 
+	agentservice "github.com/lanyulei/reborn/backend/core/internal/service/agent"
+	incidentservice "github.com/lanyulei/reborn/backend/core/internal/service/incident"
+
 	bizassistant "github.com/lanyulei/reborn/backend/core/internal/biz/assistant"
 	bizcmdb "github.com/lanyulei/reborn/backend/core/internal/biz/cmdb"
 	biznotify "github.com/lanyulei/reborn/backend/core/internal/biz/notify"
@@ -115,7 +118,7 @@ func newTestServices(t *testing.T) testServices {
 		t.Fatalf("assistantservice.NewToolCatalog() error = %v", err)
 	}
 	agentUC := bizassistant.NewAgentUsecase(assistantData.Conversations(), assistantData.Messages(), assistantData.ToolCalls(),
-		chatModel, loopback, authzUC, userUC, catalog,
+		chatModel, loopback, authzUC, userUC, catalog, nil,
 		bizassistant.AgentConfig{Enabled: true, Timeout: 30 * time.Second, MaxSteps: 6, MaxConcurrentRuns: 4},
 		testLogger())
 	conversationUC := bizassistant.NewConversationUsecase(assistantData.Conversations(), assistantData.Messages(), assistantData.ToolCalls())
@@ -147,7 +150,7 @@ func newTestServices(t *testing.T) testServices {
 		dept:          service.NewDeptService(deptUC),
 		file:          fileservice.NewFileService(fileUC),
 		role:          service.NewRoleService(biz.NewRoleUsecase(store, store, authorizer), biz.NewPermissionUsecase(store, store, authorizer, biznotify.NewNotificationUsecase(store, nil), testfake.NewTxManager()), userUC),
-		auth:          service.NewAuthService(authUC, authzUC, biz.NewAvatarUsecase(store, store, fileUC, testfake.NewAvatarStore())),
+		auth:          service.NewAuthService(authUC, authzUC, biz.NewAvatarUsecase(store, store, fileUC, testfake.NewAvatarStore()), userUC),
 		syscfg:        service.NewSystemConfigService(biz.NewSystemConfigUsecase(store, fileUC)),
 		loginLog:      service.NewLoginLogService(biz.NewLoginLogUsecase(store)),
 		notify:        notifyservice.NewNotifyChannelService(channelUC, biznotify.NewChannelHealthUsecase(store), authzUC),
@@ -227,6 +230,9 @@ func TestNewHTTPServerWithOptions(t *testing.T) {
 		svc.job.credential, svc.job.project, svc.job.template, svc.job.execution, svc.job.runner,
 		svc.job.script, svc.job.policy, nil, nil, // 定时作业 / 触发器：触发队列与去重依赖 PostgreSQL，由 data 集成测试覆盖
 		svc.k8s.cluster, svc.k8s.scope, svc.k8s.audit, svc.k8s.resource, svc.k8s.workload, svc.k8s.stream, nil, nil, svc.k8s.insight, nil, nil, svc.k8s.conf,
+		nil, nil, nil, nil, // 知识库：检索与索引依赖 PostgreSQL，由 data 集成测试覆盖
+		incidentservice.Services{}, // 故障管理：数据依赖 PostgreSQL，由 data 集成测试覆盖
+		agentservice.Services{},    // 运维 Agent：同上
 		svc.signer,
 		svc.authz,
 		AllRoles(), nil, nil, // 全部角色；探活不接数据库、不带指标

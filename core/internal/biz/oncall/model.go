@@ -217,10 +217,20 @@ type ScheduleRepo interface {
 	MatchNotifyRoute(ctx context.Context, eventType string, severity int32) (name string, channels int32, err error)
 }
 
+// ShiftScope 班次查询的范围限定：非空字段取交集（公共日历按分组 / 值班表 / 人读取，谓词下推到 SQL，
+// 不再全组织扫描后在内存里过滤）。
+type ShiftScope struct {
+	GroupID    string
+	ScheduleID string
+	UserID     string
+}
+
 // ShiftRepo 班次读仓储。
 type ShiftRepo interface {
 	// ListRange 未删除值班表中与 [from, to) 相交的班次，按开始时间排序。
 	ListRange(ctx context.Context, from, to time.Time) ([]*Shift, error)
+	// ListRangeScoped 同 ListRange，但只取 scope 限定范围内的班次。
+	ListRangeScoped(ctx context.Context, from, to time.Time, scope ShiftScope) ([]*Shift, error)
 	// Get 不存在返回 ErrShiftNotFound。
 	Get(ctx context.Context, id string) (*Shift, error)
 }

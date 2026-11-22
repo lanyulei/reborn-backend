@@ -153,6 +153,27 @@ func (r *ciRepo) Get(ctx context.Context, id string) (*biz.CI, error) {
 	return ci, nil
 }
 
+// GetByIDs implements biz.CIRepo.
+func (r *ciRepo) GetByIDs(ctx context.Context, ids []string) ([]*biz.CI, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	rows, err := r.data.Pool.Query(ctx, "SELECT "+ciSelectColumns+ciFrom+"WHERE c.id = ANY($1::uuid[]) AND c.delete_time IS NULL", dbx.TextArray(ids))
+	if err != nil {
+		return nil, fmt.Errorf("get cmdb cis: %w", err)
+	}
+	defer rows.Close()
+	items := make([]*biz.CI, 0, len(ids))
+	for rows.Next() {
+		ci, err := scanCI(rows.Scan)
+		if err != nil {
+			return nil, fmt.Errorf("scan cmdb ci: %w", err)
+		}
+		items = append(items, ci)
+	}
+	return items, rows.Err()
+}
+
 // GetByName implements biz.CIRepo.
 func (r *ciRepo) GetByName(ctx context.Context, modelCode, name string) (*biz.CI, error) {
 	row := r.data.Pool.QueryRow(ctx, "SELECT "+ciSelectColumns+ciFrom+"WHERE c.model_code = $1 AND c.name = $2 AND c.delete_time IS NULL", modelCode, name)
@@ -371,16 +392,27 @@ func updateCI(ctx context.Context, tx pgx.Tx, ci *biz.CI, expectedVersion int64,
 	return insertHistories(ctx, tx, []*biz.History{h})
 }
 
-// SoftDelete implements biz.CIRepo.
+// SoftDelete implements biz.CIRepo：先锁住资源行再数关系（并发的关联写入对两端资源行取共享锁，见
+// lockLiveCIs，二者互斥），仍有关系返回 ErrCIInUse。
 func (r *ciRepo) SoftDelete(ctx context.Context, id string, at time.Time, h *biz.History) error {
 	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
-		// update_time 一并置为删除时刻：回收站按它倒序（最近删除的在前），与索引、游标一致。
-		tag, err := tx.Exec(ctx, "UPDATE cmdb_ci SET delete_time = $2, update_time = $2 WHERE id = $1 AND delete_time IS NULL", id, at)
-		if err != nil {
-			return fmt.Errorf("soft delete cmdb ci: %w", err)
+		var one int
+		if err := tx.QueryRow(ctx, "SELECT 1 FROM cmdb_ci WHERE id = $1 AND delete_time IS NULL FOR UPDATE", id).Scan(&one); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return biz.ErrCINotFound
+			}
+			return fmt.Errorf("lock cmdb ci: %w", err)
 		}
-		if tag.RowsAffected() == 0 {
-			return biz.ErrCINotFound
+		var relations int64
+		if err := tx.QueryRow(ctx, "SELECT count(*) FROM cmdb_relation WHERE src_id = $1 OR dst_id = $1", id).Scan(&relations); err != nil {
+			return fmt.Errorf("count cmdb relations: %w", err)
+		}
+		if relations > 0 {
+			return biz.CIInUse(relations)
+		}
+		// update_time 一并置为删除时刻：回收站按它倒序（最近删除的在前），与索引、游标一致。
+		if _, err := tx.Exec(ctx, "UPDATE cmdb_ci SET delete_time = $2, update_time = $2 WHERE id = $1", id, at); err != nil {
+			return fmt.Errorf("soft delete cmdb ci: %w", err)
 		}
 		return insertHistories(ctx, tx, []*biz.History{h})
 	})

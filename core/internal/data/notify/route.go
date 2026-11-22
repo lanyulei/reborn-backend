@@ -280,6 +280,36 @@ func (r *routeRepo) CountRoutesUsingChannel(ctx context.Context, channelID strin
 	return n, nil
 }
 
+// FixedRecipientsOfChannel implements biz.ChannelReferenceChecker：未删除路由中绑定该渠道的
+// recipient_policy.fixed 并集（去重）。
+func (r *routeRepo) FixedRecipientsOfChannel(ctx context.Context, channelID string) ([]string, error) {
+	rows, err := r.data.Pool.Query(ctx,
+		"SELECT recipient_policy FROM notify_route WHERE delete_time IS NULL AND $1::uuid = ANY(channel_ids)", channelID)
+	if err != nil {
+		return nil, fmt.Errorf("list fixed recipients of channel: %w", err)
+	}
+	defer rows.Close()
+	seen := map[string]struct{}{}
+	var out []string
+	for rows.Next() {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
+			return nil, fmt.Errorf("scan recipient_policy: %w", err)
+		}
+		var policy biz.RouteRecipient
+		if err := json.Unmarshal(raw, &policy); err != nil {
+			return nil, fmt.Errorf("decode recipient_policy: %w", err)
+		}
+		for _, f := range policy.Fixed {
+			if _, dup := seen[f]; !dup {
+				seen[f] = struct{}{}
+				out = append(out, f)
+			}
+		}
+	}
+	return out, rows.Err()
+}
+
 // ListRoutesByBiz implements biz 仓储接口：biz 内全部未删除行（不分页，配置表规模；路由试算用）。
 func (r *routeRepo) ListRoutesByBiz(ctx context.Context, bizID string) ([]*biz.Route, error) {
 	rows, err := r.data.Pool.Query(ctx,

@@ -15,7 +15,7 @@ import (
 // 未配置 API Key 时助手停用：Run 在触碰任何依赖前返回 ErrDisabled，且不写出事件。
 func TestAgentUsecase_Disabled(t *testing.T) {
 	t.Parallel()
-	uc := NewAgentUsecase(nil, nil, nil, nil, nil, nil, nil, nil, NewAgentConfig(&conf.Assistant{}), slog.Default())
+	uc := NewAgentUsecase(nil, nil, nil, nil, nil, nil, nil, nil, nil, NewAgentConfig(&conf.Assistant{}), slog.Default())
 	if uc.Enabled() {
 		t.Fatal("empty api_key must disable the assistant")
 	}
@@ -113,7 +113,7 @@ func TestContextWindow_Bounded(t *testing.T) {
 // 单用户并发上限：达到上限后拒绝，归还后恢复，其它用户不受影响。
 func TestAgentUsecase_UserRunCap(t *testing.T) {
 	t.Parallel()
-	uc := NewAgentUsecase(nil, nil, nil, nil, nil, nil, nil, nil, NewAgentConfig(nil), slog.Default())
+	uc := NewAgentUsecase(nil, nil, nil, nil, nil, nil, nil, nil, nil, NewAgentConfig(nil), slog.Default())
 	for i := range maxUserConcurrentRuns {
 		if !uc.acquireUser("u1") {
 			t.Fatalf("acquireUser #%d rejected below cap", i+1)

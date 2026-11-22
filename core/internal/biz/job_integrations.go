@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"sort"
 	"strings"
-	"time"
 
 	jobv1 "github.com/lanyulei/reborn/backend/core/api/job/v1"
 	bizfile "github.com/lanyulei/reborn/backend/core/internal/biz/file"
@@ -246,11 +244,13 @@ func NewJobAlertRules(alerts bizmonitor.AlertReader, rules bizmonitor.RuleLookup
 	return jobAlerts{alerts: alerts, rules: rules}
 }
 
-// FiringSince implements bizjob.AlertFeed：告警中、未被屏蔽、首次触发时间不早于 since 的事件，按触发时间升序。
-func (j jobAlerts) FiringSince(ctx context.Context, since time.Time, limit int) ([]*bizjob.AlertEvent, error) {
+// FiringAfter implements bizjob.AlertFeed：告警中、未被屏蔽、(首次触发时间, ID) 在游标之后的事件，按该序升序
+// （监控域 Scan 带 FireAfter 时即按此序返回）。
+func (j jobAlerts) FiringAfter(ctx context.Context, after bizjob.AlertCursor, limit int) ([]*bizjob.AlertEvent, error) {
 	unmuted := false
 	items, err := j.alerts.Scan(ctx, bizmonitor.AlertFilter{
-		Groups: bizmonitor.GroupFilter{All: true}, Statuses: []int32{mc.AlertFiring}, Muted: &unmuted, FireStart: &since,
+		Groups: bizmonitor.GroupFilter{All: true}, Statuses: []int32{mc.AlertFiring}, Muted: &unmuted,
+		FireAfter: &bizmonitor.AlertCursor{FirstFireTime: after.FirstFireTime, ID: after.ID},
 	}, limit)
 	if err != nil {
 		return nil, err
@@ -261,7 +261,6 @@ func (j jobAlerts) FiringSince(ctx context.Context, since time.Time, limit int) 
 			ID: a.ID, RuleID: a.RuleID, RuleName: a.RuleName, Severity: a.Severity, Labels: a.Labels, FirstFireTime: a.FirstFireTime,
 		})
 	}
-	sort.SliceStable(out, func(i, k int) bool { return out[i].FirstFireTime.Before(out[k].FirstFireTime) })
 	return out, nil
 }
 

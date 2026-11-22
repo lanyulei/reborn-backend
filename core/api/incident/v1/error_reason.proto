@@ -1,0 +1,110 @@
+syntax = "proto3";
+
+package incident.v1;
+
+import "errors/errors.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/incident/v1;v1";
+
+// ErrorReason 是故障管理域的业务错误码枚举，由 protoc-gen-go-errors 生成带 code 的错误构造器。
+enum ErrorReason {
+  option (errors.default_code) = 500;
+  // INCIDENT_UNSPECIFIED 未指定的故障管理错误。
+  INCIDENT_UNSPECIFIED = 0;
+  // INCIDENT_FORBIDDEN 需要指挥 / 处理人身份或管理权限，映射 HTTP 403。
+  INCIDENT_FORBIDDEN = 1 [(errors.code) = 403];
+  // INCIDENT_VERSION_CONFLICT 数据已被他人修改（version 不一致），映射 HTTP 409。
+  INCIDENT_VERSION_CONFLICT = 2 [(errors.code) = 409];
+  // INCIDENT_TIME_RANGE_INVALID 查询时间范围不合法或超过上限，映射 HTTP 400。
+  INCIDENT_TIME_RANGE_INVALID = 3 [(errors.code) = 400];
+  // INCIDENT_SECRET_UNAVAILABLE 加密主密钥未配置，无法签发分享链接或保存 Webhook 密钥，映射 HTTP 503。
+  INCIDENT_SECRET_UNAVAILABLE = 4 [(errors.code) = 503];
+  // INCIDENT_RATE_LIMITED 请求过于频繁（匿名访问 / 开放接口 / Agent 写入），映射 HTTP 429。
+  INCIDENT_RATE_LIMITED = 5 [(errors.code) = 429];
+
+  // INCIDENT_NOT_FOUND 故障不存在，映射 HTTP 404。
+  INCIDENT_NOT_FOUND = 10 [(errors.code) = 404];
+  // INCIDENT_INVALID 故障内容不合法，映射 HTTP 400。
+  INCIDENT_INVALID = 11 [(errors.code) = 400];
+  // INCIDENT_STATE_INVALID 当前状态不允许该操作（如已关闭的故障不能再恢复），映射 HTTP 409。
+  INCIDENT_STATE_INVALID = 12 [(errors.code) = 409];
+  // INCIDENT_ALERT_LINKED 告警已关联到另一个活跃故障，映射 HTTP 409。
+  INCIDENT_ALERT_LINKED = 13 [(errors.code) = 409];
+  // INCIDENT_ALERT_NOT_FOUND 告警不存在或当前用户无权查看，映射 HTTP 404。
+  INCIDENT_ALERT_NOT_FOUND = 14 [(errors.code) = 404];
+  // INCIDENT_REVIEW_REQUIRED 复盘未完成，不能关闭，映射 HTTP 409。
+  INCIDENT_REVIEW_REQUIRED = 15 [(errors.code) = 409];
+  // INCIDENT_AGENT_BUSY 该故障已有 Agent 任务在进行，映射 HTTP 409。
+  INCIDENT_AGENT_BUSY = 16 [(errors.code) = 409];
+
+  // INCIDENT_BUSINESS_NOT_FOUND 业务不存在，映射 HTTP 404。
+  INCIDENT_BUSINESS_NOT_FOUND = 20 [(errors.code) = 404];
+  // INCIDENT_BUSINESS_CODE_EXISTS 业务编码已存在，映射 HTTP 409。
+  INCIDENT_BUSINESS_CODE_EXISTS = 21 [(errors.code) = 409];
+  // INCIDENT_BUSINESS_INVALID 业务内容不合法，映射 HTTP 400。
+  INCIDENT_BUSINESS_INVALID = 22 [(errors.code) = 400];
+  // INCIDENT_BUSINESS_IN_USE 业务仍被故障 / 规则 / 接入源引用，映射 HTTP 409。
+  INCIDENT_BUSINESS_IN_USE = 23 [(errors.code) = 409];
+
+  // INCIDENT_RULE_NOT_FOUND 触发规则不存在，映射 HTTP 404。
+  INCIDENT_RULE_NOT_FOUND = 30 [(errors.code) = 404];
+  // INCIDENT_RULE_NAME_EXISTS 触发规则名称已存在，映射 HTTP 409。
+  INCIDENT_RULE_NAME_EXISTS = 31 [(errors.code) = 409];
+  // INCIDENT_RULE_INVALID 触发规则内容不合法，映射 HTTP 400。
+  INCIDENT_RULE_INVALID = 32 [(errors.code) = 400];
+
+  // INCIDENT_PLAYBOOK_NOT_FOUND 预案不存在，映射 HTTP 404。
+  INCIDENT_PLAYBOOK_NOT_FOUND = 40 [(errors.code) = 404];
+  // INCIDENT_PLAYBOOK_NAME_EXISTS 预案名称已存在，映射 HTTP 409。
+  INCIDENT_PLAYBOOK_NAME_EXISTS = 41 [(errors.code) = 409];
+  // INCIDENT_PLAYBOOK_INVALID 预案内容不合法，映射 HTTP 400。
+  INCIDENT_PLAYBOOK_INVALID = 42 [(errors.code) = 400];
+  // INCIDENT_PLAYBOOK_IN_USE 预案仍被触发规则引用，映射 HTTP 409。
+  INCIDENT_PLAYBOOK_IN_USE = 43 [(errors.code) = 409];
+
+  // INCIDENT_PROPOSAL_NOT_FOUND 动作建议不存在，映射 HTTP 404。
+  INCIDENT_PROPOSAL_NOT_FOUND = 50 [(errors.code) = 404];
+  // INCIDENT_PROPOSAL_INVALID 动作建议不合法（靶标不是 CMDB 资源、动作对象不可用等），映射 HTTP 400。
+  INCIDENT_PROPOSAL_INVALID = 51 [(errors.code) = 400];
+  // INCIDENT_PROPOSAL_NOT_PENDING 动作建议已不在待审批状态，映射 HTTP 409。
+  INCIDENT_PROPOSAL_NOT_PENDING = 52 [(errors.code) = 409];
+  // INCIDENT_PROPOSAL_DUPLICATE 同一故障内已有相同动作的待审 / 进行中建议，映射 HTTP 409。
+  INCIDENT_PROPOSAL_DUPLICATE = 53 [(errors.code) = 409];
+
+  // INCIDENT_UPDATE_INVALID 公告内容不合法，映射 HTTP 400。
+  INCIDENT_UPDATE_INVALID = 60 [(errors.code) = 400];
+  // INCIDENT_SHARE_NOT_FOUND 分享链接不存在、已过期或已作废，映射 HTTP 404。
+  INCIDENT_SHARE_NOT_FOUND = 61 [(errors.code) = 404];
+  // INCIDENT_SHARE_INVALID 分享链接参数不合法，映射 HTTP 400。
+  INCIDENT_SHARE_INVALID = 62 [(errors.code) = 400];
+
+  // INCIDENT_POSTMORTEM_INVALID 复盘内容不合法，映射 HTTP 400。
+  INCIDENT_POSTMORTEM_INVALID = 70 [(errors.code) = 400];
+  // INCIDENT_POSTMORTEM_LOCKED 复盘已完成，须经「修订」修改，映射 HTTP 409。
+  INCIDENT_POSTMORTEM_LOCKED = 71 [(errors.code) = 409];
+  // INCIDENT_ACTION_ITEM_NOT_FOUND 改进项不存在，映射 HTTP 404。
+  INCIDENT_ACTION_ITEM_NOT_FOUND = 72 [(errors.code) = 404];
+
+  // INCIDENT_SOURCE_NOT_FOUND 接入源不存在，映射 HTTP 404。
+  INCIDENT_SOURCE_NOT_FOUND = 80 [(errors.code) = 404];
+  // INCIDENT_SOURCE_NAME_EXISTS 接入源名称已存在，映射 HTTP 409。
+  INCIDENT_SOURCE_NAME_EXISTS = 81 [(errors.code) = 409];
+  // INCIDENT_SOURCE_INVALID 接入源内容不合法，映射 HTTP 400。
+  INCIDENT_SOURCE_INVALID = 82 [(errors.code) = 400];
+  // INCIDENT_SOURCE_UNAUTHORIZED 开放接口令牌缺失或无效，映射 HTTP 401。
+  INCIDENT_SOURCE_UNAUTHORIZED = 83 [(errors.code) = 401];
+  // INCIDENT_SOURCE_FORBIDDEN 接入源不允许该操作（来源地址不在白名单、越权访问他人的故障），映射 HTTP 403。
+  INCIDENT_SOURCE_FORBIDDEN = 84 [(errors.code) = 403];
+
+  // INCIDENT_WEBHOOK_NOT_FOUND Webhook 订阅不存在，映射 HTTP 404。
+  INCIDENT_WEBHOOK_NOT_FOUND = 90 [(errors.code) = 404];
+  // INCIDENT_WEBHOOK_INVALID Webhook 订阅不合法（地址不是 https、指向内网等），映射 HTTP 400。
+  INCIDENT_WEBHOOK_INVALID = 91 [(errors.code) = 400];
+
+  // INCIDENT_SETTING_INVALID 设置不合法，映射 HTTP 400。
+  INCIDENT_SETTING_INVALID = 100 [(errors.code) = 400];
+  // INCIDENT_CANDIDATE_NOT_FOUND 候选故障不存在或已处理，映射 HTTP 404。
+  INCIDENT_CANDIDATE_NOT_FOUND = 101 [(errors.code) = 404];
+  // INCIDENT_AI_UNAVAILABLE 智能助手未配置模型密钥，映射 HTTP 503。
+  INCIDENT_AI_UNAVAILABLE = 102 [(errors.code) = 503];
+}

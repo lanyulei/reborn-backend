@@ -118,6 +118,8 @@ const (
 
 // HistoryFilter 全局变更审计条件（ModelCodes / Envs 由数据范围守卫叠加）。
 type HistoryFilter struct {
+	// CIIDs 限定资源（故障管理的变更关联用）；为空不限。
+	CIIDs      []string
 	ModelCodes []string
 	Envs       []string
 	ModelCode  string
@@ -213,11 +215,14 @@ type RelationSummary struct {
 type CIRepo interface {
 	Create(ctx context.Context, ci *CI, h *History) error
 	Get(ctx context.Context, id string) (*CI, error)
+	// GetByIDs 批量取未删除资源（一条语句）；不存在的 ID 静默略过，顺序不保证。
+	GetByIDs(ctx context.Context, ids []string) ([]*CI, error)
 	// GetByName 按类型 + 名称取未删除资源；不存在返回 ErrCINotFound。
 	GetByName(ctx context.Context, modelCode, name string) (*CI, error)
 	List(ctx context.Context, filter CIFilter, page, pageSize int64) ([]*CI, int64, error)
 	// Update 以 expectedVersion 条件更新全部可变列并 +1 版本；不匹配返回 ErrCIVersionConflict。
 	Update(ctx context.Context, ci *CI, expectedVersion int64, h *History) error
+	// SoftDelete 软删资源：事务内锁住资源行后数关系，仍有关系返回 ErrCIInUse（带条数）；不存在返回 ErrCINotFound。
 	SoftDelete(ctx context.Context, id string, at time.Time, h *History) error
 	// Unclaim 解除同步托管：来源置为 manual、清空外部标识与消失 / 陈旧标记，版本 +1 并写历史
 	// （与对账互斥）。资源不由采集源维护时返回 ErrNotSyncManaged。
@@ -340,6 +345,15 @@ func (uc *CIUsecase) getMasked(ctx context.Context, id string) (*CI, error) {
 // GetByID 资源详情（不含关联统计；守卫与编排用）。
 func (uc *CIUsecase) GetByID(ctx context.Context, id string) (*CI, error) {
 	return uc.cis.Get(ctx, id)
+}
+
+// GetByIDs 按 ID 批量读取未删除资源（未脱敏；不存在的 ID 静默略过，调用方按需核对）。
+// 供守卫与其它域（故障卡片等）一次取齐多条资源，代替逐条 GetByID。
+func (uc *CIUsecase) GetByIDs(ctx context.Context, ids []string) ([]*CI, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	return uc.cis.GetByIDs(ctx, ids)
 }
 
 // Get 资源详情 + 各适用关系类型两个方向的关联统计。
@@ -732,22 +746,12 @@ func (uc *CIUsecase) retireClosure(ctx context.Context, scope Scope, root *CI) (
 	return deps, nil
 }
 
-// Delete 软删资源：仍有任何关系时拒绝（先解除关系）。
+// Delete 软删资源：仍有任何关系时拒绝（先解除关系）。关系数在仓储的删除事务内、锁住资源行之后判定，
+// 与并发的关联写入互斥（这里不做无锁预检）。
 func (uc *CIUsecase) Delete(ctx context.Context, actor Actor, id string) error {
 	ci, err := uc.cis.Get(ctx, id)
 	if err != nil {
 		return err
-	}
-	counts, err := uc.relations.CountByCI(ctx, id)
-	if err != nil {
-		return err
-	}
-	var total int64
-	for _, n := range counts {
-		total += n
-	}
-	if total > 0 {
-		return detail(ErrCIInUse, "%d relations", total)
 	}
 	h, err := newHistory(actor, id, ActionDelete, map[string]any{"before": snapshot(ci)})
 	if err != nil {

@@ -97,6 +97,27 @@ func (v conversationView) Get(_ context.Context, id, userID string) (*biz.Conver
 	return &cp, nil
 }
 
+func (v conversationView) GetAny(_ context.Context, id string) (*biz.Conversation, error) {
+	v.s.mu.RLock()
+	defer v.s.mu.RUnlock()
+	e, ok := v.s.conversations[id]
+	if !ok || e.deleted {
+		return nil, biz.ErrConversationNotFound
+	}
+	cp := e.conv
+	return &cp, nil
+}
+
+func (v conversationView) Purge(_ context.Context, ids []string) error {
+	v.s.mu.Lock()
+	defer v.s.mu.Unlock()
+	for _, id := range ids {
+		delete(v.s.conversations, id)
+		delete(v.s.messages, id)
+	}
+	return nil
+}
+
 func (v conversationView) List(_ context.Context, userID string, page, pageSize int64) ([]*biz.Conversation, int64, error) {
 	v.s.mu.RLock()
 	items := make([]*biz.Conversation, 0, len(v.s.conversations))
@@ -142,7 +163,7 @@ func (v conversationView) SoftDelete(_ context.Context, id, userID string, _ tim
 	return nil
 }
 
-func (v conversationView) AcquireLease(_ context.Context, id, userID, token string, until time.Time) (bool, error) {
+func (v conversationView) AcquireLease(_ context.Context, id, userID, token string, ttl time.Duration) (bool, error) {
 	v.s.mu.Lock()
 	defer v.s.mu.Unlock()
 	e, ok := v.s.conversations[id]
@@ -152,7 +173,7 @@ func (v conversationView) AcquireLease(_ context.Context, id, userID, token stri
 	if e.runToken != "" && e.leaseUntil.After(time.Now()) {
 		return false, nil
 	}
-	e.runToken, e.leaseUntil = token, until
+	e.runToken, e.leaseUntil = token, time.Now().Add(ttl)
 	return true, nil
 }
 
@@ -223,12 +244,23 @@ func (v toolCallView) Create(_ context.Context, tc *biz.ToolCall) error {
 	return nil
 }
 
-func (v toolCallView) ListByConversation(_ context.Context, conversationID string) ([]*biz.ToolCall, error) {
+func (v toolCallView) ListActive(_ context.Context, conversationID, messageID string) ([]*biz.ToolCall, error) {
+	return v.list(conversationID, func(tc *biz.ToolCall) bool {
+		return tc.Status == biz.ToolStatusPending || (messageID != "" && tc.MessageID == messageID)
+	}), nil
+}
+
+func (v toolCallView) ListSince(_ context.Context, conversationID string, since time.Time) ([]*biz.ToolCall, error) {
+	return v.list(conversationID, func(tc *biz.ToolCall) bool { return !tc.CreateTime.Before(since) }), nil
+}
+
+// list 会话内满足 keep 的审计记录副本，按发起时间正序。
+func (v toolCallView) list(conversationID string, keep func(*biz.ToolCall) bool) []*biz.ToolCall {
 	v.s.mu.RLock()
 	defer v.s.mu.RUnlock()
 	items := make([]*biz.ToolCall, 0, 8)
 	for _, tc := range v.s.toolCalls {
-		if tc.ConversationID == conversationID {
+		if tc.ConversationID == conversationID && keep(tc) {
 			cp := *tc
 			items = append(items, &cp)
 		}
@@ -239,7 +271,7 @@ func (v toolCallView) ListByConversation(_ context.Context, conversationID strin
 		}
 		return strings.Compare(a.ID, b.ID)
 	})
-	return items, nil
+	return items
 }
 
 func (v toolCallView) Transition(_ context.Context, id, conversationID, from, to string, at time.Time) (bool, error) {

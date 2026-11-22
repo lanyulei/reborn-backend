@@ -1,0 +1,1142 @@
+syntax = "proto3";
+
+package knowledge.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/knowledge/v1;v1";
+
+// KnowledgeSpaceService 知识空间：知识库的权限与治理单位。公开空间所有登录用户可读；
+// 受限空间按 ACL（角色 / 用户 → 读 / 写 / 管理）；空间负责人隐含管理权限；超级管理员不受限。
+service KnowledgeSpaceService {
+  // ListSpaces 查询当前用户可见的全部知识空间（含对每个空间的权限级别）。
+  rpc ListSpaces(ListSpacesRequest) returns (ListSpacesResponse) {
+    option (google.api.http) = {get: "/api/v1/knowledge/space"};
+    option (system.v1.title) = "查询知识空间";
+  }
+  // GetSpace 查询单个知识空间。
+  rpc GetSpace(GetSpaceRequest) returns (GetSpaceResponse) {
+    option (google.api.http) = {get: "/api/v1/knowledge/space/{id}"};
+    option (system.v1.title) = "查询知识空间详情";
+  }
+  // CreateSpace 新建知识空间；创建者成为负责人。
+  rpc CreateSpace(CreateSpaceRequest) returns (CreateSpaceResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/knowledge/space"
+      body: "*"
+    };
+    option (system.v1.title) = "新建知识空间";
+  }
+  // UpdateSpace 修改知识空间（需管理权限）。
+  rpc UpdateSpace(UpdateSpaceRequest) returns (UpdateSpaceResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/knowledge/space/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "编辑知识空间";
+  }
+  // DeleteSpace 删除知识空间（软删；仍有未删除文档时拒绝，409 KNOWLEDGE_SPACE_NOT_EMPTY）。
+  rpc DeleteSpace(DeleteSpaceRequest) returns (DeleteSpaceResponse) {
+    option (google.api.http) = {delete: "/api/v1/knowledge/space/{id}"};
+    option (system.v1.title) = "删除知识空间";
+  }
+  // GetSpaceAcl 查询空间的访问控制列表（需管理权限）。
+  rpc GetSpaceAcl(GetSpaceAclRequest) returns (GetSpaceAclResponse) {
+    option (google.api.http) = {get: "/api/v1/knowledge/space/{id}/acl"};
+    option (system.v1.title) = "查询知识空间权限";
+  }
+  // SetSpaceAcl 整组替换空间的访问控制列表（需管理权限）。
+  rpc SetSpaceAcl(SetSpaceAclRequest) returns (SetSpaceAclResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/knowledge/space/{id}/acl"
+      body: "*"
+    };
+    option (system.v1.title) = "设置知识空间权限";
+  }
+}
+
+// KnowledgeService 知识文档：Markdown 文档的编辑、发布、版本、关联与检索。检索只覆盖当前用户
+// 可见空间内已发布的文档。
+service KnowledgeService {
+  // Search 检索知识库：运维手册、规范、排查经验、历史故障复盘（全文 + 向量混合检索，只返回当前用户可见的内容）。
+  rpc Search(SearchRequest) returns (SearchResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/knowledge/search"
+      body: "*"
+    };
+    option (system.v1.title) = "检索知识库";
+  }
+  // ListDocuments 分页查询文档（按空间 / 状态 / 标签 / 负责人 / 关键字筛选）。
+  rpc ListDocuments(ListDocumentsRequest) returns (ListDocumentsResponse) {
+    option (google.api.http) = {get: "/api/v1/knowledge/document"};
+    option (system.v1.title) = "查询知识文档";
+  }
+  // GetDocument 查询知识文档正文：可按标题路径只取其中一节（heading_path），避免整篇过长。
+  rpc GetDocument(GetDocumentRequest) returns (GetDocumentResponse) {
+    option (google.api.http) = {get: "/api/v1/knowledge/document/{id}"};
+    option (system.v1.title) = "查询知识文档详情";
+  }
+  // CreateDocument 新建知识文档草稿（Markdown 正文；需对空间的写权限）。
+  rpc CreateDocument(CreateDocumentRequest) returns (CreateDocumentResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/knowledge/document"
+      body: "*"
+    };
+    option (system.v1.title) = "新建知识文档";
+  }
+  // UpdateDocument 保存文档草稿（标题 / 正文 / 标签 / 负责人 / 复审时间）；已发布文档的修改只改草稿，发布后才生效。
+  rpc UpdateDocument(UpdateDocumentRequest) returns (UpdateDocumentResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/knowledge/document/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "编辑知识文档";
+  }
+  // PublishDocument 发布文档：生成新版本并重建索引；空间要求审核时转为提交审核。
+  rpc PublishDocument(PublishDocumentRequest) returns (PublishDocumentResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/knowledge/document/{id}:publish"
+      body: "*"
+    };
+    option (system.v1.title) = "发布知识文档";
+  }
+  // ReviewDocument 审核待发布的文档：通过即发布，驳回退回草稿（需管理权限）。
+  rpc ReviewDocument(ReviewDocumentRequest) returns (ReviewDocumentResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/knowledge/document/{id}:review"
+      body: "*"
+    };
+    option (system.v1.title) = "审核知识文档";
+  }
+  // ConfirmDocumentReview 确认文档仍然有效：复审日期顺延一个周期，不产生版本。
+  rpc ConfirmDocumentReview(ConfirmDocumentReviewRequest) returns (ConfirmDocumentReviewResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/knowledge/document/{id}:confirm-review"
+      body: "*"
+    };
+    option (system.v1.title) = "确认知识文档有效";
+  }
+  // ArchiveDocument 归档文档：同步从索引移除，不再被检索。
+  rpc ArchiveDocument(ArchiveDocumentRequest) returns (ArchiveDocumentResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/knowledge/document/{id}:archive"
+      body: "*"
+    };
+    option (system.v1.title) = "归档知识文档";
+  }
+  // RestoreDocument 恢复已归档文档为已发布并重建索引。
+  rpc RestoreDocument(RestoreDocumentRequest) returns (RestoreDocumentResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/knowledge/document/{id}:restore"
+      body: "*"
+    };
+    option (system.v1.title) = "恢复知识文档";
+  }
+  // DeleteDocument 删除文档（软删，同步移除索引）。
+  rpc DeleteDocument(DeleteDocumentRequest) returns (DeleteDocumentResponse) {
+    option (google.api.http) = {delete: "/api/v1/knowledge/document/{id}"};
+    option (system.v1.title) = "删除知识文档";
+  }
+  // ListVersions 查询文档的发布版本列表。
+  rpc ListVersions(ListVersionsRequest) returns (ListVersionsResponse) {
+    option (google.api.http) = {get: "/api/v1/knowledge/document/{id}/version"};
+    option (system.v1.title) = "查询知识文档版本";
+  }
+  // GetVersion 查询某个版本的正文快照。
+  rpc GetVersion(GetVersionRequest) returns (GetVersionResponse) {
+    option (google.api.http) = {get: "/api/v1/knowledge/document/{id}/version/{version}"};
+    option (system.v1.title) = "查询知识文档版本内容";
+  }
+  // RollbackDocument 以某个历史版本的正文发布新版本。
+  rpc RollbackDocument(RollbackDocumentRequest) returns (RollbackDocumentResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/knowledge/document/{id}:rollback"
+      body: "*"
+    };
+    option (system.v1.title) = "回滚知识文档版本";
+  }
+  // AddLink 给文档添加与运维对象（CI / 模型 / 告警规则 / 预案 / 工单 / 作业 / 流程）的关联。
+  rpc AddLink(AddLinkRequest) returns (AddLinkResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/knowledge/document/{id}/link"
+      body: "*"
+    };
+    option (system.v1.title) = "添加知识文档关联";
+  }
+  // RemoveLink 移除文档的一条关联。
+  rpc RemoveLink(RemoveLinkRequest) returns (RemoveLinkResponse) {
+    option (google.api.http) = {delete: "/api/v1/knowledge/document/{id}/link/{link_id}"};
+    option (system.v1.title) = "移除知识文档关联";
+  }
+  // ListRelated 查询与某个运维对象相关的知识文档：显式关联 + 按对象描述语义检索，供他域页面侧栏使用。
+  rpc ListRelated(ListRelatedRequest) returns (ListRelatedResponse) {
+    option (google.api.http) = {get: "/api/v1/knowledge/related"};
+    option (system.v1.title) = "查询对象相关知识";
+  }
+  // GetOverview 知识库首页概览：最近更新、我负责的、待我审核、待复审。
+  rpc GetOverview(GetOverviewRequest) returns (GetOverviewResponse) {
+    option (google.api.http) = {get: "/api/v1/knowledge/overview"};
+    option (system.v1.title) = "查询知识库概览";
+  }
+  // SubmitSearchFeedback 对一次检索结果反馈有用 / 没用（仅本人的检索记录）。
+  rpc SubmitSearchFeedback(SubmitSearchFeedbackRequest) returns (SubmitSearchFeedbackResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/knowledge/search-log/{id}:feedback"
+      body: "*"
+    };
+    option (system.v1.title) = "反馈知识检索结果";
+  }
+}
+
+// KnowledgeIngestService 文件导入：把上传到 file 域的文件解析为 Markdown 文档（后台任务）。
+service KnowledgeIngestService {
+  // CreateIngestJob 创建导入任务：file_id 为已上传的临时文件；解析后在目标空间新建文档（或覆盖指定文档的草稿）。
+  rpc CreateIngestJob(CreateIngestJobRequest) returns (CreateIngestJobResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/knowledge/ingest"
+      body: "*"
+    };
+    option (system.v1.title) = "创建知识导入任务";
+  }
+  // ListIngestJobs 分页查询导入任务。
+  rpc ListIngestJobs(ListIngestJobsRequest) returns (ListIngestJobsResponse) {
+    option (google.api.http) = {get: "/api/v1/knowledge/ingest"};
+    option (system.v1.title) = "查询知识导入任务";
+  }
+  // RetryIngestJob 重试失败的导入任务。
+  rpc RetryIngestJob(RetryIngestJobRequest) returns (RetryIngestJobResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/knowledge/ingest/{id}:retry"
+      body: "*"
+    };
+    option (system.v1.title) = "重试知识导入任务";
+  }
+}
+
+// KnowledgeAdminService 知识库管理：索引状态与重建、检索日志、统计。
+service KnowledgeAdminService {
+  // GetIndexStatus 查询索引状态：向量检索是否可用、分块与任务计数、熔断状态。
+  rpc GetIndexStatus(GetIndexStatusRequest) returns (GetIndexStatusResponse) {
+    option (google.api.http) = {get: "/api/v1/knowledge/admin/index"};
+    option (system.v1.title) = "查询知识索引状态";
+  }
+  // RebuildIndex 重建索引：按空间或单篇文档把已发布版本重新分块与向量化。
+  rpc RebuildIndex(RebuildIndexRequest) returns (RebuildIndexResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/knowledge/admin/index:rebuild"
+      body: "*"
+    };
+    option (system.v1.title) = "重建知识索引";
+  }
+  // ListSearchLogs 分页查询检索日志（管理员）。
+  rpc ListSearchLogs(ListSearchLogsRequest) returns (ListSearchLogsResponse) {
+    option (google.api.http) = {get: "/api/v1/knowledge/admin/search-log"};
+    option (system.v1.title) = "查询知识检索日志";
+  }
+  // GetStats 知识库统计：文档 / 空间 / 分块计数、检索量、无结果率、反馈、超期复审。
+  rpc GetStats(GetStatsRequest) returns (GetStatsResponse) {
+    option (google.api.http) = {get: "/api/v1/knowledge/admin/stats"};
+    option (system.v1.title) = "查询知识库统计";
+  }
+}
+
+// ---------- 空间 ----------
+
+// Space 知识空间。
+message Space {
+  // id 空间标识。
+  string id = 1;
+  // code 空间编码（URL 友好，唯一）。
+  string code = 2;
+  // name 名称。
+  string name = 3;
+  // type 类型：general 通用 / manual 运维手册 / standard 规范 / incident 故障经验 / faq 常见问题。
+  string type = 4;
+  // description 说明。
+  string description = 5;
+  // visibility 可见性：1 公开（所有登录用户可读）/ 2 受限（按 ACL）。
+  int32 visibility = 6;
+  // owner_id 负责人用户 ID。
+  string owner_id = 7;
+  // owner_name 负责人显示名。
+  string owner_name = 8;
+  // embedding_enabled 是否向量化（false 则内容不发往 embedding 服务，只做全文检索）。
+  bool embedding_enabled = 9;
+  // review_required 发布是否需要负责人审核。
+  bool review_required = 10;
+  // review_days 复审周期（天）；0 = 不复审。
+  int32 review_days = 11;
+  // level 当前用户对本空间的权限级别：0 无 / 1 读 / 2 写 / 3 管理。
+  int32 level = 12;
+  // document_count 已发布文档数。
+  int32 document_count = 13;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 14;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 15;
+}
+
+// AclEntry 空间访问控制条目。
+message AclEntry {
+  // subject_type 主体类型：role 角色 / user 用户 / machine 机器账号（预留）。
+  string subject_type = 1 [(buf.validate.field).string = {in: ["role", "user", "machine"]}];
+  // subject_id 主体 ID。
+  string subject_id = 2 [(buf.validate.field).string.uuid = true];
+  // subject_name 主体显示名（只读）。
+  string subject_name = 3;
+  // level 权限级别：1 读 / 2 写 / 3 管理。
+  int32 level = 4 [(buf.validate.field).int32 = {gte: 1, lte: 3}];
+}
+
+// ListSpacesRequest 查询空间请求。
+message ListSpacesRequest {
+  // keyword 名称 / 编码模糊匹配。
+  string keyword = 1 [(buf.validate.field).string.max_len = 64];
+  // type 按类型过滤。
+  string type = 2 [(buf.validate.field).string.max_len = 32];
+}
+
+// ListSpacesResponse 查询空间响应（空间数量有限，不分页）。
+message ListSpacesResponse {
+  // items 当前用户可见的空间。
+  repeated Space items = 1;
+}
+
+// GetSpaceRequest 查询空间请求。
+message GetSpaceRequest {
+  // id 空间标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetSpaceResponse 查询空间响应。
+message GetSpaceResponse {
+  // space 空间。
+  Space space = 1;
+}
+
+// CreateSpaceRequest 新建空间请求。
+message CreateSpaceRequest {
+  // code 空间编码：2-64 位小写字母 / 数字 / 连字符，创建后不可改。
+  string code = 1 [(buf.validate.field).string = {
+    min_len: 2
+    max_len: 64
+    pattern: "^[a-z0-9][a-z0-9-]*$"
+  }];
+  // name 名称，1-128 字符。
+  string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+  // type 类型。
+  string type = 3 [(buf.validate.field).string = {in: ["general", "manual", "standard", "incident", "faq"]}];
+  // description 说明。
+  string description = 4 [(buf.validate.field).string.max_len = 1000];
+  // visibility 可见性：1 公开 / 2 受限。
+  int32 visibility = 5 [(buf.validate.field).int32 = {in: [1, 2]}];
+  // owner_id 负责人；省略 = 创建者。
+  optional string owner_id = 6 [(buf.validate.field).string.uuid = true];
+  // embedding_enabled 是否向量化；缺省 true。
+  optional bool embedding_enabled = 7;
+  // review_required 发布是否需审核；缺省 false。
+  bool review_required = 8;
+  // review_days 复审周期（天），0-3650；缺省 0。
+  int32 review_days = 9 [(buf.validate.field).int32 = {gte: 0, lte: 3650}];
+}
+
+// CreateSpaceResponse 新建空间响应。
+message CreateSpaceResponse {
+  // space 空间。
+  Space space = 1;
+}
+
+// UpdateSpaceRequest 修改空间请求（未提供的字段不改）。
+message UpdateSpaceRequest {
+  // id 空间标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // name 名称。
+  optional string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+  // type 类型。
+  optional string type = 3 [(buf.validate.field).string = {in: ["general", "manual", "standard", "incident", "faq"]}];
+  // description 说明。
+  optional string description = 4 [(buf.validate.field).string.max_len = 1000];
+  // visibility 可见性。
+  optional int32 visibility = 5 [(buf.validate.field).int32 = {in: [1, 2]}];
+  // owner_id 负责人。
+  optional string owner_id = 6 [(buf.validate.field).string.uuid = true];
+  // embedding_enabled 是否向量化。
+  optional bool embedding_enabled = 7;
+  // review_required 发布是否需审核。
+  optional bool review_required = 8;
+  // review_days 复审周期（天）。
+  optional int32 review_days = 9 [(buf.validate.field).int32 = {gte: 0, lte: 3650}];
+}
+
+// UpdateSpaceResponse 修改空间响应。
+message UpdateSpaceResponse {
+  // space 空间。
+  Space space = 1;
+}
+
+// DeleteSpaceRequest 删除空间请求。
+message DeleteSpaceRequest {
+  // id 空间标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteSpaceResponse 删除空间响应。
+message DeleteSpaceResponse {}
+
+// GetSpaceAclRequest 查询 ACL 请求。
+message GetSpaceAclRequest {
+  // id 空间标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetSpaceAclResponse 查询 ACL 响应。
+message GetSpaceAclResponse {
+  // items ACL 条目。
+  repeated AclEntry items = 1;
+}
+
+// SetSpaceAclRequest 整组替换 ACL 请求。
+message SetSpaceAclRequest {
+  // id 空间标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // items ACL 条目，至多 200 条。
+  repeated AclEntry items = 2 [(buf.validate.field).repeated.max_items = 200];
+}
+
+// SetSpaceAclResponse 整组替换 ACL 响应。
+message SetSpaceAclResponse {
+  // items 替换后的 ACL。
+  repeated AclEntry items = 1;
+}
+
+// ---------- 文档 ----------
+
+// Document 知识文档（列表 / 详情共用；列表不带正文）。
+message Document {
+  // id 文档标识。
+  string id = 1;
+  // space_id 所属空间。
+  string space_id = 2;
+  // space_name 空间名称。
+  string space_name = 3;
+  // slug 空间内唯一的 URL 片段。
+  string slug = 4;
+  // title 标题。
+  string title = 5;
+  // status 状态：1 草稿 / 2 已发布 / 3 已归档。
+  int32 status = 6;
+  // review_state 审核状态：0 无 / 1 待审核。
+  int32 review_state = 7;
+  // content 正文（Markdown）：详情返回已发布正文（草稿返回草稿正文）；列表为空。
+  string content = 8;
+  // draft_content 待发布草稿正文（已发布文档再编辑时非空；仅详情且有写权限时返回）。
+  string draft_content = 9;
+  // has_draft 已发布文档是否有未发布的修改。
+  bool has_draft = 10;
+  // summary 摘要（人工优先，否则 AI 生成）。
+  string summary = 11;
+  // tags 标签。
+  repeated string tags = 12;
+  // source 来源：manual 手写 / import 导入 / assistant 助手沉淀 / postmortem 复盘归档。
+  string source = 13;
+  // source_ref 来源引用（文件 ID / 会话 ID / 故障 ID）。
+  string source_ref = 14;
+  // owner_id 负责人。
+  string owner_id = 15;
+  // owner_name 负责人显示名。
+  string owner_name = 16;
+  // review_at 下次复审时间；空 = 不复审。
+  google.protobuf.Timestamp review_at = 17;
+  // review_overdue 是否已超期未复审。
+  bool review_overdue = 18;
+  // version 当前已发布版本号；0 = 从未发布。
+  int32 version = 19;
+  // index_status 索引状态：0 未索引 / 1 索引中 / 2 已索引 / 3 失败。
+  int32 index_status = 20;
+  // level 当前用户对所属空间的权限级别。
+  int32 level = 21;
+  // links 关联对象（仅详情）。
+  repeated Link links = 22;
+  // headings 目录（仅详情）：标题路径列表，供按节取正文。
+  repeated string headings = 23;
+  // create_user 创建人。
+  string create_user = 24;
+  // update_user 最后修改人。
+  string update_user = 25;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 26;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 27;
+  // publish_time 最近发布时间。
+  google.protobuf.Timestamp publish_time = 28;
+}
+
+// Link 文档与运维对象的关联。
+message Link {
+  // id 关联标识。
+  string id = 1;
+  // target_type 对象类型：cmdb_model / cmdb_ci / monitor_rule / incident_playbook / ticket / job_template / workflow_definition。
+  string target_type = 2;
+  // target_id 对象 ID。
+  string target_id = 3;
+  // target_name 对象显示名（调用方传入保存，便于展示）。
+  string target_name = 4;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 5;
+}
+
+// SearchRequest 检索请求。
+message SearchRequest {
+  // query 检索词（自然语言或关键词），1-500 字符。
+  string query = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 500
+  }];
+  // space_ids 限定空间；空 = 全部可见空间。
+  repeated string space_ids = 2 [(buf.validate.field).repeated = {
+    max_items: 20
+    items: {string: {uuid: true}}
+  }];
+  // tags 限定标签（任一命中）。
+  repeated string tags = 3 [(buf.validate.field).repeated = {
+    max_items: 10
+    items: {string: {max_len: 32}}
+  }];
+  // top_k 返回条数，1-20；缺省 5。
+  int32 top_k = 4 [(buf.validate.field).int32 = {gte: 0, lte: 20}];
+}
+
+// SearchHit 一条检索命中。
+message SearchHit {
+  // document_id 文档标识。
+  string document_id = 1;
+  // title 文档标题。
+  string title = 2;
+  // space_id 所属空间。
+  string space_id = 3;
+  // space_name 空间名称。
+  string space_name = 4;
+  // chunk_seq 命中分块序号（引用锚点）。
+  int32 chunk_seq = 5;
+  // heading_path 命中所在的标题路径。
+  string heading_path = 6;
+  // snippet 命中片段（高亮用 <mark> 标注）。
+  string snippet = 7;
+  // section 命中所在整节的正文（上限约 2000 字符）。
+  string section = 8;
+  // score 融合得分（越大越相关）。
+  double score = 9;
+  // review_overdue 文档是否超期未复审。
+  bool review_overdue = 10;
+  // citation 引用标记：[kb:<document_id>#<chunk_seq>]，回答时原样引用。
+  string citation = 11;
+}
+
+// SearchResponse 检索响应。
+message SearchResponse {
+  // items 命中列表，按相关度降序。
+  repeated SearchHit items = 1;
+  // degraded 是否降级（向量检索不可用，仅全文）。
+  bool degraded = 2;
+  // search_log_id 本次检索记录标识，用于反馈。
+  string search_log_id = 3;
+  // duration_ms 耗时（毫秒）。
+  int64 duration_ms = 4;
+}
+
+// ListDocumentsRequest 分页查询文档请求。
+message ListDocumentsRequest {
+  // page 页码，从 1 开始。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // space_id 空间过滤。
+  optional string space_id = 3 [(buf.validate.field).string.uuid = true];
+  // status 状态过滤。
+  optional int32 status = 4 [(buf.validate.field).int32 = {in: [1, 2, 3]}];
+  // keyword 标题模糊匹配。
+  string keyword = 5 [(buf.validate.field).string.max_len = 128];
+  // tag 标签过滤。
+  string tag = 6 [(buf.validate.field).string.max_len = 32];
+  // owner_id 负责人过滤。
+  optional string owner_id = 7 [(buf.validate.field).string.uuid = true];
+  // review_pending 只看待审核。
+  bool review_pending = 8;
+  // review_overdue 只看超期未复审。
+  bool review_overdue = 9;
+}
+
+// ListDocumentsResponse 分页查询文档响应。
+message ListDocumentsResponse {
+  // items 当前页。
+  repeated Document items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// GetDocumentRequest 查询文档请求。
+message GetDocumentRequest {
+  // id 文档标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // heading_path 只取该标题路径下的一节（如 "部署 > 回滚"）；空 = 整篇。
+  string heading_path = 2 [(buf.validate.field).string.max_len = 512];
+}
+
+// GetDocumentResponse 查询文档响应。
+message GetDocumentResponse {
+  // document 文档（content 为整篇或指定节）。
+  Document document = 1;
+}
+
+// CreateDocumentRequest 新建文档请求。
+message CreateDocumentRequest {
+  // space_id 所属空间。
+  string space_id = 1 [(buf.validate.field).string.uuid = true];
+  // title 标题，1-255 字符。
+  string title = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 255
+  }];
+  // slug URL 片段；省略则由标题生成。
+  string slug = 3 [(buf.validate.field).string = {
+    max_len: 128
+    pattern: "^([a-z0-9][a-z0-9-]*)?$"
+  }];
+  // content Markdown 正文，至多 512 KiB。
+  string content = 4 [(buf.validate.field).string.max_len = 524288];
+  // tags 标签，至多 10 个。
+  repeated string tags = 5 [(buf.validate.field).repeated = {
+    max_items: 10
+    items: {string: {min_len: 1, max_len: 32}}
+  }];
+  // summary 人工摘要。
+  string summary = 6 [(buf.validate.field).string.max_len = 1000];
+  // owner_id 负责人；省略 = 创建者。
+  optional string owner_id = 7 [(buf.validate.field).string.uuid = true];
+  // source 来源：manual（缺省）/ assistant / postmortem（运维 Agent 经验沉淀草稿）；import 由系统写入。
+  string source = 8 [(buf.validate.field).string = {in: ["", "manual", "assistant", "postmortem"]}];
+  // source_ref 来源引用（如助手会话 ID）。
+  string source_ref = 9 [(buf.validate.field).string.max_len = 128];
+  // publish 是否创建后立即发布（需空间不要求审核）。
+  bool publish = 10;
+}
+
+// CreateDocumentResponse 新建文档响应。
+message CreateDocumentResponse {
+  // document 文档。
+  Document document = 1;
+}
+
+// UpdateDocumentRequest 保存草稿请求（未提供的字段不改）。
+message UpdateDocumentRequest {
+  // id 文档标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // title 标题。
+  optional string title = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 255
+  }];
+  // content Markdown 正文。
+  optional string content = 3 [(buf.validate.field).string.max_len = 524288];
+  // tags 标签整组替换。
+  TagList tags = 4;
+  // summary 人工摘要。
+  optional string summary = 5 [(buf.validate.field).string.max_len = 1000];
+  // owner_id 负责人。
+  optional string owner_id = 6 [(buf.validate.field).string.uuid = true];
+  // review_at 下次复审时间；clear_review_at 为 true 时清除。
+  optional google.protobuf.Timestamp review_at = 7;
+  // clear_review_at 清除复审时间。
+  bool clear_review_at = 8;
+}
+
+// TagList 标签列表（整组替换时使用；为空消息 = 清空）。
+message TagList {
+  // items 标签。
+  repeated string items = 1 [(buf.validate.field).repeated = {
+    max_items: 10
+    items: {string: {min_len: 1, max_len: 32}}
+  }];
+}
+
+// UpdateDocumentResponse 保存草稿响应。
+message UpdateDocumentResponse {
+  // document 文档。
+  Document document = 1;
+}
+
+// PublishDocumentRequest 发布请求。
+message PublishDocumentRequest {
+  // id 文档标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // note 版本说明。
+  string note = 2 [(buf.validate.field).string.max_len = 255];
+}
+
+// PublishDocumentResponse 发布响应。
+message PublishDocumentResponse {
+  // document 文档。
+  Document document = 1;
+  // pending_review 是否进入待审核（空间要求审核）。
+  bool pending_review = 2;
+}
+
+// ReviewDocumentRequest 审核请求。
+message ReviewDocumentRequest {
+  // id 文档标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // approved true 通过并发布；false 驳回。
+  bool approved = 2;
+  // note 审核意见（驳回时建议填写）。
+  string note = 3 [(buf.validate.field).string.max_len = 255];
+}
+
+// ReviewDocumentResponse 审核响应。
+message ReviewDocumentResponse {
+  // document 文档。
+  Document document = 1;
+}
+
+// ConfirmDocumentReviewRequest 确认有效请求。
+message ConfirmDocumentReviewRequest {
+  // id 文档标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// ConfirmDocumentReviewResponse 确认有效响应。
+message ConfirmDocumentReviewResponse {
+  // document 文档。
+  Document document = 1;
+}
+
+// ArchiveDocumentRequest 归档请求。
+message ArchiveDocumentRequest {
+  // id 文档标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// ArchiveDocumentResponse 归档响应。
+message ArchiveDocumentResponse {
+  // document 文档。
+  Document document = 1;
+}
+
+// RestoreDocumentRequest 恢复请求。
+message RestoreDocumentRequest {
+  // id 文档标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// RestoreDocumentResponse 恢复响应。
+message RestoreDocumentResponse {
+  // document 文档。
+  Document document = 1;
+}
+
+// DeleteDocumentRequest 删除请求。
+message DeleteDocumentRequest {
+  // id 文档标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// DeleteDocumentResponse 删除响应。
+message DeleteDocumentResponse {}
+
+// Version 发布版本。
+message Version {
+  // version 版本号，从 1 递增。
+  int32 version = 1;
+  // title 该版本标题。
+  string title = 2;
+  // note 版本说明。
+  string note = 3;
+  // content 正文快照（仅 GetVersion 返回）。
+  string content = 4;
+  // publish_user 发布人。
+  string publish_user = 5;
+  // publish_user_name 发布人显示名。
+  string publish_user_name = 6;
+  // create_time 发布时间。
+  google.protobuf.Timestamp create_time = 7;
+}
+
+// ListVersionsRequest 查询版本列表请求。
+message ListVersionsRequest {
+  // id 文档标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// ListVersionsResponse 查询版本列表响应（按版本号倒序）。
+message ListVersionsResponse {
+  // items 版本。
+  repeated Version items = 1;
+}
+
+// GetVersionRequest 查询版本内容请求。
+message GetVersionRequest {
+  // id 文档标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // version 版本号。
+  int32 version = 2 [(buf.validate.field).int32.gte = 1];
+}
+
+// GetVersionResponse 查询版本内容响应。
+message GetVersionResponse {
+  // version 版本（含正文）。
+  Version version = 1;
+}
+
+// RollbackDocumentRequest 回滚请求。
+message RollbackDocumentRequest {
+  // id 文档标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // version 目标版本号。
+  int32 version = 2 [(buf.validate.field).int32.gte = 1];
+}
+
+// RollbackDocumentResponse 回滚响应。
+message RollbackDocumentResponse {
+  // document 文档。
+  Document document = 1;
+}
+
+// AddLinkRequest 添加关联请求。
+message AddLinkRequest {
+  // id 文档标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // target_type 对象类型。
+  string target_type = 2 [(buf.validate.field).string = {in: ["cmdb_model", "cmdb_ci", "monitor_rule", "incident_playbook", "ticket", "job_template", "workflow_definition"]}];
+  // target_id 对象 ID，1-128 字符。
+  string target_id = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+  // target_name 对象显示名。
+  string target_name = 4 [(buf.validate.field).string.max_len = 255];
+}
+
+// AddLinkResponse 添加关联响应。
+message AddLinkResponse {
+  // link 关联。
+  Link link = 1;
+}
+
+// RemoveLinkRequest 移除关联请求。
+message RemoveLinkRequest {
+  // id 文档标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // link_id 关联标识。
+  string link_id = 2 [(buf.validate.field).string.uuid = true];
+}
+
+// RemoveLinkResponse 移除关联响应。
+message RemoveLinkResponse {}
+
+// ListRelatedRequest 查询对象相关知识请求。
+message ListRelatedRequest {
+  // target_type 对象类型。
+  string target_type = 1 [(buf.validate.field).string = {in: ["cmdb_model", "cmdb_ci", "monitor_rule", "monitor_alert", "incident", "incident_playbook", "ticket", "job_template", "workflow_definition"]}];
+  // target_id 对象 ID。
+  string target_id = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+  // query 对象描述（标题 / 规则名 / 标签等），用于语义检索；空 = 只返回显式关联。
+  string query = 3 [(buf.validate.field).string.max_len = 500];
+  // limit 返回条数上限，1-10；缺省 5。
+  int32 limit = 4 [(buf.validate.field).int32 = {gte: 0, lte: 10}];
+}
+
+// RelatedDocument 相关文档。
+message RelatedDocument {
+  // document_id 文档标识。
+  string document_id = 1;
+  // title 标题。
+  string title = 2;
+  // space_name 空间名称。
+  string space_name = 3;
+  // summary 摘要或命中片段。
+  string summary = 4;
+  // linked 是否显式关联（否则为语义检索命中）。
+  bool linked = 5;
+  // link_id 关联标识（linked 为 true 时）。
+  string link_id = 6;
+  // review_overdue 文档是否超期未复审。
+  bool review_overdue = 7;
+}
+
+// ListRelatedResponse 查询对象相关知识响应。
+message ListRelatedResponse {
+  // items 显式关联在前，其后为语义检索命中。
+  repeated RelatedDocument items = 1;
+}
+
+// GetOverviewRequest 概览请求。
+message GetOverviewRequest {}
+
+// GetOverviewResponse 概览响应（各列表至多 10 条）。
+message GetOverviewResponse {
+  // recent 最近发布 / 更新的文档。
+  repeated Document recent = 1;
+  // mine 我负责的文档。
+  repeated Document mine = 2;
+  // pending_review 待我审核的文档（我有管理权限的空间）。
+  repeated Document pending_review = 3;
+  // review_due 我负责且即将 / 已到复审期的文档。
+  repeated Document review_due = 4;
+  // space_count 可见空间数。
+  int32 space_count = 5;
+  // document_count 可见已发布文档数。
+  int32 document_count = 6;
+}
+
+// SubmitSearchFeedbackRequest 检索反馈请求。
+message SubmitSearchFeedbackRequest {
+  // id 检索记录标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // helpful true 有用 / false 没用。
+  bool helpful = 2;
+}
+
+// SubmitSearchFeedbackResponse 检索反馈响应。
+message SubmitSearchFeedbackResponse {}
+
+// ---------- 导入 ----------
+
+// IngestJob 导入任务。
+message IngestJob {
+  // id 任务标识。
+  string id = 1;
+  // space_id 目标空间。
+  string space_id = 2;
+  // space_name 目标空间名称。
+  string space_name = 3;
+  // document_id 产出 / 目标文档。
+  string document_id = 4;
+  // file_id 源文件标识。
+  string file_id = 5;
+  // filename 源文件名。
+  string filename = 6;
+  // status 状态：1 排队 / 2 处理中 / 3 成功 / 4 失败。
+  int32 status = 7;
+  // error 失败原因。
+  string error = 8;
+  // chunk_count 产出分块数。
+  int32 chunk_count = 9;
+  // attempts 已尝试次数。
+  int32 attempts = 10;
+  // create_user 创建人。
+  string create_user = 11;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 12;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 13;
+  // title 目标文档标题（省略时取文件名）。
+  string title = 14;
+  // tags 标签。
+  repeated string tags = 15;
+  // publish 解析完成后是否直接发布。
+  bool publish = 16;
+}
+
+// CreateIngestJobRequest 创建导入任务请求。
+message CreateIngestJobRequest {
+  // space_id 目标空间（需写权限）。
+  string space_id = 1 [(buf.validate.field).string.uuid = true];
+  // file_id 已上传的临时文件标识（file 域 UploadFile 返回）。
+  string file_id = 2 [(buf.validate.field).string.uuid = true];
+  // document_id 覆盖更新的目标文档；省略则新建。
+  optional string document_id = 3 [(buf.validate.field).string.uuid = true];
+  // title 文档标题；省略取文件名。
+  string title = 4 [(buf.validate.field).string.max_len = 255];
+  // tags 标签。
+  repeated string tags = 5 [(buf.validate.field).repeated = {
+    max_items: 10
+    items: {string: {min_len: 1, max_len: 32}}
+  }];
+  // publish 解析完成后是否直接发布（需空间不要求审核）。
+  bool publish = 6;
+}
+
+// CreateIngestJobResponse 创建导入任务响应。
+message CreateIngestJobResponse {
+  // job 任务。
+  IngestJob job = 1;
+}
+
+// ListIngestJobsRequest 查询导入任务请求。
+message ListIngestJobsRequest {
+  // page 页码。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量，1-100。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // space_id 空间过滤。
+  optional string space_id = 3 [(buf.validate.field).string.uuid = true];
+  // status 状态过滤。
+  optional int32 status = 4 [(buf.validate.field).int32 = {in: [1, 2, 3, 4]}];
+}
+
+// ListIngestJobsResponse 查询导入任务响应。
+message ListIngestJobsResponse {
+  // items 当前页。
+  repeated IngestJob items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// RetryIngestJobRequest 重试导入任务请求。
+message RetryIngestJobRequest {
+  // id 任务标识。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// RetryIngestJobResponse 重试导入任务响应。
+message RetryIngestJobResponse {
+  // job 任务。
+  IngestJob job = 1;
+}
+
+// ---------- 管理 ----------
+
+// GetIndexStatusRequest 索引状态请求。
+message GetIndexStatusRequest {}
+
+// GetIndexStatusResponse 索引状态响应。
+message GetIndexStatusResponse {
+  // vector_available 向量检索是否可用（pgvector 已安装且列已创建）。
+  bool vector_available = 1;
+  // embedding_configured 是否配置了 embedding 服务。
+  bool embedding_configured = 2;
+  // embedding_model 当前 embedding 模型。
+  string embedding_model = 3;
+  // embedding_open 熔断是否打开（打开 = 暂停向量化）。
+  bool embedding_open = 4;
+  // chunk_count 分块总数。
+  int64 chunk_count = 5;
+  // embedded_count 已向量化的分块数。
+  int64 embedded_count = 6;
+  // pending_jobs 排队中的索引任务数。
+  int64 pending_jobs = 7;
+  // failed_jobs 失败的索引任务数。
+  int64 failed_jobs = 8;
+  // hint 不可用时的说明（如如何安装 pgvector）。
+  string hint = 9;
+}
+
+// RebuildIndexRequest 重建索引请求：space_id 与 document_id 至少一个。
+message RebuildIndexRequest {
+  // space_id 重建整个空间。
+  optional string space_id = 1 [(buf.validate.field).string.uuid = true];
+  // document_id 重建单篇文档。
+  optional string document_id = 2 [(buf.validate.field).string.uuid = true];
+}
+
+// RebuildIndexResponse 重建索引响应。
+message RebuildIndexResponse {
+  // queued 已排队的文档数。
+  int32 queued = 1;
+}
+
+// SearchLog 检索日志。
+message SearchLog {
+  // id 记录标识。
+  string id = 1;
+  // user_id 用户。
+  string user_id = 2;
+  // user_name 用户显示名。
+  string user_name = 3;
+  // source 来源：web / assistant / related。
+  string source = 4;
+  // query 检索词。
+  string query = 5;
+  // hit_count 命中数。
+  int32 hit_count = 6;
+  // degraded 是否降级。
+  bool degraded = 7;
+  // duration_ms 耗时。
+  int64 duration_ms = 8;
+  // feedback 反馈：0 无 / 1 有用 / 2 没用。
+  int32 feedback = 9;
+  // create_time 时间。
+  google.protobuf.Timestamp create_time = 10;
+}
+
+// ListSearchLogsRequest 查询检索日志请求。
+message ListSearchLogsRequest {
+  // page 页码。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // page_size 每页数量。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // source 来源过滤。
+  string source = 3 [(buf.validate.field).string.max_len = 16];
+  // no_result 只看无结果。
+  bool no_result = 4;
+  // keyword 检索词模糊匹配。
+  string keyword = 5 [(buf.validate.field).string.max_len = 128];
+}
+
+// ListSearchLogsResponse 查询检索日志响应。
+message ListSearchLogsResponse {
+  // items 当前页。
+  repeated SearchLog items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// GetStatsRequest 统计请求。
+message GetStatsRequest {
+  // days 统计最近 N 天的检索，1-90；缺省 30。
+  int32 days = 1 [(buf.validate.field).int32 = {gte: 0, lte: 90}];
+}
+
+// GetStatsResponse 统计响应。
+message GetStatsResponse {
+  // space_count 空间数。
+  int64 space_count = 1;
+  // document_count 已发布文档数。
+  int64 document_count = 2;
+  // draft_count 草稿数。
+  int64 draft_count = 3;
+  // chunk_count 分块数。
+  int64 chunk_count = 4;
+  // review_overdue_count 超期未复审文档数。
+  int64 review_overdue_count = 5;
+  // pending_review_count 待审核文档数。
+  int64 pending_review_count = 6;
+  // search_count 期间检索次数。
+  int64 search_count = 7;
+  // no_result_count 期间无结果次数。
+  int64 no_result_count = 8;
+  // helpful_count 期间「有用」反馈数。
+  int64 helpful_count = 9;
+  // unhelpful_count 期间「没用」反馈数。
+  int64 unhelpful_count = 10;
+  // top_queries 期间无结果的高频检索词（知识缺口）。
+  repeated QueryCount top_queries = 11;
+}
+
+// QueryCount 检索词计数。
+message QueryCount {
+  // query 检索词。
+  string query = 1;
+  // count 次数。
+  int64 count = 2;
+}

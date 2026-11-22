@@ -117,9 +117,19 @@ func (q *fakeQueue) Due(context.Context, int) ([]*Schedule, time.Time, error) {
 	return q.due, q.now, nil
 }
 
-func (q *fakeQueue) Advance(_ context.Context, _ string, run ScheduleRun) (bool, error) {
-	q.runs = append(q.runs, run)
-	return true, nil
+func (q *fakeQueue) Fire(ctx context.Context, id string, planned time.Time, fn func(ctx context.Context, s *Schedule) (ScheduleRun, error)) (bool, error) {
+	for _, s := range q.due {
+		if s.ID != id || s.NextTime == nil || !s.NextTime.Equal(planned) {
+			continue
+		}
+		run, err := fn(ctx, s)
+		if err != nil {
+			return false, err
+		}
+		q.runs = append(q.runs, run)
+		return true, nil
+	}
+	return false, nil // 已被别的实例认领 / 推进
 }
 
 // 定时触发：准点的提交执行；错过的按策略跳过；模板被拒（停用）记为失败并照常推进。
@@ -129,6 +139,7 @@ func TestScheduleRun(t *testing.T) {
 	now := time.Date(2026, 11, 18, 10, 0, 30, 0, loc)
 	onTime := time.Date(2026, 11, 18, 10, 0, 0, 0, loc)
 	stale := time.Date(2026, 11, 18, 7, 0, 0, 0, loc)
+	late := time.Date(2026, 11, 18, 9, 0, 0, 0, loc)
 	tpl := &Template{ID: "t", Name: "x", Enabled: false}
 	execs := NewExecutionUsecase(nil, nil, nil, fakeTemplates{tpl}, nil, nil, nil, nil, noNames{}, ExecutionDeps{Runs: testAllow{}})
 	q := &fakeQueue{now: now, due: []*Schedule{
@@ -136,10 +147,14 @@ func TestScheduleRun(t *testing.T) {
 		{ID: "018f3e1a-0000-7000-8000-000000000002", TemplateID: "t", Cron: "0 * * * *", Timezone: "UTC", Misfire: jc.MisfireSkip, NextTime: &stale, Owner: "u"},
 		{ID: "018f3e1a-0000-7000-8000-000000000003", TemplateID: "t", Cron: "0 * * * *", Timezone: "UTC", Misfire: jc.MisfireRunOnce, NextTime: &stale, Owner: "u"},
 		{ID: "018f3e1a-0000-7000-8000-000000000004", TemplateID: "t", Cron: "not a cron", Timezone: "UTC", Misfire: jc.MisfireSkip, NextTime: &onTime, Owner: "u"},
+		// 晚了一个周期以内（09:00 的触发在 10:00:30 才处理）：在宽限内，不算错过，照常提交。
+		{ID: "018f3e1a-0000-7000-8000-000000000005", TemplateID: "t", Cron: "0 * * * *", Timezone: "UTC", Misfire: jc.MisfireSkip, NextTime: &late, Owner: "u"},
+		// 认领失败（计划时间已被别的实例推进）：不处理、不计数。
+		{ID: "018f3e1a-0000-7000-8000-000000000006", TemplateID: "t", Cron: "0 * * * *", Timezone: "UTC", Misfire: jc.MisfireSkip, NextTime: nil, Owner: "u"},
 	}}
 	uc := NewScheduleUsecase(nil, q, fakeTemplates{tpl}, execs, noNames{})
 	n, err := uc.Run(context.Background())
-	if err != nil || n != 4 || len(q.runs) != 4 {
+	if err != nil || n != 5 || len(q.runs) != 5 {
 		t.Fatalf("Run() = %d, %v (%d runs)", n, err, len(q.runs))
 	}
 	nextHour := time.Date(2026, 11, 18, 11, 0, 0, 0, loc)
@@ -158,6 +173,10 @@ func TestScheduleRun(t *testing.T) {
 	// 坏表达式：记原因，一天后再看。
 	if r := q.runs[3]; r.Error == "" || !r.Next.Equal(now.Add(24*time.Hour)) {
 		t.Errorf("broken cron run = %+v", r)
+	}
+	// 宽限内的迟到触发：提交（被拒记为失败）而不是「错过」，推进到下一个整点。
+	if r := q.runs[4]; !r.Fired.Equal(late) || r.Error == "错过触发时间，已跳过" || !strings.Contains(r.Error, "disabled") || !r.Next.Equal(nextHour) {
+		t.Errorf("late-within-grace run = %+v", r)
 	}
 }
 

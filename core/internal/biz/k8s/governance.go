@@ -236,6 +236,35 @@ func AlertRuleTemplate() (string, int) {
 	return alertRuleTemplate, strings.Count(alertRuleTemplate, "- alert:")
 }
 
+// authFailuresExceeded 来源地址在当前窗口内的认证失败是否已达上限。
+func (uc *GovernanceUsecase) authFailuresExceeded(clientIP string, now time.Time) bool {
+	if clientIP == "" {
+		return false
+	}
+	uc.mu.Lock()
+	defer uc.mu.Unlock()
+	f := uc.authFails[clientIP]
+	return f != nil && now.Before(f.reset) && f.count >= kubeAuthFailLimit
+}
+
+// noteAuthFailure 记一次来源地址的认证失败（窗口过期即重新计数）。
+func (uc *GovernanceUsecase) noteAuthFailure(clientIP string, now time.Time) {
+	if clientIP == "" {
+		return
+	}
+	uc.mu.Lock()
+	defer uc.mu.Unlock()
+	if uc.authFails == nil || len(uc.authFails) >= maxKubeAuthFailEntries {
+		uc.authFails = map[string]*kubeAuthFail{}
+	}
+	f := uc.authFails[clientIP]
+	if f == nil || !now.Before(f.reset) {
+		f = &kubeAuthFail{reset: now.Add(kubeAuthFailWindow)}
+		uc.authFails[clientIP] = f
+	}
+	f.count++
+}
+
 // kubeSession 缓存的令牌校验结果。
 type kubeSession struct {
 	auth     *KubeTokenAuth
@@ -262,7 +291,20 @@ const (
 	maxKubeConnsPerUser  = 300
 	// maxKubeSessions 缓存条数上限（超过即清空：只影响 5 秒内的重复校验）。
 	maxKubeSessions = 10000
+	// kubeAuthFailWindow / kubeAuthFailLimit 同一来源地址在一个窗口内允许的认证失败次数：代理入口不要求登录，
+	// 每个带错令牌的请求都要查一次库，不限的话一台机器就能用随机令牌把数据库打满。超限后在窗口剩余时间里
+	// 直接拒绝（429），不再查库。
+	kubeAuthFailWindow = time.Minute
+	kubeAuthFailLimit  = 30
+	// maxKubeAuthFailEntries 失败计数表容量上限（超过即清空：只放松一个窗口的限制）。
+	maxKubeAuthFailEntries = 10000
 )
+
+// kubeAuthFail 一个来源地址在当前窗口内的认证失败计数。
+type kubeAuthFail struct {
+	count int
+	reset time.Time
+}
 
 // GovernanceUsecase 治理用例：限时 kubeconfig、巡检查询、终端录制回放。
 type GovernanceUsecase struct {
@@ -285,6 +327,8 @@ type GovernanceUsecase struct {
 	// tokenConns / userConns 在途请求数（令牌 ID / 用户 ID → 条数）；与 sessions 分开存，缓存清空不影响计数。
 	tokenConns map[string]int
 	userConns  map[string]int
+	// authFails 来源地址 → 窗口内的认证失败计数（见 kubeAuthFailLimit）。
+	authFails map[string]*kubeAuthFail
 }
 
 // NewGovernanceUsecase new a GovernanceUsecase.
@@ -480,12 +524,20 @@ type KubeRoute struct {
 // 用户仍可用。令牌状态与用户身份缓存 5 秒（吊销由本实例发起时立即清除），身份按用户当时的启用角色解析，
 // 因此角色解绑、账号停用、数据范围收回都会生效。未通过的原因不区分，一律 401。
 // 需审批的集群上，非超管的变更请求返回 ErrApprovalRequired。
-func (uc *GovernanceUsecase) AuthorizeKube(ctx context.Context, bearer, clusterID, method, kubePath, clientIP string) (*KubeRoute, error) {
+func (uc *GovernanceUsecase) AuthorizeKube(ctx context.Context, bearer, clusterID, method, kubePath, clientIP string) (route *KubeRoute, err error) {
+	now := uc.now()
+	if uc.authFailuresExceeded(clientIP, now) {
+		return nil, errKubeTooManyRequests
+	}
+	defer func() {
+		if errors.Is(err, errKubeUnauthorized) {
+			uc.noteAuthFailure(clientIP, now)
+		}
+	}()
 	tokenID, secret, ok := kc.ParseToken(bearer)
 	if !ok {
 		return nil, errKubeUnauthorized
 	}
-	now := uc.now()
 	uc.mu.Lock()
 	s := uc.sessions[tokenID]
 	if s != nil && now.After(s.expire) {

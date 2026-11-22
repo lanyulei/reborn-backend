@@ -39,7 +39,8 @@ func TestCmdb_ModelView(t *testing.T) {
 	}
 }
 
-// 数据范围：受限角色只能看到/操作范围内的类型与环境；不限角色行为与引入前一致。
+// 数据范围：fail-closed——没有范围行的角色什么都看不到；显式配置为类型为空 = 不限；受限角色只能看到/操作
+// 范围内的类型与环境。
 func TestCmdb_DataScope(t *testing.T) {
 	t.Parallel()
 	ts, svc := newTestHTTPServerWithServices(t)
@@ -65,9 +66,9 @@ func TestCmdb_DataScope(t *testing.T) {
 		"/cmdb.v1.CmdbCIService/UpdateCI", "/cmdb.v1.CmdbRelationService/ListRelated", "/cmdb.v1.CmdbRelationService/LinkCIs",
 		"/cmdb.v1.CmdbScopeService/GetMyScope", "/cmdb.v1.CmdbCIService/ExportCIs", "/cmdb.v1.CmdbCIService/ImportCIs")
 	userBearer := testBearer(t, svc.signer, user.Id)
-	// 范围未配置 = 不限：能看到 test 环境主机。
-	if code, body := doRequestWithToken(t, http.MethodGet, ts.URL+"/api/v1/cmdb/ci/"+hostTest.ID, userBearer, ""); code != http.StatusOK {
-		t.Fatalf("unconfigured scope must be unrestricted: %d %s", code, body)
+	// 范围未配置 = 什么都看不到（fail-closed）。
+	if code, body := doRequestWithToken(t, http.MethodGet, ts.URL+"/api/v1/cmdb/ci/"+hostTest.ID, userBearer, ""); code != http.StatusForbidden || !strings.Contains(body, "CMDB_SCOPE_FORBIDDEN") {
+		t.Fatalf("unconfigured scope must see nothing: %d %s", code, body)
 	}
 	// 配置范围：取角色 ID。
 	code, body := doRequestWithToken(t, http.MethodGet, ts.URL+"/api/v1/cmdb/scope/role", admin, "")
@@ -91,6 +92,13 @@ func TestCmdb_DataScope(t *testing.T) {
 	}
 	if roleID == "" {
 		t.Fatalf("role not listed: %s", body)
+	}
+	// 显式配置为类型为空 = 不限：能看到 test 环境主机。
+	if code, body := doRequestWithToken(t, http.MethodPut, ts.URL+"/api/v1/cmdb/scope/role/"+roleID, admin, `{"modelCodes":[]}`); code != http.StatusOK {
+		t.Fatalf("set unrestricted scope: %d %s", code, body)
+	}
+	if code, body := doRequestWithToken(t, http.MethodGet, ts.URL+"/api/v1/cmdb/ci/"+hostTest.ID, userBearer, ""); code != http.StatusOK {
+		t.Fatalf("explicitly unrestricted scope must see everything: %d %s", code, body)
 	}
 	if code, body := doRequestWithToken(t, http.MethodPut, ts.URL+"/api/v1/cmdb/scope/role/"+roleID, admin, `{"modelCodes":["host","part"],"envs":["prod"]}`); code != http.StatusOK {
 		t.Fatalf("set scope: %d %s", code, body)

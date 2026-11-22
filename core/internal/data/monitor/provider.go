@@ -52,6 +52,8 @@ var ProviderSet = wire.NewSet(
 	wire.Bind(new(biz.DatasourceWriteTargets), new(*datasourceRepo)),
 	wire.Bind(new(biz.WriteURLValidator), new(*QueryClient)),
 	AlertP2ProviderSet, escalationProviders, SyncProviderSet, ruleP2Providers, StatsProviders, InhibitProviderSet,
+	// 告警事件对外只读视图（故障管理域消费）。
+	FeedProviderSet,
 )
 
 // isUniqueViolation 报告是否唯一约束冲突（constraint 为空不区分约束）。

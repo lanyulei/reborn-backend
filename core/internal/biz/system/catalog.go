@@ -59,6 +59,14 @@ var permissionCatalog = []MenuSpec{
 				Ops:  []string{"/system.v1.UserService/CreateUser"},
 			},
 			{
+				Code: "system.user.machine",
+				Name: "新建机器账号",
+				Ops: []string{
+					"/system.v1.UserService/CreateMachineUser",
+					"/system.v1.RoleService/ListRoles",
+				},
+			},
+			{
 				Code: "system.user.edit",
 				Name: "编辑用户",
 				Ops: []string{
@@ -696,6 +704,86 @@ var permissionCatalog = []MenuSpec{
 			"/assistant.v1.AssistantService/ListConversations",
 			"/assistant.v1.AssistantService/ListMessages",
 			"/assistant.v1.AssistantService/DeleteConversation",
+		},
+	},
+	{
+		Code: "knowledge",
+		Name: "知识库",
+		// 首页 / 搜索 / 空间与文档浏览 / 版本 / 相关知识 / 检索反馈：进知识库即需要。
+		DefaultOps: []string{
+			"/knowledge.v1.KnowledgeSpaceService/ListSpaces",
+			"/knowledge.v1.KnowledgeSpaceService/GetSpace",
+			"/knowledge.v1.KnowledgeService/Search",
+			"/knowledge.v1.KnowledgeService/ListDocuments",
+			"/knowledge.v1.KnowledgeService/GetDocument",
+			"/knowledge.v1.KnowledgeService/ListVersions",
+			"/knowledge.v1.KnowledgeService/GetVersion",
+			"/knowledge.v1.KnowledgeService/ListRelated",
+			"/knowledge.v1.KnowledgeService/GetOverview",
+			"/knowledge.v1.KnowledgeService/SubmitSearchFeedback",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "knowledge.write",
+				Name: "编写文档",
+				Ops: []string{
+					"/knowledge.v1.KnowledgeService/CreateDocument",
+					"/knowledge.v1.KnowledgeService/UpdateDocument",
+					"/knowledge.v1.KnowledgeService/PublishDocument",
+					"/knowledge.v1.KnowledgeService/ConfirmDocumentReview",
+					"/knowledge.v1.KnowledgeService/AddLink",
+					"/knowledge.v1.KnowledgeService/RemoveLink",
+					"/knowledge.v1.KnowledgeService/RollbackDocument",
+					"/knowledge.v1.KnowledgeIngestService/CreateIngestJob",
+					"/knowledge.v1.KnowledgeIngestService/ListIngestJobs",
+					"/knowledge.v1.KnowledgeIngestService/RetryIngestJob",
+				},
+			},
+			{
+				Code: "knowledge.review",
+				Name: "审核文档",
+				Ops:  []string{"/knowledge.v1.KnowledgeService/ReviewDocument"},
+			},
+			{
+				Code: "knowledge.archive",
+				Name: "归档与恢复文档",
+				Ops: []string{
+					"/knowledge.v1.KnowledgeService/ArchiveDocument",
+					"/knowledge.v1.KnowledgeService/RestoreDocument",
+				},
+			},
+			{
+				Code: "knowledge.delete",
+				Name: "删除文档",
+				Ops:  []string{"/knowledge.v1.KnowledgeService/DeleteDocument"},
+			},
+			{
+				Code: "knowledge.space",
+				Name: "管理知识空间",
+				Ops: []string{
+					"/knowledge.v1.KnowledgeSpaceService/CreateSpace",
+					"/knowledge.v1.KnowledgeSpaceService/UpdateSpace",
+					"/knowledge.v1.KnowledgeSpaceService/DeleteSpace",
+					"/knowledge.v1.KnowledgeSpaceService/GetSpaceAcl",
+					"/knowledge.v1.KnowledgeSpaceService/SetSpaceAcl",
+				},
+			},
+		},
+	},
+	{
+		Code: "knowledge.admin",
+		Name: "知识库管理",
+		DefaultOps: []string{
+			"/knowledge.v1.KnowledgeAdminService/GetIndexStatus",
+			"/knowledge.v1.KnowledgeAdminService/ListSearchLogs",
+			"/knowledge.v1.KnowledgeAdminService/GetStats",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "knowledge.admin.rebuild",
+				Name: "重建知识索引",
+				Ops:  []string{"/knowledge.v1.KnowledgeAdminService/RebuildIndex"},
+			},
 		},
 	},
 	{
@@ -2171,6 +2259,310 @@ var permissionCatalog = []MenuSpec{
 					"/k8s.v1.K8sGovernanceService/IssueKubeconfig",
 				},
 			},
+		},
+	},
+	{
+		Code: "incident.list",
+		Name: "故障列表",
+		// 列表、候选故障与详情页各页签的只读接口。告警所属故障（ListIncidentsByAlert）免接口授权、不在此登记：
+		// 告警详情页要展示它，访问控制在故障域内按成员 / 接口权限过滤。
+		DefaultOps: []string{
+			"/incident.v1.IncidentService/ListIncidents",
+			"/incident.v1.IncidentService/GetIncident",
+			"/incident.v1.IncidentService/SearchIncidents",
+			"/incident.v1.IncidentService/ListCandidates",
+			"/incident.v1.IncidentService/ListTimeline",
+			"/incident.v1.IncidentService/ListIncidentAlerts",
+			"/incident.v1.IncidentService/GetImpact",
+			"/incident.v1.IncidentService/ListChanges",
+			"/incident.v1.IncidentService/GetIncidentContext",
+			"/incident.v1.IncidentService/ListIncidentOptions",
+			"/incident.v1.IncidentProposalService/ListProposals",
+			"/incident.v1.IncidentUpdateService/ListUpdates",
+			"/incident.v1.IncidentUpdateService/ListShareLinks",
+			"/incident.v1.IncidentPostmortemService/GetPostmortem",
+			"/incident.v1.IncidentPostmortemService/ListPostmortemVersions",
+			"/incident.v1.IncidentPostmortemService/ListActionItems",
+			"/incident.v1.IncidentStatsService/GetOverview",
+			// 故障详情「AI 诊断」页签：运维 Agent 的运行摘要（完整转录另由 agent.task 菜单控制）。
+			"/agent.v1.AgentTaskService/ListIncidentRuns",
+			"/agent.v1.AgentTaskService/GetRun",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "incident.list.diagnose",
+				Name: "让 Agent 分析",
+				Ops: []string{
+					"/agent.v1.AgentTaskService/RunForIncident",
+					"/agent.v1.AgentTaskService/CancelTask",
+					"/agent.v1.AgentTaskService/RateRun",
+				},
+			},
+			{
+				Code: "incident.list.create",
+				Name: "新建 / 升级为故障",
+				Ops: []string{
+					"/incident.v1.IncidentService/CreateIncident",
+					"/incident.v1.IncidentService/PromoteCandidate",
+					"/incident.v1.IncidentService/DismissCandidate",
+				},
+			},
+			{
+				Code: "incident.list.handle",
+				Name: "处置",
+				// 状态流转、改等级、改指挥官 / 成员、评论、关联告警与变更、合并、开工单、重生成 AI 摘要；
+				// 是否有权操作这一条由故障域按角色（指挥官 / 处理人 / 管理员）再判一次。
+				Ops: []string{
+					"/incident.v1.IncidentService/UpdateIncident",
+					"/incident.v1.IncidentService/TransitionIncident",
+					"/incident.v1.IncidentService/ChangeSeverity",
+					"/incident.v1.IncidentService/AssignCommander",
+					"/incident.v1.IncidentService/UpdateMembers",
+					"/incident.v1.IncidentService/AddComment",
+					"/incident.v1.IncidentService/PinEvent",
+					"/incident.v1.IncidentService/AttachAlerts",
+					"/incident.v1.IncidentService/DetachAlert",
+					"/incident.v1.IncidentService/MarkChange",
+					"/incident.v1.IncidentService/MergeIncident",
+					"/incident.v1.IncidentService/CreateIncidentTicket",
+					"/incident.v1.IncidentService/RegenerateSummary",
+				},
+			},
+			{
+				Code: "incident.list.proposal",
+				Name: "处置建议",
+				Ops: []string{
+					"/incident.v1.IncidentProposalService/CreateProposal",
+					"/incident.v1.IncidentProposalService/DecideProposal",
+					"/incident.v1.IncidentProposalService/CancelProposal",
+					"/incident.v1.IncidentProposalService/ResetAutoApprove",
+					"/incident.v1.IncidentConfigService/ListPlaybookTargets",
+				},
+			},
+			{
+				Code: "incident.list.update",
+				Name: "发布公告",
+				Ops: []string{
+					"/incident.v1.IncidentUpdateService/CreateUpdate",
+					"/incident.v1.IncidentUpdateService/DraftUpdate",
+				},
+			},
+			{
+				Code: "incident.list.share",
+				Name: "分享链接",
+				Ops: []string{
+					"/incident.v1.IncidentUpdateService/CreateShareLink",
+					"/incident.v1.IncidentUpdateService/GetShareLinkToken",
+					"/incident.v1.IncidentUpdateService/ResetShareLink",
+					"/incident.v1.IncidentUpdateService/DeleteShareLink",
+				},
+			},
+			{
+				Code: "incident.list.postmortem",
+				Name: "编写复盘",
+				Ops: []string{
+					"/incident.v1.IncidentPostmortemService/SavePostmortem",
+					"/incident.v1.IncidentPostmortemService/CompletePostmortem",
+					"/incident.v1.IncidentPostmortemService/RevisePostmortem",
+					"/incident.v1.IncidentPostmortemService/DraftPostmortem",
+					"/incident.v1.IncidentPostmortemService/GenerateTimeline",
+					"/incident.v1.IncidentPostmortemService/SaveActionItem",
+					"/incident.v1.IncidentPostmortemService/DeleteActionItem",
+					"/incident.v1.IncidentPostmortemService/CreateActionItemTicket",
+				},
+			},
+			{
+				Code: "incident.list.agent",
+				Name: "AI Agent 接入",
+				// 运维 AI Agent 的机器账号持有：占用 / 释放处置租约、写入发现。
+				Ops: []string{
+					"/incident.v1.IncidentService/AcquireAgentLease",
+					"/incident.v1.IncidentService/ReleaseAgentLease",
+					"/incident.v1.IncidentService/AddFinding",
+				},
+			},
+		},
+	},
+	{
+		Code: "incident.review",
+		Name: "复盘看板",
+		DefaultOps: []string{
+			"/incident.v1.IncidentService/ListIncidents",
+			"/incident.v1.IncidentService/ListIncidentOptions",
+			"/incident.v1.IncidentPostmortemService/ListActionItems",
+			"/incident.v1.IncidentPostmortemService/GetPostmortem",
+		},
+	},
+	{
+		Code: "incident.stats",
+		Name: "故障统计",
+		DefaultOps: []string{
+			"/incident.v1.IncidentStatsService/GetOverview",
+			"/incident.v1.IncidentStatsService/GetTrend",
+			"/incident.v1.IncidentStatsService/GetEfficiency",
+			"/incident.v1.IncidentStatsService/GetDistribution",
+			"/incident.v1.IncidentConfigService/ListBusinesses",
+		},
+	},
+	{
+		Code: "incident.rule",
+		Name: "触发规则",
+		DefaultOps: []string{
+			"/incident.v1.IncidentConfigService/ListRules",
+			"/incident.v1.IncidentConfigService/GetRule",
+			"/incident.v1.IncidentConfigService/ListBusinesses",
+			"/incident.v1.IncidentConfigService/ListPlaybooks",
+			"/incident.v1.IncidentService/ListIncidentOptions",
+		},
+		Elements: []ElementSpec{
+			{Code: "incident.rule.create", Name: "新建规则", Ops: []string{"/incident.v1.IncidentConfigService/CreateRule"}},
+			{Code: "incident.rule.update", Name: "编辑规则", Ops: []string{"/incident.v1.IncidentConfigService/UpdateRule"}},
+			{Code: "incident.rule.delete", Name: "删除规则", Ops: []string{"/incident.v1.IncidentConfigService/DeleteRule"}},
+			{Code: "incident.rule.test", Name: "回放测试", Ops: []string{"/incident.v1.IncidentConfigService/TestRule"}},
+		},
+	},
+	{
+		Code: "incident.playbook",
+		Name: "处置预案",
+		DefaultOps: []string{
+			"/incident.v1.IncidentConfigService/ListPlaybooks",
+			"/incident.v1.IncidentConfigService/GetPlaybook",
+			"/incident.v1.IncidentConfigService/ListPlaybookTargets",
+			"/incident.v1.IncidentConfigService/ListBusinesses",
+			"/incident.v1.IncidentService/ListIncidentOptions",
+		},
+		Elements: []ElementSpec{
+			{Code: "incident.playbook.create", Name: "新建预案", Ops: []string{"/incident.v1.IncidentConfigService/CreatePlaybook"}},
+			{Code: "incident.playbook.update", Name: "编辑预案", Ops: []string{"/incident.v1.IncidentConfigService/UpdatePlaybook"}},
+			{Code: "incident.playbook.delete", Name: "删除预案", Ops: []string{"/incident.v1.IncidentConfigService/DeletePlaybook"}},
+		},
+	},
+	{
+		Code: "incident.business",
+		Name: "业务字典",
+		DefaultOps: []string{
+			"/incident.v1.IncidentConfigService/ListBusinesses",
+			"/incident.v1.IncidentService/ListIncidentOptions",
+		},
+		Elements: []ElementSpec{
+			{Code: "incident.business.create", Name: "新建业务", Ops: []string{"/incident.v1.IncidentConfigService/CreateBusiness"}},
+			{Code: "incident.business.update", Name: "编辑业务", Ops: []string{"/incident.v1.IncidentConfigService/UpdateBusiness"}},
+			{Code: "incident.business.delete", Name: "删除业务", Ops: []string{"/incident.v1.IncidentConfigService/DeleteBusiness"}},
+		},
+	},
+	{
+		Code: "incident.source",
+		Name: "接入与 Webhook",
+		// 开放接口本身（OpenCreateIncident 等）凭接入令牌认证、免接口授权，不在此登记。
+		DefaultOps: []string{
+			"/incident.v1.IncidentConfigService/ListSources",
+			"/incident.v1.IncidentConfigService/ListWebhooks",
+			"/incident.v1.IncidentConfigService/ListBusinesses",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "incident.source.manage",
+				Name: "新建 / 编辑接入源",
+				Ops: []string{
+					"/incident.v1.IncidentConfigService/CreateSource",
+					"/incident.v1.IncidentConfigService/UpdateSource",
+				},
+			},
+			{Code: "incident.source.reset", Name: "重置接入令牌", Ops: []string{"/incident.v1.IncidentConfigService/ResetSourceToken"}},
+			{Code: "incident.source.delete", Name: "删除接入源", Ops: []string{"/incident.v1.IncidentConfigService/DeleteSource"}},
+			{
+				Code: "incident.source.webhook",
+				Name: "管理 Webhook",
+				Ops: []string{
+					"/incident.v1.IncidentConfigService/CreateWebhook",
+					"/incident.v1.IncidentConfigService/UpdateWebhook",
+					"/incident.v1.IncidentConfigService/DeleteWebhook",
+				},
+			},
+		},
+	},
+	{
+		Code: "incident.setting",
+		Name: "故障设置",
+		DefaultOps: []string{
+			"/incident.v1.IncidentConfigService/GetSettings",
+			"/incident.v1.IncidentService/ListIncidentOptions",
+		},
+		Elements: []ElementSpec{
+			{Code: "incident.setting.update", Name: "保存设置", Ops: []string{"/incident.v1.IncidentConfigService/UpdateSettings"}},
+		},
+	},
+	{
+		Code: "agent.task",
+		Name: "Agent 运行记录",
+		// 任务列表 / 详情 / 运行详情（含完整转录）；Profile 名称用于筛选。
+		DefaultOps: []string{
+			"/agent.v1.AgentTaskService/ListTasks",
+			"/agent.v1.AgentTaskService/GetTask",
+			"/agent.v1.AgentTaskService/GetRun",
+			"/agent.v1.AgentTaskService/ListIncidentRuns",
+			"/agent.v1.AgentProfileService/ListProfiles",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "agent.task.run",
+				Name: "召唤 / 取消任务",
+				Ops: []string{
+					"/agent.v1.AgentTaskService/RunForIncident",
+					"/agent.v1.AgentTaskService/CancelTask",
+				},
+			},
+			{
+				Code: "agent.task.rate",
+				Name: "评价运行",
+				Ops:  []string{"/agent.v1.AgentTaskService/RateRun"},
+			},
+		},
+	},
+	{
+		Code: "agent.profile",
+		Name: "Agent Profile",
+		DefaultOps: []string{
+			"/agent.v1.AgentProfileService/ListProfiles",
+			"/agent.v1.AgentProfileService/GetProfile",
+			"/agent.v1.AgentProfileService/ListProfileHistory",
+			"/agent.v1.AgentProfileService/ListProfileTools",
+			"/system.v1.UserService/ListUsers",
+			"/incident.v1.IncidentConfigService/ListBusinesses",
+		},
+		Elements: []ElementSpec{
+			{
+				Code: "agent.profile.create",
+				Name: "新建 Profile",
+				Ops:  []string{"/agent.v1.AgentProfileService/CreateProfile"},
+			},
+			{
+				Code: "agent.profile.update",
+				Name: "编辑 Profile",
+				Ops:  []string{"/agent.v1.AgentProfileService/UpdateProfile"},
+			},
+			{
+				Code: "agent.profile.delete",
+				Name: "删除 Profile",
+				Ops:  []string{"/agent.v1.AgentProfileService/DeleteProfile"},
+			},
+			{
+				Code: "agent.profile.test",
+				Name: "干跑 Profile",
+				Ops: []string{
+					"/agent.v1.AgentProfileService/TestProfile",
+					"/agent.v1.AgentTaskService/GetTask",
+					"/incident.v1.IncidentService/ListIncidents",
+				},
+			},
+		},
+	},
+	{
+		Code: "agent.stats",
+		Name: "Agent 统计",
+		DefaultOps: []string{
+			"/agent.v1.AgentStatsService/GetAgentOverview",
+			"/agent.v1.AgentProfileService/ListProfiles",
 		},
 	},
 }

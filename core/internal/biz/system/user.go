@@ -2,6 +2,8 @@ package biz
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"slices"
 	"time"
@@ -24,6 +26,15 @@ const (
 	StatusPaused int32 = 3
 	// StatusResigned 离职：账号归档。
 	StatusResigned int32 = 4
+)
+
+// 账号类型：人类账号正常登录；机器账号（运维 Agent 等无人值守调用方）没有密码、不能登录、
+// 没有刷新令牌，只能被签发短期访问令牌（AuthUsecase.IssueMachineToken）。
+const (
+	// UserKindHuman 人。
+	UserKindHuman int32 = 1
+	// UserKindMachine 机器。
+	UserKindMachine int32 = 2
 )
 
 // 角色状态常量（角色仅启用/停用两态）。
@@ -58,6 +69,8 @@ type User struct {
 	Gender   string
 	IsAdmin  bool
 	Status   int32
+	// Kind 账号类型：UserKindHuman / UserKindMachine；零值按人处理（读路径一律回填）。
+	Kind int32
 	// Avatar 头像地址；空 = 未设置。
 	Avatar string
 	// Depts 所属部门：仅创建链路携带（与建号同事务写入）；读路径不回填，
@@ -77,6 +90,8 @@ type UserFilter struct {
 	Status          *int32
 	DeptID          string
 	IncludeSubDepts bool
+	// Kind 账号类型过滤；nil 表示不过滤。
+	Kind *int32
 }
 
 // UserUpdate 是用户部分更新；nil 字段不更新。
@@ -109,7 +124,14 @@ var (
 	// 标记（防止操作者把自己锁在系统之外）；判定在 service 层（需传输层
 	// 身份），哨兵在此定义以统一 reason 事实源。
 	ErrUserSelfOperation = errors.BadRequest(v1.ErrorReason_USER_SELF_OPERATION.String(), "operation on current user is not allowed")
+	// ErrMachineAccount 机器账号不能登录、改密码、改资料、上传头像，也不能走人类账号的编辑入口。
+	ErrMachineAccount = errors.BadRequest(v1.ErrorReason_USER_MACHINE_ACCOUNT.String(), "machine account does not support this operation")
+	// ErrPasswordMismatch 自助修改密码时现密码不正确（400：已认证的自助接口，不用 401 以免客户端当作令牌失效）。
+	ErrPasswordMismatch = errors.BadRequest(v1.ErrorReason_PASSWORD_MISMATCH.String(), "current password is incorrect")
 )
+
+// IsMachine 报告账号是否为机器账号。
+func (u *User) IsMachine() bool { return u != nil && u.Kind == UserKindMachine }
 
 // UserReader 是用户只读仓储接口，由 data 层实现（依赖倒置）。
 type UserReader interface {
@@ -202,6 +224,9 @@ func (uc *UserUsecase) Create(ctx context.Context, user *User) (*User, error) {
 // 登录（access token 剩余 ≤access_ttl 的残留窗口由 authz 实时读 is_admin
 // 覆盖）。
 func (uc *UserUsecase) Update(ctx context.Context, id string, upd UserUpdate) error {
+	if err := uc.rejectMachine(ctx, id); err != nil {
+		return err
+	}
 	if upd.Depts != nil {
 		depts, err := upd.Depts.normalized()
 		if err != nil {
@@ -235,6 +260,9 @@ func (uc *UserUsecase) UpdateStatus(ctx context.Context, id string, status int32
 // 全部刷新令牌（账号失陷场景下重置密码必须逐出在线会话）；不存在返回
 // ErrUserNotFound。
 func (uc *UserUsecase) ResetPassword(ctx context.Context, id, password string) error {
+	if err := uc.rejectMachine(ctx, id); err != nil {
+		return err
+	}
 	plain, err := decodePassword(password)
 	if err != nil {
 		return err
@@ -247,6 +275,105 @@ func (uc *UserUsecase) ResetPassword(ctx context.Context, id, password string) e
 		return err
 	}
 	return uc.revokeSessions(ctx, id)
+}
+
+// ChangeMyPassword 本人修改密码：核对现密码（Argon2id，等代价比较）后哈希落库，并吊销该用户全部刷新令牌
+// （其它在线会话一并登出；当前会话的访问令牌到期后需重新登录）。机器账号拒绝；现密码不正确返回
+// ErrPasswordMismatch；不存在返回 ErrUserNotFound。管理员重置他人密码走 ResetPassword。
+func (uc *UserUsecase) ChangeMyPassword(ctx context.Context, id, oldPassword, newPassword string) error {
+	u, err := uc.reader.GetUser(ctx, id)
+	if err != nil {
+		return err
+	}
+	if u.IsMachine() {
+		return ErrMachineAccount
+	}
+	current, err := DecodeField(oldPassword)
+	if err != nil {
+		return err
+	}
+	plain, err := decodePassword(newPassword)
+	if err != nil {
+		return err
+	}
+	// 密码哈希只在按用户名的认证读路径上带出；这里只做比较，不外传。
+	cred, err := uc.reader.GetUserByUsername(ctx, u.Username)
+	if err != nil {
+		return err
+	}
+	if !uc.hasher.Verify(current, cred.Password) {
+		return ErrPasswordMismatch
+	}
+	hash, err := uc.hasher.Hash(plain)
+	if err != nil {
+		return fmt.Errorf("hash password: %w", err)
+	}
+	if err := uc.writer.UpdateUser(ctx, id, UserUpdate{PasswordHash: &hash}); err != nil {
+		return err
+	}
+	return uc.revokeSessions(ctx, id)
+}
+
+// rejectMachine 机器账号不走人类账号的资料 / 密码入口；不存在返回 ErrUserNotFound。
+func (uc *UserUsecase) rejectMachine(ctx context.Context, id string) error {
+	u, err := uc.reader.GetUser(ctx, id)
+	if err != nil {
+		return err
+	}
+	if u.IsMachine() {
+		return ErrMachineAccount
+	}
+	return nil
+}
+
+// IsMachine 报告账号是否为机器账号（跨域窄接口：故障域据此判定 Agent 建议能否申请自动通过，
+// Agent 域据此校验 Profile 绑定的账号）；不存在返回 ErrUserNotFound。
+func (uc *UserUsecase) IsMachine(ctx context.Context, id string) (bool, error) {
+	u, err := uc.reader.GetUser(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	return u.IsMachine(), nil
+}
+
+// machinePasswordEntropy 机器账号占位口令的随机字节数：口令永不被使用，只为满足列非空与哈希格式。
+const machinePasswordEntropy = 32
+
+// CreateMachine 新建机器账号：没有可用口令（随机值哈希后落库，Login 对机器账号恒拒绝）、不绑内置角色
+// （内置角色是给人的缺省角色），只绑调用方指定的角色（至少一个，须全部存在）。
+func (uc *UserUsecase) CreateMachine(ctx context.Context, username, nickname string, roleIDs []string) (*User, error) {
+	if len(roleIDs) == 0 {
+		return nil, ErrRoleNotFound
+	}
+	found, err := uc.roleReader.ListRolesByIDs(ctx, roleIDs)
+	if err != nil {
+		return nil, err
+	}
+	if len(found) != len(roleIDs) {
+		return nil, ErrRoleNotFound
+	}
+	id, err := idgen.NewID()
+	if err != nil {
+		return nil, err
+	}
+	secret := make([]byte, machinePasswordEntropy)
+	if _, err := rand.Read(secret); err != nil {
+		return nil, fmt.Errorf("generate machine secret: %w", err)
+	}
+	hash, err := uc.hasher.Hash(hex.EncodeToString(secret))
+	if err != nil {
+		return nil, fmt.Errorf("hash machine secret: %w", err)
+	}
+	now := time.Now().UTC()
+	user := &User{
+		ID: id, Username: username, Password: hash, Nickname: nickname, Gender: "unknown",
+		Status: StatusEnabled, Kind: UserKindMachine, CreateTime: now, UpdateTime: now,
+	}
+	if err := uc.writer.CreateUserWithRoles(ctx, user, mergeRoleIDs(roleIDs, nil)); err != nil {
+		return nil, err
+	}
+	user.Password = ""
+	return user, nil
 }
 
 // revokeSessions 吊销用户全部刷新令牌。失败返回错误：主写已提交，但令牌

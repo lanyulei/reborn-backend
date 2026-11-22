@@ -98,7 +98,7 @@ func buildPayload(in payloadInput) mc.NotifyPayload {
 	a := in.Alert
 	loc := time.UTC
 	if in.Timezone != "" {
-		if l, err := time.LoadLocation(in.Timezone); err == nil {
+		if l, err := mc.LoadLocation(in.Timezone); err == nil {
 			loc = l
 		}
 	}

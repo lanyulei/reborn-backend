@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+package knowledge.v1;
+
+import "errors/errors.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/knowledge/v1;v1";
+
+// ErrorReason 是知识库域（knowledge）的业务错误码枚举，由 protoc-gen-go-errors
+// 生成带 code 的错误构造器。枚举值沿用 Kratos 错误码惯例（域前缀而非枚举名
+// 前缀），故豁免 ENUM_VALUE_PREFIX（见 buf.yaml ignore_only）。
+enum ErrorReason {
+  option (errors.default_code) = 500;
+  // KNOWLEDGE_UNSPECIFIED 未指定的知识库错误。
+  KNOWLEDGE_UNSPECIFIED = 0;
+  // KNOWLEDGE_SPACE_NOT_FOUND 知识空间不存在或当前用户不可见，映射 HTTP 404。
+  KNOWLEDGE_SPACE_NOT_FOUND = 1 [(errors.code) = 404];
+  // KNOWLEDGE_SPACE_CODE_EXISTS 空间编码已存在，映射 HTTP 409。
+  KNOWLEDGE_SPACE_CODE_EXISTS = 2 [(errors.code) = 409];
+  // KNOWLEDGE_SPACE_NOT_EMPTY 空间下仍有文档，不能删除，映射 HTTP 409。
+  KNOWLEDGE_SPACE_NOT_EMPTY = 3 [(errors.code) = 409];
+  // KNOWLEDGE_DOCUMENT_NOT_FOUND 文档不存在或当前用户不可见，映射 HTTP 404。
+  KNOWLEDGE_DOCUMENT_NOT_FOUND = 4 [(errors.code) = 404];
+  // KNOWLEDGE_SLUG_EXISTS 同一空间内 slug 已存在，映射 HTTP 409。
+  KNOWLEDGE_SLUG_EXISTS = 5 [(errors.code) = 409];
+  // KNOWLEDGE_FORBIDDEN 对该空间 / 文档没有所需的权限级别，映射 HTTP 403。
+  KNOWLEDGE_FORBIDDEN = 6 [(errors.code) = 403];
+  // KNOWLEDGE_INVALID_STATE 文档当前状态不允许该操作，映射 HTTP 409。
+  KNOWLEDGE_INVALID_STATE = 7 [(errors.code) = 409];
+  // KNOWLEDGE_SECRET_DETECTED 正文中检测到疑似密钥 / 口令，拒绝保存，映射 HTTP 400。
+  KNOWLEDGE_SECRET_DETECTED = 8 [(errors.code) = 400];
+  // KNOWLEDGE_VERSION_NOT_FOUND 版本不存在，映射 HTTP 404。
+  KNOWLEDGE_VERSION_NOT_FOUND = 9 [(errors.code) = 404];
+  // KNOWLEDGE_LINK_EXISTS 关联已存在，映射 HTTP 409。
+  KNOWLEDGE_LINK_EXISTS = 10 [(errors.code) = 409];
+  // KNOWLEDGE_LINK_NOT_FOUND 关联不存在，映射 HTTP 404。
+  KNOWLEDGE_LINK_NOT_FOUND = 11 [(errors.code) = 404];
+  // KNOWLEDGE_INGEST_NOT_FOUND 导入任务不存在，映射 HTTP 404。
+  KNOWLEDGE_INGEST_NOT_FOUND = 12 [(errors.code) = 404];
+  // KNOWLEDGE_INGEST_UNSUPPORTED 导入文件类型不支持，映射 HTTP 400。
+  KNOWLEDGE_INGEST_UNSUPPORTED = 13 [(errors.code) = 400];
+  // KNOWLEDGE_SEARCH_LOG_NOT_FOUND 检索记录不存在或不属于当前用户，映射 HTTP 404。
+  KNOWLEDGE_SEARCH_LOG_NOT_FOUND = 14 [(errors.code) = 404];
+  // KNOWLEDGE_CONTENT_TOO_LARGE 正文超过长度上限，映射 HTTP 400。
+  KNOWLEDGE_CONTENT_TOO_LARGE = 15 [(errors.code) = 400];
+  // KNOWLEDGE_ACL_INVALID ACL 条目不合法（主体不存在 / 重复），映射 HTTP 400。
+  KNOWLEDGE_ACL_INVALID = 16 [(errors.code) = 400];
+  // KNOWLEDGE_INVALID 入参不合法（标题为空、标签超限、关联对象类型未知等），映射 HTTP 400。
+  KNOWLEDGE_INVALID = 17 [(errors.code) = 400];
+  // KNOWLEDGE_DOCUMENT_CONFLICT 文档已被并发修改（乐观锁失败），需刷新后重试，映射 HTTP 409。
+  KNOWLEDGE_DOCUMENT_CONFLICT = 18 [(errors.code) = 409];
+}

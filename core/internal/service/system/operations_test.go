@@ -8,6 +8,7 @@ import (
 
 	cmdbv1 "github.com/lanyulei/reborn/backend/core/api/cmdb/v1"
 	filev1 "github.com/lanyulei/reborn/backend/core/api/file/v1"
+	incidentv1 "github.com/lanyulei/reborn/backend/core/api/incident/v1"
 	monitorv1 "github.com/lanyulei/reborn/backend/core/api/monitor/v1"
 	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
 	oncallv1 "github.com/lanyulei/reborn/backend/core/api/oncall/v1"
@@ -48,7 +49,7 @@ func TestListOperations(t *testing.T) {
 			!strings.HasPrefix(svc, "assistant.v1.") && !strings.HasPrefix(svc, "cmdb.v1.") &&
 			!strings.HasPrefix(svc, "oncall.v1.") && !strings.HasPrefix(svc, "workflow.v1.") &&
 			!strings.HasPrefix(svc, "ticket.v1.") && !strings.HasPrefix(svc, "monitor.v1.") &&
-			!strings.HasPrefix(svc, "job.v1.") && !strings.HasPrefix(svc, "k8s.v1.") {
+			!strings.HasPrefix(svc, "job.v1.") && !strings.HasPrefix(svc, "k8s.v1.") && !strings.HasPrefix(svc, "knowledge.v1.") && !strings.HasPrefix(svc, "incident.v1.") && !strings.HasPrefix(svc, "agent.v1.") {
 			t.Fatalf("operation %q not in an authorized proto package", op.Name)
 		}
 		if op.Title == "" {
@@ -169,6 +170,8 @@ func TestIsAuthzExempt(t *testing.T) {
 		// 头像：上传为本人自助接口；读取为 <img> 直载的静态资源语义
 		v1.OperationAuthServiceUploadMyAvatar,
 		v1.OperationAuthServiceGetUserAvatar,
+		// 自助修改密码：本人、须核对现密码（仍须 JWT）
+		v1.OperationAuthServiceChangeMyPassword,
 		// 公共值班日历：凭不可猜测的地址令牌匿名只读（管理接口不免检）
 		oncallv1.OperationOncallShareServiceGetPublicCalendar,
 		// 通用附件：已登录用户的自助能力（仍须 JWT）；访问控制在文件域按归属判定
@@ -190,6 +193,15 @@ func TestIsAuthzExempt(t *testing.T) {
 		OperationK8sExecConnect,
 		// 作业中心的开放触发接口：凭触发器的调用令牌或流程 Webhook 的签名认证；触发器的管理接口不免检
 		OperationJobOpenFire,
+		// 故障的匿名状态页：凭不可猜测的分享令牌匿名只读（管理接口不免检）
+		incidentv1.OperationIncidentUpdateServiceGetPublicIncident,
+		// 故障管理的开放接口：凭接入令牌认证，只能操作自己创建的故障（接入源的管理接口不免检）
+		incidentv1.OperationIncidentOpenServiceOpenCreateIncident,
+		incidentv1.OperationIncidentOpenServiceOpenGetIncident,
+		incidentv1.OperationIncidentOpenServiceOpenAppendNote,
+		incidentv1.OperationIncidentOpenServiceOpenResolveIncident,
+		// 告警所属故障：已登录的告警查看者要能看到告警关联到了哪条故障；访问控制在故障域按成员 / 接口权限过滤
+		incidentv1.OperationIncidentServiceListIncidentsByAlert,
 	}
 	if len(authzExemptOperations) != len(want) {
 		t.Fatalf("authzExemptOperations has %d members, want exactly %d", len(authzExemptOperations), len(want))

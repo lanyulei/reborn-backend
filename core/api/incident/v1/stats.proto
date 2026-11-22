@@ -1,0 +1,155 @@
+syntax = "proto3";
+
+package incident.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/incident/v1;v1";
+
+// IncidentStatsService 故障统计（演练与已合并的不计）。时间范围 ≤ 366 天。
+service IncidentStatsService {
+  // GetOverview 概览：当前活跃数（按等级）、待复盘 / 超期、待审批建议、今日新开 / 恢复。
+  rpc GetOverview(StatsRangeRequest) returns (GetOverviewResponse) {
+    option (google.api.http) = {get: "/api/v1/incident-stats/overview"};
+    option (system.v1.title) = "查询故障统计概览";
+  }
+  // GetTrend 趋势：按天 / 周 / 月的故障数（按等级拆分）与累计时长。
+  rpc GetTrend(StatsRangeRequest) returns (GetTrendResponse) {
+    option (google.api.http) = {get: "/api/v1/incident-stats/trend"};
+    option (system.v1.title) = "查询故障趋势";
+  }
+  // GetEfficiency MTTD / MTTA / MTTM / MTTR（按等级）、重开率、复盘超期率、改进项完成率。
+  rpc GetEfficiency(StatsRangeRequest) returns (GetEfficiencyResponse) {
+    option (google.api.http) = {get: "/api/v1/incident-stats/efficiency"};
+    option (system.v1.title) = "查询故障效率指标";
+  }
+  // GetDistribution 根因分布、来源分布、按业务的故障数与累计时长、告警 → 故障转化率。
+  rpc GetDistribution(StatsRangeRequest) returns (GetDistributionResponse) {
+    option (google.api.http) = {get: "/api/v1/incident-stats/distribution"};
+    option (system.v1.title) = "查询故障分布";
+  }
+}
+
+// StatsRangeRequest 时间范围（按开启时间）。
+message StatsRangeRequest {
+  // 开始时间（RFC3339，缺省 30 天前）。
+  optional google.protobuf.Timestamp start_time = 1;
+  // 结束时间（RFC3339，缺省现在）。
+  optional google.protobuf.Timestamp end_time = 2;
+  // 只统计该业务。
+  optional string business_id = 3 [(buf.validate.field).string.uuid = true];
+  // bucket day / week / month（趋势用）。
+  string bucket = 4 [(buf.validate.field).string = {
+    in: [
+      "",
+      "day",
+      "week",
+      "month"
+    ]
+  }];
+}
+
+message SeverityCount {
+  // 等级。
+  int32 severity = 1;
+  // 数量。
+  int32 count = 2;
+}
+
+message GetOverviewResponse {
+  // 活跃故障数。
+  int32 active = 1;
+  // 活跃故障按等级。
+  repeated SeverityCount active_by_severity = 2;
+  // 待响应数。
+  int32 unresponded = 3;
+  // 待复盘数。
+  int32 review_pending = 4;
+  // 复盘超期数。
+  int32 review_overdue = 5;
+  // 待审批建议数。
+  int32 proposal_pending = 6;
+  // 今日新开。
+  int32 today_opened = 7;
+  // 今日解决。
+  int32 today_resolved = 8;
+  // 待定候选数。
+  int32 candidates = 9;
+}
+
+message TrendPoint {
+  // bucket 起点（RFC3339 日期）。
+  string bucket = 1;
+  // 总数。
+  int32 total = 2;
+  // 按等级。
+  repeated SeverityCount by_severity = 3;
+  // duration_s 该桶内故障的累计时长（发生 → 恢复，秒）。
+  int64 duration_s = 4;
+}
+
+message GetTrendResponse {
+  // 趋势点。
+  repeated TrendPoint points = 1;
+}
+
+message EfficiencyRow {
+  // severity 0 = 全部。
+  int32 severity = 1;
+  // 故障数。
+  int32 count = 2;
+  // *_s 平均秒数；-1 = 无样本。
+  int64 mttd_s = 3;
+  // 平均响应时长（秒）。
+  int64 mtta_s = 4;
+  // 平均缓解时长（秒）。
+  int64 mttm_s = 5;
+  // 平均解决时长（秒）。
+  int64 mttr_s = 6;
+}
+
+message GetEfficiencyResponse {
+  // 按等级的效率。
+  repeated EfficiencyRow rows = 1;
+  // reopen_rate 重开率（0-1）；review_overdue_rate 复盘超期率；action_item_done_rate 改进项完成率。
+  float reopen_rate = 2;
+  // 复盘超期率。
+  float review_overdue_rate = 3;
+  // 改进项完成率。
+  float action_item_done_rate = 4;
+  // 改进项总数。
+  int32 action_item_total = 5;
+  // 已完成改进项数。
+  int32 action_item_done = 6;
+}
+
+message NamedCount {
+  // 键。
+  string key = 1;
+  // 显示名。
+  string name = 2;
+  // 数量。
+  int32 count = 3;
+  // 累计时长（秒）。
+  int64 duration_s = 4;
+}
+
+message GetDistributionResponse {
+  // 按根因。
+  repeated NamedCount root_causes = 1;
+  // 按来源。
+  repeated NamedCount sources = 2;
+  // 按业务。
+  repeated NamedCount businesses = 3;
+  // 按触发规则。
+  repeated NamedCount rules = 4;
+  // candidate_total / candidate_promoted 候选故障总数与转正数（转化率）。
+  int32 candidate_total = 5;
+  // 升级成故障的候选数。
+  int32 candidate_promoted = 6;
+  // alert_linked 关联到故障的告警数。
+  int32 alert_linked = 7;
+}

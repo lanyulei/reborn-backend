@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"net"
 	"net/url"
 	"regexp"
 	"strings"
@@ -145,8 +146,27 @@ func checkAPIServer(raw string) error {
 		return errors.New("must not embed credentials")
 	case u.RawQuery != "" || u.Fragment != "" || u.ForceQuery:
 		return errors.New("must not contain a query or fragment")
+	case unsafeEndpointHost(u.Hostname()):
+		return errors.New("must not point at a loopback, link-local or unspecified address")
 	}
 	return nil
+}
+
+// unsafeEndpointHost 集群 API Server / 代理不允许指向的主机（数据面按这个地址发起连接，是 SSRF 的
+// 入口）：本机、链路本地（云厂商的元数据地址 169.254.169.254 在这一段）、未指定与组播地址，以及
+// localhost。私网地址（10/8、172.16/12、192.168/16、CGNAT）有意放行——被纳管的集群绝大多数就在
+// 私网里，kit/netguard.UnsafeHost 的整段规则在这里不适用；字面 IP 之外的主机名在连接时由数据面解析。
+func unsafeEndpointHost(host string) bool {
+	h := strings.ToLower(strings.TrimSuffix(host, "."))
+	if h == "" || h == "localhost" || strings.HasSuffix(h, ".localhost") {
+		return true
+	}
+	ip := net.ParseIP(strings.Trim(h, "[]"))
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsMulticast() || ip.IsInterfaceLocalMulticast()
 }
 
 // checkProxyURL 代理地址：可空；http / https，不得带查询串与片段（代理账号走 userinfo 是惯例，允许）。
@@ -163,6 +183,9 @@ func checkProxyURL(raw string) error {
 	}
 	if u.RawQuery != "" || u.Fragment != "" {
 		return errors.New("must not contain a query or fragment")
+	}
+	if unsafeEndpointHost(u.Hostname()) {
+		return errors.New("must not point at a loopback, link-local or unspecified address")
 	}
 	return nil
 }

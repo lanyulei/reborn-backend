@@ -93,6 +93,8 @@ type ChangeFilter struct {
 	ClusterID     string
 	Status        *int32
 	Keyword       string
+	// Start / End 提交时间窗（故障管理的变更关联用）；nil 不限。
+	Start, End *time.Time
 }
 
 // ClusterApproval 集群的审批配置。
@@ -154,6 +156,15 @@ type ChangeRefresher interface {
 	Approved(ctx context.Context, limit int) ([]ApprovedChange, error)
 	// RefreshRequester 重写发起人的身份快照；只对仍处于已批准状态的变更单生效。
 	RefreshRequester(ctx context.Context, id string, requester *kc.ChangeRequester) error
+	// FailApproved 把一张仍处于已批准状态的变更单置为失败；已被领取执行（执行中）的不动。
+	FailApproved(ctx context.Context, id, message string) error
+}
+
+// OrphanSweeper 仓储可选能力：删除建单失败且补偿也失败而残留的「待审批、无工单」变更单
+// （见 ChangeUsecase.submit）；没有工单的变更单永远等不到审批结果。
+type OrphanSweeper interface {
+	// SweepOrphans 删除创建早于 olderThan 之前、仍待审批且没有工单的变更单，返回行数。
+	SweepOrphans(ctx context.Context, olderThan time.Duration) (int, error)
 }
 
 // SettingRepo 平台设置（k8s_setting）。
@@ -436,15 +447,18 @@ func (uc *ChangeUsecase) submit(ctx context.Context, c *Change, exec, templateID
 		},
 	})
 	if err != nil {
-		// 清理用脱离取消的 ctx：请求被取消时也不能留下没有工单的变更单。
-		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
-		if derr := uc.store.AttachTicket(cctx, id, "", ""); derr != nil {
-			uc.log.ErrorContext(ctx, "remove orphan k8s change failed", "change_id", id, "error", derr)
-		}
+		uc.discardChange(ctx, id)
 		return err
 	}
-	if err := uc.store.AttachTicket(ctx, id, ticketID, number); err != nil {
+	if err := uc.attachTicket(ctx, id, ticketID, number); err != nil {
+		// 工单已建、变更单却挂不上：撤掉工单并删除变更单，不能留下一张永远待审批的变更单
+		// （监听器按工单找不到变更单，审批结果会落空）。
+		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), compensateTimeout)
+		defer cancel()
+		if cerr := uc.tickets.Cancel(cctx, ticketID, c.RequesterID); cerr != nil {
+			uc.log.ErrorContext(ctx, "cancel ticket of unattached k8s change failed", "change_id", id, "ticket_id", ticketID, "error", cerr)
+		}
+		uc.discardChange(ctx, id)
 		return err
 	}
 	if !finished && uc.viewers != nil {
@@ -469,6 +483,45 @@ func (uc *ChangeUsecase) submit(ctx context.Context, c *Change, exec, templateID
 		}
 	}
 	return errChangeSubmittedTo.WithMetadata(map[string]string{"change_id": id, "ticket_id": ticketID, "ticket_number": number})
+}
+
+// 挂接工单的重试与补偿时限。
+const (
+	attachTicketAttempts = 3
+	attachTicketBackoff  = 200 * time.Millisecond
+	compensateTimeout    = 5 * time.Second
+	// orphanChangeAge 待审批且没有工单的变更单存活多久后由后台清掉（挂接与补偿都失败的残留）。
+	orphanChangeAge = 10 * time.Minute
+)
+
+// attachTicket 把工单挂到变更单上。请求被取消也要完成（工单已建，变更单不能没有工单），瞬时失败短暂重试。
+func (uc *ChangeUsecase) attachTicket(ctx context.Context, id, ticketID, number string) error {
+	actx, cancel := context.WithTimeout(context.WithoutCancel(ctx), compensateTimeout)
+	defer cancel()
+	var err error
+	for attempt := range attachTicketAttempts {
+		if err = uc.store.AttachTicket(actx, id, ticketID, number); err == nil {
+			return nil
+		}
+		if attempt == attachTicketAttempts-1 {
+			break
+		}
+		select {
+		case <-actx.Done():
+			return err
+		case <-time.After(attachTicketBackoff << attempt):
+		}
+	}
+	return err
+}
+
+// discardChange 删除还没有挂上工单的变更单。用脱离取消的 ctx：请求被取消时也不能留下没有工单的变更单。
+func (uc *ChangeUsecase) discardChange(ctx context.Context, id string) {
+	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), compensateTimeout)
+	defer cancel()
+	if derr := uc.store.AttachTicket(cctx, id, "", ""); derr != nil {
+		uc.log.ErrorContext(ctx, "remove orphan k8s change failed", "change_id", id, "error", derr)
+	}
 }
 
 // Submitted 从 K8S_CHANGE_SUBMITTED 错误里取出变更单与工单标识；不是该错误返回 ok = false。
@@ -895,6 +948,15 @@ const changeWorkerBatch = 20
 // Run 处理一轮，返回处理的行数（有积压时立即再跑一轮）。
 func (w *ChangeWorker) Run(ctx context.Context) (int, error) {
 	done := 0
+	if sweeper, ok := w.queue.(OrphanSweeper); ok {
+		n, err := sweeper.SweepOrphans(ctx, orphanChangeAge)
+		if err != nil {
+			return done, err
+		}
+		if n > 0 {
+			w.log.WarnContext(ctx, "removed k8s changes left pending without a ticket", "count", n)
+		}
+	}
 	if err := w.refreshRequesters(ctx); err != nil {
 		return done, err
 	}
@@ -1094,7 +1156,8 @@ func (w *ChangeWorker) refreshRequesters(ctx context.Context) error {
 			}
 		}
 		if !st.active {
-			if err := w.flow.Finish(ctx, it.ID, kc.ChangeFailed, "发起人的账号已停用或已删除，变更未执行"); err != nil {
+			// 只对仍处于已批准状态的变更单生效：列出之后可能已被领取执行，不能把执行中的改成失败。
+			if err := w.refresh.FailApproved(ctx, it.ID, "发起人的账号已停用或已删除，变更未执行"); err != nil {
 				return err
 			}
 			continue

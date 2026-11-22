@@ -127,6 +127,7 @@ const (
 	AlertEventWorkflow     = "workflow"      // 触发了流程
 	AlertEventAISummary    = "ai_summary"    // 生成了 AI 摘要
 	AlertEventActionFailed = "action_failed" // 事件动作（建单 / 流程 / 摘要 / 回写）最终失败
+	AlertEventIncident     = "incident"      // 被关联到故障 / 从故障移出（故障管理域写入，Detail.Text 为说明）
 )
 
 // AlertEventTypes 事件时间线的全部类型。返回新切片。
@@ -135,6 +136,7 @@ func AlertEventTypes() []string {
 		AlertEventFire, AlertEventResolve, AlertEventClose, AlertEventMute, AlertEventUnmute, AlertEventInhibit,
 		AlertEventUninhibit, AlertEventEscalate, AlertEventNotify, AlertEventAck, AlertEventUnack, AlertEventTransfer,
 		AlertEventComment, AlertEventTicket, AlertEventTicketNote, AlertEventWorkflow, AlertEventAISummary, AlertEventActionFailed,
+		AlertEventIncident,
 	}
 }
 

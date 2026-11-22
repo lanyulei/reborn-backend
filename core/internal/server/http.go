@@ -4,11 +4,14 @@ import (
 	"log/slog"
 	"time"
 
+	agentv1 "github.com/lanyulei/reborn/backend/core/api/agent/v1"
 	assistantv1 "github.com/lanyulei/reborn/backend/core/api/assistant/v1"
 	cmdbv1 "github.com/lanyulei/reborn/backend/core/api/cmdb/v1"
 	filev1 "github.com/lanyulei/reborn/backend/core/api/file/v1"
+	incidentv1 "github.com/lanyulei/reborn/backend/core/api/incident/v1"
 	jobv1 "github.com/lanyulei/reborn/backend/core/api/job/v1"
 	k8sv1 "github.com/lanyulei/reborn/backend/core/api/k8s/v1"
+	knowledgev1 "github.com/lanyulei/reborn/backend/core/api/knowledge/v1"
 	monitorv1 "github.com/lanyulei/reborn/backend/core/api/monitor/v1"
 	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
 	oncallv1 "github.com/lanyulei/reborn/backend/core/api/oncall/v1"
@@ -17,11 +20,14 @@ import (
 	workflowv1 "github.com/lanyulei/reborn/backend/core/api/workflow/v1"
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
 	"github.com/lanyulei/reborn/backend/core/internal/conf"
+	agentservice "github.com/lanyulei/reborn/backend/core/internal/service/agent"
 	assistantservice "github.com/lanyulei/reborn/backend/core/internal/service/assistant"
 	cmdbservice "github.com/lanyulei/reborn/backend/core/internal/service/cmdb"
 	fileservice "github.com/lanyulei/reborn/backend/core/internal/service/file"
+	incidentservice "github.com/lanyulei/reborn/backend/core/internal/service/incident"
 	jobservice "github.com/lanyulei/reborn/backend/core/internal/service/job"
 	k8sservice "github.com/lanyulei/reborn/backend/core/internal/service/k8s"
+	knowledgeservice "github.com/lanyulei/reborn/backend/core/internal/service/knowledge"
 	monitorservice "github.com/lanyulei/reborn/backend/core/internal/service/monitor"
 	notifyservice "github.com/lanyulei/reborn/backend/core/internal/service/notify"
 	oncallservice "github.com/lanyulei/reborn/backend/core/internal/service/oncall"
@@ -79,6 +85,9 @@ func NewHTTPServer(c *conf.Server, logger *slog.Logger, user *service.UserServic
 	k8sGov *k8sservice.GovernanceService,
 	k8sChange *k8sservice.ChangeService,
 	k8sConf *conf.K8S,
+	kbSpace *knowledgeservice.SpaceService, kbDoc *knowledgeservice.KnowledgeService, kbIngest *knowledgeservice.IngestService, kbAdmin *knowledgeservice.AdminService,
+	incident incidentservice.Services,
+	agent agentservice.Services,
 	signer *biz.TokenSigner, authzUC *biz.AuthzUsecase,
 	roles Roles, pinger Pinger, metrics *Metrics,
 ) *http.Server {
@@ -192,5 +201,19 @@ func NewHTTPServer(c *conf.Server, logger *slog.Logger, user *service.UserServic
 	registerK8sGovernance(srv, k8sGov, logger)
 	// K8sStreamService（SSE）与 Web 终端（WebSocket）不经生成代码绑定，见 k8s.go。
 	registerK8sStreams(srv, k8sStream, k8sConf.GetAllowedOrigins(), logger)
+	knowledgev1.RegisterKnowledgeSpaceServiceHTTPServer(srv, kbSpace)
+	knowledgev1.RegisterKnowledgeServiceHTTPServer(srv, kbDoc)
+	knowledgev1.RegisterKnowledgeIngestServiceHTTPServer(srv, kbIngest)
+	knowledgev1.RegisterKnowledgeAdminServiceHTTPServer(srv, kbAdmin)
+	incidentv1.RegisterIncidentServiceHTTPServer(srv, incident.Incident)
+	incidentv1.RegisterIncidentConfigServiceHTTPServer(srv, incident.Config)
+	incidentv1.RegisterIncidentProposalServiceHTTPServer(srv, incident.Proposal)
+	incidentv1.RegisterIncidentUpdateServiceHTTPServer(srv, incident.Update)
+	incidentv1.RegisterIncidentPostmortemServiceHTTPServer(srv, incident.Postmortem)
+	incidentv1.RegisterIncidentStatsServiceHTTPServer(srv, incident.Stats)
+	incidentv1.RegisterIncidentOpenServiceHTTPServer(srv, incident.Open)
+	agentv1.RegisterAgentProfileServiceHTTPServer(srv, agent.Profile)
+	agentv1.RegisterAgentTaskServiceHTTPServer(srv, agent.Task)
+	agentv1.RegisterAgentStatsServiceHTTPServer(srv, agent.Stats)
 	return srv
 }

@@ -72,6 +72,17 @@ message ChatRequest {
     min_len: 1
     max_len: 4000
   }];
+  // context 页内助手上下文：用户正在查看的对象（如 knowledge_document）。服务端校验读权限后把该对象的
+  // 摘要拼进系统提示并预加载所属模块的工具；省略 = 普通对话。
+  optional ChatContext context = 3;
+}
+
+// ChatContext 页内助手上下文对象。
+message ChatContext {
+  // type 对象类型；当前支持 knowledge_document（知识文档）、incident（故障）。
+  string type = 1 [(buf.validate.field).string = {in: ["knowledge_document", "incident"]}];
+  // id 对象标识。
+  string id = 2 [(buf.validate.field).string.uuid = true];
 }
 
 // ChatResponse 占位：实际响应为 SSE 事件流，本消息不会被序列化返回。

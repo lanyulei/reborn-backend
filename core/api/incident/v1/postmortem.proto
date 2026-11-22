@@ -1,0 +1,329 @@
+syntax = "proto3";
+
+package incident.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "incident/v1/common.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/incident/v1;v1";
+
+// IncidentPostmortemService 复盘：结构化文档（草稿 → 完成生成不可变版本 → 修订）、AI 初稿、改进项与建单。
+service IncidentPostmortemService {
+  rpc GetPostmortem(GetPostmortemRequest) returns (PostmortemResponse) {
+    option (google.api.http) = {get: "/api/v1/incident/{id}/postmortem"};
+    option (system.v1.title) = "查询故障复盘";
+  }
+  // SavePostmortem 保存草稿（未完成时）或修订稿（完成后须先 Revise）。
+  rpc SavePostmortem(SavePostmortemRequest) returns (PostmortemResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/incident/{id}/postmortem"
+      body: "*"
+    };
+    option (system.v1.title) = "保存故障复盘";
+  }
+  // CompletePostmortem 标记完成：生成版本 vN+1 并锁定。
+  rpc CompletePostmortem(CompletePostmortemRequest) returns (PostmortemResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident/{id}/postmortem:complete"
+      body: "*"
+    };
+    option (system.v1.title) = "完成故障复盘";
+  }
+  // RevisePostmortem 进入修订：解锁为「复盘中」，再次完成生成新版本。
+  rpc RevisePostmortem(RevisePostmortemRequest) returns (PostmortemResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident/{id}/postmortem:revise"
+      body: "*"
+    };
+    option (system.v1.title) = "修订故障复盘";
+  }
+  rpc ListPostmortemVersions(ListPostmortemVersionsRequest) returns (ListPostmortemVersionsResponse) {
+    option (google.api.http) = {get: "/api/v1/incident/{id}/postmortem/version"};
+    option (system.v1.title) = "查询故障复盘版本";
+  }
+  // DraftPostmortem AI 生成复盘初稿（不落库）。
+  rpc DraftPostmortem(DraftPostmortemRequest) returns (PostmortemDocResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident/{id}/postmortem:draft"
+      body: "*"
+    };
+    option (system.v1.title) = "AI 生成故障复盘初稿";
+  }
+  // GenerateTimeline 系统生成时间线初稿（关键事件，去掉通知与系统噪声）。
+  rpc GenerateTimeline(GenerateTimelineRequest) returns (GenerateTimelineResponse) {
+    option (google.api.http) = {get: "/api/v1/incident/{id}/postmortem:timeline"};
+    option (system.v1.title) = "生成故障复盘时间线";
+  }
+  rpc ListActionItems(ListActionItemsRequest) returns (ListActionItemsResponse) {
+    option (google.api.http) = {get: "/api/v1/incident-action-item"};
+    option (system.v1.title) = "查询故障改进项";
+  }
+  rpc SaveActionItem(SaveActionItemRequest) returns (ActionItemResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident/{id}/action-item"
+      body: "*"
+    };
+    option (system.v1.title) = "保存故障改进项";
+  }
+  rpc DeleteActionItem(DeleteActionItemRequest) returns (EmptyPostmortemResponse) {
+    option (google.api.http) = {delete: "/api/v1/incident/{id}/action-item/{item_id}"};
+    option (system.v1.title) = "删除故障改进项";
+  }
+  // CreateActionItemTicket 改进项建单（幂等）。
+  rpc CreateActionItemTicket(CreateActionItemTicketRequest) returns (ActionItemResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident/{id}/action-item/{item_id}:ticket"
+      body: "*"
+    };
+    option (system.v1.title) = "故障改进项建单";
+  }
+}
+
+message EmptyPostmortemResponse {}
+
+// PostmortemDoc 复盘文档的章节。
+message PostmortemDoc {
+  // 概述。
+  string summary = 1 [(buf.validate.field).string.max_bytes = 16384];
+  // 影响。
+  string impact = 2 [(buf.validate.field).string.max_bytes = 16384];
+  // 时间线。
+  string timeline = 3 [(buf.validate.field).string.max_bytes = 32768];
+  // 根因分类编码。
+  string root_cause_code = 4 [(buf.validate.field).string.max_len = 32];
+  // 根因。
+  string root_cause = 5 [(buf.validate.field).string.max_bytes = 16384];
+  // 触发因素。
+  string trigger = 6 [(buf.validate.field).string.max_bytes = 8192];
+  // detection 检测方式：monitor / user / inspection / change / other。
+  string detection = 7 [(buf.validate.field).string.max_len = 32];
+  // 处理过程。
+  string handling = 8 [(buf.validate.field).string.max_bytes = 16384];
+  // 做得好的。
+  string went_well = 9 [(buf.validate.field).string.max_bytes = 8192];
+  // 待改进的。
+  string went_wrong = 10 [(buf.validate.field).string.max_bytes = 8192];
+}
+
+// Postmortem 复盘。
+message Postmortem {
+  // 故障 ID。
+  string incident_id = 1;
+  // status 0=不需要 1=待复盘 2=复盘中 3=已完成（与故障的 review_status 同口径）。
+  int32 status = 2;
+  // 复盘内容。
+  PostmortemDoc doc = 3;
+  // 当前版本号。
+  int32 current_version = 4;
+  // 复盘截止时间。
+  google.protobuf.Timestamp review_due = 5;
+  // 是否已超期。
+  bool overdue = 6;
+  // 最后修改人。
+  NamedRef update_user = 7;
+  // 更新时间。
+  google.protobuf.Timestamp update_time = 8;
+  // 改进项。
+  repeated ActionItem action_items = 9;
+  // can_edit 当前用户能否编辑（指挥 / 处理人 / 管理员）。
+  bool can_edit = 10;
+}
+
+message GetPostmortemRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+message PostmortemResponse {
+  // 复盘。
+  Postmortem postmortem = 1;
+}
+
+message SavePostmortemRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // 复盘内容（整体替换）。
+  PostmortemDoc doc = 2 [(buf.validate.field).required = true];
+}
+
+message CompletePostmortemRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // note 版本说明。
+  string note = 2 [(buf.validate.field).string.max_len = 255];
+}
+
+message RevisePostmortemRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// PostmortemVersion 不可变版本。
+message PostmortemVersion {
+  // 版本 ID。
+  string id = 1;
+  // 版本号。
+  int32 version = 2;
+  // 该版本内容。
+  PostmortemDoc doc = 3;
+  // 定稿说明。
+  string note = 4;
+  // 定稿人。
+  NamedRef creator = 5;
+  // 定稿时间。
+  google.protobuf.Timestamp create_time = 6;
+}
+
+message ListPostmortemVersionsRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+message ListPostmortemVersionsResponse {
+  // 版本列表（新的在前）。
+  repeated PostmortemVersion items = 1;
+}
+
+message DraftPostmortemRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+message PostmortemDocResponse {
+  // 复盘草稿。
+  PostmortemDoc doc = 1;
+}
+
+message GenerateTimelineRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+message GenerateTimelineResponse {
+  // text 时间线文本（Markdown 列表）。
+  string text = 1;
+}
+
+// ActionItem 改进项。
+message ActionItem {
+  // 改进项 ID。
+  string id = 1;
+  // 故障 ID。
+  string incident_id = 2;
+  // 故障编号。
+  string incident_number = 3;
+  // 标题。
+  string title = 4;
+  // kind 1=修复 2=预防 3=检测 4=流程。
+  int32 kind = 5;
+  // 负责人。
+  NamedRef owner = 6;
+  // due_date YYYY-MM-DD。
+  string due_date = 7;
+  // status 1=待完成 2=已完成。
+  int32 status = 8;
+  // 关联工单。
+  NamedRef ticket = 9;
+  // 工单编号。
+  string ticket_number = 10;
+  // 创建时间。
+  google.protobuf.Timestamp create_time = 11;
+  // 更新时间。
+  google.protobuf.Timestamp update_time = 12;
+  // 是否已超期。
+  bool overdue = 13;
+}
+
+message ListActionItemsRequest {
+  // 页码（从 1 起）。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // 每页条数（最多 100）。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // 故障 ID。
+  optional string incident_id = 3 [(buf.validate.field).string.uuid = true];
+  // 状态：1=待办 2=进行中 3=已完成 4=已取消。
+  optional int32 status = 4 [(buf.validate.field).int32 = {
+    in: [
+      1,
+      2
+    ]
+  }];
+  // 负责人用户 ID。
+  optional string owner_id = 5 [(buf.validate.field).string.uuid = true];
+  // 只看已超期的。
+  optional bool overdue = 6;
+}
+
+message ListActionItemsResponse {
+  // 改进项列表。
+  repeated ActionItem items = 1;
+  // 总数。
+  int64 total = 2;
+}
+
+message SaveActionItemRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // item_id 空 = 新建。
+  string item_id = 2 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+  // 标题。
+  string title = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 255
+  }];
+  // 类型：1=修复 2=预防 3=监控 4=流程。
+  int32 kind = 4 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 4
+  }];
+  // 负责人用户 ID。
+  string owner_id = 5 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+  // 截止日期（YYYY-MM-DD）。
+  string due_date = 6 [
+    (buf.validate.field).string.pattern = "^\\d{4}-\\d{2}-\\d{2}$",
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+  // 状态：1=待办 2=进行中 3=已完成 4=已取消。
+  int32 status = 7 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 2
+  }];
+}
+
+message DeleteActionItemRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // 改进项 ID。
+  string item_id = 2 [(buf.validate.field).string.uuid = true];
+}
+
+message CreateActionItemTicketRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // 改进项 ID。
+  string item_id = 2 [(buf.validate.field).string.uuid = true];
+  // 工单模板 ID。
+  string template_id = 3 [(buf.validate.field).string.uuid = true];
+  // 工单优先级。
+  int32 priority = 4 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 4
+  }];
+}
+
+message ActionItemResponse {
+  // 改进项。
+  ActionItem item = 1;
+}

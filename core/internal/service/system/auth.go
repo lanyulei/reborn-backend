@@ -22,11 +22,12 @@ type AuthService struct {
 	uc     *biz.AuthUsecase
 	authz  *biz.AuthzUsecase
 	avatar *biz.AvatarUsecase
+	users  *biz.UserUsecase
 }
 
 // NewAuthService new an AuthService.
-func NewAuthService(uc *biz.AuthUsecase, authz *biz.AuthzUsecase, avatar *biz.AvatarUsecase) *AuthService {
-	return &AuthService{uc: uc, authz: authz, avatar: avatar}
+func NewAuthService(uc *biz.AuthUsecase, authz *biz.AuthzUsecase, avatar *biz.AvatarUsecase, users *biz.UserUsecase) *AuthService {
+	return &AuthService{uc: uc, authz: authz, avatar: avatar, users: users}
 }
 
 // Login implements proto AuthService/Login：委托认证用例校验凭据并签发双令牌。
@@ -200,6 +201,19 @@ func truncate(s string) string {
 		s = s[:len(s)-1]
 	}
 	return s
+}
+
+// ChangeMyPassword implements proto AuthService/ChangeMyPassword：当前登录用户凭现密码修改密码；
+// 身份取自 claims，请求体里没有用户标识，改不了别人的。
+func (s *AuthService) ChangeMyPassword(ctx context.Context, req *v1.ChangeMyPasswordRequest) (*v1.ChangeMyPasswordResponse, error) {
+	userID, err := UserIDFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.users.ChangeMyPassword(ctx, userID, req.GetOldPassword(), req.GetNewPassword()); err != nil {
+		return nil, err
+	}
+	return &v1.ChangeMyPasswordResponse{}, nil
 }
 
 // UploadMyAvatar implements proto AuthService/UploadMyAvatar：当前登录用户自助上传头像。

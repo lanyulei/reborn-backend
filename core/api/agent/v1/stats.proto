@@ -1,0 +1,103 @@
+syntax = "proto3";
+
+package agent.v1;
+
+import "agent/v1/profile.proto";
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/agent/v1;v1";
+
+// AgentStatsService 运维 Agent 统计。时间范围至多 90 天。
+service AgentStatsService {
+  // GetAgentOverview 概览：任务数按终态、运行耗时、token 用量、申请自动的建议数、有用率、按 Profile 分布。
+  rpc GetAgentOverview(GetAgentOverviewRequest) returns (GetAgentOverviewResponse) {
+    option (google.api.http) = {get: "/api/v1/agent-stats/overview"};
+    option (system.v1.title) = "查询 Agent 统计概览";
+  }
+}
+
+// GetAgentOverviewRequest 概览请求。
+message GetAgentOverviewRequest {
+  // start_time 起点（含），缺省近 7 天。
+  google.protobuf.Timestamp start_time = 1;
+  // end_time 终点（不含），缺省现在。
+  google.protobuf.Timestamp end_time = 2;
+  // profile_id Profile 过滤，可选。
+  string profile_id = 3 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+}
+
+// StatusCount 某状态的任务数。
+message StatusCount {
+  // status 状态。
+  string status = 1;
+  // count 任务数。
+  int32 count = 2;
+}
+
+// ProfileStat 一个 Profile 的统计。
+message ProfileStat {
+  // profile Profile 引用。
+  AgentNamedRef profile = 1;
+  // tasks 任务数。
+  int32 tasks = 2;
+  // succeeded 产出发现的运行数。
+  int32 succeeded = 3;
+  // no_finding 无结论的运行数。
+  int32 no_finding = 4;
+  // failed 失败的运行数。
+  int32 failed = 5;
+  // helpful 评价为有用的运行数。
+  int32 helpful = 6;
+  // unhelpful 评价为无用的运行数。
+  int32 unhelpful = 7;
+  // prompt_tokens prompt token 用量。
+  int64 prompt_tokens = 8;
+  // completion_tokens completion token 用量。
+  int64 completion_tokens = 9;
+  // avg_duration_s 平均耗时（秒）。
+  double avg_duration_s = 10;
+}
+
+// GetAgentOverviewResponse 概览响应。
+message GetAgentOverviewResponse {
+  // tasks_by_status 任务数按状态。
+  repeated StatusCount tasks_by_status = 1;
+  // runs 运行总数。
+  int32 runs = 2;
+  // succeeded 产出发现的运行数。
+  int32 succeeded = 3;
+  // no_finding 无结论的运行数。
+  int32 no_finding = 4;
+  // failed 失败的运行数。
+  int32 failed = 5;
+  // avg_duration_s 平均耗时（秒）。
+  double avg_duration_s = 6;
+  // p95_duration_s P95 耗时（秒）。
+  double p95_duration_s = 7;
+  // prompt_tokens prompt token 用量。
+  int64 prompt_tokens = 8;
+  // completion_tokens completion token 用量。
+  int64 completion_tokens = 9;
+  // proposals 提出的建议数。
+  int32 proposals = 10;
+  // auto_eligible 申请自动通过的建议数。
+  int32 auto_eligible = 11;
+  // helpful 评价为有用的运行数。
+  int32 helpful = 12;
+  // unhelpful 评价为无用的运行数。
+  int32 unhelpful = 13;
+  // by_profile 按 Profile 分布。
+  repeated ProfileStat by_profile = 14;
+  // today_tasks 今日任务数。
+  int32 today_tasks = 15;
+  // today_prompt_tokens 今日 prompt token 用量（对照日预算）。
+  int64 today_prompt_tokens = 16;
+  // daily_prompt_budget 全局日 prompt token 预算。
+  int64 daily_prompt_budget = 17;
+}

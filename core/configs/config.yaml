@@ -72,6 +72,42 @@ assistant:
   tool_timeout: 5s
   max_steps: 20
   max_concurrent_runs: 8
+knowledge:
+  # 知识库：向量化服务（OpenAI 兼容 /v1/embeddings）。与 assistant 的对话模型分离（通常不是同一供应商）。
+  # api_key 由环境变量注入（env.NewSource("KRATOS") 去掉 KRATOS_ 前缀后注入为 KNOWLEDGE_EMBEDDING_API_KEY 键）：
+  #   export KRATOS_KNOWLEDGE_EMBEDDING_API_KEY=...
+  # 未设置时不向量化，检索只走全文；数据库未安装 pgvector 时同样只走全文（启动日志会提示）。
+  # 向量维度固定 1024（bge-m3 / text-embedding-v3 的缺省维度）；换模型后在「知识库管理」里重建索引。
+  embedding:
+    base_url: https://api.siliconflow.cn/v1
+    api_key: ${KNOWLEDGE_EMBEDDING_API_KEY:}
+    model: BAAI/bge-m3
+    batch_size: 32
+    timeout: 30s
+  # 检索日志保留期（protojson 秒格式）；缺省 90 天。
+  search_log_retention: 7776000s
+  # 单实例同时处理的索引任务数；缺省 2。
+  index_concurrency: 2
+agent:
+  # 运维 Agent：以机器账号对故障做无人值守诊断，并按预案提出处置建议（设计见 backend/docs/ops-agent-functional-design.md）。
+  # 模型接入与工具执行回环沿用 assistant 段；assistant.api_key 为空时即使 enabled 也不可用。
+  enabled: true
+  # 单任务时限（Profile 预算未设置时的缺省；protojson 秒格式）、最多模型调用次数、单实例并发任务数。
+  task_timeout: 480s
+  max_steps: 20
+  max_concurrent_tasks: 3
+  # 全局日 token 预算：耗尽后新任务直接过期并通知管理员角色；上线前的保守值，回放评估后按用量重设。
+  daily_prompt_token_budget: 2000000
+  daily_completion_token_budget: 300000
+  # 按工具（proto full method）的回环调用超时覆盖：日志 / 诊断类接口更长，其余沿用 assistant.tool_timeout。
+  tool_timeout_overrides:
+    "/job.v1.JobExecutionService/GetJobExecutionLog": 15s
+    "/k8s.v1.K8sInsightService/DiagnosePod": 15s
+    "/k8s.v1.K8sInsightService/DiagnoseWorkload": 15s
+  # 运行记录及其助手会话的保留期（90 天）；排队超时；失败重试退避序列（长度即最多重试次数）。
+  retention: 7776000s
+  queue_ttl: 600s
+  retry_backoff: [30s, 120s, 600s]
 monitor:
   # 前端站点地址（如 https://ops.example.com）。非空时告警通知里的详情链接为
   # <site_url>/monitor/alert/<id>；留空则是站内相对路径（通知渠道里点不开，只适合站内消息）。

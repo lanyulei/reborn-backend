@@ -28,13 +28,33 @@ lint:
       - api/monitor/v1/error_reason.proto
       - api/job/v1/error_reason.proto
       - api/k8s/v1/error_reason.proto
+      - api/incident/v1/error_reason.proto
+      - api/knowledge/v1/error_reason.proto
+      - api/agent/v1/error_reason.proto
     # 由 core 转发给容器平台数据面的接口：响应体是数据面返回的 JSON，原样透传（google.api.HttpBody）。
     RPC_RESPONSE_STANDARD_NAME:
+      - api/incident/v1/incident.proto
+      - api/incident/v1/config.proto
+      - api/incident/v1/proposal.proto
+      - api/incident/v1/update.proto
+      - api/incident/v1/postmortem.proto
+      - api/incident/v1/stats.proto
+      - api/incident/v1/open.proto
       - api/k8s/v1/resource.proto
       - api/k8s/v1/helm.proto
       - api/k8s/v1/workload.proto
       - api/k8s/v1/insight.proto
+    RPC_REQUEST_STANDARD_NAME:
+      - api/incident/v1/incident.proto
+      - api/incident/v1/stats.proto
     RPC_REQUEST_RESPONSE_UNIQUE:
+      - api/incident/v1/incident.proto
+      - api/incident/v1/config.proto
+      - api/incident/v1/proposal.proto
+      - api/incident/v1/update.proto
+      - api/incident/v1/postmortem.proto
+      - api/incident/v1/stats.proto
+      - api/incident/v1/open.proto
       - api/k8s/v1/resource.proto
       - api/k8s/v1/helm.proto
       - api/k8s/v1/workload.proto

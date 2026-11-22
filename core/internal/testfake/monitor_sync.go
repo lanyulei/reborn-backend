@@ -373,6 +373,18 @@ func (v monitorActionView) held(a *biz.AlertAction) *MonitorActionRow {
 	return nil
 }
 
+// Renew implements biz.ActionRepo.
+func (v monitorActionView) Renew(_ context.Context, a *biz.AlertAction, lease time.Duration) (bool, error) {
+	v.s.mu.Lock()
+	defer v.s.mu.Unlock()
+	row := v.held(a)
+	if row == nil {
+		return false, nil
+	}
+	row.NextTime = v.s.Now().Add(lease)
+	return true, nil
+}
+
 // FinishTx implements biz.ActionRepo.
 func (v monitorActionView) FinishTx(_ context.Context, _ txrun.Tx, a *biz.AlertAction, status int32, note string) (bool, error) {
 	v.s.mu.Lock()

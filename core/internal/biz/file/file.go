@@ -116,10 +116,10 @@ type BindRepo interface {
 
 // PurgeRepo 是后台清理仓储接口。
 type PurgeRepo interface {
-	// PurgeExpired 领取一批待清理文件（过期临时文件 / 超过保留期的软删文件），
-	// 对每个文件先调用 remove 删除对象，成功的物理删除元数据行，失败的记下时间、
+	// PurgeExpired 领取一批待清理文件（过期临时文件 / 超过保留期的软删文件）并打上领取标记，
+	// 事务外对每个文件调用 remove 删除对象，成功的物理删除元数据行，失败的保留领取标记、
 	// retryAfter 之内不再领取（坏行不会堵住队列）；返回成功清理的条数。
-	// 多实例并发安全：领取使用 SKIP LOCKED，同一行不会被两个实例同时处理。
+	// 多实例并发安全：领取使用 SKIP LOCKED + 领取标记，同一行不会被两个实例同时处理。
 	PurgeExpired(ctx context.Context, tempBefore, deletedBefore time.Time, retryAfter time.Duration, limit int, remove func(ctx context.Context, f *File) error) (int, error)
 }
 

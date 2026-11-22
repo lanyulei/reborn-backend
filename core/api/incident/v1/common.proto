@@ -1,0 +1,259 @@
+syntax = "proto3";
+
+package incident.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/incident/v1;v1";
+
+// 等级：1=S1 致命 2=S2 严重 3=S3 一般 4=S4 轻微（数字越小越严重）。
+// 状态：1=待响应 2=处理中 3=已缓解 4=已恢复 5=已关闭 6=已合并。
+// 复盘状态：0=不需要 1=待复盘 2=复盘中 3=已完成。
+// 来源：1=手动 2=触发规则 3=开放接口 4=Agent。
+// 操作者类型：1=用户 2=系统 3=Agent。
+
+// NamedRef 被引用对象的 ID 与显示名。
+message NamedRef {
+  // id 对象唯一标识。
+  string id = 1;
+  // name 显示名；对象已不存在时为空。
+  string name = 2;
+  // missing 对象已被删除或不可用。
+  bool missing = 3;
+}
+
+// LabelMatcher 一行告警标签匹配条件（语法与监控告警域一致）；多行之间是「并且」。
+message LabelMatcher {
+  // label 标签名。
+  string label = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+  // op 操作符：== / != / =~ / !~ / in / not in。
+  string op = 2 [(buf.validate.field).string = {
+    in: [
+      "==",
+      "!=",
+      "=~",
+      "!~",
+      "in",
+      "not in"
+    ]
+  }];
+  // value == / != / =~ / !~ 时使用。
+  string value = 3 [(buf.validate.field).string.max_len = 1024];
+  // values in / not in 时使用，1-50 个。
+  repeated string values = 4 [(buf.validate.field).repeated = {
+    max_items: 50
+    items: {
+      string: {max_len: 256}
+    }
+  }];
+}
+
+// Business 业务字典的一条。
+message Business {
+  // id 业务唯一标识。
+  string id = 1;
+  // code 业务编码（创建后不可改）。
+  string code = 2;
+  // name 名称。
+  string name = 3;
+  // description 说明。
+  string description = 4;
+  // owner 负责人。
+  NamedRef owner = 5;
+  // schedule 缺省值班表（指挥来源）。
+  NamedRef schedule = 6;
+  // groups 缺省通知群标识。
+  repeated string groups = 7;
+  // ci 可选关联的 CMDB 资源。
+  NamedRef ci = 8;
+  // label_values 匹配标签值。
+  repeated string label_values = 9;
+  // sort 顺序，越小越靠前。
+  int32 sort = 10;
+  // enabled 是否启用。
+  bool enabled = 11;
+  // version 乐观锁版本号。
+  int32 version = 12;
+  // create_time / update_time 时间。
+  google.protobuf.Timestamp create_time = 13;
+  // 更新时间。
+  google.protobuf.Timestamp update_time = 14;
+}
+
+// BusinessSpec 业务的可编辑内容。
+message BusinessSpec {
+  // code 业务编码，1-64 字符：小写字母开头，小写字母 / 数字 / 下划线 / 中划线。
+  string code = 1 [(buf.validate.field).string = {
+    pattern: "^[a-z][a-z0-9_-]{0,63}$"
+  }];
+  // name 名称，1-128 字符。
+  string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+  // description 说明，至多 255 字符。
+  string description = 3 [(buf.validate.field).string.max_len = 255];
+  // owner_id 负责人，可空。
+  string owner_id = 4 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+  // schedule_id 缺省值班表，可空。
+  string schedule_id = 5 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+  // groups 通知群标识（$ 开头，如 $group:ops；对应通知管理里群机器人渠道的群），至多 10 个。
+  repeated string groups = 6 [(buf.validate.field).repeated = {
+    max_items: 10
+    unique: true
+    items: {
+      string: {pattern: "^\\$[A-Za-z0-9:_.-]{1,63}$"}
+    }
+  }];
+  // ci_id 关联的 CMDB 资源，可空。
+  string ci_id = 7 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+  // label_values 匹配标签值，至多 50 个。
+  repeated string label_values = 8 [(buf.validate.field).repeated = {
+    max_items: 50
+    unique: true
+    items: {
+      string: {
+        min_len: 1
+        max_len: 256
+      }
+    }
+  }];
+  // sort 顺序。
+  int32 sort = 9 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 100000
+  }];
+  // enabled 是否启用。
+  bool enabled = 10;
+}
+
+// SeveritySetting 一个等级的响应要求（分钟为单位；0 = 不要求）。
+message SeveritySetting {
+  // respond_m 响应时限（分钟）：开启后超过它仍未进入处理中则升级。
+  int32 respond_m = 1 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 1440
+  }];
+  // stale_m 无进展提醒间隔（分钟）：处理中超过它没有新公告或备注则提醒指挥。
+  int32 stale_m = 2 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 1440
+  }];
+  // first_update_m 首条公告时限（分钟）。
+  int32 first_update_m = 3 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 1440
+  }];
+  // review_days 复盘期限（恢复后多少个工作日）；0 = 不要求复盘。
+  int32 review_days = 4 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 60
+  }];
+  // allow_auto_resolve 是否允许触发规则自动恢复。
+  bool allow_auto_resolve = 5;
+  // allow_auto_approve 是否允许低风险动作建议自动批准。
+  bool allow_auto_approve = 6;
+}
+
+// RootCause 根因分类。
+message RootCause {
+  // code 编码。
+  string code = 1 [(buf.validate.field).string = {
+    pattern: "^[a-z][a-z0-9_]{0,31}$"
+  }];
+  // name 名称。
+  string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+}
+
+// Settings 故障管理设置（单例）。
+message Settings {
+  // severities 各等级的响应要求，键 1-4。
+  map<int32, SeveritySetting> severities = 1;
+  // root_causes 根因分类。
+  repeated RootCause root_causes = 2 [(buf.validate.field).repeated.max_items = 50];
+  // fallback_schedule_id 兜底值班表：业务未绑值班表或值班表空档时的指挥来源。
+  string fallback_schedule_id = 3 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+  // storm_threshold 同一规则 1 分钟内开出的故障数超过它即风暴归并。
+  int32 storm_threshold = 4 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // candidate_ttl_m 候选故障保留时长（分钟）。
+  int32 candidate_ttl_m = 5 [(buf.validate.field).int32 = {
+    gte: 5
+    lte: 1440
+  }];
+  // reopen_window_h 重开窗口（小时）。
+  int32 reopen_window_h = 6 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 720
+  }];
+  // auto_close_days S3/S4 无复盘要求的故障恢复后自动关闭的天数。
+  int32 auto_close_days = 7 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 90
+  }];
+  // personal_events 个人收到通知的事件动作段（opened / assigned / escalated / stale / proposal / review_due…）。
+  repeated string personal_events = 8 [(buf.validate.field).repeated = {
+    max_items: 20
+    items: {
+      string: {max_len: 32}
+    }
+  }];
+  // proposal_ttl_m 动作建议的过期时间（分钟）。
+  int32 proposal_ttl_m = 9 [(buf.validate.field).int32 = {
+    gte: 5
+    lte: 1440
+  }];
+  // verify_window_m 动作执行后的验证窗口（分钟）。
+  int32 verify_window_m = 10 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 120
+  }];
+  // change_lookback_h 变更关联回看小时数。
+  int32 change_lookback_h = 11 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 168
+  }];
+  // agent_max_findings 单条故障内 Agent 发现的条数上限。
+  int32 agent_max_findings = 12 [(buf.validate.field).int32 = {
+    gte: 10
+    lte: 1000
+  }];
+  // agent_auto_cooldown_m Agent 建议自动通过的冷却：同一资源同一预案步骤在此分钟数内自动执行过则转人工，1-1440，缺省 30。
+  int32 agent_auto_cooldown_m = 14 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 1440
+  }];
+  // agent_auto_max_running 全局同时自动执行中的 Agent 建议上限，0 = 缺省 5。
+  int32 agent_auto_max_running = 15 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 100
+  }];
+  // agent_auto_max_running_per_business 同一业务同时自动执行中的 Agent 建议上限，0 = 缺省 2。
+  int32 agent_auto_max_running_per_business = 16 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 100
+  }];
+  // version 乐观锁版本号（读取时返回；保存时原样传回）。
+  int32 version = 20;
+}

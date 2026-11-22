@@ -77,7 +77,7 @@ func TestMakeTitle(t *testing.T) {
 
 func TestBuildSystemPrompt(t *testing.T) {
 	t.Parallel()
-	p := buildSystemPrompt("admin", "管理员", true, false)
+	p := buildSystemPrompt("admin", "管理员", true, false, false)
 	if !strings.Contains(p, "admin（管理员）") || !strings.Contains(p, "超级管理员") {
 		t.Fatalf("prompt missing actor info: %s", p)
 	}

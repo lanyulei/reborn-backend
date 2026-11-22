@@ -59,6 +59,25 @@ type relationSide struct {
 
 // lockCardinalitySides 事务内对待写关系的受约束端加事务级 advisory lock（键排序，防死锁），
 // 返回这些端供写入后复核。one_to_one 两端受约束；one_to_many 仅 dst 端。
+// lockLiveCIs 对关系两端的资源行取共享锁并确认都未删除：与资源删除（ciRepo.SoftDelete 先 FOR UPDATE 再数
+// 关系）互斥，关系不会挂到刚被删除的资源上、资源也不会在数到 0 之后又被关联上。任一端不存在或已删除
+// 返回 ErrCINotFound。
+func lockLiveCIs(ctx context.Context, tx pgx.Tx, ids []string) error {
+	ids = slices.Compact(slices.Sorted(slices.Values(ids)))
+	rows, err := tx.Query(ctx, "SELECT id::text FROM cmdb_ci WHERE id = ANY($1::uuid[]) AND delete_time IS NULL ORDER BY id FOR SHARE", dbx.TextArray(ids))
+	if err != nil {
+		return fmt.Errorf("lock cmdb relation ends: %w", err)
+	}
+	live, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return fmt.Errorf("lock cmdb relation ends: %w", err)
+	}
+	if len(live) != len(ids) {
+		return biz.ErrCINotFound
+	}
+	return nil
+}
+
 func lockCardinalitySides(ctx context.Context, tx pgx.Tx, rels []*biz.Relation) ([]relationSide, error) {
 	cardinality := map[string]string{}
 	var sides []relationSide
@@ -112,6 +131,13 @@ func (r *relationRepo) Create(ctx context.Context, rel *biz.Relation, histories 
 // CreateBatch implements biz.RelationRepo（单事务）。
 func (r *relationRepo) CreateBatch(ctx context.Context, rels []*biz.Relation, histories []*biz.History) error {
 	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+		ends := make([]string, 0, len(rels)*2)
+		for _, rel := range rels {
+			ends = append(ends, rel.SrcID, rel.DstID)
+		}
+		if err := lockLiveCIs(ctx, tx, ends); err != nil {
+			return err
+		}
 		sides, err := lockCardinalitySides(ctx, tx, rels)
 		if err != nil {
 			return err
@@ -152,6 +178,9 @@ func (r *relationRepo) Delete(ctx context.Context, typeCode, srcID, dstID string
 // Move implements biz.RelationRepo（解除 + 建立同事务）。
 func (r *relationRepo) Move(ctx context.Context, typeCode string, old, next *biz.Relation, histories []*biz.History) error {
 	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+		if err := lockLiveCIs(ctx, tx, []string{next.SrcID, next.DstID}); err != nil {
+			return err
+		}
 		sides, err := lockCardinalitySides(ctx, tx, []*biz.Relation{next})
 		if err != nil {
 			return err
@@ -171,6 +200,16 @@ func (r *relationRepo) Move(ctx context.Context, typeCode string, old, next *biz
 
 // ListRelated implements biz.RelationRepo：按方向连接对端资源，对端名称关键字过滤。
 func (r *relationRepo) ListRelated(ctx context.Context, ciID, typeCode, direction, keyword string, page, pageSize int64) ([]*biz.RelatedCI, int64, error) {
+	return r.listRelated(ctx, ciID, typeCode, direction, keyword, nil, nil, page, pageSize)
+}
+
+// ListRelatedIn implements biz.RelationRepo.
+func (r *relationRepo) ListRelatedIn(ctx context.Context, ciID, typeCode, direction, keyword string, modelCodes, envs []string, page, pageSize int64) ([]*biz.RelatedCI, int64, error) {
+	return r.listRelated(ctx, ciID, typeCode, direction, keyword, modelCodes, envs, page, pageSize)
+}
+
+// listRelated 关联列表；modelCodes / envs 非 nil 时对端按其过滤（空集合即无结果）。
+func (r *relationRepo) listRelated(ctx context.Context, ciID, typeCode, direction, keyword string, modelCodes, envs []string, page, pageSize int64) ([]*biz.RelatedCI, int64, error) {
 	self, other := "r.src_id", "r.dst_id"
 	if direction == biz.DirectionIncoming {
 		self, other = "r.dst_id", "r.src_id"
@@ -180,6 +219,14 @@ func (r *relationRepo) ListRelated(ctx context.Context, ciID, typeCode, directio
 	if keyword != "" {
 		args = append(args, dbx.LikeContains(keyword))
 		where += " AND c.name ILIKE $" + strconv.Itoa(len(args))
+	}
+	if modelCodes != nil {
+		args = append(args, dbx.TextArray(modelCodes))
+		where += " AND c.model_code = ANY($" + strconv.Itoa(len(args)) + ")"
+	}
+	if envs != nil {
+		args = append(args, dbx.TextArray(envs))
+		where += " AND c.env = ANY($" + strconv.Itoa(len(args)) + ")"
 	}
 	from := " FROM cmdb_relation r JOIN cmdb_ci c ON c.id = " + other + " JOIN cmdb_model m ON m.code = c.model_code" + ciJoinSource + "WHERE "
 	var total int64

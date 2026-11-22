@@ -20,11 +20,14 @@ import (
 	"github.com/go-kratos/kratos/v3/errors"
 	"github.com/google/wire"
 
+	bizagent "github.com/lanyulei/reborn/backend/core/internal/biz/agent"
 	bizassistant "github.com/lanyulei/reborn/backend/core/internal/biz/assistant"
 	bizcmdb "github.com/lanyulei/reborn/backend/core/internal/biz/cmdb"
 	bizfile "github.com/lanyulei/reborn/backend/core/internal/biz/file"
+	bizincident "github.com/lanyulei/reborn/backend/core/internal/biz/incident"
 	bizjob "github.com/lanyulei/reborn/backend/core/internal/biz/job"
 	bizk8s "github.com/lanyulei/reborn/backend/core/internal/biz/k8s"
+	bizknowledge "github.com/lanyulei/reborn/backend/core/internal/biz/knowledge"
 	bizmonitor "github.com/lanyulei/reborn/backend/core/internal/biz/monitor"
 	biznotify "github.com/lanyulei/reborn/backend/core/internal/biz/notify"
 	bizoncall "github.com/lanyulei/reborn/backend/core/internal/biz/oncall"
@@ -117,12 +120,53 @@ var ProviderSet = wire.NewSet(
 	// 变更审批：审批就是一张工单（ticket / workflow 域），免审批权限与自助授权角色由 system 域提供
 	// （单向依赖 k8s → ticket / workflow / system；适配器见 k8s_change.go）。
 	NewK8sChangeTickets, NewK8sTicketViewers, NewK8sTicketNotes, NewK8sBypassChecker, NewK8sSelfRoles, NewK8sChangeSiteURL,
+	// 知识库域：启用角色 / 组织目录 / 角色目录由 system 域提供，附件经 file 域，AI 摘要复用监控域的摘要适配器，
+	// 通知事件经 notify 的 NotificationWriter 写入；助手的页内上下文由知识库的文档用例提供
+	// （单向依赖 knowledge → system / file / notify；assistant → knowledge 只经窄接口）。
+	bizknowledge.ProviderSet,
+	wire.Bind(new(bizknowledge.RoleSource), new(*bizsystem.AuthzUsecase)),
+	wire.Bind(new(bizknowledge.Directory), new(*bizsystem.DirectoryUsecase)),
+	wire.Bind(new(bizknowledge.Files), new(*bizfile.Usecase)),
+	NewKnowledgeRoles,
+	NewKnowledgeSummarizer,
+	// 故障管理域：组织目录 / 管理员 / 接口权限由 system 域提供，值班与值班表由 oncall 域提供，告警与匹配器复用
+	// 监控域，资源与拓扑经 cmdb 域，变更来源来自 job / workflow / k8s，工单 / 流程 / 作业以代理执行人身份经各域
+	// 用例（其权限与风险门禁照常生效），AI 摘要复用监控域的摘要适配器（适配器见 incident_adapters.go；
+	// 单向依赖 incident → 各域）。
+	bizincident.ProviderSet,
+	IncidentProviderSet,
+	wire.Bind(new(bizincident.DeptLeaders), new(*bizsystem.DirectoryUsecase)),
+	// 助手页内上下文：知识库文档与故障各自实现，按对象类型分发（assistant → knowledge / incident 只经窄接口）。
+	NewAssistantContextProviders,
+	// 运维 Agent 域：无人值守运行 / 会话 / 工具目录 / 回环执行器复用 assistant，机器账号与权限由 system 提供，故障快照与成员
+	// 判定由 incident 提供，自监控事件经 notify 写入；incident → agent 的入队窄接口只依赖任务仓储（适配器见 agent_adapters.go）。
+	bizagent.ProviderSet,
+	AgentProviderSet,
 )
+
+// assistantContexts 按对象类型把助手的页内上下文请求分发到持有该对象的业务域。
+type assistantContexts struct {
+	knowledge *bizknowledge.DocumentUsecase
+	incidents *bizincident.IncidentUsecase
+}
+
+// NewAssistantContextProviders 装配助手页内上下文提供者（对象类型 → 业务域）。
+func NewAssistantContextProviders(knowledge *bizknowledge.DocumentUsecase, incidents *bizincident.IncidentUsecase) bizassistant.ContextProvider {
+	return assistantContexts{knowledge: knowledge, incidents: incidents}
+}
+
+// DescribeContext implements bizassistant.ContextProvider.
+func (p assistantContexts) DescribeContext(ctx context.Context, userID, typ, id string) (module, text string, err error) {
+	if typ == bizincident.ContextType {
+		return p.incidents.DescribeContext(ctx, userID, typ, id)
+	}
+	return p.knowledge.DescribeContext(ctx, userID, typ, id)
+}
 
 // NewFileAccessCheckers 装配附件访问检查器（业务类型 → 检查器）：持有附件的业务域
 // 在此登记自己的检查器；未登记的业务类型其附件一律不可读（deny-by-default）。
-func NewFileAccessCheckers(tickets *bizticket.FileAccess) bizfile.AccessCheckers {
-	return bizfile.AccessCheckers{bizticket.BusinessType: tickets}
+func NewFileAccessCheckers(tickets *bizticket.FileAccess, knowledge *bizknowledge.FileAccess, incidents *bizincident.FileAccess) bizfile.AccessCheckers {
+	return bizfile.AccessCheckers{bizticket.BusinessType: tickets, bizknowledge.BusinessType: knowledge, bizincident.BusinessType: incidents}
 }
 
 // NewWorkflowListeners 装配流程事件监听器（业务类型 → 监听器）：基于流程引擎的业务域

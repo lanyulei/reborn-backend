@@ -477,6 +477,16 @@ func (r *instanceRepo) ListInstances(ctx context.Context, filter biz.InstanceFil
 	default:
 		add("business_type = $", filter.BusinessType)
 	}
+	if len(filter.BusinessIDs) > 0 {
+		add("business_id = ANY($", dbx.TextArray(filter.BusinessIDs))
+		where[len(where)-1] += ")"
+	}
+	if filter.StartAfter != nil {
+		add("start_time >= $", *filter.StartAfter)
+	}
+	if filter.StartBefore != nil {
+		add("start_time < $", *filter.StartBefore)
+	}
 	whereClause := strings.Join(where, " AND ")
 	var total int64
 	if err := r.data.Pool.QueryRow(ctx, "SELECT count(*) FROM workflow_instance WHERE "+whereClause, args...).Scan(&total); err != nil {

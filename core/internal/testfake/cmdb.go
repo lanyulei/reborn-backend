@@ -634,6 +634,19 @@ func (v cmdbCIView) Get(_ context.Context, id string) (*biz.CI, error) {
 	return cloneCI(&e.ci), nil
 }
 
+// GetByIDs implements biz.CIRepo：不存在 / 已删除的 ID 略过。
+func (v cmdbCIView) GetByIDs(_ context.Context, ids []string) ([]*biz.CI, error) {
+	v.s.mu.RLock()
+	defer v.s.mu.RUnlock()
+	out := make([]*biz.CI, 0, len(ids))
+	for _, id := range ids {
+		if e, ok := v.s.cis[id]; ok && !e.deleted {
+			out = append(out, cloneCI(&e.ci))
+		}
+	}
+	return out, nil
+}
+
 func (v cmdbCIView) GetByName(_ context.Context, modelCode, name string) (*biz.CI, error) {
 	v.s.mu.RLock()
 	defer v.s.mu.RUnlock()
@@ -779,6 +792,16 @@ func (v cmdbCIView) SoftDelete(_ context.Context, id string, _ time.Time, h *biz
 	e, ok := v.s.cis[id]
 	if !ok || e.deleted {
 		return biz.ErrCINotFound
+	}
+	// 对齐 data 层：仍有关系时拒绝（同一把锁内判定）。
+	var relations int64
+	for _, r := range v.s.relations {
+		if r.SrcID == id || r.DstID == id {
+			relations++
+		}
+	}
+	if relations > 0 {
+		return biz.CIInUse(relations)
 	}
 	e.deleted = true
 	e.ci.UpdateTime = time.Now()
@@ -946,6 +969,15 @@ func (v cmdbRelationView) Move(_ context.Context, typeCode string, old, next *bi
 }
 
 func (v cmdbRelationView) ListRelated(_ context.Context, ciID, typeCode, direction, keyword string, page, pageSize int64) ([]*biz.RelatedCI, int64, error) {
+	return v.listRelated(ciID, typeCode, direction, keyword, nil, nil, page, pageSize)
+}
+
+// ListRelatedIn implements biz.RelationRepo.
+func (v cmdbRelationView) ListRelatedIn(_ context.Context, ciID, typeCode, direction, keyword string, modelCodes, envs []string, page, pageSize int64) ([]*biz.RelatedCI, int64, error) {
+	return v.listRelated(ciID, typeCode, direction, keyword, modelCodes, envs, page, pageSize)
+}
+
+func (v cmdbRelationView) listRelated(ciID, typeCode, direction, keyword string, modelCodes, envs []string, page, pageSize int64) ([]*biz.RelatedCI, int64, error) {
 	v.s.mu.RLock()
 	items := make([]*biz.RelatedCI, 0, 8)
 	for id, r := range v.s.relations {
@@ -963,6 +995,9 @@ func (v cmdbRelationView) ListRelated(_ context.Context, ciID, typeCode, directi
 		}
 		e, ok := v.s.cis[other]
 		if !ok || e.deleted || (keyword != "" && !strings.Contains(e.ci.Name, keyword)) {
+			continue
+		}
+		if (modelCodes != nil && !slices.Contains(modelCodes, e.ci.ModelCode)) || (envs != nil && !slices.Contains(envs, e.ci.Env)) {
 			continue
 		}
 		items = append(items, &biz.RelatedCI{RelationID: id, CI: cloneCI(&e.ci)})

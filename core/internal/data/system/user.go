@@ -35,6 +35,7 @@ type userPO struct {
 	gender     string
 	isAdmin    bool
 	status     int16
+	kind       int16
 	avatar     string
 	createTime time.Time
 	updateTime time.Time
@@ -43,6 +44,7 @@ type userPO struct {
 // toEntity 将 PO 转换为领域模型（DO）；NULL 归一为空串（DO 约定：空串=未填写）。
 func (p userPO) toEntity() biz.User {
 	u := biz.User{
+		Kind:       int32(p.kind),
 		ID:         p.id,
 		Username:   p.username,
 		Nickname:   p.nickname,
@@ -67,7 +69,7 @@ func (p userPO) toEntity() biz.User {
 func scanUser(scan func(dest ...any) error) (*biz.User, error) {
 	var p userPO
 	if err := scan(&p.id, &p.username, &p.nickname, &p.email, &p.phone,
-		&p.gender, &p.isAdmin, &p.status, &p.avatar, &p.createTime, &p.updateTime); err != nil {
+		&p.gender, &p.isAdmin, &p.status, &p.kind, &p.avatar, &p.createTime, &p.updateTime); err != nil {
 		return nil, err
 	}
 	u := p.toEntity()
@@ -75,7 +77,7 @@ func scanUser(scan func(dest ...any) error) (*biz.User, error) {
 }
 
 // userSelectColumns 是用户查询列序，与 scanUser 一一对应。
-const userSelectColumns = "id, username, nickname, email, phone, gender, is_admin, status, avatar, create_time, update_time"
+const userSelectColumns = "id, username, nickname, email, phone, gender, is_admin, status, kind, avatar, create_time, update_time"
 
 // userRepo 是用户仓储的 PostgreSQL 实现：手写参数化 SQL，无 ORM/反射。
 type userRepo struct {
@@ -127,10 +129,10 @@ func (r *userRepo) GetUserByUsername(ctx context.Context, username string) (*biz
 		password string
 	)
 	err := r.data.Pool.QueryRow(ctx,
-		`SELECT id, username, password, nickname, email, phone, gender, is_admin, status, create_time, update_time
+		`SELECT id, username, password, nickname, email, phone, gender, is_admin, status, kind, create_time, update_time
 		 FROM "system_user" WHERE username = $1 AND delete_time IS NULL`, username).
 		Scan(&p.id, &p.username, &password, &p.nickname, &p.email, &p.phone,
-			&p.gender, &p.isAdmin, &p.status, &p.createTime, &p.updateTime)
+			&p.gender, &p.isAdmin, &p.status, &p.kind, &p.createTime, &p.updateTime)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, biz.ErrUserNotFound
@@ -162,6 +164,10 @@ func (r *userRepo) ListUsers(ctx context.Context, filter biz.UserFilter, page, p
 	if filter.DeptID != "" {
 		args = append(args, filter.DeptID)
 		where = append(where, userDeptFilter(strconv.Itoa(len(args)), filter.IncludeSubDepts))
+	}
+	if filter.Kind != nil {
+		args = append(args, *filter.Kind)
+		where = append(where, "kind = $"+strconv.Itoa(len(args)))
 	}
 	whereClause := strings.Join(where, " AND ")
 
@@ -210,14 +216,22 @@ func userDeptFilter(n string, includeSub bool) string {
 // 空串邮箱/手机号经 NULLIF 归一为 NULL。
 func (r *userRepo) CreateUser(ctx context.Context, user *biz.User) error {
 	_, err := r.data.Pool.Exec(ctx,
-		`INSERT INTO "system_user" (id, username, password, nickname, email, phone, gender, is_admin, status, create_time, update_time)
-		 VALUES ($1, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''), $7, $8, $9, $10, $11)`,
+		`INSERT INTO "system_user" (id, username, password, nickname, email, phone, gender, is_admin, status, kind, create_time, update_time)
+		 VALUES ($1, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''), $7, $8, $9, $10, $11, $12)`,
 		user.ID, user.Username, user.Password, user.Nickname, user.Email, user.Phone,
-		user.Gender, user.IsAdmin, user.Status, user.CreateTime, user.UpdateTime)
+		user.Gender, user.IsAdmin, user.Status, userKind(user.Kind), user.CreateTime, user.UpdateTime)
 	if err != nil {
 		return mapUserUniqueViolation(err)
 	}
 	return nil
+}
+
+// userKind 账号类型落库值：零值按人（历史调用方不设 Kind）。
+func userKind(kind int32) int32 {
+	if kind == biz.UserKindMachine {
+		return biz.UserKindMachine
+	}
+	return biz.UserKindHuman
 }
 
 // CreateUserWithRoles implements biz.UserWriter：建号、角色绑定与所属部门
@@ -225,10 +239,10 @@ func (r *userRepo) CreateUser(ctx context.Context, user *biz.User) error {
 func (r *userRepo) CreateUserWithRoles(ctx context.Context, user *biz.User, roleIDs []string) error {
 	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx,
-			`INSERT INTO "system_user" (id, username, password, nickname, email, phone, gender, is_admin, status, create_time, update_time)
-			 VALUES ($1, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''), $7, $8, $9, $10, $11)`,
+			`INSERT INTO "system_user" (id, username, password, nickname, email, phone, gender, is_admin, status, kind, create_time, update_time)
+			 VALUES ($1, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''), $7, $8, $9, $10, $11, $12)`,
 			user.ID, user.Username, user.Password, user.Nickname, user.Email, user.Phone,
-			user.Gender, user.IsAdmin, user.Status, user.CreateTime, user.UpdateTime); err != nil {
+			user.Gender, user.IsAdmin, user.Status, userKind(user.Kind), user.CreateTime, user.UpdateTime); err != nil {
 			return mapUserUniqueViolation(err)
 		}
 		for _, roleID := range roleIDs {

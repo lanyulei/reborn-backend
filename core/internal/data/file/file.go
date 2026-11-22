@@ -189,61 +189,65 @@ func (r *fileRepo) ReleaseFilesTx(ctx context.Context, tx txrun.Tx, bizType, biz
 	return nil
 }
 
-// PurgeExpired implements biz.PurgeRepo：事务内以 SKIP LOCKED 领取一批（多实例各取
-// 各的，互不阻塞），逐个删除对象，再物理删除对象已删掉的元数据行。删除对象失败的
-// 文件保留元数据并记下失败时间，retryAfter 之内不再领取——否则一批坏行（驱动被下线、
-// 权限错误）会每轮都排在最前，把后面的文件永远挡住。事务中途失败则整批回滚，下一轮
-// 重试（对象删除幂等）。持有行锁期间与并发的绑定互斥：绑定方等待后重判为不命中。
+// PurgeExpired implements biz.PurgeRepo，三步：
+//  1. 短事务里以 SKIP LOCKED 领取一批（多实例各取各的）并打上领取标记——purge_time 记为此刻，retryAfter
+//     之内别的实例不再领取；过期的临时文件顺手软删（并发的绑定等锁后重判为不命中）。
+//  2. 事务外逐个删除对象：对象存储的往返不该占着数据库事务与行锁。
+//  3. 物理删除对象已删掉的元数据行。删除对象失败的行留在已领取状态，retryAfter 之后重新领取——否则
+//     一批坏行（驱动被下线、权限错误）会每轮都排在最前，把后面的文件永远挡住。
+//
+// 任一步中途失败都安全：领取标记到期后重领，对象删除幂等。
 func (r *fileRepo) PurgeExpired(ctx context.Context, tempBefore, deletedBefore time.Time, retryAfter time.Duration, limit int, remove func(ctx context.Context, f *biz.File) error) (int, error) {
-	var (
-		purged    int
-		removeErr error
-	)
+	var files []*biz.File
 	err := dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx,
 			`SELECT id, driver, object_key FROM file_object
 			 WHERE ((status = 1 AND delete_time IS NULL AND create_time < $1)
-			    OR (delete_time IS NOT NULL AND delete_time < $2))
+			    OR (delete_time IS NOT NULL AND delete_time < $2)
+			    OR purge_time IS NOT NULL)
 			   AND (purge_time IS NULL OR purge_time < now() - make_interval(secs => $4))
 			 ORDER BY id LIMIT $3 FOR UPDATE SKIP LOCKED`, tempBefore, deletedBefore, limit, retryAfter.Seconds())
 		if err != nil {
 			return fmt.Errorf("claim expired files: %w", err)
 		}
-		files, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (*biz.File, error) {
+		if files, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (*biz.File, error) {
 			var f biz.File
 			return &f, row.Scan(&f.ID, &f.Driver, &f.ObjectKey)
-		})
-		if err != nil {
+		}); err != nil {
 			return fmt.Errorf("scan expired files: %w", err)
 		}
-		done := make([]string, 0, len(files))
-		var failed []string
-		for _, f := range files {
-			if err := remove(ctx, f); err != nil {
-				removeErr = errors.Join(removeErr, fmt.Errorf("remove object of file %s: %w", f.ID, err))
-				failed = append(failed, f.ID)
-				continue
-			}
-			done = append(done, f.ID)
-		}
-		if len(failed) > 0 {
-			if _, err := tx.Exec(ctx,
-				"UPDATE file_object SET purge_time = now() WHERE id IN (SELECT unnest($1::text[])::uuid)", failed); err != nil {
-				return fmt.Errorf("mark failed purges: %w", err)
-			}
-		}
-		if len(done) == 0 {
+		if len(files) == 0 {
 			return nil
 		}
-		if _, err := tx.Exec(ctx,
-			"DELETE FROM file_object WHERE id IN (SELECT unnest($1::text[])::uuid)", done); err != nil {
-			return fmt.Errorf("delete expired files: %w", err)
+		ids := make([]string, 0, len(files))
+		for _, f := range files {
+			ids = append(ids, f.ID)
 		}
-		purged = len(done)
+		if _, err := tx.Exec(ctx,
+			`UPDATE file_object SET purge_time = now(), delete_time = COALESCE(delete_time, now())
+			 WHERE id IN (SELECT unnest($1::text[])::uuid)`, ids); err != nil {
+			return fmt.Errorf("mark claimed purges: %w", err)
+		}
 		return nil
 	})
 	if err != nil {
 		return 0, err
 	}
-	return purged, removeErr
+	done := make([]string, 0, len(files))
+	var removeErr error
+	for _, f := range files {
+		if err := remove(ctx, f); err != nil {
+			removeErr = errors.Join(removeErr, fmt.Errorf("remove object of file %s: %w", f.ID, err))
+			continue
+		}
+		done = append(done, f.ID)
+	}
+	if len(done) == 0 {
+		return 0, removeErr
+	}
+	if _, err := r.data.Pool.Exec(ctx,
+		"DELETE FROM file_object WHERE id IN (SELECT unnest($1::text[])::uuid)", done); err != nil {
+		return 0, errors.Join(removeErr, fmt.Errorf("delete expired files: %w", err))
+	}
+	return len(done), removeErr
 }

@@ -153,8 +153,9 @@ func TestAssistant_ReadToolRoundTrip(t *testing.T) {
 	// 超管可用工具很多：按模块加载。首个请求只带元工具；直接调用了 system 模块的工具后，
 	// 该模块的工具随后续请求下发，其它模块仍不下发。
 	first, second := toolNames(reqs[0]), toolNames(reqs[1])
-	if len(first) != 1 || !first[bizassistant.LoadToolsName] || !strings.Contains(reqs[0].System, bizassistant.LoadToolsName) {
-		t.Fatalf("first request must offer only the loader: %v", first)
+	// 常驻工具（知识库检索）不随模块加载，首个请求也带上。
+	if len(first) != 2 || !first[bizassistant.LoadToolsName] || !first["KnowledgeService_Search"] || !strings.Contains(reqs[0].System, bizassistant.LoadToolsName) {
+		t.Fatalf("first request must offer only the loader and resident tools: %v", first)
 	}
 	if !second["UserService_DeleteUser"] || !second[bizassistant.LoadToolsName] || second["OncallGroupService_ListGroups"] {
 		t.Fatalf("second request must offer the system module only: %d tools", len(second))
@@ -463,7 +464,7 @@ func TestAssistant_LoadToolsByModule(t *testing.T) {
 	if len(reqs) != 3 {
 		t.Fatalf("model requests = %d, want 3", len(reqs))
 	}
-	if first := toolNames(reqs[0]); len(first) != 1 || !first[bizassistant.LoadToolsName] {
+	if first := toolNames(reqs[0]); len(first) != 2 || !first[bizassistant.LoadToolsName] || !first["KnowledgeService_Search"] {
 		t.Fatalf("first request tools = %v", first)
 	}
 	loaded := toolNames(reqs[1])

@@ -1,0 +1,245 @@
+syntax = "proto3";
+
+package incident.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "incident/v1/common.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/incident/v1;v1";
+
+// IncidentProposalService 动作建议：人 / AI / Agent 想「做一件事」的统一入口——提出 → 审批 → 执行 → 回写 → 验证。
+// 执行经作业中心 / 流程中心，以预案的代理执行人身份发起，既有权限、风险规则、审批与审计全部生效。
+service IncidentProposalService {
+  // ListProposals 故障的动作建议。
+  rpc ListProposals(ListProposalsRequest) returns (ListProposalsResponse) {
+    option (google.api.http) = {get: "/api/v1/incident/{id}/proposal"};
+    option (system.v1.title) = "查询故障动作建议";
+  }
+  // CreateProposal 提出建议：引用预案步骤，或直接给出作业模板 / 流程定义。指挥提出的建议可立即批准（approve=true）。
+  rpc CreateProposal(CreateProposalRequest) returns (ProposalResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident/{id}/proposal"
+      body: "*"
+    };
+    option (system.v1.title) = "提出故障动作建议";
+  }
+  // DecideProposal 指挥批准 / 拒绝。
+  rpc DecideProposal(DecideProposalRequest) returns (ProposalResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident/{id}/proposal/{proposal_id}:decide"
+      body: "*"
+    };
+    option (system.v1.title) = "审批故障动作建议";
+  }
+  // CancelProposal 提出者撤回待审批的建议。
+  rpc CancelProposal(CancelProposalRequest) returns (ProposalResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident/{id}/proposal/{proposal_id}:cancel"
+      body: "*"
+    };
+    option (system.v1.title) = "撤回故障动作建议";
+  }
+  // ResetAutoApprove 指挥手动恢复自动批准（熔断后）。
+  rpc ResetAutoApprove(ResetAutoApproveRequest) returns (ResetAutoApproveResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident/{id}:auto-approve"
+      body: "*"
+    };
+    option (system.v1.title) = "恢复故障自动批准";
+  }
+}
+
+// ProposalAction 动作内容。
+message ProposalAction {
+  // kind job / workflow。
+  string kind = 1 [(buf.validate.field).string = {
+    in: [
+      "job",
+      "workflow"
+    ]
+  }];
+  // ref 作业模板 ID / 流程定义标识。
+  string ref = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+  // ref_name 展示名（服务端填充）。
+  string ref_name = 3;
+  map<string, string> params = 4 [(buf.validate.field).map = {
+    max_pairs: 50
+    values: {
+      string: {max_len: 1024}
+    }
+  }];
+  // ci_ids 作业靶标（只能是 CMDB 资源，且须在受影响资源或其上游范围内）；流程忽略。
+  repeated string ci_ids = 5 [(buf.validate.field).repeated = {
+    max_items: 200
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+  // ci_refs 靶标展示名（服务端填充）。
+  repeated NamedRef ci_refs = 6;
+}
+
+// Proposal 动作建议。
+message Proposal {
+  // 建议 ID。
+  string id = 1;
+  // 故障 ID。
+  string incident_id = 2;
+  // 标题。
+  string title = 3;
+  // 理由。
+  string reason = 4;
+  // 依据。
+  repeated string evidence = 5;
+  // 动作。
+  ProposalAction action = 6;
+  // 来源预案。
+  NamedRef playbook = 7;
+  // 预案步骤序号。
+  int32 step_index = 8;
+  // 风险：1=低 2=中 3=高。
+  int32 risk = 9;
+  // 状态：1=待审批 2=已通过 3=已拒绝 4=执行中 5=成功 6=失败 7=已取消 8=已过期。
+  int32 status = 10;
+  // 是否自动通过。
+  bool auto = 11;
+  // 提出者类型：1=用户 2=系统 3=Agent。
+  int32 proposer_type = 12;
+  // 提出者。
+  NamedRef proposer = 13;
+  // 审批人。
+  NamedRef decided_by = 14;
+  // 审批时间。
+  google.protobuf.Timestamp decided_time = 15;
+  // 审批意见。
+  string decision_note = 16;
+  // 过期时间。
+  google.protobuf.Timestamp expire_time = 17;
+  // 执行载体类型。
+  string exec_kind = 18;
+  // 执行载体 ID。
+  string exec_ref = 19;
+  // 代理执行人。
+  NamedRef exec_user = 20;
+  // 执行结果。
+  string result = 21;
+  // 验证窗口截止。
+  google.protobuf.Timestamp verify_until = 22;
+  // 验证结果。
+  VerifyResult verify_result = 23;
+  // 创建时间。
+  google.protobuf.Timestamp create_time = 24;
+  // 更新时间。
+  google.protobuf.Timestamp update_time = 25;
+  // can_decide 当前用户能否审批（指挥 / 管理员）。
+  bool can_decide = 26;
+  // auto_eligible Agent 提出时申请自动通过（Agent 侧条件已满足；是否自动仍由故障侧判定）。
+  bool auto_eligible = 28;
+  // url 执行对象的站内路径。
+  string exec_url = 27;
+}
+
+// VerifyResult 验证窗口结果。
+message VerifyResult {
+  // 执行前活跃告警数。
+  int32 alerts_before = 1;
+  // 窗口结束时活跃告警数。
+  int32 alerts_after = 2;
+  // 窗口内恢复的告警数。
+  int32 resolved = 3;
+  // 窗口内新增的告警数。
+  int32 new_alerts = 4;
+  // worse 窗口内告警数增加。
+  bool worse = 5;
+  // 检查时间。
+  google.protobuf.Timestamp checked_time = 6;
+}
+
+message ListProposalsRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // status 0=全部。
+  int32 status = 2 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 8
+  }];
+}
+
+message ListProposalsResponse {
+  // 建议列表。
+  repeated Proposal items = 1;
+}
+
+message CreateProposalRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // playbook_id + step_index 引用预案步骤；或直接给 action。
+  string playbook_id = 2 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+  // 预案步骤序号（从 0 起）。
+  int32 step_index = 3 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 19
+  }];
+  // 自定义动作（不走预案时填）。
+  ProposalAction action = 4;
+  // 标题。
+  string title = 5 [(buf.validate.field).string.max_len = 255];
+  // 理由。
+  string reason = 6 [(buf.validate.field).string.max_len = 4000];
+  // 依据。
+  repeated string evidence = 7 [(buf.validate.field).repeated = {
+    max_items: 20
+    items: {
+      string: {max_len: 2000}
+    }
+  }];
+  // approve 指挥提出并立即批准（手动执行预案）。
+  bool approve = 8;
+  // auto_eligible 申请自动通过：只有持有该故障有效 Agent 租约的机器账号可设，其余调用者设了也被忽略。
+  bool auto_eligible = 9;
+  // auto_max_targets Agent 申请自动通过时允许的靶标资源数上限（0 = 不限）；靶标按预案步骤解析后超出即转人工。
+  int32 auto_max_targets = 10 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 100
+  }];
+}
+
+message ProposalResponse {
+  // 建议。
+  Proposal proposal = 1;
+}
+
+message DecideProposalRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // 建议 ID。
+  string proposal_id = 2 [(buf.validate.field).string.uuid = true];
+  // true=通过 false=拒绝。
+  bool approved = 3;
+  // 审批意见。
+  string note = 4 [(buf.validate.field).string.max_len = 255];
+}
+
+message CancelProposalRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // 建议 ID。
+  string proposal_id = 2 [(buf.validate.field).string.uuid = true];
+}
+
+message ResetAutoApproveRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+message ResetAutoApproveResponse {}

@@ -434,6 +434,9 @@ type AlertFilter struct {
 	FireStart     *time.Time
 	FireEnd       *time.Time
 	HistorySince  *time.Time
+	// FireAfter 键集游标：只取 (first_fire_time, id) 严格大于它的事件，且 Scan 改按 (first_fire_time, id) 升序
+	// 返回（后台消费者按首次触发时间顺序翻页用；列表接口不用）。ID 为空等价于该时刻之后的全部事件。
+	FireAfter *AlertCursor
 	// RecipientID 非空时只返回通知过该用户的事件（monitor_notify_log.recipients）。
 	RecipientID string
 	// OrAckUser 与 RecipientID 一起用：通知过该用户的，或由该用户认领的（「我负责的」）。
@@ -445,6 +448,12 @@ type AlertFilter struct {
 	Inhibited   *bool
 	AckUserID   string
 	HandleState int32
+}
+
+// AlertCursor 按 (首次触发时间, 事件 ID) 的读取位置。
+type AlertCursor struct {
+	FirstFireTime time.Time
+	ID            string
 }
 
 // 聚合维度。

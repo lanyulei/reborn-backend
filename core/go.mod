@@ -18,6 +18,7 @@ require (
 	github.com/jackc/pgerrcode v0.0.0-20250907135507-afb5586c32a6
 	github.com/jackc/pgx/v5 v5.13.0
 	github.com/lanyulei/reborn/backend/kit v0.0.0
+	github.com/ledongthuc/pdf v0.0.0-20261020125853-5e46805f718e
 	github.com/openai/openai-go/v3 v3.102.0
 	github.com/prometheus/client_golang v1.25.0
 	github.com/robfig/cron/v3 v3.0.1
@@ -27,6 +28,7 @@ require (
 	go.opentelemetry.io/otel/sdk/metric v1.47.0
 	go.uber.org/automaxprocs v1.6.0
 	golang.org/x/crypto v0.59.0
+	golang.org/x/net v0.63.0
 	golang.org/x/sync v0.25.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20261116203732-fd2c7689a808
 	google.golang.org/protobuf v1.36.12
@@ -73,7 +75,6 @@ require (
 	go.yaml.in/yaml/v4 v4.0.0 // indirect
 	golang.org/x/exp v0.0.0-20261117202309-7a49493bfd90 // indirect
 	golang.org/x/mod v0.43.0 // indirect
-	golang.org/x/net v0.63.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect
 	golang.org/x/text v0.44.0 // indirect
 	golang.org/x/tools v0.53.0 // indirect

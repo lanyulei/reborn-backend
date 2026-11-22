@@ -157,6 +157,11 @@ func (uc *AuthUsecase) Login(ctx context.Context, username, password, ip, userAg
 		return nil, nil, ErrInvalidCredentials
 	}
 	uc.limiter.succeed(username, ip)
+	if u.IsMachine() {
+		// 机器账号没有可用口令，上面的校验必然失败；这里是口令被人为同步到机器账号时的兜底。
+		uc.recordLogin(ctx, &LoginLog{UserID: u.ID, Username: username, Result: LoginResultAccountDisabled, IP: ip, UserAgent: userAgent})
+		return nil, nil, ErrMachineAccount
+	}
 	if u.Status != StatusEnabled {
 		uc.recordLogin(ctx, &LoginLog{UserID: u.ID, Username: username, Result: LoginResultAccountDisabled, IP: ip, UserAgent: userAgent})
 		return nil, nil, ErrAccountDisabled
@@ -298,6 +303,37 @@ func (uc *AuthUsecase) Profile(ctx context.Context, userID string) (*User, []*Ro
 }
 
 // issueTokens 签发 access + refresh 双令牌并落库刷新令牌哈希。
+// 机器令牌 TTL 的界：下限防签出即过期，上限防长期凭据（任务时限 + 2 分钟量级）。
+const (
+	minMachineTokenTTL = time.Minute
+	maxMachineTokenTTL = 2 * time.Hour
+)
+
+// IssueMachineToken 为机器账号签发一枚短期访问令牌（跨域窄接口：运维 Agent 运行器每次尝试开始时取一枚）。
+// 只对 kind=机器、状态可用的账号签发；不写刷新令牌、不记登录日志（机器账号不走登录）。令牌与普通访问令牌
+// 同密钥同 claims，授权中间件按账号实时状态拒绝已停用账号，停用即 kill switch。
+func (uc *AuthUsecase) IssueMachineToken(ctx context.Context, userID string, ttl time.Duration) (string, time.Time, error) {
+	if ttl < minMachineTokenTTL || ttl > maxMachineTokenTTL {
+		return "", time.Time{}, fmt.Errorf("machine token ttl %s out of range [%s, %s]", ttl, minMachineTokenTTL, maxMachineTokenTTL)
+	}
+	u, err := uc.userReader.GetUser(ctx, userID)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	if !u.IsMachine() {
+		return "", time.Time{}, ErrMachineAccount
+	}
+	if u.Status != StatusEnabled {
+		return "", time.Time{}, ErrAccountDisabled
+	}
+	now := time.Now()
+	token, err := uc.signer.SignAccessWithTTL(u.ID, u.Username, now, ttl)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	return token, now.Add(ttl), nil
+}
+
 func (uc *AuthUsecase) issueTokens(ctx context.Context, u *User, now time.Time) (*TokenPair, error) {
 	access, expiresIn, err := uc.signer.SignAccess(u.ID, u.Username, now)
 	if err != nil {

@@ -81,3 +81,8 @@ const SourceManual = cmdbcontract.SourceManual
 func detail(base *errors.Error, format string, args ...any) error {
 	return errors.New(int(base.Code), base.Reason, fmt.Sprintf(format, args...))
 }
+
+// CIInUse 资源仍有关系、不能删除的错误（errors.Is 仍匹配 ErrCIInUse）；仓储在删除事务内判定后返回。
+func CIInUse(relations int64) error {
+	return detail(ErrCIInUse, "%d relations", relations)
+}

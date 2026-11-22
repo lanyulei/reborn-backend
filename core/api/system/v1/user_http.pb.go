@@ -18,6 +18,7 @@ var _ = new(context.Context)
 const _ = http.SupportPackageIsVersion3
 
 const OperationUserServiceBindUserRoles = "/system.v1.UserService/BindUserRoles"
+const OperationUserServiceCreateMachineUser = "/system.v1.UserService/CreateMachineUser"
 const OperationUserServiceCreateUser = "/system.v1.UserService/CreateUser"
 const OperationUserServiceDeleteUser = "/system.v1.UserService/DeleteUser"
 const OperationUserServiceGetUser = "/system.v1.UserService/GetUser"
@@ -30,13 +31,16 @@ const OperationUserServiceUpdateUserStatus = "/system.v1.UserService/UpdateUserS
 type UserServiceHTTPServer interface {
 	// BindUserRoles BindUserRoles 全量覆盖用户的角色绑定（先清空再写入，一个用户可绑多个角色）。
 	BindUserRoles(context.Context, *BindUserRolesRequest) (*BindUserRolesResponse, error)
+	// CreateMachineUser ListUserRoles 查询用户已绑定的角色列表。
+	// CreateMachineUser 新建机器账号：没有密码、不能登录、没有刷新令牌，只能被签发短期访问令牌（运维 Agent 等
+	// 无人值守调用方使用）；必须绑定至少一个角色。
+	CreateMachineUser(context.Context, *CreateMachineUserRequest) (*CreateMachineUserResponse, error)
 	// CreateUser CreateUser 创建用户；username/email/phone 在未删除行内唯一。
 	CreateUser(context.Context, *CreateUserRequest) (*CreateUserResponse, error)
 	// DeleteUser DeleteUser 删除用户（软删），并物理删除其全部角色绑定。
 	DeleteUser(context.Context, *DeleteUserRequest) (*DeleteUserResponse, error)
 	// GetUser GetUser 查询用户详情，绝不返回密码。
 	GetUser(context.Context, *GetUserRequest) (*GetUserResponse, error)
-	// ListUserRoles ListUserRoles 查询用户已绑定的角色列表。
 	ListUserRoles(context.Context, *ListUserRolesRequest) (*ListUserRolesResponse, error)
 	// ListUsers ListUsers 分页查询用户，page_size 上限 100。
 	ListUsers(context.Context, *ListUsersRequest) (*ListUsersResponse, error)
@@ -58,6 +62,7 @@ func RegisterUserServiceHTTPServer(s *http.Server, srv UserServiceHTTPServer) {
 	r.Handle("GET", "/api/v1/system/user/{id}", _UserService_GetUser0_HTTP_Handler(srv))
 	r.Handle("GET", "/api/v1/system/user", _UserService_ListUsers0_HTTP_Handler(srv))
 	r.Handle("PUT", "/api/v1/system/user/{id}/role", _UserService_BindUserRoles0_HTTP_Handler(srv))
+	r.Handle("POST", "/api/v1/system/user:machine", _UserService_CreateMachineUser0_HTTP_Handler(srv))
 	r.Handle("GET", "/api/v1/system/user/{id}/role", _UserService_ListUserRoles0_HTTP_Handler(srv))
 }
 
@@ -231,6 +236,25 @@ func _UserService_BindUserRoles0_HTTP_Handler(srv UserServiceHTTPServer) func(ct
 	}
 }
 
+func _UserService_CreateMachineUser0_HTTP_Handler(srv UserServiceHTTPServer) func(ctx http.Context) error {
+	return func(ctx http.Context) error {
+		var in CreateMachineUserRequest
+		if err := ctx.Bind(&in); err != nil {
+			return err
+		}
+		http.SetOperation(ctx, OperationUserServiceCreateMachineUser)
+		h := ctx.Middleware(func(ctx context.Context, req interface{}) (interface{}, error) {
+			return srv.CreateMachineUser(ctx, req.(*CreateMachineUserRequest))
+		})
+		out, err := h(ctx, &in)
+		if err != nil {
+			return err
+		}
+		reply := out.(*CreateMachineUserResponse)
+		return ctx.Result(200, reply)
+	}
+}
+
 func _UserService_ListUserRoles0_HTTP_Handler(srv UserServiceHTTPServer) func(ctx http.Context) error {
 	return func(ctx http.Context) error {
 		var in ListUserRolesRequest
@@ -256,13 +280,16 @@ func _UserService_ListUserRoles0_HTTP_Handler(srv UserServiceHTTPServer) func(ct
 type UserServiceHTTPClient interface {
 	// BindUserRoles BindUserRoles 全量覆盖用户的角色绑定（先清空再写入，一个用户可绑多个角色）。
 	BindUserRoles(ctx context.Context, req *BindUserRolesRequest, opts ...http.CallOption) (rsp *BindUserRolesResponse, err error)
+	// CreateMachineUser ListUserRoles 查询用户已绑定的角色列表。
+	// CreateMachineUser 新建机器账号：没有密码、不能登录、没有刷新令牌，只能被签发短期访问令牌（运维 Agent 等
+	// 无人值守调用方使用）；必须绑定至少一个角色。
+	CreateMachineUser(ctx context.Context, req *CreateMachineUserRequest, opts ...http.CallOption) (rsp *CreateMachineUserResponse, err error)
 	// CreateUser CreateUser 创建用户；username/email/phone 在未删除行内唯一。
 	CreateUser(ctx context.Context, req *CreateUserRequest, opts ...http.CallOption) (rsp *CreateUserResponse, err error)
 	// DeleteUser DeleteUser 删除用户（软删），并物理删除其全部角色绑定。
 	DeleteUser(ctx context.Context, req *DeleteUserRequest, opts ...http.CallOption) (rsp *DeleteUserResponse, err error)
 	// GetUser GetUser 查询用户详情，绝不返回密码。
 	GetUser(ctx context.Context, req *GetUserRequest, opts ...http.CallOption) (rsp *GetUserResponse, err error)
-	// ListUserRoles ListUserRoles 查询用户已绑定的角色列表。
 	ListUserRoles(ctx context.Context, req *ListUserRolesRequest, opts ...http.CallOption) (rsp *ListUserRolesResponse, err error)
 	// ListUsers ListUsers 分页查询用户，page_size 上限 100。
 	ListUsers(ctx context.Context, req *ListUsersRequest, opts ...http.CallOption) (rsp *ListUsersResponse, err error)
@@ -294,6 +321,26 @@ func (c *UserServiceHTTPClientImpl) BindUserRoles(ctx context.Context, in *BindU
 		http.PathTemplate(pattern),
 	}, opts...)
 	err := c.cc.Invoke(ctx, "PUT", path, in, &out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// CreateMachineUser ListUserRoles 查询用户已绑定的角色列表。
+// CreateMachineUser 新建机器账号：没有密码、不能登录、没有刷新令牌，只能被签发短期访问令牌（运维 Agent 等
+// 无人值守调用方使用）；必须绑定至少一个角色。
+func (c *UserServiceHTTPClientImpl) CreateMachineUser(ctx context.Context, in *CreateMachineUserRequest, opts ...http.CallOption) (*CreateMachineUserResponse, error) {
+	var out CreateMachineUserResponse
+	pattern := "/api/v1/system/user:machine"
+	path := http.BuildPath(pattern, in)
+	opts = append([]http.CallOption{
+		http.Accept("application/protojson"),
+		http.ContentType("application/protojson"),
+		http.Operation(OperationUserServiceCreateMachineUser),
+		http.PathTemplate(pattern),
+	}, opts...)
+	err := c.cc.Invoke(ctx, "POST", path, in, &out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -352,7 +399,6 @@ func (c *UserServiceHTTPClientImpl) GetUser(ctx context.Context, in *GetUserRequ
 	return &out, nil
 }
 
-// ListUserRoles ListUserRoles 查询用户已绑定的角色列表。
 func (c *UserServiceHTTPClientImpl) ListUserRoles(ctx context.Context, in *ListUserRolesRequest, opts ...http.CallOption) (*ListUserRolesResponse, error) {
 	var out ListUserRolesResponse
 	pattern := "/api/v1/system/user/{id}/role"

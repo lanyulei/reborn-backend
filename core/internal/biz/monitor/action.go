@@ -23,7 +23,8 @@ const (
 	// actionBatch 一轮至多领取的动作数；领满时循环立刻再跑一轮。
 	actionBatch = 10
 	// actionLease 领取后的租约：期内别的实例不会再领同一行；须长于一次执行的最长耗时（AI 摘要的超时上限
-	// 加上落账）。进程在执行中途崩溃时，租约到期后该行被重新领取。
+	// 加上落账）。进程在执行中途崩溃时，租约到期后该行被重新领取。一批是顺序执行的，排在后面的动作
+	// 开始前先续租（Run），租约只需覆盖单个动作，不必覆盖整批。
 	actionLease = 5 * time.Minute
 	// actionBackoffBase / actionBackoffMax 失败后的退避：第 n 次失败后等 min(30s × 2^(n-1), 30 分钟)。
 	actionBackoffBase = 30 * time.Second
@@ -65,6 +66,9 @@ type ActionRepo interface {
 	// 「工单追加恢复记录」：引擎在告警恢复时只要规则开了自动建单就会入队这条动作，工单可能还没建出来——
 	// 等建单有了结论再执行（有工单则追加，没有则记为无需执行）。
 	Claim(ctx context.Context, limit int, lease time.Duration) ([]*AlertAction, error)
+	// Renew 续租：把 next_time 再推到 lease 之后，同样以「仍是待执行且尝试次数未变」围栏；围栏未命中
+	// （租约已过期并被别的实例重新领取，或已终结）返回 false。
+	Renew(ctx context.Context, a *AlertAction, lease time.Duration) (bool, error)
 	// FinishTx 在事务内把动作置为终态（已完成 / 已放弃 / 无需执行），以「仍是待执行且尝试次数未变」围栏；
 	// 围栏未命中（已被别的实例重新领取或已终结）返回 false。
 	FinishTx(ctx context.Context, tx txrun.Tx, a *AlertAction, status int32, note string) (bool, error)
@@ -162,7 +166,20 @@ func (uc *ActionUsecase) Run(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	for _, a := range actions {
+	for i, a := range actions {
+		if i > 0 {
+			// 同批靠后的动作开始前先续租：前面的动作（AI 摘要最长 120 秒）可能已耗掉大半租约，不续租的话
+			// 执行中途租约到期，别的实例会重新领取并与本实例同时执行同一个动作。续租失败（已被领走）就
+			// 不再碰它。
+			ok, err := uc.d.Actions.Renew(ctx, a, actionLease)
+			if err != nil {
+				return 0, err
+			}
+			if !ok {
+				uc.d.Logger.WarnContext(ctx, "monitor alert action lease lost before execution, skipping", "action_id", a.ID, "alert_id", a.AlertID, "kind", a.Kind)
+				continue
+			}
+		}
 		if err := uc.handle(ctx, a); err != nil {
 			return 0, err
 		}

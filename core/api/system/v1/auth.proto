@@ -57,6 +57,17 @@ service AuthService {
       get: "/api/v1/user/{id}/avatar"
     };
   }
+  // ChangeMyPassword 当前登录用户自助修改密码（自助接口，免授权；须 Bearer access token）：必须提供
+  // 现密码，核对通过才改；成功后该用户全部刷新令牌作废（其它会话登出，当前访问令牌到期后需重新登录）。
+  // 现密码不正确返回 PASSWORD_MISMATCH（400）；机器账号返回 USER_MACHINE_ACCOUNT（400）；
+  // 新密码明文不在 8-64 位返回 FIELD_DECODE（400）。管理员重置他人密码走 UserService/ResetUserPassword
+  // （不接受对本人操作）。
+  rpc ChangeMyPassword(ChangeMyPasswordRequest) returns (ChangeMyPasswordResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/me/password"
+      body: "*"
+    };
+  }
 }
 
 // LoginRequest 登录请求。
@@ -151,6 +162,24 @@ message UploadMyAvatarResponse {
   // url 带内容指纹的头像访问地址（已写入用户 avatar 字段）。
   string url = 1;
 }
+
+// ChangeMyPasswordRequest 自助修改密码请求。
+message ChangeMyPasswordRequest {
+  // old_password 现密码：允许 b64$ 前缀的 Base64 编码值（前端统一编码）或明文。
+  string old_password = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 256
+  }];
+  // new_password 新密码：允许 b64$ 前缀的 Base64 编码值或明文，服务端解码后断言明文 8-64 位；
+  // Argon2id 哈希后落库。
+  string new_password = 2 [(buf.validate.field).string = {
+    min_len: 8
+    max_len: 256
+  }];
+}
+
+// ChangeMyPasswordResponse 自助修改密码响应。
+message ChangeMyPasswordResponse {}
 
 // GetUserAvatarRequest 查看头像请求。
 message GetUserAvatarRequest {

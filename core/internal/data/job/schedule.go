@@ -174,17 +174,35 @@ func (r *scheduleRepo) Due(ctx context.Context, limit int) ([]*biz.Schedule, tim
 	return items, now, err
 }
 
-// Advance implements biz.ScheduleQueue：条件更新（next_time 仍是本次的计划时间）保证多实例下只推进一次。
-func (r *scheduleRepo) Advance(ctx context.Context, id string, run biz.ScheduleRun) (bool, error) {
-	tag, err := r.data.Pool.Exec(ctx,
-		`UPDATE job_schedule SET next_time = $3, last_time = $2, last_error = $5,
-		   last_execution_id = COALESCE($4::uuid, last_execution_id)
-		 WHERE id = $1 AND next_time = $2 AND enabled AND delete_time IS NULL`,
-		id, run.Fired, run.Next, dbx.NilIfEmpty(run.ExecutionID), run.Error)
-	if err != nil {
-		return false, fmt.Errorf("advance job schedule: %w", err)
-	}
-	return tag.RowsAffected() == 1, nil
+// Fire implements biz.ScheduleQueue：事务内 FOR UPDATE SKIP LOCKED 复核并锁住该条（next_time 仍是计划时间、
+// 仍启用），别的实例正持有或已推进的拿不到行；持锁期间调 fn，再随锁落账推进 next_time。
+func (r *scheduleRepo) Fire(ctx context.Context, id string, planned time.Time,
+	fn func(ctx context.Context, s *biz.Schedule) (biz.ScheduleRun, error),
+) (bool, error) {
+	claimed := false
+	err := dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+		s, err := scanSchedule(tx.QueryRow(ctx, scheduleSelect+
+			" WHERE s.id = $1 AND s.next_time = $2 AND s.enabled AND s.delete_time IS NULL FOR UPDATE OF s SKIP LOCKED", id, planned).Scan)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("claim job schedule: %w", err)
+		}
+		run, err := fn(ctx, s)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx,
+			`UPDATE job_schedule SET next_time = $3, last_time = $2, last_error = $5,
+			   last_execution_id = COALESCE($4::uuid, last_execution_id)
+			 WHERE id = $1`, id, planned, run.Next, dbx.NilIfEmpty(run.ExecutionID), run.Error); err != nil {
+			return fmt.Errorf("advance job schedule: %w", err)
+		}
+		claimed = true
+		return nil
+	})
+	return claimed, err
 }
 
 // ---------------------------------------------------------------------------
@@ -513,7 +531,7 @@ func (r *fireRepo) Complete(ctx context.Context, f *biz.TriggerFire) error {
 // 状态取各片里最差的一个（数值最大的非成功状态优先，全部成功才是成功）。
 func (r *fireRepo) Due(ctx context.Context, limit int) ([]*biz.PendingSignal, error) {
 	rows, err := r.data.Pool.Query(ctx,
-		`SELECT f.id::text, f.workflow_instance_id::text, f.signal, f.execution_id::text, f.signal_attempts, s.worst, s.all_ok
+		`SELECT f.id::text, f.workflow_instance_id::text, f.signal, f.execution_id::text, f.signal_attempts, s.worst, s.all_ok, f.create_time
 		 FROM job_trigger_fire f
 		 JOIN job_execution e ON e.id = f.execution_id
 		 CROSS JOIN LATERAL (
@@ -530,7 +548,7 @@ func (r *fireRepo) Due(ctx context.Context, limit int) ([]*biz.PendingSignal, er
 	var items []*biz.PendingSignal
 	for rows.Next() {
 		var s biz.PendingSignal
-		if err := rows.Scan(&s.FireID, &s.InstanceID, &s.Signal, &s.ExecutionID, &s.Attempts, &s.Status, &s.Success); err != nil {
+		if err := rows.Scan(&s.FireID, &s.InstanceID, &s.Signal, &s.ExecutionID, &s.Attempts, &s.Status, &s.Success, &s.FiredAt); err != nil {
 			return nil, fmt.Errorf("scan due job signal: %w", err)
 		}
 		items = append(items, &s)

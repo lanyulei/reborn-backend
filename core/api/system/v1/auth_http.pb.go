@@ -18,6 +18,7 @@ var _ = new(context.Context)
 
 const _ = http.SupportPackageIsVersion3
 
+const OperationAuthServiceChangeMyPassword = "/system.v1.AuthService/ChangeMyPassword"
 const OperationAuthServiceGetLoginProfile = "/system.v1.AuthService/GetLoginProfile"
 const OperationAuthServiceGetUserAvatar = "/system.v1.AuthService/GetUserAvatar"
 const OperationAuthServiceLogin = "/system.v1.AuthService/Login"
@@ -26,6 +27,12 @@ const OperationAuthServiceRefreshToken = "/system.v1.AuthService/RefreshToken"
 const OperationAuthServiceUploadMyAvatar = "/system.v1.AuthService/UploadMyAvatar"
 
 type AuthServiceHTTPServer interface {
+	// ChangeMyPassword ChangeMyPassword 当前登录用户自助修改密码（自助接口，免授权；须 Bearer access token）：必须提供
+	// 现密码，核对通过才改；成功后该用户全部刷新令牌作废（其它会话登出，当前访问令牌到期后需重新登录）。
+	// 现密码不正确返回 PASSWORD_MISMATCH（400）；机器账号返回 USER_MACHINE_ACCOUNT（400）；
+	// 新密码明文不在 8-64 位返回 FIELD_DECODE（400）。管理员重置他人密码走 UserService/ResetUserPassword
+	// （不接受对本人操作）。
+	ChangeMyPassword(context.Context, *ChangeMyPasswordRequest) (*ChangeMyPasswordResponse, error)
 	// GetLoginProfile GetLoginProfile 查询当前登录用户信息与角色；用户身份取自 Bearer token。
 	GetLoginProfile(context.Context, *GetLoginProfileRequest) (*GetLoginProfileResponse, error)
 	// GetUserAvatar GetUserAvatar 以原始字节流返回用户头像（HttpBody），供 <img> 直载；匿名可读
@@ -51,6 +58,7 @@ func RegisterAuthServiceHTTPServer(s *http.Server, srv AuthServiceHTTPServer) {
 	r.Handle("GET", "/api/v1/me", _AuthService_GetLoginProfile0_HTTP_Handler(srv))
 	r.Handle("POST", "/api/v1/me/avatar", _AuthService_UploadMyAvatar0_HTTP_Handler(srv))
 	r.Handle("GET", "/api/v1/user/{id}/avatar", _AuthService_GetUserAvatar0_HTTP_Handler(srv))
+	r.Handle("POST", "/api/v1/me/password", _AuthService_ChangeMyPassword0_HTTP_Handler(srv))
 }
 
 func _AuthService_Login0_HTTP_Handler(srv AuthServiceHTTPServer) func(ctx http.Context) error {
@@ -170,7 +178,32 @@ func _AuthService_GetUserAvatar0_HTTP_Handler(srv AuthServiceHTTPServer) func(ct
 	}
 }
 
+func _AuthService_ChangeMyPassword0_HTTP_Handler(srv AuthServiceHTTPServer) func(ctx http.Context) error {
+	return func(ctx http.Context) error {
+		var in ChangeMyPasswordRequest
+		if err := ctx.Bind(&in); err != nil {
+			return err
+		}
+		http.SetOperation(ctx, OperationAuthServiceChangeMyPassword)
+		h := ctx.Middleware(func(ctx context.Context, req interface{}) (interface{}, error) {
+			return srv.ChangeMyPassword(ctx, req.(*ChangeMyPasswordRequest))
+		})
+		out, err := h(ctx, &in)
+		if err != nil {
+			return err
+		}
+		reply := out.(*ChangeMyPasswordResponse)
+		return ctx.Result(200, reply)
+	}
+}
+
 type AuthServiceHTTPClient interface {
+	// ChangeMyPassword ChangeMyPassword 当前登录用户自助修改密码（自助接口，免授权；须 Bearer access token）：必须提供
+	// 现密码，核对通过才改；成功后该用户全部刷新令牌作废（其它会话登出，当前访问令牌到期后需重新登录）。
+	// 现密码不正确返回 PASSWORD_MISMATCH（400）；机器账号返回 USER_MACHINE_ACCOUNT（400）；
+	// 新密码明文不在 8-64 位返回 FIELD_DECODE（400）。管理员重置他人密码走 UserService/ResetUserPassword
+	// （不接受对本人操作）。
+	ChangeMyPassword(ctx context.Context, req *ChangeMyPasswordRequest, opts ...http.CallOption) (rsp *ChangeMyPasswordResponse, err error)
 	// GetLoginProfile GetLoginProfile 查询当前登录用户信息与角色；用户身份取自 Bearer token。
 	GetLoginProfile(ctx context.Context, req *GetLoginProfileRequest, opts ...http.CallOption) (rsp *GetLoginProfileResponse, err error)
 	// GetUserAvatar GetUserAvatar 以原始字节流返回用户头像（HttpBody），供 <img> 直载；匿名可读
@@ -194,6 +227,28 @@ type AuthServiceHTTPClientImpl struct {
 
 func NewAuthServiceHTTPClient(client *http.Client) AuthServiceHTTPClient {
 	return &AuthServiceHTTPClientImpl{client}
+}
+
+// ChangeMyPassword ChangeMyPassword 当前登录用户自助修改密码（自助接口，免授权；须 Bearer access token）：必须提供
+// 现密码，核对通过才改；成功后该用户全部刷新令牌作废（其它会话登出，当前访问令牌到期后需重新登录）。
+// 现密码不正确返回 PASSWORD_MISMATCH（400）；机器账号返回 USER_MACHINE_ACCOUNT（400）；
+// 新密码明文不在 8-64 位返回 FIELD_DECODE（400）。管理员重置他人密码走 UserService/ResetUserPassword
+// （不接受对本人操作）。
+func (c *AuthServiceHTTPClientImpl) ChangeMyPassword(ctx context.Context, in *ChangeMyPasswordRequest, opts ...http.CallOption) (*ChangeMyPasswordResponse, error) {
+	var out ChangeMyPasswordResponse
+	pattern := "/api/v1/me/password"
+	path := http.BuildPath(pattern, in)
+	opts = append([]http.CallOption{
+		http.Accept("application/protojson"),
+		http.ContentType("application/protojson"),
+		http.Operation(OperationAuthServiceChangeMyPassword),
+		http.PathTemplate(pattern),
+	}, opts...)
+	err := c.cc.Invoke(ctx, "POST", path, in, &out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // GetLoginProfile GetLoginProfile 查询当前登录用户信息与角色；用户身份取自 Bearer token。

@@ -97,7 +97,8 @@ func emailToProto(c *biz.EmailConfig) *notifyv1.EmailChannelConfig {
 	}
 }
 
-// webhookToProto 将 DO Webhook 配置转为 proto。
+// webhookToProto 将 DO Webhook 配置转为 proto；请求头取值只写不读，出参一律掩码（键名保留，前端据此
+// 知道配了哪些头；原样提交掩码即保留原值）。
 func webhookToProto(c *biz.WebhookConfig) *notifyv1.WebhookChannelConfig {
 	if c == nil {
 		return nil
@@ -105,7 +106,7 @@ func webhookToProto(c *biz.WebhookConfig) *notifyv1.WebhookChannelConfig {
 	return &notifyv1.WebhookChannelConfig{
 		Url:      c.URL,
 		Method:   c.Method,
-		Headers:  c.Headers,
+		Headers:  biz.MaskWebhookHeaders(c.Headers),
 		TimeoutS: &c.TimeoutS,
 	}
 }

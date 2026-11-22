@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/oncall"
@@ -274,6 +275,26 @@ func (r *shiftRepo) ListRange(ctx context.Context, from, to time.Time) ([]*biz.S
 		 ORDER BY sh.start_time, sh.schedule_id, sh.role`, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("list oncall shifts: %w", err)
+	}
+	return collectShifts(rows)
+}
+
+// ListRangeScoped implements biz.ShiftRepo：范围谓词下推（schedule_id / group_id / user_id 列均有索引可用）。
+func (r *shiftRepo) ListRangeScoped(ctx context.Context, from, to time.Time, scope biz.ShiftScope) ([]*biz.Shift, error) {
+	where, args := " WHERE sh.start_time < $2 AND sh.end_time > $1", []any{from, to}
+	add := func(cond string, v string) {
+		if v != "" {
+			args = append(args, v)
+			where += " AND " + cond + "$" + strconv.Itoa(len(args))
+		}
+	}
+	add("sc.group_id = ", scope.GroupID)
+	add("sh.schedule_id = ", scope.ScheduleID)
+	add("sh.user_id = ", scope.UserID)
+	rows, err := r.data.Pool.Query(ctx,
+		"SELECT "+shiftSelectColumns+shiftJoins+where+" ORDER BY sh.start_time, sh.schedule_id, sh.role", args...)
+	if err != nil {
+		return nil, fmt.Errorf("list oncall shifts in scope: %w", err)
 	}
 	return collectShifts(rows)
 }

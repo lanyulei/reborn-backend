@@ -156,8 +156,10 @@ func alertWhere(a *sqlArgs, f biz.AlertFilter) (string, error) {
 		where += " AND a.fingerprint = " + a.add(f.Fingerprint)
 	}
 	if f.Keyword != "" {
-		p := a.add(dbx.LikeContains(f.Keyword))
-		where += " AND (a.rule_name ILIKE " + p + " OR a.labels::text ILIKE " + p + ")"
+		// 接口契约（ListAlertsRequest.keyword）就是「规则名称模糊匹配」；标签按键值精确过滤走 Labels。
+		// 不再对 labels::text 做 ILIKE：那会对每一行展开 jsonb（无索引可用）。规则名称走
+		// idx_monitor_alert_rule_name_trgm（0085）。
+		where += " AND a.rule_name ILIKE " + a.add(dbx.LikeContains(f.Keyword))
 	}
 	if len(f.Labels) > 0 {
 		raw, err := json.Marshal(f.Labels)
@@ -171,6 +173,14 @@ func alertWhere(a *sqlArgs, f biz.AlertFilter) (string, error) {
 	}
 	if f.FireEnd != nil {
 		where += " AND a.first_fire_time <= " + a.add(*f.FireEnd)
+	}
+	if f.FireAfter != nil {
+		// 键集游标；ID 为空用全零 uuid 作下界（任何真实 ID 都大于它）。走 idx_monitor_alert_first_fire。
+		id := f.FireAfter.ID
+		if id == "" {
+			id = "00000000-0000-0000-0000-000000000000"
+		}
+		where += " AND (a.first_fire_time, a.id) > (" + a.add(f.FireAfter.FirstFireTime) + ", " + a.add(id) + "::uuid)"
 	}
 	if f.HistorySince != nil {
 		// 未给时间范围：活跃事件全量，历史事件只回看一段（走 (status, last_fire_time) 索引）。
@@ -247,14 +257,18 @@ func (r *alertRepo) List(ctx context.Context, filter biz.AlertFilter, page, page
 	return items, total, err
 }
 
-// Scan implements biz.AlertReader.
+// Scan implements biz.AlertReader。带键集游标（FireAfter）时按 (first_fire_time, id) 升序——消费者据此翻页。
 func (r *alertRepo) Scan(ctx context.Context, filter biz.AlertFilter, limit int) ([]*biz.Alert, error) {
 	var a sqlArgs
 	where, err := alertWhere(&a, filter)
 	if err != nil {
 		return nil, err
 	}
-	return r.query(ctx, where+" ORDER BY a.last_fire_time DESC, a.id DESC LIMIT "+a.add(limit), a.args, int64(limit))
+	order := " ORDER BY a.last_fire_time DESC, a.id DESC"
+	if filter.FireAfter != nil {
+		order = " ORDER BY a.first_fire_time, a.id"
+	}
+	return r.query(ctx, where+order+" LIMIT "+a.add(limit), a.args, int64(limit))
 }
 
 // Get implements biz.AlertReader.

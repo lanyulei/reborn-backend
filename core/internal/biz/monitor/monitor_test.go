@@ -836,11 +836,20 @@ func TestDatasource_Usecase(t *testing.T) {
 	if len(conns) != 3 || conns[0].Secret != token || conns[1].Secret != token || conns[1].URL != "http://vm:8428/select/0" || conns[2].Secret != other {
 		t.Fatalf("secrets used for test connection are wrong (%d calls)", len(conns))
 	}
-	// 失败不作为接口错误返回，错误原文进结果。
-	e.query.Err = biz.QueryFailed(false, "timeout: context deadline exceeded")
-	if res, err := e.sources.Test(ctx, ds.ID); err != nil || res.OK || !strings.Contains(res.Error, "timeout") {
+	// 失败不作为接口错误返回；结果里只给粗粒度分类，不回显数据源 / 客户端的错误原文（可能带上游的部署信息）。
+	e.query.Err = biz.QueryFailed(false, "Get http://10.1.2.3:8428/api/v1/query: connection refused")
+	if res, err := e.sources.Test(ctx, ds.ID); err != nil || res.OK || !strings.Contains(res.Error, "不可达") || strings.Contains(res.Error, "10.1.2.3") {
 		t.Fatalf("failed probe = %+v err=%v", res, err)
 	}
+	e.query.Err = biz.QueryFailed(true, "bad_data: unexpected path")
+	if res, err := e.sources.Test(ctx, ds.ID); err != nil || res.OK || !strings.Contains(res.Error, "拒绝") {
+		t.Fatalf("bad-query probe = %+v err=%v", res, err)
+	}
+	e.query.Err = context.DeadlineExceeded
+	if res, err := e.sources.Test(ctx, ds.ID); err != nil || res.OK || !strings.Contains(res.Error, "超时") {
+		t.Fatalf("timeout probe = %+v err=%v", res, err)
+	}
+	e.query.Err = biz.QueryFailed(false, "connection refused")
 	// 查询：错误透传；停用的数据源不能查；区间步数有上限。
 	_, err = e.sources.Query(ctx, ds.ID, "up", time.Time{})
 	wantErr(t, "query failure", err, biz.ErrDatasourceUnreachable)

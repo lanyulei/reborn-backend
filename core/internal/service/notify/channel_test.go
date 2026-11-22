@@ -7,6 +7,7 @@ import (
 
 	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/notify"
+	"github.com/lanyulei/reborn/backend/core/internal/pkg/operator"
 	"github.com/lanyulei/reborn/backend/core/internal/testfake"
 
 	"github.com/go-kratos/kratos/v3/errors"
@@ -55,7 +56,7 @@ func TestNotifyChannelService_CreateRoundtrip(t *testing.T) {
 		t.Fatalf("CreateChannel() detail = %+v", ch.GetDetail())
 	}
 
-	// webhook 类型：secret 可选、headers/timeout 往返。
+	// webhook 类型：secret 可选、timeout 往返；请求头取值只写不读，出参为掩码。
 	whResp, err := svc.CreateChannel(ctx, &notifyv1.CreateChannelRequest{
 		Type: notifyv1.NotifyChannelType_NOTIFY_CHANNEL_TYPE_WEBHOOK,
 		Name: "webhook-audit",
@@ -70,7 +71,7 @@ func TestNotifyChannelService_CreateRoundtrip(t *testing.T) {
 	}
 	wh := whResp.GetChannel()
 	detail, ok := wh.GetDetail().(*notifyv1.NotifyChannel_Webhook)
-	if !ok || detail.Webhook.GetHeaders()["X-Source"] != "core" || detail.Webhook.GetTimeoutS() != 3 {
+	if !ok || detail.Webhook.GetHeaders()["X-Source"] != biz.WebhookHeaderMask || detail.Webhook.GetTimeoutS() != 3 {
 		t.Fatalf("CreateChannel(webhook) detail = %+v", wh.GetDetail())
 	}
 	if wh.GetRateLimit().GetQps() != 5 || wh.GetRateLimit().GetBurst() != 10 {
@@ -318,11 +319,16 @@ func TestNotifyChannelService_SendTestEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStruct() error = %v", err)
 	}
-	custom, err := svc.SendTestEvent(ctx, &notifyv1.SendTestEventRequest{
+	// 显式收件人只允许操作者本人（用户 ID）等：任意邮箱被拒。
+	if _, err := svc.SendTestEvent(ctx, &notifyv1.SendTestEventRequest{Id: id, Recipients: []string{"ops@example.com"}}); !errors.Is(err, biz.ErrChannelConfigInvalid) {
+		t.Fatalf("SendTestEvent(arbitrary recipient) error = %v, want ErrChannelConfigInvalid", err)
+	}
+	const self = "018f3e1a-0000-7000-8000-0000000000aa"
+	custom, err := svc.SendTestEvent(operator.WithID(ctx, self), &notifyv1.SendTestEventRequest{
 		Id:         id,
 		EventType:  sptr("monitor.alert.test"),
 		Title:      sptr("自定义测试"),
-		Recipients: []string{"ops@example.com"},
+		Recipients: []string{self},
 		Payload:    payload,
 	})
 	if err != nil {
@@ -332,7 +338,7 @@ func TestNotifyChannelService_SendTestEvent(t *testing.T) {
 	if got.GetEventType() != "monitor.alert.test" || got.GetTitle() != "自定义测试" {
 		t.Fatalf("SendTestEvent(custom) type/title = %q/%q", got.GetEventType(), got.GetTitle())
 	}
-	if len(got.GetRecipients()) != 1 || got.GetRecipients()[0] != "ops@example.com" {
+	if len(got.GetRecipients()) != 1 || got.GetRecipients()[0] != self {
 		t.Fatalf("SendTestEvent(custom) recipients = %v", got.GetRecipients())
 	}
 	if got.GetPayload().GetFields()["order"].GetStringValue() != "A-1" {

@@ -580,6 +580,99 @@ func (x *UploadMyAvatarResponse) GetUrl() string {
 	return ""
 }
 
+// ChangeMyPasswordRequest 自助修改密码请求。
+type ChangeMyPasswordRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// old_password 现密码：允许 b64$ 前缀的 Base64 编码值（前端统一编码）或明文。
+	OldPassword string `protobuf:"bytes,1,opt,name=old_password,json=oldPassword,proto3" json:"old_password,omitempty"`
+	// new_password 新密码：允许 b64$ 前缀的 Base64 编码值或明文，服务端解码后断言明文 8-64 位；
+	// Argon2id 哈希后落库。
+	NewPassword   string `protobuf:"bytes,2,opt,name=new_password,json=newPassword,proto3" json:"new_password,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChangeMyPasswordRequest) Reset() {
+	*x = ChangeMyPasswordRequest{}
+	mi := &file_system_v1_auth_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChangeMyPasswordRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChangeMyPasswordRequest) ProtoMessage() {}
+
+func (x *ChangeMyPasswordRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_system_v1_auth_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChangeMyPasswordRequest.ProtoReflect.Descriptor instead.
+func (*ChangeMyPasswordRequest) Descriptor() ([]byte, []int) {
+	return file_system_v1_auth_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *ChangeMyPasswordRequest) GetOldPassword() string {
+	if x != nil {
+		return x.OldPassword
+	}
+	return ""
+}
+
+func (x *ChangeMyPasswordRequest) GetNewPassword() string {
+	if x != nil {
+		return x.NewPassword
+	}
+	return ""
+}
+
+// ChangeMyPasswordResponse 自助修改密码响应。
+type ChangeMyPasswordResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChangeMyPasswordResponse) Reset() {
+	*x = ChangeMyPasswordResponse{}
+	mi := &file_system_v1_auth_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChangeMyPasswordResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChangeMyPasswordResponse) ProtoMessage() {}
+
+func (x *ChangeMyPasswordResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_system_v1_auth_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChangeMyPasswordResponse.ProtoReflect.Descriptor instead.
+func (*ChangeMyPasswordResponse) Descriptor() ([]byte, []int) {
+	return file_system_v1_auth_proto_rawDescGZIP(), []int{11}
+}
+
 // GetUserAvatarRequest 查看头像请求。
 type GetUserAvatarRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -591,7 +684,7 @@ type GetUserAvatarRequest struct {
 
 func (x *GetUserAvatarRequest) Reset() {
 	*x = GetUserAvatarRequest{}
-	mi := &file_system_v1_auth_proto_msgTypes[10]
+	mi := &file_system_v1_auth_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -603,7 +696,7 @@ func (x *GetUserAvatarRequest) String() string {
 func (*GetUserAvatarRequest) ProtoMessage() {}
 
 func (x *GetUserAvatarRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_system_v1_auth_proto_msgTypes[10]
+	mi := &file_system_v1_auth_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -616,7 +709,7 @@ func (x *GetUserAvatarRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetUserAvatarRequest.ProtoReflect.Descriptor instead.
 func (*GetUserAvatarRequest) Descriptor() ([]byte, []int) {
-	return file_system_v1_auth_proto_rawDescGZIP(), []int{10}
+	return file_system_v1_auth_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *GetUserAvatarRequest) GetId() string {
@@ -666,9 +759,15 @@ const file_system_v1_auth_proto_rawDesc = "" +
 	"image/jpegR\n" +
 	"image/webpR\x04mime\"*\n" +
 	"\x16UploadMyAvatarResponse\x12\x10\n" +
-	"\x03url\x18\x01 \x01(\tR\x03url\"0\n" +
+	"\x03url\x18\x01 \x01(\tR\x03url\"w\n" +
+	"\x17ChangeMyPasswordRequest\x12-\n" +
+	"\fold_password\x18\x01 \x01(\tB\n" +
+	"\xbaH\ar\x05\x10\x01\x18\x80\x02R\voldPassword\x12-\n" +
+	"\fnew_password\x18\x02 \x01(\tB\n" +
+	"\xbaH\ar\x05\x10\b\x18\x80\x02R\vnewPassword\"\x1a\n" +
+	"\x18ChangeMyPasswordResponse\"0\n" +
 	"\x14GetUserAvatarRequest\x12\x18\n" +
-	"\x02id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id2\xfd\x04\n" +
+	"\x02id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id2\xfa\x05\n" +
 	"\vAuthService\x12T\n" +
 	"\x05Login\x12\x17.system.v1.LoginRequest\x1a\x18.system.v1.LoginResponse\"\x18\x82\xd3\xe4\x93\x02\x12:\x01*\"\r/api/v1/login\x12q\n" +
 	"\fRefreshToken\x12\x1e.system.v1.RefreshTokenRequest\x1a\x1f.system.v1.RefreshTokenResponse\" \x82\xd3\xe4\x93\x02\x1a:\x01*\"\x15/api/v1/token/refresh\x12X\n" +
@@ -676,7 +775,8 @@ const file_system_v1_auth_proto_rawDesc = "" +
 	"\x0fGetLoginProfile\x12!.system.v1.GetLoginProfileRequest\x1a\".system.v1.GetLoginProfileResponse\"\x12\x82\xd3\xe4\x93\x02\f\x12\n" +
 	"/api/v1/me\x12s\n" +
 	"\x0eUploadMyAvatar\x12 .system.v1.UploadMyAvatarRequest\x1a!.system.v1.UploadMyAvatarResponse\"\x1c\x82\xd3\xe4\x93\x02\x16:\x01*\"\x11/api/v1/me/avatar\x12h\n" +
-	"\rGetUserAvatar\x12\x1f.system.v1.GetUserAvatarRequest\x1a\x14.google.api.HttpBody\" \x82\xd3\xe4\x93\x02\x1a\x12\x18/api/v1/user/{id}/avatarB:Z8github.com/lanyulei/reborn/backend/core/api/system/v1;v1b\x06proto3"
+	"\rGetUserAvatar\x12\x1f.system.v1.GetUserAvatarRequest\x1a\x14.google.api.HttpBody\" \x82\xd3\xe4\x93\x02\x1a\x12\x18/api/v1/user/{id}/avatar\x12{\n" +
+	"\x10ChangeMyPassword\x12\".system.v1.ChangeMyPasswordRequest\x1a#.system.v1.ChangeMyPasswordResponse\"\x1e\x82\xd3\xe4\x93\x02\x18:\x01*\"\x13/api/v1/me/passwordB:Z8github.com/lanyulei/reborn/backend/core/api/system/v1;v1b\x06proto3"
 
 var (
 	file_system_v1_auth_proto_rawDescOnce sync.Once
@@ -690,41 +790,45 @@ func file_system_v1_auth_proto_rawDescGZIP() []byte {
 	return file_system_v1_auth_proto_rawDescData
 }
 
-var file_system_v1_auth_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_system_v1_auth_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_system_v1_auth_proto_goTypes = []any{
-	(*LoginRequest)(nil),            // 0: system.v1.LoginRequest
-	(*LoginResponse)(nil),           // 1: system.v1.LoginResponse
-	(*RefreshTokenRequest)(nil),     // 2: system.v1.RefreshTokenRequest
-	(*RefreshTokenResponse)(nil),    // 3: system.v1.RefreshTokenResponse
-	(*LogoutRequest)(nil),           // 4: system.v1.LogoutRequest
-	(*LogoutResponse)(nil),          // 5: system.v1.LogoutResponse
-	(*GetLoginProfileRequest)(nil),  // 6: system.v1.GetLoginProfileRequest
-	(*GetLoginProfileResponse)(nil), // 7: system.v1.GetLoginProfileResponse
-	(*UploadMyAvatarRequest)(nil),   // 8: system.v1.UploadMyAvatarRequest
-	(*UploadMyAvatarResponse)(nil),  // 9: system.v1.UploadMyAvatarResponse
-	(*GetUserAvatarRequest)(nil),    // 10: system.v1.GetUserAvatarRequest
-	(*User)(nil),                    // 11: system.v1.User
-	(*Role)(nil),                    // 12: system.v1.Role
-	(*httpbody.HttpBody)(nil),       // 13: google.api.HttpBody
+	(*LoginRequest)(nil),             // 0: system.v1.LoginRequest
+	(*LoginResponse)(nil),            // 1: system.v1.LoginResponse
+	(*RefreshTokenRequest)(nil),      // 2: system.v1.RefreshTokenRequest
+	(*RefreshTokenResponse)(nil),     // 3: system.v1.RefreshTokenResponse
+	(*LogoutRequest)(nil),            // 4: system.v1.LogoutRequest
+	(*LogoutResponse)(nil),           // 5: system.v1.LogoutResponse
+	(*GetLoginProfileRequest)(nil),   // 6: system.v1.GetLoginProfileRequest
+	(*GetLoginProfileResponse)(nil),  // 7: system.v1.GetLoginProfileResponse
+	(*UploadMyAvatarRequest)(nil),    // 8: system.v1.UploadMyAvatarRequest
+	(*UploadMyAvatarResponse)(nil),   // 9: system.v1.UploadMyAvatarResponse
+	(*ChangeMyPasswordRequest)(nil),  // 10: system.v1.ChangeMyPasswordRequest
+	(*ChangeMyPasswordResponse)(nil), // 11: system.v1.ChangeMyPasswordResponse
+	(*GetUserAvatarRequest)(nil),     // 12: system.v1.GetUserAvatarRequest
+	(*User)(nil),                     // 13: system.v1.User
+	(*Role)(nil),                     // 14: system.v1.Role
+	(*httpbody.HttpBody)(nil),        // 15: google.api.HttpBody
 }
 var file_system_v1_auth_proto_depIdxs = []int32{
-	11, // 0: system.v1.LoginResponse.user:type_name -> system.v1.User
-	11, // 1: system.v1.GetLoginProfileResponse.user:type_name -> system.v1.User
-	12, // 2: system.v1.GetLoginProfileResponse.roles:type_name -> system.v1.Role
+	13, // 0: system.v1.LoginResponse.user:type_name -> system.v1.User
+	13, // 1: system.v1.GetLoginProfileResponse.user:type_name -> system.v1.User
+	14, // 2: system.v1.GetLoginProfileResponse.roles:type_name -> system.v1.Role
 	0,  // 3: system.v1.AuthService.Login:input_type -> system.v1.LoginRequest
 	2,  // 4: system.v1.AuthService.RefreshToken:input_type -> system.v1.RefreshTokenRequest
 	4,  // 5: system.v1.AuthService.Logout:input_type -> system.v1.LogoutRequest
 	6,  // 6: system.v1.AuthService.GetLoginProfile:input_type -> system.v1.GetLoginProfileRequest
 	8,  // 7: system.v1.AuthService.UploadMyAvatar:input_type -> system.v1.UploadMyAvatarRequest
-	10, // 8: system.v1.AuthService.GetUserAvatar:input_type -> system.v1.GetUserAvatarRequest
-	1,  // 9: system.v1.AuthService.Login:output_type -> system.v1.LoginResponse
-	3,  // 10: system.v1.AuthService.RefreshToken:output_type -> system.v1.RefreshTokenResponse
-	5,  // 11: system.v1.AuthService.Logout:output_type -> system.v1.LogoutResponse
-	7,  // 12: system.v1.AuthService.GetLoginProfile:output_type -> system.v1.GetLoginProfileResponse
-	9,  // 13: system.v1.AuthService.UploadMyAvatar:output_type -> system.v1.UploadMyAvatarResponse
-	13, // 14: system.v1.AuthService.GetUserAvatar:output_type -> google.api.HttpBody
-	9,  // [9:15] is the sub-list for method output_type
-	3,  // [3:9] is the sub-list for method input_type
+	12, // 8: system.v1.AuthService.GetUserAvatar:input_type -> system.v1.GetUserAvatarRequest
+	10, // 9: system.v1.AuthService.ChangeMyPassword:input_type -> system.v1.ChangeMyPasswordRequest
+	1,  // 10: system.v1.AuthService.Login:output_type -> system.v1.LoginResponse
+	3,  // 11: system.v1.AuthService.RefreshToken:output_type -> system.v1.RefreshTokenResponse
+	5,  // 12: system.v1.AuthService.Logout:output_type -> system.v1.LogoutResponse
+	7,  // 13: system.v1.AuthService.GetLoginProfile:output_type -> system.v1.GetLoginProfileResponse
+	9,  // 14: system.v1.AuthService.UploadMyAvatar:output_type -> system.v1.UploadMyAvatarResponse
+	15, // 15: system.v1.AuthService.GetUserAvatar:output_type -> google.api.HttpBody
+	11, // 16: system.v1.AuthService.ChangeMyPassword:output_type -> system.v1.ChangeMyPasswordResponse
+	10, // [10:17] is the sub-list for method output_type
+	3,  // [3:10] is the sub-list for method input_type
 	3,  // [3:3] is the sub-list for extension type_name
 	3,  // [3:3] is the sub-list for extension extendee
 	0,  // [0:3] is the sub-list for field type_name
@@ -743,7 +847,7 @@ func file_system_v1_auth_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_system_v1_auth_proto_rawDesc), len(file_system_v1_auth_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   11,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

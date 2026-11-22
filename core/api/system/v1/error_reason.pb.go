@@ -87,10 +87,15 @@ const (
 	ErrorReason_DEPT_MOVE_INVALID ErrorReason = 26
 	// DEPT_DEPTH_EXCEEDED 部门层级超过上限，映射 HTTP 400。
 	ErrorReason_DEPT_DEPTH_EXCEEDED ErrorReason = 27
+	// USER_MACHINE_ACCOUNT 机器账号不能登录、不能改密码 / 资料 / 头像，也不能被当作人类账号编辑，映射 HTTP 400。
+	ErrorReason_USER_MACHINE_ACCOUNT ErrorReason = 40
 	// DEPT_LIMIT_EXCEEDED 部门总数或单个用户所属部门数超过上限，映射 HTTP 400。
 	ErrorReason_DEPT_LIMIT_EXCEEDED ErrorReason = 28
 	// IMAGE_TYPE_INVALID 上传的 logo / 头像不是允许的图片格式（按文件内容判定，不看声明的类型），映射 HTTP 400。
 	ErrorReason_IMAGE_TYPE_INVALID ErrorReason = 29
+	// PASSWORD_MISMATCH 自助修改密码时提供的现密码不正确，映射 HTTP 400（已认证用户的自助接口，不走 401
+	// 以免客户端误判为令牌失效）。
+	ErrorReason_PASSWORD_MISMATCH ErrorReason = 30
 )
 
 // Enum value maps for ErrorReason.
@@ -124,8 +129,10 @@ var (
 		25: "DEPT_HAS_MEMBERS",
 		26: "DEPT_MOVE_INVALID",
 		27: "DEPT_DEPTH_EXCEEDED",
+		40: "USER_MACHINE_ACCOUNT",
 		28: "DEPT_LIMIT_EXCEEDED",
 		29: "IMAGE_TYPE_INVALID",
+		30: "PASSWORD_MISMATCH",
 	}
 	ErrorReason_value = map[string]int32{
 		"USER_UNSPECIFIED":       0,
@@ -156,8 +163,10 @@ var (
 		"DEPT_HAS_MEMBERS":       25,
 		"DEPT_MOVE_INVALID":      26,
 		"DEPT_DEPTH_EXCEEDED":    27,
+		"USER_MACHINE_ACCOUNT":   40,
 		"DEPT_LIMIT_EXCEEDED":    28,
 		"IMAGE_TYPE_INVALID":     29,
+		"PASSWORD_MISMATCH":      30,
 	}
 )
 
@@ -192,7 +201,7 @@ var File_system_v1_error_reason_proto protoreflect.FileDescriptor
 
 const file_system_v1_error_reason_proto_rawDesc = "" +
 	"\n" +
-	"\x1csystem/v1/error_reason.proto\x12\tsystem.v1\x1a\x13errors/errors.proto*\xc7\x06\n" +
+	"\x1csystem/v1/error_reason.proto\x12\tsystem.v1\x1a\x13errors/errors.proto*\x84\a\n" +
 	"\vErrorReason\x12\x14\n" +
 	"\x10USER_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x0eUSER_NOT_FOUND\x10\x01\x1a\x04\xa8E\x94\x03\x12\x15\n" +
@@ -222,9 +231,11 @@ const file_system_v1_error_reason_proto_rawDesc = "" +
 	"\x11DEPT_HAS_CHILDREN\x10\x18\x1a\x04\xa8E\x99\x03\x12\x1a\n" +
 	"\x10DEPT_HAS_MEMBERS\x10\x19\x1a\x04\xa8E\x99\x03\x12\x1b\n" +
 	"\x11DEPT_MOVE_INVALID\x10\x1a\x1a\x04\xa8E\x90\x03\x12\x1d\n" +
-	"\x13DEPT_DEPTH_EXCEEDED\x10\x1b\x1a\x04\xa8E\x90\x03\x12\x1d\n" +
+	"\x13DEPT_DEPTH_EXCEEDED\x10\x1b\x1a\x04\xa8E\x90\x03\x12\x1e\n" +
+	"\x14USER_MACHINE_ACCOUNT\x10(\x1a\x04\xa8E\x90\x03\x12\x1d\n" +
 	"\x13DEPT_LIMIT_EXCEEDED\x10\x1c\x1a\x04\xa8E\x90\x03\x12\x1c\n" +
-	"\x12IMAGE_TYPE_INVALID\x10\x1d\x1a\x04\xa8E\x90\x03\x1a\x04\xa0E\xf4\x03B:Z8github.com/lanyulei/reborn/backend/core/api/system/v1;v1b\x06proto3"
+	"\x12IMAGE_TYPE_INVALID\x10\x1d\x1a\x04\xa8E\x90\x03\x12\x1b\n" +
+	"\x11PASSWORD_MISMATCH\x10\x1e\x1a\x04\xa8E\x90\x03\x1a\x04\xa0E\xf4\x03B:Z8github.com/lanyulei/reborn/backend/core/api/system/v1;v1b\x06proto3"
 
 var (
 	file_system_v1_error_reason_proto_rawDescOnce sync.Once

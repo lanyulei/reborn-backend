@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package agent.v1;
+
+import "errors/errors.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/agent/v1;v1";
+
+// ErrorReason 是运维 Agent 域的业务错误码枚举，由 protoc-gen-go-errors 生成带 code 的错误构造器。
+enum ErrorReason {
+  option (errors.default_code) = 500;
+  // AGENT_UNSPECIFIED 未指定的 Agent 错误。
+  AGENT_UNSPECIFIED = 0;
+  // AGENT_PROFILE_NOT_FOUND Profile 不存在，映射 HTTP 404。
+  AGENT_PROFILE_NOT_FOUND = 1 [(errors.code) = 404];
+  // AGENT_PROFILE_INVALID Profile 内容不合法（阶段 / 工具 / 预算 / 机器账号），映射 HTTP 400。
+  AGENT_PROFILE_INVALID = 2 [(errors.code) = 400];
+  // AGENT_PROFILE_NAME_EXISTS Profile 名称已存在，映射 HTTP 409。
+  AGENT_PROFILE_NAME_EXISTS = 3 [(errors.code) = 409];
+  // AGENT_VERSION_CONFLICT 数据已被他人修改（version 不一致），映射 HTTP 409。
+  AGENT_VERSION_CONFLICT = 4 [(errors.code) = 409];
+  // AGENT_TASK_NOT_FOUND 任务不存在，映射 HTTP 404。
+  AGENT_TASK_NOT_FOUND = 5 [(errors.code) = 404];
+  // AGENT_TASK_STATE_INVALID 任务当前状态不允许该操作，映射 HTTP 409。
+  AGENT_TASK_STATE_INVALID = 6 [(errors.code) = 409];
+  // AGENT_RUN_NOT_FOUND 运行不存在，映射 HTTP 404。
+  AGENT_RUN_NOT_FOUND = 7 [(errors.code) = 404];
+  // AGENT_FORBIDDEN 需要故障的指挥 / 处理人身份或管理权限，映射 HTTP 403。
+  AGENT_FORBIDDEN = 8 [(errors.code) = 403];
+  // AGENT_DISABLED Agent 未配置或已停用，映射 HTTP 503。
+  AGENT_DISABLED = 9 [(errors.code) = 503];
+  // AGENT_ACCOUNT_INVALID 机器账号不存在、不是机器账号或已停用，映射 HTTP 400。
+  AGENT_ACCOUNT_INVALID = 10 [(errors.code) = 400];
+  // AGENT_TASK_EXISTS 该故障已有排队或进行中的任务，映射 HTTP 409。
+  AGENT_TASK_EXISTS = 11 [(errors.code) = 409];
+  // AGENT_PROFILE_IN_USE Profile 仍有排队或进行中的任务，不能删除，映射 HTTP 409。
+  AGENT_PROFILE_IN_USE = 12 [(errors.code) = 409];
+  // AGENT_TIME_RANGE_INVALID 统计时间范围不合法或超过上限，映射 HTTP 400。
+  AGENT_TIME_RANGE_INVALID = 13 [(errors.code) = 400];
+}

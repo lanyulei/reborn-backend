@@ -2,6 +2,7 @@ package biz
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"strings"
 	"time"
@@ -406,9 +407,25 @@ func (uc *DatasourceUsecase) probe(ctx context.Context, conn Connection) (*TestR
 	}
 	res := &TestResult{OK: err == nil, Latency: latency}
 	if err != nil {
-		res.Error = errorMessage(err)
+		res.Error = probeReason(err)
 	}
 	return res, nil
+}
+
+// probeReason 测试连接失败的说明：只给粗粒度的分类，不回显数据源 / 客户端的错误原文（原文可能带着
+// 上游返回的内部地址、版本等部署信息）。
+func probeReason(err error) string {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "连接超时：数据源在超时时间内没有响应"
+	case kerrors.Is(err, ErrQueryInvalid):
+		return "数据源拒绝了测试查询：请检查数据源类型与地址路径"
+	case kerrors.Is(err, ErrDatasourceInvalid):
+		return "连接配置不合法：请检查地址、认证方式与请求头"
+	case kerrors.Is(err, ErrDatasourceUnreachable):
+		return "数据源不可达或返回了无法解析的响应：请检查地址、认证信息与网络连通性"
+	}
+	return "连接失败"
 }
 
 // Test 测试已保存数据源的连接。

@@ -84,24 +84,25 @@ func (j jobHosts) Resolve(ctx context.Context, userID string, target jobcontract
 	return j.resolveFilter(ctx, scope, target, limit)
 }
 
-// resolveIDs 逐个读取指定的资源；已不存在、不属于该类型、已退役或不在数据范围内的计入 Skipped。
-// 读取走主键，个数受 limit 约束（上限 jobcontract.MaxHosts）。
+// resolveIDs 一次取齐指定的资源（CMDB 批量读取，不再逐个 GetByID）；已不存在、不属于该类型、已退役或不在
+// 数据范围内的计入 Skipped。顺序保持用户选择的顺序，个数受 limit 约束（上限 jobcontract.MaxHosts）。
 func (j jobHosts) resolveIDs(ctx context.Context, scope bizcmdb.Scope, target jobcontract.Target, limit int) (bizjob.ResourceSet, error) {
 	set := bizjob.ResourceSet{Items: make([]bizjob.Resource, 0, min(len(target.CIIDs), limit))}
+	found, err := j.cis.GetByIDs(ctx, target.CIIDs)
+	if err != nil {
+		return bizjob.ResourceSet{}, err
+	}
+	byID := make(map[string]*bizcmdb.CI, len(found))
+	for _, ci := range found {
+		byID[ci.ID] = ci
+	}
 	for _, id := range target.CIIDs {
 		if len(set.Items) >= limit {
 			set.Truncated = true
 			break
 		}
-		ci, err := j.cis.GetByID(ctx, id)
-		if kerrors.Is(err, bizcmdb.ErrCINotFound) {
-			set.Skipped++
-			continue
-		}
-		if err != nil {
-			return bizjob.ResourceSet{}, err
-		}
-		if ci.ModelCode != target.ModelCode || ci.Status == bizcmdb.CIStatusRetired || !scope.Allows(ci.ModelCode, ci.Env) {
+		ci, ok := byID[id]
+		if !ok || ci.ModelCode != target.ModelCode || ci.Status == bizcmdb.CIStatusRetired || !scope.Allows(ci.ModelCode, ci.Env) {
 			set.Skipped++
 			continue
 		}

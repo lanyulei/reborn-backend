@@ -91,6 +91,9 @@ type RelationRepo interface {
 	// Move 同事务：解除 (type, oldSrc, oldDst) 并建立 (type, newSrc, newDst)。
 	Move(ctx context.Context, typeCode string, old, next *Relation, histories []*History) error
 	ListRelated(ctx context.Context, ciID, typeCode, direction, keyword string, page, pageSize int64) ([]*RelatedCI, int64, error)
+	// ListRelatedIn 同 ListRelated，但只取对端类型在 modelCodes 内、环境在 envs 内的（nil = 该维度不限，
+	// 空集合 = 什么都不取）：受限用户的关联列表在 SQL 里过滤，分页与总数都按可见的算。
+	ListRelatedIn(ctx context.Context, ciID, typeCode, direction, keyword string, modelCodes, envs []string, page, pageSize int64) ([]*RelatedCI, int64, error)
 	// Neighbors 以 ciID 为中心按层展开，节点数达 maxNodes 即停止并报告截断。
 	// flow："" 两个方向；FlowDownstream 只沿 src→dst；FlowUpstream 只沿 dst→src。
 	Neighbors(ctx context.Context, ciID, flow string, depth, maxNodes int32) (nodes []*TopologyNode, edges []*TopologyEdge, truncated bool, err error)
@@ -125,13 +128,22 @@ func (uc *RelationUsecase) Link(ctx context.Context, actor Actor, ciID, typeCode
 	rels := make([]*Relation, 0, len(targetIDs))
 	histories := make([]*History, 0, len(targetIDs)*2)
 	var linked int32
+	// 目标一次取齐（不逐个查）。
+	targets, err := uc.cis.GetByIDs(ctx, targetIDs)
+	if err != nil {
+		return 0, err
+	}
+	byID := make(map[string]*CI, len(targets))
+	for _, target := range targets {
+		byID[target.ID] = target
+	}
 	for _, targetID := range targetIDs {
 		if targetID == ciID {
 			return 0, detail(ErrRelationNotAllowed, "cannot link a resource to itself")
 		}
-		target, err := uc.cis.Get(ctx, targetID)
-		if err != nil {
-			return 0, err
+		target, ok := byID[targetID]
+		if !ok {
+			return 0, ErrCINotFound
 		}
 		rel, err := uc.buildRelation(ctx, actor, t, ci, target, direction, batch)
 		if err != nil {
@@ -233,21 +245,56 @@ func (uc *RelationUsecase) ListRelated(ctx context.Context, ciID, typeCode, dire
 	if err != nil {
 		return nil, 0, err
 	}
-	// 对端属性脱敏（对端类型固定时只取一次字段定义）。
+	return items, total, uc.maskRelated(ctx, items)
+}
+
+// ListRelatedScoped 按调用者数据范围分页查询关联资源：范围外的对端不展示（不泄露名称与数量），过滤在
+// 仓储的 SQL 里完成，分页与总数都按可见的算。范围不限时等同 ListRelated。
+func (uc *RelationUsecase) ListRelatedScoped(ctx context.Context, scope Scope, ciID, typeCode, direction, keyword string, page, pageSize int64) ([]*RelatedCI, int64, error) {
+	if scope.Unrestricted {
+		return uc.ListRelated(ctx, ciID, typeCode, direction, keyword, page, pageSize)
+	}
+	if _, _, err := uc.load(ctx, ciID, typeCode); err != nil {
+		return nil, 0, err
+	}
+	page, pageSize = paging.Normalize(page, pageSize)
+	modelCodes := scopeKeyList(scope.Models) // 非 nil：空集合即什么都看不到
+	var envs []string
+	if !scope.EnvUnrestricted {
+		envs = scopeKeyList(scope.Envs)
+	}
+	items, total, err := uc.relations.ListRelatedIn(ctx, ciID, typeCode, direction, keyword, modelCodes, envs, page, pageSize)
+	if err != nil {
+		return nil, 0, err
+	}
+	return items, total, uc.maskRelated(ctx, items)
+}
+
+// maskRelated 对端属性脱敏（对端类型固定时只取一次字段定义）。
+func (uc *RelationUsecase) maskRelated(ctx context.Context, items []*RelatedCI) error {
 	byModel := map[string][]string{}
 	for _, r := range items {
 		codes, ok := byModel[r.CI.ModelCode]
 		if !ok {
 			fields, err := uc.fields.ListByModel(ctx, r.CI.ModelCode)
 			if err != nil {
-				return nil, 0, err
+				return err
 			}
 			codes = sensitiveCodes(fields)
 			byModel[r.CI.ModelCode] = codes
 		}
 		MaskAttrs(r.CI.Attrs, codes)
 	}
-	return items, total, nil
+	return nil
+}
+
+// scopeKeyList 集合的键列表（空集合返回非 nil 的空切片，与"不限"的 nil 区分）。
+func scopeKeyList(set map[string]struct{}) []string {
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	return out
 }
 
 // 拓扑展开方向（影响分析）。

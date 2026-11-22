@@ -1,0 +1,381 @@
+syntax = "proto3";
+
+package agent.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/agent/v1;v1";
+
+// AgentProfileService 运维 Agent 的 Profile（策略）：适用范围、阶段与工具白名单、预算、自动通过条件。
+// 本域接口不作为助手工具暴露给模型（递归无意义）。
+service AgentProfileService {
+  // ListProfiles 分页查询 Profile。
+  rpc ListProfiles(ListProfilesRequest) returns (ListProfilesResponse) {
+    option (google.api.http) = {get: "/api/v1/agent-profile"};
+    option (system.v1.title) = "查询 Agent Profile";
+  }
+  // GetProfile 查询 Profile 详情。
+  rpc GetProfile(GetProfileRequest) returns (GetProfileResponse) {
+    option (google.api.http) = {get: "/api/v1/agent-profile/{id}"};
+    option (system.v1.title) = "查询 Agent Profile 详情";
+  }
+  // CreateProfile 新建 Profile。
+  rpc CreateProfile(CreateProfileRequest) returns (CreateProfileResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/agent-profile"
+      body: "*"
+    };
+    option (system.v1.title) = "新建 Agent Profile";
+  }
+  // UpdateProfile 编辑 Profile（乐观锁；每次变更写入变更历史）。
+  rpc UpdateProfile(UpdateProfileRequest) returns (UpdateProfileResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/agent-profile/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "编辑 Agent Profile";
+  }
+  // DeleteProfile 删除 Profile（仍有排队 / 进行中任务时拒绝）。
+  rpc DeleteProfile(DeleteProfileRequest) returns (DeleteProfileResponse) {
+    option (google.api.http) = {delete: "/api/v1/agent-profile/{id}"};
+    option (system.v1.title) = "删除 Agent Profile";
+  }
+  // TestProfile 对指定历史故障发起一次干跑（阶段 1–3 正常执行、阶段 4 只捕获不写入）；异步，返回任务 ID。
+  rpc TestProfile(TestProfileRequest) returns (TestProfileResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/agent-profile/{id}:test"
+      body: "*"
+    };
+    option (system.v1.title) = "干跑 Agent Profile";
+  }
+  // ListProfileHistory 查询 Profile 变更历史。
+  rpc ListProfileHistory(ListProfileHistoryRequest) returns (ListProfileHistoryResponse) {
+    option (google.api.http) = {get: "/api/v1/agent-profile/{id}/history"};
+    option (system.v1.title) = "查询 Agent Profile 变更历史";
+  }
+  // ListProfileTools 查询可写进工具白名单的工具目录（助手工具目录里属于本域允许范围的只读工具与指定写工具）。
+  rpc ListProfileTools(ListProfileToolsRequest) returns (ListProfileToolsResponse) {
+    option (google.api.http) = {get: "/api/v1/agent-profile-tool"};
+    option (system.v1.title) = "查询 Agent 可用工具目录";
+  }
+}
+
+// AgentNamedRef 引用对象：ID + 显示名；missing 表示对象已不存在。
+message AgentNamedRef {
+  // 对象 ID。
+  string id = 1;
+  // 显示名。
+  string name = 2;
+  // 对象已不存在。
+  bool missing = 3;
+}
+
+// StageSpec 一个阶段的配置。
+message StageSpec {
+  // key 阶段键：collect 收集 / hypothesize 假设 / verify 验证 / conclude 结论。
+  string key = 1 [(buf.validate.field).string = {
+    in: [
+      "collect",
+      "hypothesize",
+      "verify",
+      "conclude"
+    ]
+  }];
+  // max_steps 本阶段最多模型调用次数，1-15。
+  int32 max_steps = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 15
+  }];
+  // tools 本阶段允许的工具名（<Service>_<Method>），至多 30 个；为空 = 不下发工具（纯推理）。
+  repeated string tools = 3 [(buf.validate.field).repeated = {
+    max_items: 30
+    items: {
+      string: {
+        pattern: "^[a-zA-Z0-9_-]{1,64}$"
+      }
+    }
+  }];
+}
+
+// BudgetSpec 单任务预算。
+message BudgetSpec {
+  // max_steps 全任务最多模型调用次数，1-40。
+  int32 max_steps = 1 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 40
+  }];
+  // timeout_s 全任务时限（秒），60-1800。
+  int32 timeout_s = 2 [(buf.validate.field).int32 = {
+    gte: 60
+    lte: 1800
+  }];
+  // prompt_tokens 单任务 prompt token 上限，1000-2000000。
+  int64 prompt_tokens = 3 [(buf.validate.field).int64 = {
+    gte: 1000
+    lte: 2000000
+  }];
+  // completion_tokens 单任务 completion token 上限，500-200000。
+  int64 completion_tokens = 4 [(buf.validate.field).int64 = {
+    gte: 500
+    lte: 200000
+  }];
+}
+
+// AutoSpec Agent 侧的自动通过条件（incident 侧的冷却 / 并发在故障设置里）。
+message AutoSpec {
+  // enabled 是否允许 Agent 的建议申请自动通过（auto_eligible）。
+  bool enabled = 1;
+  // min_confidence 发现置信度下限（0-100），缺省 80。
+  int32 min_confidence = 2 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 100
+  }];
+  // require_metric_evidence 至少一条「支持」证据来自指标 / 诊断工具。
+  bool require_metric_evidence = 3;
+  // max_targets 建议靶标 CI 数上限（1-20），缺省 3。
+  int32 max_targets = 4 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 20
+  }];
+  // envs 允许自动执行的靶标环境（CMDB env 编码），缺省只允许非生产环境；含 prod 须管理员显式勾选。
+  repeated string envs = 5 [(buf.validate.field).repeated = {
+    max_items: 20
+    items: {
+      string: {max_len: 32}
+    }
+  }];
+}
+
+// ProfileSpec Profile 内容。
+message ProfileSpec {
+  // name 名称（唯一），1-64 字符。
+  string name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // description 说明，至多 512 字符。
+  string description = 2 [(buf.validate.field).string.max_len = 512];
+  // kind 类型：diagnose 故障诊断（四阶段）；postmortem 经验沉淀（复盘完成后起草知识草稿，两阶段）。
+  string kind = 3 [(buf.validate.field).string = {
+    in: ["diagnose", "postmortem"]
+  }];
+  // agent_user_id 机器账号（system 用户，kind=机器）。
+  string agent_user_id = 4 [(buf.validate.field).string.uuid = true];
+  // priority 优先级（数值小者优先，同类型多个 Profile 命中同一故障时取第一个），0-1000。
+  int32 priority = 5 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 1000
+  }];
+  // enabled 是否启用。
+  bool enabled = 6;
+  // severities 适用等级（1-4），为空 = S1–S3。
+  repeated int32 severities = 7 [(buf.validate.field).repeated = {
+    max_items: 4
+    items: {
+      int32: {
+        gte: 1
+        lte: 4
+      }
+    }
+  }];
+  // business_ids 适用业务（故障业务字典 ID），为空 = 不限。
+  repeated string business_ids = 8 [(buf.validate.field).repeated = {
+    max_items: 100
+    items: {
+      string: {uuid: true}
+    }
+  }];
+  // hourly_limit 每小时自动任务上限（人工召唤不计），1-500，缺省 30。
+  int32 hourly_limit = 9 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 500
+  }];
+  // stages 四个阶段的配置（缺省由系统内置）。
+  repeated StageSpec stages = 10 [(buf.validate.field).repeated.max_items = 4];
+  // budget 单任务预算（缺省由系统内置）。
+  BudgetSpec budget = 11;
+  // auto Agent 侧自动通过条件。
+  AutoSpec auto = 12;
+  // knowledge_space_id 经验沉淀草稿落入的知识空间（kind=postmortem 必填，机器账号须有该空间的写权限）。
+  string knowledge_space_id = 13 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+}
+
+// Profile 一条 Profile。
+message Profile {
+  // id Profile ID。
+  string id = 1;
+  // spec 内容。
+  ProfileSpec spec = 2;
+  // agent_user 机器账号引用。
+  AgentNamedRef agent_user = 3;
+  // breaker_open Profile 级熔断已打开（自动通过能力停用，需人工恢复）。
+  bool breaker_open = 4;
+  // breaker_reason 熔断原因。
+  string breaker_reason = 5;
+  // version 乐观锁版本号。
+  int32 version = 6;
+  // create_time 创建时间。
+  google.protobuf.Timestamp create_time = 7;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 8;
+  // update_user 最近修改人。
+  AgentNamedRef update_user = 9;
+}
+
+// ListProfilesRequest 列表请求。
+message ListProfilesRequest {
+  // keyword 名称关键字，可选。
+  string keyword = 1 [(buf.validate.field).string.max_len = 64];
+  // enabled 启用过滤，可选。
+  optional bool enabled = 2;
+  // page 页码，从 1 起。
+  int64 page = 3 [(buf.validate.field).int64.gte = 0];
+  // page_size 每页条数，至多 100。
+  int32 page_size = 4 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 100
+  }];
+}
+
+// ListProfilesResponse 列表响应。
+message ListProfilesResponse {
+  // items 当前页。
+  repeated Profile items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// GetProfileRequest 详情请求。
+message GetProfileRequest {
+  // id Profile ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetProfileResponse 详情响应。
+message GetProfileResponse {
+  // profile Profile。
+  Profile profile = 1;
+}
+
+// CreateProfileRequest 新建请求。
+message CreateProfileRequest {
+  // spec 内容。
+  ProfileSpec spec = 1 [(buf.validate.field).required = true];
+}
+
+// CreateProfileResponse 新建响应。
+message CreateProfileResponse {
+  // profile 新建的 Profile。
+  Profile profile = 1;
+}
+
+// UpdateProfileRequest 编辑请求。
+message UpdateProfileRequest {
+  // id Profile ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // spec 内容。
+  ProfileSpec spec = 2 [(buf.validate.field).required = true];
+  // version 乐观锁版本号。
+  int32 version = 3 [(buf.validate.field).int32.gte = 1];
+  // reset_breaker 同时恢复 Profile 级熔断。
+  bool reset_breaker = 4;
+}
+
+// UpdateProfileResponse 编辑响应。
+message UpdateProfileResponse {
+  // profile 更新后的 Profile。
+  Profile profile = 1;
+}
+
+// DeleteProfileRequest 删除请求。
+message DeleteProfileRequest {
+  // id Profile ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // version 乐观锁版本号。
+  int32 version = 2 [(buf.validate.field).int32.gte = 1];
+}
+
+// DeleteProfileResponse 删除响应。
+message DeleteProfileResponse {}
+
+// TestProfileRequest 干跑请求。
+message TestProfileRequest {
+  // id Profile ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // incident_id 用作样本的历史故障 ID。
+  string incident_id = 2 [(buf.validate.field).string.uuid = true];
+}
+
+// TestProfileResponse 干跑响应：任务 ID，结果经 AgentTaskService/GetTask 轮询。
+message TestProfileResponse {
+  // task_id 干跑任务 ID。
+  string task_id = 1;
+}
+
+// ProfileHistory 一次变更。
+message ProfileHistory {
+  // id 记录 ID。
+  string id = 1;
+  // version 变更后的版本号。
+  int32 version = 2;
+  // actor 修改人。
+  AgentNamedRef actor = 3;
+  // before 变更前内容（新建时为空）。
+  ProfileSpec before = 4;
+  // after 变更后内容。
+  ProfileSpec after = 5;
+  // note 说明（如「恢复熔断」）。
+  string note = 6;
+  // create_time 变更时间。
+  google.protobuf.Timestamp create_time = 7;
+}
+
+// ListProfileHistoryRequest 变更历史请求。
+message ListProfileHistoryRequest {
+  // id Profile ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // page 页码，从 1 起。
+  int64 page = 2 [(buf.validate.field).int64.gte = 0];
+  // page_size 每页条数，至多 100。
+  int32 page_size = 3 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 100
+  }];
+}
+
+// ListProfileHistoryResponse 变更历史响应。
+message ListProfileHistoryResponse {
+  // items 当前页。
+  repeated ProfileHistory items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// ListProfileToolsRequest 工具目录请求。
+message ListProfileToolsRequest {}
+
+// ToolOption 一个可配置的工具。
+message ToolOption {
+  // name 工具名 <Service>_<Method>。
+  string name = 1;
+  // title 接口中文名。
+  string title = 2;
+  // module 所属模块。
+  string module = 3;
+  // write 是否写工具（只有列入允许范围的写工具会出现）。
+  bool write = 4;
+  // stages 建议归属的阶段键。
+  repeated string stages = 5;
+}
+
+// ListProfileToolsResponse 工具目录响应。
+message ListProfileToolsResponse {
+  // items 工具。
+  repeated ToolOption items = 1;
+}

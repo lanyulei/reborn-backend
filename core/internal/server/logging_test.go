@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	agentservice "github.com/lanyulei/reborn/backend/core/internal/service/agent"
+	incidentservice "github.com/lanyulei/reborn/backend/core/internal/service/incident"
+
 	monitorservice "github.com/lanyulei/reborn/backend/core/internal/service/monitor"
 	"github.com/lanyulei/reborn/backend/kit/kitconf"
 
@@ -26,7 +29,7 @@ func TestHTTPServer_LoginLogNoPlaintextPassword(t *testing.T) {
 	}))
 	svc := newTestServices(t)
 	signer := svc.signer
-	srv := NewHTTPServer(&conf.Server{Http: &kitconf.HTTP{}}, logger, svc.user, svc.role, svc.dept, svc.auth, svc.syscfg, svc.loginLog, svc.notify, svc.template, svc.route, svc.silence, svc.subscription, svc.producer, svc.event, svc.dispatch, svc.deliveryLog, svc.deadLetter, svc.assistant, svc.assistantChat, svc.cmdbModel, svc.cmdbCI, svc.cmdbRelation, svc.cmdbScope, svc.cmdbSync, svc.cmdbInsight, nil, nil, nil, svc.file, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, monitorservice.P2Services{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, svc.signer, svc.authz, AllRoles(), nil, nil)
+	srv := NewHTTPServer(&conf.Server{Http: &kitconf.HTTP{}}, logger, svc.user, svc.role, svc.dept, svc.auth, svc.syscfg, svc.loginLog, svc.notify, svc.template, svc.route, svc.silence, svc.subscription, svc.producer, svc.event, svc.dispatch, svc.deliveryLog, svc.deadLetter, svc.assistant, svc.assistantChat, svc.cmdbModel, svc.cmdbCI, svc.cmdbRelation, svc.cmdbScope, svc.cmdbSync, svc.cmdbInsight, nil, nil, nil, svc.file, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, monitorservice.P2Services{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, incidentservice.Services{}, agentservice.Services{}, svc.signer, svc.authz, AllRoles(), nil, nil)
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
 

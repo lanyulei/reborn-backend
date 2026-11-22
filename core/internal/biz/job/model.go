@@ -200,6 +200,8 @@ type ExecutionFilter struct {
 	StartTime  *time.Time
 	EndTime    *time.Time
 	CIID       string
+	// CIIDs 靶标含这些主机中任一台（故障管理的变更关联用）。
+	CIIDs      []string
 	Kinds      []int32
 	Triggers   []int32
 	GroupID    string
@@ -497,6 +499,8 @@ type PendingSignal struct {
 	Status   int32
 	Success  bool
 	Attempts int32
+	// FiredAt 触发记录的登记时间：信号按它起算的存活期（signalMaxAge）放弃，而不按尝试次数。
+	FiredAt time.Time
 }
 
 // AlertEvent 一条告警事件（监控域提供）。

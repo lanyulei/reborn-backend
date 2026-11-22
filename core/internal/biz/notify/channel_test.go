@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lanyulei/reborn/backend/core/internal/pkg/operator"
+
 	"github.com/go-kratos/kratos/v3/errors"
 )
 
@@ -17,7 +19,8 @@ var uuidV7Pattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[8
 // （重名冲突、软删不可见、nil 字段不更新）。
 type channelRepoStub struct {
 	channels map[string]*Channel
-	refs     map[string]int64 // channelID -> 引用它的路由数
+	refs     map[string]int64    // channelID -> 引用它的路由数
+	fixed    map[string][]string // channelID -> 绑定路由的固定收件人
 }
 
 func newChannelRepoStub() *channelRepoStub {
@@ -446,6 +449,8 @@ func TestChannelUsecase_SendTestEventCustomSpec(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
+	// 显式收件人须是绑定路由的固定收件人（或操作者本人 / $bot）。
+	stub.fixed = map[string][]string{ch.ID: {"ops@example.com"}}
 	spec := TestEventSpec{
 		EventType:  "monitor.alert.test",
 		Title:      "自定义测试",
@@ -612,6 +617,11 @@ func (s *channelRepoStub) CountRoutesUsingChannel(_ context.Context, channelID s
 	return s.refs[channelID], nil
 }
 
+// FixedRecipientsOfChannel 固定收件人桩：按 fixed 字段返回。
+func (s *channelRepoStub) FixedRecipientsOfChannel(_ context.Context, channelID string) ([]string, error) {
+	return s.fixed[channelID], nil
+}
+
 // TestChannelUsecase_DeleteReferencedByRoute 仍被未删除路由引用的渠道拒绝删除（409），
 // 解绑后可删。
 func TestChannelUsecase_DeleteReferencedByRoute(t *testing.T) {
@@ -676,7 +686,7 @@ func TestChannelUsecase_SendTestEventCooldown(t *testing.T) {
 	stub := newChannelRepoStub()
 	uc := NewChannelUsecase(stub, new(eventWriterStub), stub)
 	now := time.Unix(1_800_000_000, 0)
-	uc.now = func() time.Time { return now }
+	uc.tests.now = func() time.Time { return now }
 	ctx := context.Background()
 	a, err := uc.Create(ctx, newEmailChannel("email-a"))
 	if err != nil {
@@ -704,8 +714,8 @@ func TestChannelUsecase_SendTestEventCooldown(t *testing.T) {
 		t.Fatalf("after cooldown: %v", err)
 	}
 	// 过期条目随占用被清理：b 的记录已超冷却期 → 只剩 a。
-	if len(uc.lastTest) != 1 {
-		t.Fatalf("cooldown map = %d entries, want 1 (expired entries pruned)", len(uc.lastTest))
+	if len(uc.tests.last) != 1 {
+		t.Fatalf("cooldown map = %d entries, want 1 (expired entries pruned)", len(uc.tests.last))
 	}
 	if _, err := uc.SendTestEvent(ctx, b.ID, TestEventSpec{}); err != nil {
 		t.Fatalf("b after cooldown: %v", err)
@@ -720,7 +730,8 @@ func TestChannelUsecase_WebhookURLRejectsLocal(t *testing.T) {
 	t.Parallel()
 	stub := newChannelRepoStub()
 	uc := NewChannelUsecase(stub, new(eventWriterStub), stub)
-	for _, u := range []string{"https://localhost/h", "https://127.0.0.1/h", "https://10.0.0.5/h", "https://[::1]/h", "https://169.254.169.254/latest", "https://100.64.1.1/x",
+	for _, u := range []string{
+		"https://localhost/h", "https://127.0.0.1/h", "https://10.0.0.5/h", "https://[::1]/h", "https://169.254.169.254/latest", "https://100.64.1.1/x",
 		// NAT64 / 6to4 把内网地址嵌在 IPv6 里；非 https 发送时必然失败，保存时就拒绝。
 		"https://[64:ff9b::a00:1]/h", "https://[2002:a00:1::1]/h", "http://hooks.example.com/x",
 	} {
@@ -752,5 +763,92 @@ func TestChannelUsecase_RobotCardURL(t *testing.T) {
 	}
 	if err := mk("btn", &RobotConfig{CardButton: "x"}); !errors.Is(err, ErrChannelConfigInvalid) {
 		t.Fatalf("button without url error = %v", err)
+	}
+}
+
+// TestChannelUsecase_SendTestEventRecipientsRestricted 测试事件的显式收件只放行操作者本人、绑定路由的
+// 固定收件人与群机器人的 $bot：任意邮箱被拒（否则有测试权限的人就能以平台名义给任何地址发信）。
+func TestChannelUsecase_SendTestEventRecipientsRestricted(t *testing.T) {
+	t.Parallel()
+	stub := newChannelRepoStub()
+	events := &eventWriterStub{}
+	uc := NewChannelUsecase(stub, events, stub).WithTestEventCooldown(0)
+	const self = "018f3e1a-0000-7000-8000-0000000000aa"
+	ctx := operator.WithID(context.Background(), self)
+
+	mail, err := uc.Create(ctx, newEmailChannel("email-x"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stub.fixed = map[string][]string{mail.ID: {"Fixed@example.com"}}
+	if _, err := uc.SendTestEvent(ctx, mail.ID, TestEventSpec{Recipients: []string{"anyone@example.com"}}); !errors.Is(err, ErrChannelConfigInvalid) {
+		t.Fatalf("arbitrary recipient error = %v, want ErrChannelConfigInvalid", err)
+	}
+	if _, err := uc.SendTestEvent(ctx, mail.ID, TestEventSpec{Recipients: []string{RobotTestRecipient}}); !errors.Is(err, ErrChannelConfigInvalid) {
+		t.Fatalf("$bot on an email channel error = %v, want ErrChannelConfigInvalid", err)
+	}
+	if len(events.inserted) != 0 {
+		t.Fatalf("rejected recipients must not insert, got %d", len(events.inserted))
+	}
+	// 本人（大小写不敏感）与固定收件人放行。
+	if _, err := uc.SendTestEvent(ctx, mail.ID, TestEventSpec{Recipients: []string{strings.ToUpper(self), " fixed@example.com "}}); err != nil {
+		t.Fatalf("self + fixed recipients: %v", err)
+	}
+	// 未注入操作者时本人不可用：用户 ID 形态也被拒。
+	if _, err := uc.SendTestEvent(context.Background(), mail.ID, TestEventSpec{Recipients: []string{self}}); !errors.Is(err, ErrChannelConfigInvalid) {
+		t.Fatalf("self without operator error = %v, want ErrChannelConfigInvalid", err)
+	}
+
+	robot := &Channel{Type: ChannelTypeWecom, Name: "wecom-x", Secret: "k", Enabled: true, Config: &ChannelConfig{Robot: &RobotConfig{}}}
+	if _, err := uc.Create(ctx, robot); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := uc.SendTestEvent(ctx, robot.ID, TestEventSpec{Recipients: []string{RobotTestRecipient}}); err != nil {
+		t.Fatalf("$bot on a robot channel: %v", err)
+	}
+	if _, err := uc.SendTestEvent(ctx, robot.ID, TestEventSpec{Recipients: []string{"$group:ops"}}); !errors.Is(err, ErrChannelConfigInvalid) {
+		t.Fatalf("other group id error = %v, want ErrChannelConfigInvalid", err)
+	}
+}
+
+// TestChannelUsecase_WebhookHeadersWriteOnly 请求头取值只写不读：出参掩码；更新时空 / 掩码取值沿用
+// 原值；新建时空取值被拒。
+func TestChannelUsecase_WebhookHeadersWriteOnly(t *testing.T) {
+	t.Parallel()
+	stub := newChannelRepoStub()
+	uc := NewChannelUsecase(stub, new(eventWriterStub), stub)
+	ctx := context.Background()
+	mk := func(headers map[string]string) *ChannelConfig {
+		return &ChannelConfig{Webhook: &WebhookConfig{URL: "https://hook.example.com/x", Headers: headers, TimeoutS: 5}}
+	}
+	if _, err := uc.Create(ctx, &Channel{Type: ChannelTypeWebhook, Name: "wh-blank", Config: mk(map[string]string{"X-Token": ""})}); !errors.Is(err, ErrChannelConfigInvalid) {
+		t.Fatalf("blank header value on create error = %v, want ErrChannelConfigInvalid", err)
+	}
+	ch, err := uc.Create(ctx, &Channel{Type: ChannelTypeWebhook, Name: "wh", Config: mk(map[string]string{"X-Token": "t0", "X-Source": "core"})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 掩码保留原值、显式取值改写、未提交的键删除。
+	if err := uc.Update(ctx, ch.ID, ChannelUpdate{Config: mk(map[string]string{"X-Token": WebhookHeaderMask, "X-New": "n1"})}); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	got, err := uc.Get(ctx, ch.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"X-Token": "t0", "X-New": "n1"}
+	if h := got.Config.Webhook.Headers; len(h) != len(want) || h["X-Token"] != "t0" || h["X-New"] != "n1" {
+		t.Fatalf("headers after update = %v, want %v", h, want)
+	}
+	// 现有配置里没有的键取值为空：仍被拒。
+	if err := uc.Update(ctx, ch.ID, ChannelUpdate{Config: mk(map[string]string{"X-Other": ""})}); !errors.Is(err, ErrChannelConfigInvalid) {
+		t.Fatalf("blank value for an unknown header error = %v, want ErrChannelConfigInvalid", err)
+	}
+	masked := MaskWebhookHeaders(got.Config.Webhook.Headers)
+	if len(masked) != 2 || masked["X-Token"] != WebhookHeaderMask || masked["X-New"] != WebhookHeaderMask {
+		t.Fatalf("masked = %v", masked)
+	}
+	if MaskWebhookHeaders(nil) != nil {
+		t.Fatal("masking nil must stay nil")
 	}
 }

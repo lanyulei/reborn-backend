@@ -409,6 +409,20 @@ func ErrorDeptDepthExceeded(format string, args ...interface{}) *errors.Error {
 	return errors.New(400, ErrorReason_DEPT_DEPTH_EXCEEDED.String(), fmt.Sprintf(format, args...))
 }
 
+// USER_MACHINE_ACCOUNT 机器账号不能登录、不能改密码 / 资料 / 头像，也不能被当作人类账号编辑，映射 HTTP 400。
+func IsUserMachineAccount(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := errors.FromError(err)
+	return e.Reason == ErrorReason_USER_MACHINE_ACCOUNT.String() && e.Code == 400
+}
+
+// USER_MACHINE_ACCOUNT 机器账号不能登录、不能改密码 / 资料 / 头像，也不能被当作人类账号编辑，映射 HTTP 400。
+func ErrorUserMachineAccount(format string, args ...interface{}) *errors.Error {
+	return errors.New(400, ErrorReason_USER_MACHINE_ACCOUNT.String(), fmt.Sprintf(format, args...))
+}
+
 // DEPT_LIMIT_EXCEEDED 部门总数或单个用户所属部门数超过上限，映射 HTTP 400。
 func IsDeptLimitExceeded(err error) bool {
 	if err == nil {
@@ -435,4 +449,20 @@ func IsImageTypeInvalid(err error) bool {
 // IMAGE_TYPE_INVALID 上传的 logo / 头像不是允许的图片格式（按文件内容判定，不看声明的类型），映射 HTTP 400。
 func ErrorImageTypeInvalid(format string, args ...interface{}) *errors.Error {
 	return errors.New(400, ErrorReason_IMAGE_TYPE_INVALID.String(), fmt.Sprintf(format, args...))
+}
+
+// PASSWORD_MISMATCH 自助修改密码时提供的现密码不正确，映射 HTTP 400（已认证用户的自助接口，不走 401
+// 以免客户端误判为令牌失效）。
+func IsPasswordMismatch(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := errors.FromError(err)
+	return e.Reason == ErrorReason_PASSWORD_MISMATCH.String() && e.Code == 400
+}
+
+// PASSWORD_MISMATCH 自助修改密码时提供的现密码不正确，映射 HTTP 400（已认证用户的自助接口，不走 401
+// 以免客户端误判为令牌失效）。
+func ErrorPasswordMismatch(format string, args ...interface{}) *errors.Error {
+	return errors.New(400, ErrorReason_PASSWORD_MISMATCH.String(), fmt.Sprintf(format, args...))
 }

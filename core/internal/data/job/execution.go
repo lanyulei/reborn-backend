@@ -251,6 +251,9 @@ func (r *executionRepo) List(ctx context.Context, filter biz.ExecutionFilter, pa
 	if filter.CIID != "" {
 		where += " AND EXISTS (SELECT 1 FROM job_execution_host h WHERE h.ci_id = " + a.add(filter.CIID) + " AND h.execution_id = e.id)"
 	}
+	if len(filter.CIIDs) > 0 {
+		where += " AND EXISTS (SELECT 1 FROM job_execution_host h WHERE h.ci_id = ANY(" + a.add(dbx.TextArray(filter.CIIDs)) + "::uuid[]) AND h.execution_id = e.id)"
+	}
 	var total int64
 	if err := r.data.Pool.QueryRow(ctx, "SELECT count(*) FROM job_execution e WHERE "+where, a.args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count job executions: %w", err)

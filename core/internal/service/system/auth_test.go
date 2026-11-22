@@ -47,7 +47,8 @@ func newAuthService(t *testing.T) (*AuthService, *biz.AuthUsecase, *testfake.Sto
 	if err != nil {
 		t.Fatalf("testfake.NewFileUsecase() error = %v", err)
 	}
-	return NewAuthService(uc, authz, biz.NewAvatarUsecase(store, store, files, testfake.NewAvatarStore())), uc, store, authorizer
+	users := biz.NewUserUsecase(store, store, store, store, hasher, store)
+	return NewAuthService(uc, authz, biz.NewAvatarUsecase(store, store, files, testfake.NewAvatarStore()), users), uc, store, authorizer
 }
 
 // seedAuthUser 预置可登录用户（真实 Argon2id 哈希）。
@@ -372,5 +373,32 @@ func TestAvatarUsecase_LegacyAvatar(t *testing.T) {
 	}
 	if got, err := store.GetUser(ctx, u.ID); err != nil || got.Avatar != url {
 		t.Fatalf("user avatar url = %q, %v; want %q", got.Avatar, err, url)
+	}
+}
+
+// 自助修改密码：现密码错误拒绝且旧密码仍可登录；改成后旧密码失效、新密码可登录；无身份拒绝。
+func TestAuthService_ChangeMyPassword(t *testing.T) {
+	t.Parallel()
+	svc, _, store, _ := newAuthService(t)
+	u := seedAuthUser(t, store, "alice")
+	ctx, bg := claimsContext(u.ID), context.Background()
+
+	if _, err := svc.ChangeMyPassword(ctx, &v1.ChangeMyPasswordRequest{OldPassword: "wrong-secret", NewPassword: "new-secret-123"}); !errors.Is(err, biz.ErrPasswordMismatch) {
+		t.Fatalf("ChangeMyPassword(wrong current) error = %v, want ErrPasswordMismatch", err)
+	}
+	if _, err := svc.Login(bg, &v1.LoginRequest{Username: "alice", Password: "plain-secret"}); err != nil {
+		t.Fatalf("old password must still work after a rejected change: %v", err)
+	}
+	if _, err := svc.ChangeMyPassword(ctx, &v1.ChangeMyPasswordRequest{OldPassword: "plain-secret", NewPassword: "new-secret-123"}); err != nil {
+		t.Fatalf("ChangeMyPassword() error = %v", err)
+	}
+	if _, err := svc.Login(bg, &v1.LoginRequest{Username: "alice", Password: "plain-secret"}); !errors.Is(err, biz.ErrInvalidCredentials) {
+		t.Fatalf("Login(old password) error = %v, want ErrInvalidCredentials", err)
+	}
+	if _, err := svc.Login(bg, &v1.LoginRequest{Username: "alice", Password: "new-secret-123"}); err != nil {
+		t.Fatalf("Login(new password) error = %v", err)
+	}
+	if _, err := svc.ChangeMyPassword(bg, &v1.ChangeMyPasswordRequest{OldPassword: "new-secret-123", NewPassword: "another-secret-1"}); !errors.Is(err, biz.ErrTokenInvalid) {
+		t.Fatalf("ChangeMyPassword(no identity) error = %v, want ErrTokenInvalid", err)
 	}
 }

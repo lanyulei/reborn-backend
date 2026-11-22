@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"log/slog"
 	"math"
 	"net"
 	"slices"
@@ -19,14 +20,18 @@ import (
 )
 
 const (
-	// alertBatch 一轮读取的告警事件数。
+	// alertBatch 一页读取的告警事件数。
 	alertBatch = 200
-	// alertLookback 告警事件的回看窗口：触发器只处理最近这段时间内首次触发的告警（服务停机更久的不补）。
+	// alertMaxPages 一轮至多翻的页数：告警风暴时一轮处理 alertMaxPages × alertBatch 条，余下的下一轮从水位线
+	// 接着读（不丢，只是晚一轮）；翻满时记一条告警日志。
+	alertMaxPages = 10
+	// alertLookback 告警事件的回看窗口：水位线不会落后于现在超过这段时间（服务停机更久的不补）。
 	alertLookback = 10 * time.Minute
 	// signalBatch 一轮发送的流程信号数。
 	signalBatch = 20
-	// signalMaxAttempts 流程信号的最多尝试次数（流程实例一直没有等这个信号的节点时放弃）。
-	signalMaxAttempts = 60
+	// signalMaxAge 流程信号自触发登记起的存活期：流程实例这么久还没走到等这个信号的节点（或一直发不出去）
+	// 才放弃。按墙钟而不按尝试次数——「还没有节点在等」与数据库故障都不该消耗放弃额度。
+	signalMaxAge = 3 * 24 * time.Hour
 	// signalRetry 信号重试间隔的基数（按次数线性增长，封顶 5 分钟）。
 	signalRetry = 5 * time.Second
 )
@@ -54,10 +59,21 @@ type TriggerUsecase struct {
 	workflow  Signals
 	dir       Directory
 	now       func() time.Time
-	// seen 本进程已处理过的（触发器, 告警事件）：回看窗口内每轮都会重读同一批事件，记住处理过的
-	// 就不必每轮都去数据库撞一次去重键。只是省查询的缓存——正确性由触发记录的唯一键保证。
+	// log 后台循环里的告警日志（积压翻满等）。作业域的 biz 不注入日志器，缺省用进程默认 logger；组合根可经
+	// WithLogger 换成统一的结构化 logger。
+	log *slog.Logger
+	// seen 本进程已处理过的（触发器, 告警事件）：水位线回退（失败重读、重启）时会重读同一批事件，记住处理过
+	// 的就不必每轮都去数据库撞一次去重键。只是省查询的缓存——正确性由触发记录的唯一键保证。
 	seenMu sync.Mutex
 	seen   map[string]time.Time
+	// alertMark 告警事件读取的水位线：下一轮从它之后读；一轮里有触发器处理失败的事件时停在那条之前（下一轮
+	// 重读、重试），且不落后于现在超过 alertLookback。进程内状态（作业域没有可存它的列；重启后退回回看窗口的
+	// 起点，重读到的事件由触发记录唯一键 + seen 去重）。只有 job-alert 循环这一个协程读写。
+	alertMark AlertCursor
+	// triggerSince 各触发器开始评估的时刻：首次见到（本进程启动后 / 新建或重新启用）取其最后编辑时间——启用一个
+	// 触发器不应对着存量告警补跑作业；此后改名之类的编辑不再推后它，编辑前后积压的告警不会被跳过。从启用
+	// 列表消失（停用 / 删除）的条目清掉，再启用时重新按编辑时间起算。
+	triggerSince map[string]time.Time
 }
 
 // TriggerDeps 聚合 TriggerUsecase 的依赖。
@@ -88,8 +104,16 @@ func NewTriggerUsecase(d TriggerDeps, templates TemplateReader, targets *TargetU
 	return &TriggerUsecase{
 		repo: d.Repo, secrets: d.Secrets, fires: d.Fires, signals: d.Signals, alerts: d.Alerts, rules: d.Rules,
 		templates: templates, targets: targets, execs: execs, sealer: d.Sealer, opener: d.Opener, workflow: d.Workflow,
-		dir: dir, now: time.Now, seen: map[string]time.Time{},
+		dir: dir, now: time.Now, log: slog.Default(), seen: map[string]time.Time{}, triggerSince: map[string]time.Time{},
 	}
+}
+
+// WithLogger 替换后台循环用的日志器（nil 忽略）。
+func (uc *TriggerUsecase) WithLogger(log *slog.Logger) *TriggerUsecase {
+	if log != nil {
+		uc.log = log
+	}
+	return uc
 }
 
 // List 分页查询触发器。
@@ -450,43 +474,94 @@ func alertHost(value string) (string, bool) {
 	return jc.NormalizeAddress(strings.Trim(value, "[]"))
 }
 
-// RunAlerts 告警自愈（后台循环；多实例并发安全）：读取最近首次触发的告警事件，逐个与启用的告警
-// 触发器匹配，命中即触发一次。同一事件对同一触发器只触发一次（触发记录的唯一键去重），
-// 因此每轮都从回看窗口的起点重读是安全的。返回本轮新触发的次数。
+// RunAlerts 告警自愈（后台循环；多实例并发安全）：从水位线之后按 (首次触发时间, ID) 顺序翻页读取告警
+// 事件，逐个与启用的告警触发器匹配，命中即触发一次。同一事件对同一触发器只触发一次（触发记录的唯一键
+// 去重），因此水位线回退重读是安全的。返回值恒为 0：本轮即使有新触发也不要求立即再跑。
 func (uc *TriggerUsecase) RunAlerts(ctx context.Context) (int, error) {
 	triggers, err := uc.secrets.EnabledAlertTriggers(ctx)
-	if err != nil || len(triggers) == 0 {
-		return 0, err
-	}
-	events, err := uc.alerts.FiringSince(ctx, uc.now().Add(-alertLookback), alertBatch)
 	if err != nil {
 		return 0, err
 	}
-	fired := 0
+	now := uc.now()
+	since := uc.refreshTriggerSince(triggers, now) // 没有启用的触发器时也要执行：清掉已停用的条目
+	if len(triggers) == 0 {
+		return 0, nil
+	}
+	uc.pruneSeen(now)
+	mark := uc.alertMark
+	if floor := now.Add(-alertLookback); mark.FirstFireTime.Before(floor) {
+		mark = AlertCursor{FirstFireTime: floor}
+	}
+	round := &alertRound{hosts: map[string]HostSet{}}
 	var first error
-	for _, a := range events {
-		for _, t := range triggers {
-			// 触发器启用（或最后一次编辑）之前就已触发的告警不处理：启用一个触发器不应对着存量告警补跑作业。
-			if !alertMatches(t.Alert, a) || a.FirstFireTime.Before(t.UpdateTime) || uc.alreadySeen(t.ID, a.ID) {
-				continue
-			}
-			fresh, err := uc.fireAlert(ctx, t, a)
-			if err != nil {
-				// 一个触发器出故障不挡住其余的：没记为已处理，下一轮重试。
-				if first == nil {
-					first = err
+	var stuck *AlertCursor // 第一条有触发器处理失败的事件之前的位置：水位线停在这里，下一轮从它重读
+	for page := 1; ; page++ {
+		events, err := uc.alerts.FiringAfter(ctx, mark, alertBatch)
+		if err != nil {
+			uc.alertMark = uc.settleMark(mark, stuck)
+			return 0, err
+		}
+		for _, a := range events {
+			before := mark
+			mark = AlertCursor{FirstFireTime: a.FirstFireTime, ID: a.ID}
+			for _, t := range triggers {
+				if !alertMatches(t.Alert, a) || a.FirstFireTime.Before(since[t.ID]) || uc.alreadySeen(t.ID, a.ID) {
+					continue
 				}
-				continue
-			}
-			uc.markSeen(t.ID, a.ID)
-			if fresh {
-				fired++
+				if _, err := uc.fireAlert(ctx, round, t, a); err != nil {
+					// 一个触发器出故障不挡住其余的：没记为已处理，水位线停在这条之前，下一轮重试。
+					if first == nil {
+						first = err
+					}
+					if stuck == nil {
+						stuck = &before
+					}
+					continue
+				}
+				uc.markSeen(t.ID, a.ID, now)
 			}
 		}
+		if len(events) < alertBatch {
+			break
+		}
+		if page >= alertMaxPages {
+			uc.log.WarnContext(ctx, "job alert triggers: alert backlog exceeds one round, continuing next round",
+				"pages", page, "batch", alertBatch, "mark_time", mark.FirstFireTime, "mark_id", mark.ID)
+			break
+		}
 	}
-	_ = fired
-	// 本轮即使有新触发也不要求立即再跑：下一轮照常按间隔执行。
+	uc.alertMark = uc.settleMark(mark, stuck)
 	return 0, first
+}
+
+// settleMark 本轮结束后的水位线：有失败就停在失败事件之前，否则是读到的最后一条。
+func (uc *TriggerUsecase) settleMark(end AlertCursor, stuck *AlertCursor) AlertCursor {
+	if stuck != nil {
+		return *stuck
+	}
+	return end
+}
+
+// refreshTriggerSince 更新各触发器的起算时刻（见 triggerSince），返回本轮用的快照。
+func (uc *TriggerUsecase) refreshTriggerSince(triggers []*Trigger, now time.Time) map[string]time.Time {
+	since := make(map[string]time.Time, len(triggers))
+	for _, t := range triggers {
+		at, ok := uc.triggerSince[t.ID]
+		if !ok {
+			at = t.UpdateTime
+			if at.IsZero() {
+				at = now.Add(-alertLookback)
+			}
+			uc.triggerSince[t.ID] = at
+		}
+		since[t.ID] = at
+	}
+	for id := range uc.triggerSince {
+		if _, ok := since[id]; !ok {
+			delete(uc.triggerSince, id)
+		}
+	}
+	return since
 }
 
 func (uc *TriggerUsecase) alreadySeen(triggerID, alertID string) bool {
@@ -496,22 +571,31 @@ func (uc *TriggerUsecase) alreadySeen(triggerID, alertID string) bool {
 	return ok
 }
 
-func (uc *TriggerUsecase) markSeen(triggerID, alertID string) {
-	now := uc.now()
+func (uc *TriggerUsecase) markSeen(triggerID, alertID string, now time.Time) {
 	uc.seenMu.Lock()
 	defer uc.seenMu.Unlock()
 	uc.seen[triggerID+"/"+alertID] = now
-	if len(uc.seen) > 4*alertBatch {
-		for k, at := range uc.seen {
-			if now.Sub(at) > 2*alertLookback {
-				delete(uc.seen, k)
-			}
+}
+
+// pruneSeen 每轮一次清掉早于两个回看窗口的条目（那些事件不会再被读到）。
+func (uc *TriggerUsecase) pruneSeen(now time.Time) {
+	uc.seenMu.Lock()
+	defer uc.seenMu.Unlock()
+	for k, at := range uc.seen {
+		if now.Sub(at) > 2*alertLookback {
+			delete(uc.seen, k)
 		}
 	}
 }
 
+// alertRound 一轮告警自愈内的缓存：同一触发器的目标主机集合只解析一次（一轮里可能对着几百条事件反复
+// 查同一个模板的主机）。
+type alertRound struct {
+	hosts map[string]HostSet // 触发器 ID → 目标主机集合（只缓存成功的解析）
+}
+
 // fireAlert 对一条告警事件触发一个触发器；返回是否为新的一次触发。
-func (uc *TriggerUsecase) fireAlert(ctx context.Context, t *Trigger, a *AlertEvent) (bool, error) {
+func (uc *TriggerUsecase) fireAlert(ctx context.Context, round *alertRound, t *Trigger, a *AlertEvent) (bool, error) {
 	fire := &TriggerFire{TriggerID: t.ID, Ref: a.ID, Summary: truncateRunes(a.RuleName, 255)}
 	var only []string
 	if t.Alert.HostLabel != "" {
@@ -520,7 +604,7 @@ func (uc *TriggerUsecase) fireAlert(ctx context.Context, t *Trigger, a *AlertEve
 		ciID := ""
 		if ok {
 			var err error
-			if ciID, err = uc.hostByAddress(ctx, t, addr); err != nil && !Rejected(err) {
+			if ciID, err = uc.hostByAddress(ctx, round, t, addr); err != nil && !Rejected(err) {
 				return false, err
 			}
 		}
@@ -546,14 +630,18 @@ func (uc *TriggerUsecase) fireAlert(ctx context.Context, t *Trigger, a *AlertEve
 }
 
 // hostByAddress 在模板的目标主机（按触发器负责人的数据范围）里找连接地址为 addr 的那台，返回其资源 ID。
-func (uc *TriggerUsecase) hostByAddress(ctx context.Context, t *Trigger, addr string) (string, error) {
-	tpl, err := uc.templates.Get(ctx, t.TemplateID)
-	if err != nil {
-		return "", err
-	}
-	set, err := uc.targets.ResolveN(ctx, t.Owner, tpl.Target, jc.MaxHosts*jc.MaxSlices)
-	if err != nil {
-		return "", err
+// 主机集合一轮内按触发器缓存。
+func (uc *TriggerUsecase) hostByAddress(ctx context.Context, round *alertRound, t *Trigger, addr string) (string, error) {
+	set, ok := round.hosts[t.ID]
+	if !ok {
+		tpl, err := uc.templates.Get(ctx, t.TemplateID)
+		if err != nil {
+			return "", err
+		}
+		if set, err = uc.targets.ResolveN(ctx, t.Owner, tpl.Target, jc.MaxHosts*jc.MaxSlices); err != nil {
+			return "", err
+		}
+		round.hosts[t.ID] = set
 	}
 	for _, h := range set.Hosts {
 		if h.Problem == "" && h.Address == addr {
@@ -564,12 +652,14 @@ func (uc *TriggerUsecase) hostByAddress(ctx context.Context, t *Trigger, addr st
 }
 
 // RunSignals 回发流程信号（后台循环；多实例并发安全——重复发送同一信号由流程引擎判为「没有节点在等」）。
-// 作业（含全部切片）结束后向发起调用的流程实例发送信号；流程还没走到等待节点时稍后重试。
+// 作业（含全部切片）结束后向发起调用的流程实例发送信号；流程还没走到等待节点时稍后重试，自触发登记起
+// 超过 signalMaxAge 仍没送达才放弃（实例已结束 / 信号被流程拒绝则立即放弃）。
 func (uc *TriggerUsecase) RunSignals(ctx context.Context) (int, error) {
 	items, err := uc.signals.Due(ctx, signalBatch)
 	if err != nil {
 		return 0, err
 	}
+	now := uc.now()
 	var first error
 	for _, s := range items {
 		delivered, gone, err := uc.workflow.Signal(ctx, s.InstanceID, s.Signal, map[string]any{
@@ -588,8 +678,8 @@ func (uc *TriggerUsecase) RunSignals(ctx context.Context) (int, error) {
 			continue
 		case delivered:
 			state = jc.SignalSent
-		case gone || err != nil || s.Attempts+1 >= signalMaxAttempts:
-			// 实例已结束 / 信号被流程拒绝（变量名与业务字段冲突等）/ 重试用尽：放弃。
+		case gone || err != nil || now.Sub(s.FiredAt) > signalMaxAge:
+			// 实例已结束 / 信号被流程拒绝（变量名与业务字段冲突等）/ 存活期已过：放弃。
 			state = jc.SignalGaveUp
 		}
 		if err := uc.signals.Mark(ctx, s.FireID, state, retry); err != nil {

@@ -31,7 +31,10 @@ type ChatRequest struct {
 	// conversation_id 会话标识，可选；省略则新建会话。
 	ConversationId *string `protobuf:"bytes,1,opt,name=conversation_id,json=conversationId,proto3,oneof" json:"conversation_id,omitempty"`
 	// content 用户消息正文，1-4000 字符。
-	Content       string `protobuf:"bytes,2,opt,name=content,proto3" json:"content,omitempty"`
+	Content string `protobuf:"bytes,2,opt,name=content,proto3" json:"content,omitempty"`
+	// context 页内助手上下文：用户正在查看的对象（如 knowledge_document）。服务端校验读权限后把该对象的
+	// 摘要拼进系统提示并预加载所属模块的工具；省略 = 普通对话。
+	Context       *ChatContext `protobuf:"bytes,3,opt,name=context,proto3,oneof" json:"context,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -80,6 +83,68 @@ func (x *ChatRequest) GetContent() string {
 	return ""
 }
 
+func (x *ChatRequest) GetContext() *ChatContext {
+	if x != nil {
+		return x.Context
+	}
+	return nil
+}
+
+// ChatContext 页内助手上下文对象。
+type ChatContext struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// type 对象类型；当前支持 knowledge_document（知识文档）、incident（故障）。
+	Type string `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"`
+	// id 对象标识。
+	Id            string `protobuf:"bytes,2,opt,name=id,proto3" json:"id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChatContext) Reset() {
+	*x = ChatContext{}
+	mi := &file_assistant_v1_assistant_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChatContext) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChatContext) ProtoMessage() {}
+
+func (x *ChatContext) ProtoReflect() protoreflect.Message {
+	mi := &file_assistant_v1_assistant_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChatContext.ProtoReflect.Descriptor instead.
+func (*ChatContext) Descriptor() ([]byte, []int) {
+	return file_assistant_v1_assistant_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *ChatContext) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *ChatContext) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
 // ChatResponse 占位：实际响应为 SSE 事件流，本消息不会被序列化返回。
 type ChatResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -89,7 +154,7 @@ type ChatResponse struct {
 
 func (x *ChatResponse) Reset() {
 	*x = ChatResponse{}
-	mi := &file_assistant_v1_assistant_proto_msgTypes[1]
+	mi := &file_assistant_v1_assistant_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -101,7 +166,7 @@ func (x *ChatResponse) String() string {
 func (*ChatResponse) ProtoMessage() {}
 
 func (x *ChatResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_assistant_v1_assistant_proto_msgTypes[1]
+	mi := &file_assistant_v1_assistant_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -114,7 +179,7 @@ func (x *ChatResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChatResponse.ProtoReflect.Descriptor instead.
 func (*ChatResponse) Descriptor() ([]byte, []int) {
-	return file_assistant_v1_assistant_proto_rawDescGZIP(), []int{1}
+	return file_assistant_v1_assistant_proto_rawDescGZIP(), []int{2}
 }
 
 // ConfirmResponse 占位：实际响应为 SSE 事件流，本消息不会被序列化返回。
@@ -126,7 +191,7 @@ type ConfirmResponse struct {
 
 func (x *ConfirmResponse) Reset() {
 	*x = ConfirmResponse{}
-	mi := &file_assistant_v1_assistant_proto_msgTypes[2]
+	mi := &file_assistant_v1_assistant_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -138,7 +203,7 @@ func (x *ConfirmResponse) String() string {
 func (*ConfirmResponse) ProtoMessage() {}
 
 func (x *ConfirmResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_assistant_v1_assistant_proto_msgTypes[2]
+	mi := &file_assistant_v1_assistant_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -151,7 +216,7 @@ func (x *ConfirmResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConfirmResponse.ProtoReflect.Descriptor instead.
 func (*ConfirmResponse) Descriptor() ([]byte, []int) {
-	return file_assistant_v1_assistant_proto_rawDescGZIP(), []int{2}
+	return file_assistant_v1_assistant_proto_rawDescGZIP(), []int{3}
 }
 
 // ConfirmRequest 确认/拒绝助手提出的写操作。
@@ -169,7 +234,7 @@ type ConfirmRequest struct {
 
 func (x *ConfirmRequest) Reset() {
 	*x = ConfirmRequest{}
-	mi := &file_assistant_v1_assistant_proto_msgTypes[3]
+	mi := &file_assistant_v1_assistant_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -181,7 +246,7 @@ func (x *ConfirmRequest) String() string {
 func (*ConfirmRequest) ProtoMessage() {}
 
 func (x *ConfirmRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_assistant_v1_assistant_proto_msgTypes[3]
+	mi := &file_assistant_v1_assistant_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -194,7 +259,7 @@ func (x *ConfirmRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConfirmRequest.ProtoReflect.Descriptor instead.
 func (*ConfirmRequest) Descriptor() ([]byte, []int) {
-	return file_assistant_v1_assistant_proto_rawDescGZIP(), []int{3}
+	return file_assistant_v1_assistant_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *ConfirmRequest) GetConversationId() string {
@@ -235,7 +300,7 @@ type AssistantConversation struct {
 
 func (x *AssistantConversation) Reset() {
 	*x = AssistantConversation{}
-	mi := &file_assistant_v1_assistant_proto_msgTypes[4]
+	mi := &file_assistant_v1_assistant_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -247,7 +312,7 @@ func (x *AssistantConversation) String() string {
 func (*AssistantConversation) ProtoMessage() {}
 
 func (x *AssistantConversation) ProtoReflect() protoreflect.Message {
-	mi := &file_assistant_v1_assistant_proto_msgTypes[4]
+	mi := &file_assistant_v1_assistant_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -260,7 +325,7 @@ func (x *AssistantConversation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AssistantConversation.ProtoReflect.Descriptor instead.
 func (*AssistantConversation) Descriptor() ([]byte, []int) {
-	return file_assistant_v1_assistant_proto_rawDescGZIP(), []int{4}
+	return file_assistant_v1_assistant_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *AssistantConversation) GetId() string {
@@ -320,7 +385,7 @@ type AssistantToolCall struct {
 
 func (x *AssistantToolCall) Reset() {
 	*x = AssistantToolCall{}
-	mi := &file_assistant_v1_assistant_proto_msgTypes[5]
+	mi := &file_assistant_v1_assistant_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -332,7 +397,7 @@ func (x *AssistantToolCall) String() string {
 func (*AssistantToolCall) ProtoMessage() {}
 
 func (x *AssistantToolCall) ProtoReflect() protoreflect.Message {
-	mi := &file_assistant_v1_assistant_proto_msgTypes[5]
+	mi := &file_assistant_v1_assistant_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -345,7 +410,7 @@ func (x *AssistantToolCall) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AssistantToolCall.ProtoReflect.Descriptor instead.
 func (*AssistantToolCall) Descriptor() ([]byte, []int) {
-	return file_assistant_v1_assistant_proto_rawDescGZIP(), []int{5}
+	return file_assistant_v1_assistant_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *AssistantToolCall) GetId() string {
@@ -439,7 +504,7 @@ type AssistantMessage struct {
 
 func (x *AssistantMessage) Reset() {
 	*x = AssistantMessage{}
-	mi := &file_assistant_v1_assistant_proto_msgTypes[6]
+	mi := &file_assistant_v1_assistant_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -451,7 +516,7 @@ func (x *AssistantMessage) String() string {
 func (*AssistantMessage) ProtoMessage() {}
 
 func (x *AssistantMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_assistant_v1_assistant_proto_msgTypes[6]
+	mi := &file_assistant_v1_assistant_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -464,7 +529,7 @@ func (x *AssistantMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AssistantMessage.ProtoReflect.Descriptor instead.
 func (*AssistantMessage) Descriptor() ([]byte, []int) {
-	return file_assistant_v1_assistant_proto_rawDescGZIP(), []int{6}
+	return file_assistant_v1_assistant_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *AssistantMessage) GetId() string {
@@ -522,7 +587,7 @@ type ListConversationsRequest struct {
 
 func (x *ListConversationsRequest) Reset() {
 	*x = ListConversationsRequest{}
-	mi := &file_assistant_v1_assistant_proto_msgTypes[7]
+	mi := &file_assistant_v1_assistant_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -534,7 +599,7 @@ func (x *ListConversationsRequest) String() string {
 func (*ListConversationsRequest) ProtoMessage() {}
 
 func (x *ListConversationsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_assistant_v1_assistant_proto_msgTypes[7]
+	mi := &file_assistant_v1_assistant_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -547,7 +612,7 @@ func (x *ListConversationsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListConversationsRequest.ProtoReflect.Descriptor instead.
 func (*ListConversationsRequest) Descriptor() ([]byte, []int) {
-	return file_assistant_v1_assistant_proto_rawDescGZIP(), []int{7}
+	return file_assistant_v1_assistant_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ListConversationsRequest) GetPage() int64 {
@@ -577,7 +642,7 @@ type ListConversationsResponse struct {
 
 func (x *ListConversationsResponse) Reset() {
 	*x = ListConversationsResponse{}
-	mi := &file_assistant_v1_assistant_proto_msgTypes[8]
+	mi := &file_assistant_v1_assistant_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -589,7 +654,7 @@ func (x *ListConversationsResponse) String() string {
 func (*ListConversationsResponse) ProtoMessage() {}
 
 func (x *ListConversationsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_assistant_v1_assistant_proto_msgTypes[8]
+	mi := &file_assistant_v1_assistant_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -602,7 +667,7 @@ func (x *ListConversationsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListConversationsResponse.ProtoReflect.Descriptor instead.
 func (*ListConversationsResponse) Descriptor() ([]byte, []int) {
-	return file_assistant_v1_assistant_proto_rawDescGZIP(), []int{8}
+	return file_assistant_v1_assistant_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ListConversationsResponse) GetItems() []*AssistantConversation {
@@ -630,7 +695,7 @@ type ListMessagesRequest struct {
 
 func (x *ListMessagesRequest) Reset() {
 	*x = ListMessagesRequest{}
-	mi := &file_assistant_v1_assistant_proto_msgTypes[9]
+	mi := &file_assistant_v1_assistant_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -642,7 +707,7 @@ func (x *ListMessagesRequest) String() string {
 func (*ListMessagesRequest) ProtoMessage() {}
 
 func (x *ListMessagesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_assistant_v1_assistant_proto_msgTypes[9]
+	mi := &file_assistant_v1_assistant_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -655,7 +720,7 @@ func (x *ListMessagesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListMessagesRequest.ProtoReflect.Descriptor instead.
 func (*ListMessagesRequest) Descriptor() ([]byte, []int) {
-	return file_assistant_v1_assistant_proto_rawDescGZIP(), []int{9}
+	return file_assistant_v1_assistant_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ListMessagesRequest) GetId() string {
@@ -676,7 +741,7 @@ type ListMessagesResponse struct {
 
 func (x *ListMessagesResponse) Reset() {
 	*x = ListMessagesResponse{}
-	mi := &file_assistant_v1_assistant_proto_msgTypes[10]
+	mi := &file_assistant_v1_assistant_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -688,7 +753,7 @@ func (x *ListMessagesResponse) String() string {
 func (*ListMessagesResponse) ProtoMessage() {}
 
 func (x *ListMessagesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_assistant_v1_assistant_proto_msgTypes[10]
+	mi := &file_assistant_v1_assistant_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -701,7 +766,7 @@ func (x *ListMessagesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListMessagesResponse.ProtoReflect.Descriptor instead.
 func (*ListMessagesResponse) Descriptor() ([]byte, []int) {
-	return file_assistant_v1_assistant_proto_rawDescGZIP(), []int{10}
+	return file_assistant_v1_assistant_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ListMessagesResponse) GetItems() []*AssistantMessage {
@@ -722,7 +787,7 @@ type DeleteConversationRequest struct {
 
 func (x *DeleteConversationRequest) Reset() {
 	*x = DeleteConversationRequest{}
-	mi := &file_assistant_v1_assistant_proto_msgTypes[11]
+	mi := &file_assistant_v1_assistant_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -734,7 +799,7 @@ func (x *DeleteConversationRequest) String() string {
 func (*DeleteConversationRequest) ProtoMessage() {}
 
 func (x *DeleteConversationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_assistant_v1_assistant_proto_msgTypes[11]
+	mi := &file_assistant_v1_assistant_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -747,7 +812,7 @@ func (x *DeleteConversationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteConversationRequest.ProtoReflect.Descriptor instead.
 func (*DeleteConversationRequest) Descriptor() ([]byte, []int) {
-	return file_assistant_v1_assistant_proto_rawDescGZIP(), []int{11}
+	return file_assistant_v1_assistant_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *DeleteConversationRequest) GetId() string {
@@ -766,7 +831,7 @@ type DeleteConversationResponse struct {
 
 func (x *DeleteConversationResponse) Reset() {
 	*x = DeleteConversationResponse{}
-	mi := &file_assistant_v1_assistant_proto_msgTypes[12]
+	mi := &file_assistant_v1_assistant_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -778,7 +843,7 @@ func (x *DeleteConversationResponse) String() string {
 func (*DeleteConversationResponse) ProtoMessage() {}
 
 func (x *DeleteConversationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_assistant_v1_assistant_proto_msgTypes[12]
+	mi := &file_assistant_v1_assistant_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -791,19 +856,25 @@ func (x *DeleteConversationResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteConversationResponse.ProtoReflect.Descriptor instead.
 func (*DeleteConversationResponse) Descriptor() ([]byte, []int) {
-	return file_assistant_v1_assistant_proto_rawDescGZIP(), []int{12}
+	return file_assistant_v1_assistant_proto_rawDescGZIP(), []int{13}
 }
 
 var File_assistant_v1_assistant_proto protoreflect.FileDescriptor
 
 const file_assistant_v1_assistant_proto_rawDesc = "" +
 	"\n" +
-	"\x1cassistant/v1/assistant.proto\x12\fassistant.v1\x1a\x1cgoogle/api/annotations.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1bbuf/validate/validate.proto\x1a\x1bsystem/v1/annotations.proto\"\x7f\n" +
+	"\x1cassistant/v1/assistant.proto\x12\fassistant.v1\x1a\x1cgoogle/api/annotations.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1bbuf/validate/validate.proto\x1a\x1bsystem/v1/annotations.proto\"\xc5\x01\n" +
 	"\vChatRequest\x126\n" +
 	"\x0fconversation_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01H\x00R\x0econversationId\x88\x01\x01\x12$\n" +
 	"\acontent\x18\x02 \x01(\tB\n" +
-	"\xbaH\ar\x05\x10\x01\x18\xa0\x1fR\acontentB\x12\n" +
-	"\x10_conversation_id\"\x0e\n" +
+	"\xbaH\ar\x05\x10\x01\x18\xa0\x1fR\acontent\x128\n" +
+	"\acontext\x18\x03 \x01(\v2\x19.assistant.v1.ChatContextH\x01R\acontext\x88\x01\x01B\x12\n" +
+	"\x10_conversation_idB\n" +
+	"\n" +
+	"\b_context\"`\n" +
+	"\vChatContext\x127\n" +
+	"\x04type\x18\x01 \x01(\tB#\xbaH r\x1eR\x12knowledge_documentR\bincidentR\x04type\x12\x18\n" +
+	"\x02id\x18\x02 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\"\x0e\n" +
 	"\fChatResponse\"\x11\n" +
 	"\x0fConfirmResponse\"\x8b\x01\n" +
 	"\x0eConfirmRequest\x121\n" +
@@ -874,46 +945,48 @@ func file_assistant_v1_assistant_proto_rawDescGZIP() []byte {
 	return file_assistant_v1_assistant_proto_rawDescData
 }
 
-var file_assistant_v1_assistant_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_assistant_v1_assistant_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_assistant_v1_assistant_proto_goTypes = []any{
 	(*ChatRequest)(nil),                // 0: assistant.v1.ChatRequest
-	(*ChatResponse)(nil),               // 1: assistant.v1.ChatResponse
-	(*ConfirmResponse)(nil),            // 2: assistant.v1.ConfirmResponse
-	(*ConfirmRequest)(nil),             // 3: assistant.v1.ConfirmRequest
-	(*AssistantConversation)(nil),      // 4: assistant.v1.AssistantConversation
-	(*AssistantToolCall)(nil),          // 5: assistant.v1.AssistantToolCall
-	(*AssistantMessage)(nil),           // 6: assistant.v1.AssistantMessage
-	(*ListConversationsRequest)(nil),   // 7: assistant.v1.ListConversationsRequest
-	(*ListConversationsResponse)(nil),  // 8: assistant.v1.ListConversationsResponse
-	(*ListMessagesRequest)(nil),        // 9: assistant.v1.ListMessagesRequest
-	(*ListMessagesResponse)(nil),       // 10: assistant.v1.ListMessagesResponse
-	(*DeleteConversationRequest)(nil),  // 11: assistant.v1.DeleteConversationRequest
-	(*DeleteConversationResponse)(nil), // 12: assistant.v1.DeleteConversationResponse
-	(*timestamppb.Timestamp)(nil),      // 13: google.protobuf.Timestamp
+	(*ChatContext)(nil),                // 1: assistant.v1.ChatContext
+	(*ChatResponse)(nil),               // 2: assistant.v1.ChatResponse
+	(*ConfirmResponse)(nil),            // 3: assistant.v1.ConfirmResponse
+	(*ConfirmRequest)(nil),             // 4: assistant.v1.ConfirmRequest
+	(*AssistantConversation)(nil),      // 5: assistant.v1.AssistantConversation
+	(*AssistantToolCall)(nil),          // 6: assistant.v1.AssistantToolCall
+	(*AssistantMessage)(nil),           // 7: assistant.v1.AssistantMessage
+	(*ListConversationsRequest)(nil),   // 8: assistant.v1.ListConversationsRequest
+	(*ListConversationsResponse)(nil),  // 9: assistant.v1.ListConversationsResponse
+	(*ListMessagesRequest)(nil),        // 10: assistant.v1.ListMessagesRequest
+	(*ListMessagesResponse)(nil),       // 11: assistant.v1.ListMessagesResponse
+	(*DeleteConversationRequest)(nil),  // 12: assistant.v1.DeleteConversationRequest
+	(*DeleteConversationResponse)(nil), // 13: assistant.v1.DeleteConversationResponse
+	(*timestamppb.Timestamp)(nil),      // 14: google.protobuf.Timestamp
 }
 var file_assistant_v1_assistant_proto_depIdxs = []int32{
-	13, // 0: assistant.v1.AssistantConversation.create_time:type_name -> google.protobuf.Timestamp
-	13, // 1: assistant.v1.AssistantConversation.update_time:type_name -> google.protobuf.Timestamp
-	13, // 2: assistant.v1.AssistantToolCall.create_time:type_name -> google.protobuf.Timestamp
-	5,  // 3: assistant.v1.AssistantMessage.tool_calls:type_name -> assistant.v1.AssistantToolCall
-	13, // 4: assistant.v1.AssistantMessage.create_time:type_name -> google.protobuf.Timestamp
-	4,  // 5: assistant.v1.ListConversationsResponse.items:type_name -> assistant.v1.AssistantConversation
-	6,  // 6: assistant.v1.ListMessagesResponse.items:type_name -> assistant.v1.AssistantMessage
-	0,  // 7: assistant.v1.AssistantChatService.Chat:input_type -> assistant.v1.ChatRequest
-	3,  // 8: assistant.v1.AssistantChatService.Confirm:input_type -> assistant.v1.ConfirmRequest
-	7,  // 9: assistant.v1.AssistantService.ListConversations:input_type -> assistant.v1.ListConversationsRequest
-	9,  // 10: assistant.v1.AssistantService.ListMessages:input_type -> assistant.v1.ListMessagesRequest
-	11, // 11: assistant.v1.AssistantService.DeleteConversation:input_type -> assistant.v1.DeleteConversationRequest
-	1,  // 12: assistant.v1.AssistantChatService.Chat:output_type -> assistant.v1.ChatResponse
-	2,  // 13: assistant.v1.AssistantChatService.Confirm:output_type -> assistant.v1.ConfirmResponse
-	8,  // 14: assistant.v1.AssistantService.ListConversations:output_type -> assistant.v1.ListConversationsResponse
-	10, // 15: assistant.v1.AssistantService.ListMessages:output_type -> assistant.v1.ListMessagesResponse
-	12, // 16: assistant.v1.AssistantService.DeleteConversation:output_type -> assistant.v1.DeleteConversationResponse
-	12, // [12:17] is the sub-list for method output_type
-	7,  // [7:12] is the sub-list for method input_type
-	7,  // [7:7] is the sub-list for extension type_name
-	7,  // [7:7] is the sub-list for extension extendee
-	0,  // [0:7] is the sub-list for field type_name
+	1,  // 0: assistant.v1.ChatRequest.context:type_name -> assistant.v1.ChatContext
+	14, // 1: assistant.v1.AssistantConversation.create_time:type_name -> google.protobuf.Timestamp
+	14, // 2: assistant.v1.AssistantConversation.update_time:type_name -> google.protobuf.Timestamp
+	14, // 3: assistant.v1.AssistantToolCall.create_time:type_name -> google.protobuf.Timestamp
+	6,  // 4: assistant.v1.AssistantMessage.tool_calls:type_name -> assistant.v1.AssistantToolCall
+	14, // 5: assistant.v1.AssistantMessage.create_time:type_name -> google.protobuf.Timestamp
+	5,  // 6: assistant.v1.ListConversationsResponse.items:type_name -> assistant.v1.AssistantConversation
+	7,  // 7: assistant.v1.ListMessagesResponse.items:type_name -> assistant.v1.AssistantMessage
+	0,  // 8: assistant.v1.AssistantChatService.Chat:input_type -> assistant.v1.ChatRequest
+	4,  // 9: assistant.v1.AssistantChatService.Confirm:input_type -> assistant.v1.ConfirmRequest
+	8,  // 10: assistant.v1.AssistantService.ListConversations:input_type -> assistant.v1.ListConversationsRequest
+	10, // 11: assistant.v1.AssistantService.ListMessages:input_type -> assistant.v1.ListMessagesRequest
+	12, // 12: assistant.v1.AssistantService.DeleteConversation:input_type -> assistant.v1.DeleteConversationRequest
+	2,  // 13: assistant.v1.AssistantChatService.Chat:output_type -> assistant.v1.ChatResponse
+	3,  // 14: assistant.v1.AssistantChatService.Confirm:output_type -> assistant.v1.ConfirmResponse
+	9,  // 15: assistant.v1.AssistantService.ListConversations:output_type -> assistant.v1.ListConversationsResponse
+	11, // 16: assistant.v1.AssistantService.ListMessages:output_type -> assistant.v1.ListMessagesResponse
+	13, // 17: assistant.v1.AssistantService.DeleteConversation:output_type -> assistant.v1.DeleteConversationResponse
+	13, // [13:18] is the sub-list for method output_type
+	8,  // [8:13] is the sub-list for method input_type
+	8,  // [8:8] is the sub-list for extension type_name
+	8,  // [8:8] is the sub-list for extension extendee
+	0,  // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_assistant_v1_assistant_proto_init() }
@@ -928,7 +1001,7 @@ func file_assistant_v1_assistant_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_assistant_v1_assistant_proto_rawDesc), len(file_assistant_v1_assistant_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   13,
+			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

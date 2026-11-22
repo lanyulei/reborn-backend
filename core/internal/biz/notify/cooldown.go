@@ -1,0 +1,42 @@
+package biz
+
+import (
+	"fmt"
+	"sync"
+	"time"
+)
+
+// cooldown 按键的最小间隔（渠道连通性测试按渠道、事件重发按源事件）：两者都会把一条事件真实投递到
+// 收件人，不节流即成免费发信口。进程内状态：多副本各自计数（人工按钮场景足够）；渠道表与事件表
+// 都没有可用来记「上次测试 / 重发时间」的列，做成库级节流需要加列，暂不引入。
+type cooldown struct {
+	d    time.Duration
+	now  func() time.Time
+	mu   sync.Mutex
+	last map[string]time.Time
+}
+
+func newCooldown(d time.Duration) *cooldown {
+	return &cooldown{d: d, now: time.Now, last: map[string]time.Time{}}
+}
+
+// reserve 间隔不足返回 base 包装的错误（带剩余等待时间），否则占用本次名额；顺带清掉已过冷却期的旧
+// 条目（map 不随键数无界增长）。d ≤ 0 关闭节流。
+func (c *cooldown) reserve(key string, base error) error {
+	if c.d <= 0 {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := c.now()
+	if last, ok := c.last[key]; ok && now.Sub(last) < c.d {
+		return fmt.Errorf("%w: retry after %s", base, (c.d - now.Sub(last)).Round(time.Second))
+	}
+	for id, at := range c.last {
+		if now.Sub(at) >= c.d {
+			delete(c.last, id)
+		}
+	}
+	c.last[key] = now
+	return nil
+}

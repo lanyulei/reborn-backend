@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	v1 "github.com/lanyulei/reborn/backend/core/api/k8s/v1"
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/k8s"
@@ -148,7 +149,7 @@ func (s *ClusterService) TestCluster(ctx context.Context, req *v1.TestClusterReq
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, v1.ErrorK8sUpstreamError("data plane returned an unreadable test result")
 	}
-	resp := &v1.TestClusterResponse{Ok: out.OK, Version: out.Version, DurationMs: out.DurationMS, Error: out.Error}
+	resp := &v1.TestClusterResponse{Ok: out.OK, Version: out.Version, DurationMs: out.DurationMS, Error: classifyTestError(out.Error)}
 	for _, c := range out.Checks {
 		resp.Checks = append(resp.Checks, &v1.SelfCheckItem{Name: c.Name, Ok: c.OK, Message: c.Message})
 	}
@@ -200,4 +201,30 @@ func (s *ClusterService) ListClusterOptions(ctx context.Context, _ *v1.ListClust
 		})
 	}
 	return resp, nil
+}
+
+// classifyTestError 把数据面连接测试的失败原因归为粗粒度类别：原文可能带着对端返回的原始错误
+// （内网地址、证书主题、HTTP 响应片段），不原样回给调用者。数据面自己写的凭据类说明原样保留。
+func classifyTestError(msg string) string {
+	m := strings.ToLower(strings.TrimSpace(msg))
+	switch {
+	case m == "":
+		return ""
+	case strings.Contains(m, "credential"):
+		return msg
+	case strings.Contains(m, "timeout") || strings.Contains(m, "deadline exceeded") || strings.Contains(m, "timed out"):
+		return "connection timed out"
+	case strings.Contains(m, "connection refused"):
+		return "connection refused"
+	case strings.Contains(m, "no such host") || strings.Contains(m, "server misbehaving") || strings.Contains(m, "dns"):
+		return "host name could not be resolved"
+	case strings.Contains(m, "x509") || strings.Contains(m, "tls") || strings.Contains(m, "certificate"):
+		return "TLS handshake failed: the server certificate is not trusted or the client certificate was rejected"
+	case strings.Contains(m, "unauthorized") || strings.Contains(m, "forbidden") || strings.Contains(m, " 401") || strings.Contains(m, " 403"):
+		return "authentication failed: the credential was rejected by the API server"
+	case strings.Contains(m, "proxy"):
+		return "the proxy could not be reached or rejected the connection"
+	default:
+		return "connection failed"
+	}
 }

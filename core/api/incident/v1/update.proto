@@ -1,0 +1,230 @@
+syntax = "proto3";
+
+package incident.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "incident/v1/common.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/incident/v1;v1";
+
+// IncidentUpdateService 公告与只读分享链接。公告发出即写通知事件（incident.<等级>.update）；
+// 分享链接凭地址里不可猜测的令牌匿名访问，只含公告与当前状态。
+service IncidentUpdateService {
+  rpc ListUpdates(ListUpdatesRequest) returns (ListUpdatesResponse) {
+    option (google.api.http) = {get: "/api/v1/incident/{id}/update"};
+    option (system.v1.title) = "查询故障公告";
+  }
+  rpc CreateUpdate(CreateUpdateRequest) returns (UpdateResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident/{id}/update"
+      body: "*"
+    };
+    option (system.v1.title) = "发布故障公告";
+  }
+  // DraftUpdate AI 起草公告（不落库，填入编辑框）。
+  rpc DraftUpdate(DraftUpdateRequest) returns (DraftResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident/{id}/update:draft"
+      body: "*"
+    };
+    option (system.v1.title) = "AI 起草故障公告";
+  }
+  rpc ListShareLinks(ListShareLinksRequest) returns (ListShareLinksResponse) {
+    option (google.api.http) = {get: "/api/v1/incident/{id}/share"};
+    option (system.v1.title) = "查询故障分享链接";
+  }
+  rpc CreateShareLink(CreateShareLinkRequest) returns (ShareLinkTokenResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident/{id}/share"
+      body: "*"
+    };
+    option (system.v1.title) = "新建故障分享链接";
+  }
+  rpc GetShareLinkToken(GetShareLinkTokenRequest) returns (ShareLinkTokenResponse) {
+    option (google.api.http) = {get: "/api/v1/incident/{id}/share/{share_id}/token"};
+    option (system.v1.title) = "查看故障分享链接令牌";
+  }
+  rpc ResetShareLink(ResetShareLinkRequest) returns (ShareLinkTokenResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident/{id}/share/{share_id}:reset"
+      body: "*"
+    };
+    option (system.v1.title) = "重置故障分享链接";
+  }
+  rpc DeleteShareLink(DeleteShareLinkRequest) returns (EmptyUpdateResponse) {
+    option (google.api.http) = {delete: "/api/v1/incident/{id}/share/{share_id}"};
+    option (system.v1.title) = "作废故障分享链接";
+  }
+  // GetPublicIncident 匿名访问：凭令牌读取故障的标题 / 等级 / 状态 / 公告列表（免登录、免授权）。
+  rpc GetPublicIncident(GetPublicIncidentRequest) returns (GetPublicIncidentResponse) {
+    option (google.api.http) = {get: "/api/v1/public/incident/{token}"};
+    option (system.v1.title) = "查看公开的故障公告";
+  }
+}
+
+message EmptyUpdateResponse {}
+
+// IncidentUpdate 公告。
+message IncidentUpdate {
+  // 公告 ID。
+  string id = 1;
+  // kind 1=开启 2=进展 3=恢复。
+  int32 kind = 2;
+  // 内容。
+  string content = 3;
+  // 发布人。
+  NamedRef author = 4;
+  // 发布时间。
+  google.protobuf.Timestamp create_time = 5;
+}
+
+message ListUpdatesRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+message ListUpdatesResponse {
+  // 公告列表（新的在前）。
+  repeated IncidentUpdate items = 1;
+}
+
+message CreateUpdateRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // 公告类型：1=进展 2=缓解 3=解决。
+  int32 kind = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 3
+  }];
+  // 内容。
+  string content = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_bytes: 16384
+  }];
+}
+
+message UpdateResponse {
+  // 公告。
+  IncidentUpdate update = 1;
+}
+
+message DraftUpdateRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // 公告类型：1=进展 2=缓解 3=解决。
+  int32 kind = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 3
+  }];
+}
+
+// DraftResponse AI 草稿。
+message DraftResponse {
+  // AI 草稿。
+  string content = 1;
+}
+
+// ShareLink 分享链接（不含令牌）。
+message ShareLink {
+  // 链接 ID。
+  string id = 1;
+  // 名称。
+  string name = 2;
+  // 过期时间。
+  google.protobuf.Timestamp expire_time = 3;
+  // 访问次数。
+  int32 access_count = 4;
+  // 最近访问时间。
+  google.protobuf.Timestamp last_access_time = 5;
+  // 创建人。
+  NamedRef creator = 6;
+  // 创建时间。
+  google.protobuf.Timestamp create_time = 7;
+}
+
+message ListShareLinksRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+message ListShareLinksResponse {
+  // 链接列表。
+  repeated ShareLink items = 1;
+}
+
+message CreateShareLinkRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // 名称（给谁看）。
+  string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+  // expire_hours 有效期（小时），0 = 缺省 168（7 天），上限 720。
+  int32 expire_hours = 3 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 720
+  }];
+}
+
+message GetShareLinkTokenRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // 链接 ID。
+  string share_id = 2 [(buf.validate.field).string.uuid = true];
+}
+
+message ResetShareLinkRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // 链接 ID。
+  string share_id = 2 [(buf.validate.field).string.uuid = true];
+}
+
+message DeleteShareLinkRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // 链接 ID。
+  string share_id = 2 [(buf.validate.field).string.uuid = true];
+}
+
+// ShareLinkTokenResponse 带令牌明文。
+message ShareLinkTokenResponse {
+  // 链接。
+  ShareLink link = 1;
+  // 访问令牌（拼到公开地址里）。
+  string token = 2;
+}
+
+message GetPublicIncidentRequest {
+  // 分享令牌。
+  string token = 1 [(buf.validate.field).string = {
+    min_len: 20
+    max_len: 128
+  }];
+}
+
+// GetPublicIncidentResponse 公开视图：不含告警、资源、时间线。
+message GetPublicIncidentResponse {
+  // 编号。
+  string number = 1;
+  // 标题。
+  string title = 2;
+  // 等级。
+  int32 severity = 3;
+  // 状态。
+  int32 status = 4;
+  // 业务名。
+  string business_name = 5;
+  // 发生时间。
+  google.protobuf.Timestamp occur_time = 6;
+  // 解决时间。
+  google.protobuf.Timestamp resolve_time = 7;
+  // 公告。
+  repeated IncidentUpdate updates = 8;
+  // 是否演练。
+  bool is_drill = 9;
+}

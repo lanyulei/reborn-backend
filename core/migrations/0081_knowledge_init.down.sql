@@ -1,0 +1,10 @@
+-- 0081_knowledge_init.down.sql 回退知识库域全部表（不卸载 vector 扩展：可能被其他库对象使用）。
+DROP TABLE IF EXISTS knowledge_search_log;
+DROP TABLE IF EXISTS knowledge_index_job;
+DROP TABLE IF EXISTS knowledge_ingest_job;
+DROP TABLE IF EXISTS knowledge_link;
+DROP TABLE IF EXISTS knowledge_chunk;
+DROP TABLE IF EXISTS knowledge_version;
+DROP TABLE IF EXISTS knowledge_document;
+DROP TABLE IF EXISTS knowledge_space_acl;
+DROP TABLE IF EXISTS knowledge_space;

@@ -164,6 +164,9 @@ func TextArray(items []string) []string {
 	return items
 }
 
+// advisoryReleaseTimeout 释放 advisory lock（解锁 + 关闭专用连接）的时限。
+const advisoryReleaseTimeout = 5 * time.Second
+
 // TryAdvisoryLock 非阻塞获取会话级 advisory lock：锁绑定专用连接（Acquire 后 Hijack
 // 脱离连接池），release 解锁并关闭连接；连接断即锁释放（PG 会话结束自动释放，无需 TTL）。
 // ok=false 表示他人持有。持锁连接不在池内、无人探活：ctx 携带 loop.LockProbe
@@ -189,8 +192,11 @@ func TryAdvisoryLock(ctx context.Context, pool *pgxpool.Pool, key string) (relea
 		probe.Check = raw.Ping
 	}
 	release = func() {
-		_, _ = raw.Exec(context.WithoutCancel(ctx), "SELECT pg_advisory_unlock($1)", id)
-		_ = raw.Close(context.WithoutCancel(ctx))
+		// 解锁与关连接带上限：连接已半死时 Exec 可能一直挂着，而连接关闭本身就会释放会话级锁。
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), advisoryReleaseTimeout)
+		defer cancel()
+		_, _ = raw.Exec(rctx, "SELECT pg_advisory_unlock($1)", id)
+		_ = raw.Close(rctx)
 	}
 	return release, true, nil
 }

@@ -1,0 +1,118 @@
+syntax = "proto3";
+
+package incident.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/incident/v1;v1";
+
+// IncidentOpenService 开放接口（供外部监控 / 巡检 / 客服系统、Agent 服务接入；不走用户登录）：
+// 请求头 Authorization: Bearer <接入源令牌>；库内只存令牌哈希，可重置、可停用；可配来源 IP 白名单。
+// external_key 为幂等键：同一接入源重复提交返回同一故障。接入源不能开 S1。
+service IncidentOpenService {
+  rpc OpenCreateIncident(OpenCreateIncidentRequest) returns (OpenIncidentResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/open/incident"
+      body: "*"
+    };
+    option (system.v1.title) = "开放接口：开启故障";
+  }
+  rpc OpenGetIncident(OpenGetIncidentRequest) returns (OpenIncidentResponse) {
+    option (google.api.http) = {get: "/api/v1/open/incident/{id}"};
+    option (system.v1.title) = "开放接口：查询故障";
+  }
+  // OpenAppendNote 追加一条备注（来源标记为接入源）。
+  rpc OpenAppendNote(OpenAppendNoteRequest) returns (OpenIncidentResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/open/incident/{id}/note"
+      body: "*"
+    };
+    option (system.v1.title) = "开放接口：追加故障备注";
+  }
+  // OpenResolveIncident 置已恢复（只能恢复本接入源开出的故障）。
+  rpc OpenResolveIncident(OpenResolveIncidentRequest) returns (OpenIncidentResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/open/incident/{id}:resolve"
+      body: "*"
+    };
+    option (system.v1.title) = "开放接口：恢复故障";
+  }
+}
+
+message OpenCreateIncidentRequest {
+  // external_key 幂等键（必填），1-128 字符。
+  string external_key = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+  // 标题。
+  string title = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 255
+  }];
+  // severity 2-4；0 = 接入源缺省。
+  int32 severity = 3 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 4
+  }];
+  // 摘要。
+  string summary = 4 [(buf.validate.field).string.max_len = 4000];
+  // business_code 业务编码，可空（取接入源缺省）。
+  string business_code = 5 [(buf.validate.field).string.max_len = 64];
+  // 发生时间（RFC3339，缺省为现在）。
+  optional google.protobuf.Timestamp occur_time = 6;
+  // ci_names 受影响资源的名称（按 CMDB 名称精确匹配，匹配不到忽略），至多 50 个。
+  repeated string ci_names = 7 [(buf.validate.field).repeated = {
+    max_items: 50
+    items: {
+      string: {max_len: 255}
+    }
+  }];
+}
+
+message OpenGetIncidentRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+message OpenAppendNoteRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // 备注内容。
+  string text = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 8000
+  }];
+}
+
+message OpenResolveIncidentRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // 解决说明。
+  string note = 2 [(buf.validate.field).string.max_len = 4000];
+}
+
+// OpenIncidentResponse 开放接口的故障视图（最小披露）。
+message OpenIncidentResponse {
+  // 故障 ID。
+  string id = 1;
+  // 编号。
+  string number = 2;
+  // 标题。
+  string title = 3;
+  // 等级。
+  int32 severity = 4;
+  // 状态。
+  int32 status = 5;
+  // 开启时间。
+  google.protobuf.Timestamp open_time = 6;
+  // 解决时间。
+  google.protobuf.Timestamp resolve_time = 7;
+  // created 本次调用是否新建了故障（幂等重复为 false）。
+  bool created = 8;
+  // 详情页地址。
+  string url = 9;
+}

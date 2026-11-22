@@ -141,6 +141,24 @@ func (s *Store) ListRoutes(_ context.Context, filter biz.RouteFilter, page, page
 	return items[start:end], total, nil
 }
 
+// FixedRecipientsOfChannel implements biz.ChannelReferenceChecker：未删除路由中绑定该渠道的固定收件人并集。
+func (s *Store) FixedRecipientsOfChannel(_ context.Context, channelID string) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []string
+	for _, e := range s.routes {
+		if e.deleted || !slices.Contains(e.route.ChannelIDs, channelID) {
+			continue
+		}
+		for _, f := range e.route.Recipient.Fixed {
+			if !slices.Contains(out, f) {
+				out = append(out, f)
+			}
+		}
+	}
+	return out, nil
+}
+
 // CountRoutesUsingChannel implements biz.ChannelReferenceChecker：未删除路由中引用该渠道的条数。
 func (s *Store) CountRoutesUsingChannel(_ context.Context, channelID string) (int64, error) {
 	s.mu.RLock()

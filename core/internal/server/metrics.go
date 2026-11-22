@@ -32,6 +32,11 @@ type Metrics struct {
 	provider *sdkmetric.MeterProvider
 	loopRuns metric.Int64Counter
 	items    metric.Int64Counter
+	// 运维 Agent：任务终态、阶段耗时、模型失败、token 用量（bizagent.Metrics）。
+	agentTasks  metric.Int64Counter
+	agentStage  metric.Float64Histogram
+	agentModel  metric.Int64Counter
+	agentTokens metric.Int64Counter
 }
 
 // NewMetrics 构造指标与导出器。积压指标在每次抓取时现查（一条走部分索引的聚合），
@@ -48,6 +53,18 @@ func NewMetrics(stats bizworkflow.JobStats) (*Metrics, func(), error) {
 		return nil, nil, err
 	}
 	if m.items, err = meter.Int64Counter("core_loop_items_total", metric.WithDescription("items processed by worker loop")); err != nil {
+		return nil, nil, err
+	}
+	if m.agentTasks, err = meter.Int64Counter("core_agent_tasks_total", metric.WithDescription("ops agent tasks reaching a terminal status, by status")); err != nil {
+		return nil, nil, err
+	}
+	if m.agentStage, err = meter.Float64Histogram("core_agent_stage_seconds", metric.WithDescription("ops agent stage duration by stage and status"), metric.WithUnit("s")); err != nil {
+		return nil, nil, err
+	}
+	if m.agentModel, err = meter.Int64Counter("core_agent_model_failures_total", metric.WithDescription("ops agent model-side failures by kind")); err != nil {
+		return nil, nil, err
+	}
+	if m.agentTokens, err = meter.Int64Counter("core_agent_tokens_total", metric.WithDescription("ops agent token usage by kind (prompt / completion)")); err != nil {
 		return nil, nil, err
 	}
 	overdue, err := meter.Int64ObservableGauge("core_workflow_jobs_overdue",
@@ -94,6 +111,43 @@ func (m *Metrics) Record(ctx context.Context, name string, items int, err error)
 	m.loopRuns.Add(ctx, 1, metric.WithAttributes(attribute.String("loop", name), attribute.String("result", result)))
 	if items > 0 {
 		m.items.Add(ctx, int64(items), metric.WithAttributes(attribute.String("loop", name)))
+	}
+}
+
+// TaskFinished implements bizagent.Metrics.
+func (m *Metrics) TaskFinished(ctx context.Context, status string) {
+	if m == nil {
+		return
+	}
+	m.agentTasks.Add(ctx, 1, metric.WithAttributes(attribute.String("status", status)))
+}
+
+// StageFinished implements bizagent.Metrics.
+func (m *Metrics) StageFinished(ctx context.Context, stage, status string, d time.Duration) {
+	if m == nil {
+		return
+	}
+	m.agentStage.Record(ctx, d.Seconds(), metric.WithAttributes(attribute.String("stage", stage), attribute.String("status", status)))
+}
+
+// ModelFailure implements bizagent.Metrics.
+func (m *Metrics) ModelFailure(ctx context.Context, kind string) {
+	if m == nil {
+		return
+	}
+	m.agentModel.Add(ctx, 1, metric.WithAttributes(attribute.String("kind", kind)))
+}
+
+// Tokens implements bizagent.Metrics.
+func (m *Metrics) Tokens(ctx context.Context, prompt, completion int64) {
+	if m == nil {
+		return
+	}
+	if prompt > 0 {
+		m.agentTokens.Add(ctx, prompt, metric.WithAttributes(attribute.String("kind", "prompt")))
+	}
+	if completion > 0 {
+		m.agentTokens.Add(ctx, completion, metric.WithAttributes(attribute.String("kind", "completion")))
 	}
 }
 

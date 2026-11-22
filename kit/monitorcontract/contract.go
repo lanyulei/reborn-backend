@@ -568,6 +568,10 @@ func appendSortedLabels(buf []byte, labels map[string]string, names []string) []
 // IANA 名称（有限集合），进程内只读优化，不承载任何正确性。
 var locations sync.Map // map[string]*time.Location
 
+// LoadLocation 带进程内缓存的 time.LoadLocation（空 / "UTC" 直接返回 time.UTC）：通知与模拟等每条都要
+// 按规则时区格式化时间的路径用它，免得每次都读时区库。
+func LoadLocation(name string) (*time.Location, error) { return loadLocation(name) }
+
 func loadLocation(name string) (*time.Location, error) {
 	if name == "" || name == "UTC" {
 		return time.UTC, nil

@@ -182,7 +182,8 @@ func TestMonitorP2SchemaMatchesContract(t *testing.T) {
 		}
 		return sql[i : i+j]
 	}
-	if got := quotedList(section("CONSTRAINT ck_monitor_alert_event_type CHECK (type IN (", "CONSTRAINT ck_monitor_alert_event_detail")); !slices.Equal(got, monitorcontract.AlertEventTypes()) {
+	// 告警时间线的类型集合可被后续迁移重定义（0080 故障域追加 incident），以最后一次定义为准。
+	if got := quotedList(latestCheck(t, "ck_monitor_alert_event_type")); !slices.Equal(got, monitorcontract.AlertEventTypes()) {
 		t.Errorf("monitor_alert_event.type CHECK = %v\ncontract = %v", got, monitorcontract.AlertEventTypes())
 	}
 	if got := quotedList(section("CONSTRAINT ck_monitor_engine_event_type CHECK (type IN (", "CONSTRAINT ck_monitor_engine_event_detail")); !slices.Equal(got, monitorcontract.EngineEventTypes()) {
@@ -228,4 +229,35 @@ func TestMonitorP2SchemaMatchesContract(t *testing.T) {
 	if !notifycontract.EventPatternPattern.MatchString("monitor.engine.*") {
 		t.Error("seeded route pattern rejected by the notify contract")
 	}
+}
+
+// latestCheck 返回全部迁移里最后一次定义的「CONSTRAINT <name> CHECK (type IN (...))」取值片段：
+// 后续迁移用 DROP / ADD CONSTRAINT 扩展集合时，契约比对以最新定义为准。
+func latestCheck(t *testing.T, name string) string {
+	t.Helper()
+	pattern := regexp.MustCompile(`CONSTRAINT ` + regexp.QuoteMeta(name) + `\s+CHECK \(type IN \(([^)]*)\)`)
+	var files []string
+	if err := fs.WalkDir(FS, ".", func(path string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && strings.HasSuffix(path, ".up.sql") {
+			files = append(files, path)
+		}
+		return err
+	}); err != nil {
+		t.Fatalf("walk migrations: %v", err)
+	}
+	slices.Sort(files)
+	latest := ""
+	for _, f := range files {
+		raw, err := fs.ReadFile(FS, f)
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		if m := pattern.FindAllStringSubmatch(string(raw), -1); len(m) > 0 {
+			latest = m[len(m)-1][1]
+		}
+	}
+	if latest == "" {
+		t.Fatalf("no migration defines %s", name)
+	}
+	return latest
 }

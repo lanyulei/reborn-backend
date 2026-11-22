@@ -235,12 +235,13 @@ func (uc *ScheduleUsecase) Delete(ctx context.Context, userID, id string) error 
 	return uc.repo.Write(ctx, OpDelete, &Schedule{ID: id}, 0, userID)
 }
 
-// Run 触发到期的定时作业（后台循环；多实例并发安全）。返回本轮处理的条数。
+// Run 触发到期的定时作业（后台循环；多实例并发安全）。返回本轮由本实例触发的条数。
 //
-// 每条定时作业：先算出下一次触发时间，再以「定时作业 ID + 计划时间」为幂等键提交执行，最后以
-// next_time 仍等于计划时间为条件落账。两个实例同时处理同一条时，幂等键保证只建一条执行，
-// 落账的条件更新保证只推进一次。提交被业务规则拒绝（模板停用、负责人无权限等）记为本次触发失败，
-// 照常推进到下一次；数据库等故障不推进，下一轮重试。
+// 每条到期的定时作业先由仓储认领（行锁 + SKIP LOCKED，并复核 next_time 仍是读到的计划时间）：多实例下
+// 只有一个实例拿到它，其余跳过，不再各自都去提交一遍。持锁期间算出下一次触发时间、以「定时作业 ID +
+// 计划时间」为幂等键提交执行，再随锁一起落账推进 next_time。提交被业务规则拒绝（模板停用、负责人无
+// 权限等）记为本次触发失败，照常推进到下一次；数据库等故障整体回滚，下一轮重做（幂等键保证即使提交
+// 已成功也不会再建一条）。
 func (uc *ScheduleUsecase) Run(ctx context.Context) (int, error) {
 	items, now, err := uc.queue.Due(ctx, scheduleBatch)
 	if err != nil {
@@ -250,18 +251,27 @@ func (uc *ScheduleUsecase) Run(ctx context.Context) (int, error) {
 	done := 0
 	var first error
 	for _, s := range items {
-		if err := uc.fire(ctx, s, now); err != nil {
+		if s.NextTime == nil {
+			continue
+		}
+		ok, err := uc.queue.Fire(ctx, s.ID, *s.NextTime, func(ctx context.Context, cur *Schedule) (ScheduleRun, error) {
+			return uc.fire(ctx, cur, now)
+		})
+		if err != nil {
 			if first == nil {
 				first = err
 			}
 			continue
 		}
-		done++
+		if ok {
+			done++
+		}
 	}
 	return done, first
 }
 
-func (uc *ScheduleUsecase) fire(ctx context.Context, s *Schedule, now time.Time) error {
+// fire 算出一次触发的结果（持锁期间调用）：下一次触发时间、本次提交的执行或失败原因。
+func (uc *ScheduleUsecase) fire(ctx context.Context, s *Schedule, now time.Time) (ScheduleRun, error) {
 	planned := *s.NextTime
 	run := ScheduleRun{Fired: planned}
 	sched, loc, err := parseCron(s.Cron, s.Timezone)
@@ -271,16 +281,14 @@ func (uc *ScheduleUsecase) fire(ctx context.Context, s *Schedule, now time.Time)
 	if err != nil {
 		// 存量的表达式不再可解析 / 不再触发：记下原因并停在一天之后再看，不让它每轮都被取出来。
 		run.Next, run.Error = now.Add(24*time.Hour), truncateRunes(Message(err), 512)
-		_, err := uc.queue.Advance(ctx, s.ID, run)
-		return err
+		return run, nil
 	}
-	// 错过的触发：计划时间之后已经过了不止一个周期（服务停机等）。按策略跳过或补跑一次——
-	// 无论错过多少次都只补一次。
-	missed := sched.Next(planned.In(loc)).Before(now)
+	// 错过的触发：计划时间之后已经过了两个以上周期（服务停机等；晚一个周期以内照常触发——循环间隔、锁等待
+	// 与短暂停机不该让作业被判为错过）。按策略跳过或补跑一次——无论错过多少次都只补一次。
+	missed := sched.Next(sched.Next(planned.In(loc))).Before(now)
 	if missed && s.Misfire == jc.MisfireSkip {
 		run.Error = "错过触发时间，已跳过"
-		_, err := uc.queue.Advance(ctx, s.ID, run)
-		return err
+		return run, nil
 	}
 	exec, err := uc.execs.Submit(ctx, s.Owner, SubmitInput{
 		TemplateID: s.TemplateID, TemplateVersion: s.TemplateVersion, Params: s.Params, Trigger: jc.TriggerSchedule, TriggerRef: s.ID,
@@ -292,8 +300,7 @@ func (uc *ScheduleUsecase) fire(ctx context.Context, s *Schedule, now time.Time)
 	case Rejected(err):
 		run.Error = truncateRunes(Message(err), 512)
 	default:
-		return err
+		return run, err
 	}
-	_, err = uc.queue.Advance(ctx, s.ID, run)
-	return err
+	return run, nil
 }

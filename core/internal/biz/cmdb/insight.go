@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -148,6 +149,15 @@ type InsightUsecase struct {
 	quality   map[string]qualityCacheEntry
 	// qualityFlight 合并同一范围的并发计算。
 	qualityFlight singleflight.Group
+	// 运营概览的短缓存（见 Overview），口径同数据质量，键多一个回看天数。
+	overviewMu     sync.Mutex
+	overviewCache  map[string]overviewCacheEntry
+	overviewFlight singleflight.Group
+}
+
+type overviewCacheEntry struct {
+	at  time.Time
+	out *Overview
 }
 
 // NewInsightUsecase new an InsightUsecase.
@@ -241,16 +251,49 @@ func (uc *InsightUsecase) Overview(ctx context.Context, filter OverviewFilter, d
 	if days > OverviewMaxDays {
 		days = OverviewMaxDays
 	}
-	// 回看窗口含今天：起点为 (days-1) 天前的零点。
-	now := time.Now()
-	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).AddDate(0, 0, -int(days-1))
-	filter.Since = start
-	out, err := uc.overview.Stats(ctx, filter)
+	// 结果按（数据范围，回看天数）缓存 qualityCacheTTL：概览是十来条聚合查询，多人同时打开看板、
+	// 前端轮询都只扫一遍；看板允许分钟级延迟。并发未命中合并为一次计算。
+	key := qualityCacheKey(filter) + "/" + strconv.Itoa(int(days))
+	uc.overviewMu.Lock()
+	if e, ok := uc.overviewCache[key]; ok && time.Since(e.at) < qualityCacheTTL {
+		uc.overviewMu.Unlock()
+		return cloneOverview(e.out), nil
+	}
+	uc.overviewMu.Unlock()
+	v, err, _ := uc.overviewFlight.Do(key, func() (any, error) {
+		// 回看窗口含今天：起点为 (days-1) 天前的零点。
+		now := time.Now()
+		filter.Since = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).AddDate(0, 0, -int(days-1))
+		octx, cancel := context.WithTimeout(context.WithoutCancel(ctx), qualityQueryTimeout)
+		defer cancel()
+		out, err := uc.overview.Stats(octx, filter)
+		if err != nil {
+			return nil, err
+		}
+		out.Days = days
+		uc.overviewMu.Lock()
+		if uc.overviewCache == nil || len(uc.overviewCache) >= qualityCacheMaxKeys {
+			uc.overviewCache = make(map[string]overviewCacheEntry, 8)
+		}
+		uc.overviewCache[key] = overviewCacheEntry{at: time.Now(), out: out}
+		uc.overviewMu.Unlock()
+		return out, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	out.Days = days
-	return out, nil
+	return cloneOverview(v.(*Overview)), nil
+}
+
+// cloneOverview 返回副本（切片独立，调用方改写不污染缓存）。
+func cloneOverview(o *Overview) *Overview {
+	cp := *o
+	cp.ByModel = slices.Clone(o.ByModel)
+	cp.ByStatus = slices.Clone(o.ByStatus)
+	cp.ByEnv = slices.Clone(o.ByEnv)
+	cp.BySource = slices.Clone(o.BySource)
+	cp.Trend = slices.Clone(o.Trend)
+	return &cp
 }
 
 // Quality 数据质量：按模型统计各类问题的资源数。

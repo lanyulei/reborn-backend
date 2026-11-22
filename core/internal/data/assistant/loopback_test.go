@@ -134,3 +134,34 @@ func splitQuery(q string) []string {
 	}
 	return append(out, cur)
 }
+
+// 路径参数取 "." / ".." 一律拒绝（不发出请求）；发起对话的客户端 IP 经 X-Forwarded-For 透传。
+func TestLoopbackInvoker_PathDotSegmentsAndClientIP(t *testing.T) {
+	t.Parallel()
+	var hits int
+	var forwarded string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		forwarded = r.Header.Get("X-Forwarded-For")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(ts.Close)
+	inv := newInvoker(ts)
+	spec := biz.ToolSpec{HTTPMethod: "GET", PathTemplate: "/x/{id}", PathFields: []string{"id"}}
+	for _, id := range []string{".", ".."} {
+		res, err := inv.Invoke(context.Background(), spec, json.RawMessage(`{"id":"`+id+`"}`), "")
+		if err != nil || res.StatusCode != http.StatusBadRequest {
+			t.Fatalf("id %q: res = %+v, err = %v; want 400", id, res, err)
+		}
+	}
+	if hits != 0 {
+		t.Fatalf("dot-segment path must not be requested, hits = %d", hits)
+	}
+	ctx := biz.WithClientIP(context.Background(), "203.0.113.7")
+	if _, err := inv.Invoke(ctx, spec, json.RawMessage(`{"id":"a"}`), ""); err != nil {
+		t.Fatal(err)
+	}
+	if hits != 1 || forwarded != "203.0.113.7" {
+		t.Fatalf("hits = %d, X-Forwarded-For = %q", hits, forwarded)
+	}
+}

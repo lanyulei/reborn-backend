@@ -245,9 +245,8 @@ func TestUserService_AdminGuards(t *testing.T) {
 	if _, err := svc.UpdateUser(adminCtx, &v1.UpdateUserRequest{Id: bobID, IsAdmin: &yes}); err != nil {
 		t.Fatalf("admin grants bob is_admin: %v", err)
 	}
-	if _, err := svc.ResetUserPassword(adminCtx, &v1.ResetUserPasswordRequest{Id: adminID, Password: "new-secret-123"}); err != nil {
-		t.Fatalf("admin resets own password: %v", err)
-	}
+	_, err = svc.ResetUserPassword(adminCtx, &v1.ResetUserPasswordRequest{Id: adminID, Password: "new-secret-123"})
+	self("admin resets own password via the admin endpoint", err)
 	if _, err := svc.DeleteUser(adminCtx, &v1.DeleteUserRequest{Id: bobID}); err != nil {
 		t.Fatalf("admin deletes bob (now admin): %v", err)
 	}

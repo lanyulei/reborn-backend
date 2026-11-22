@@ -5,7 +5,9 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/lanyulei/reborn/backend/kit/idgen"
 	jc "github.com/lanyulei/reborn/backend/kit/jobcontract"
@@ -26,6 +28,38 @@ func compileRisk(pattern string) (*regexp.Regexp, error) {
 	return regexp.Compile(pattern)
 }
 
+// riskRegexps 已编译规则的进程内缓存，键 = 规则 ID@版本（规则改动版本号递增，旧版本条目失效）。每次提交都
+// 要拿全部规则匹配一遍，不缓存就是每条规则每次提交编译一次。条目数超过两倍规则上限时整体清空（只是缓存）。
+var riskRegexps = struct {
+	sync.Mutex
+	m map[string]*regexp.Regexp
+}{m: map[string]*regexp.Regexp{}}
+
+// riskRegexp 取规则的已编译正则（没有 ID 的草稿不缓存）。
+func riskRegexp(r *RiskRule) (*regexp.Regexp, error) {
+	if r.ID == "" {
+		return compileRisk(r.Pattern)
+	}
+	key := r.ID + "@" + strconv.Itoa(int(r.Version))
+	riskRegexps.Lock()
+	re, ok := riskRegexps.m[key]
+	riskRegexps.Unlock()
+	if ok {
+		return re, nil
+	}
+	re, err := compileRisk(r.Pattern)
+	if err != nil {
+		return nil, err
+	}
+	riskRegexps.Lock()
+	if len(riskRegexps.m) >= 2*maxRiskRules {
+		clear(riskRegexps.m)
+	}
+	riskRegexps.m[key] = re
+	riskRegexps.Unlock()
+	return re, nil
+}
+
 // matchRisk 用启用的规则匹配一段命令 / 脚本内容，返回命中项（拦截在前、须审批次之、提醒最后）。
 // 编译不过的存量规则跳过（保存时已校验，这里不让一条坏规则挡住全部提交）。
 func matchRisk(rules []*RiskRule, content string) []jc.RiskHit {
@@ -34,7 +68,7 @@ func matchRisk(rules []*RiskRule, content string) []jc.RiskHit {
 		if !r.Enabled {
 			continue
 		}
-		re, err := compileRisk(r.Pattern)
+		re, err := riskRegexp(r)
 		if err != nil {
 			continue
 		}

@@ -82,21 +82,31 @@ func (s *TokenSigner) RefreshTTL() time.Duration { return s.refreshTTL }
 // SignAccess 以 HS256 签发访问令牌；now 由调用方注入，便于测试确定性构造
 // 过期/临期令牌。返回令牌串与其有效期（秒）。
 func (s *TokenSigner) SignAccess(userID, username string, now time.Time) (string, int64, error) {
+	token, err := s.SignAccessWithTTL(userID, username, now, s.accessTTL)
+	if err != nil {
+		return "", 0, err
+	}
+	return token, int64(s.accessTTL / time.Second), nil
+}
+
+// SignAccessWithTTL 以指定有效期签发访问令牌（同密钥、同 claims 结构）；供机器账号的短期令牌使用，
+// 人类登录一律走 SignAccess（配置的 access_ttl）。
+func (s *TokenSigner) SignAccessWithTTL(userID, username string, now time.Time, ttl time.Duration) (string, error) {
 	claims := AccessClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    s.issuer,
 			Subject:   userID,
 			ID:        uuid.NewString(),
 			IssuedAt:  jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(now.Add(s.accessTTL)),
+			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
 		},
 		Username: username,
 	}
 	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(s.secret)
 	if err != nil {
-		return "", 0, fmt.Errorf("sign access token: %w", err)
+		return "", fmt.Errorf("sign access token: %w", err)
 	}
-	return token, int64(s.accessTTL / time.Second), nil
+	return token, nil
 }
 
 // ParseAccess 解析并校验访问令牌；校验集与鉴权中间件完全一致
@@ -126,11 +136,13 @@ func (s *TokenSigner) ClaimsFactory() func() jwt.Claims {
 	return func() jwt.Claims { return &AccessClaims{} }
 }
 
-// ParserOptions 返回与签发侧一致的解析校验选项：签名方法白名单 + 签发方校验。
+// ParserOptions 返回与签发侧一致的解析校验选项：签名方法白名单 + 签发方校验 + 必须带 exp
+// （没有过期时间的令牌即便签名正确也拒绝：签发侧恒写 exp，缺失只可能是伪造或旧密钥泄露后的手工构造）。
 func (s *TokenSigner) ParserOptions() []jwt.ParserOption {
 	return []jwt.ParserOption{
 		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
 		jwt.WithIssuer(s.issuer),
+		jwt.WithExpirationRequired(),
 	}
 }
 

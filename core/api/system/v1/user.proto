@@ -75,6 +75,15 @@ service UserService {
     option (system.v1.title) = "设置用户角色";
   }
   // ListUserRoles 查询用户已绑定的角色列表。
+  // CreateMachineUser 新建机器账号：没有密码、不能登录、没有刷新令牌，只能被签发短期访问令牌（运维 Agent 等
+  // 无人值守调用方使用）；必须绑定至少一个角色。
+  rpc CreateMachineUser(CreateMachineUserRequest) returns (CreateMachineUserResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/system/user:machine"
+      body: "*"
+    };
+    option (system.v1.title) = "新建机器账号";
+  }
   rpc ListUserRoles(ListUserRolesRequest) returns (ListUserRolesResponse) {
     option (google.api.http) = {
       get: "/api/v1/system/user/{id}/role"
@@ -109,6 +118,35 @@ message User {
   string avatar = 11;
   // depts 所属部门（主部门在前）；仅用户详情与用户列表填充。
   repeated UserDept depts = 12;
+  // kind 账号类型：1=人 2=机器（不能登录、不能改密码，只能被签发短期访问令牌）。
+  int32 kind = 13;
+}
+
+// CreateMachineUserRequest 新建机器账号请求。
+message CreateMachineUserRequest {
+  // username 登录名，3-64 位字母/数字/下划线/中划线。
+  string username = 1 [(buf.validate.field).string = {
+    pattern: "^[a-zA-Z0-9_-]{3,64}$"
+  }];
+  // nickname 显示名，1-64 位。
+  string nickname = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 64
+  }];
+  // role_ids 绑定的角色，至少一个。
+  repeated string role_ids = 3 [(buf.validate.field).repeated = {
+    min_items: 1
+    max_items: 50
+    items: {
+      string: {uuid: true}
+    }
+  }];
+}
+
+// CreateMachineUserResponse 新建机器账号响应。
+message CreateMachineUserResponse {
+  // user 已创建的机器账号。
+  User user = 1;
 }
 
 // UserDeptAssignment 用户所属部门整组替换载荷（空列表 = 不属于任何部门）。
@@ -278,6 +316,8 @@ message ListUsersRequest {
   optional string dept_id = 5 [(buf.validate.field).string.uuid = true];
   // include_sub_depts 与 dept_id 同用：是否包含其全部下级部门的用户。
   bool include_sub_depts = 6;
+  // kind 账号类型过滤，可选：1=人 2=机器。
+  optional int32 kind = 7 [(buf.validate.field).int32 = { in: [1, 2] }];
 }
 
 // ListUsersResponse 分页查询用户响应。

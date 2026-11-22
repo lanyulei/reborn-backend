@@ -13,7 +13,10 @@ const maxToolOutputBytes = 32 << 10
 
 // sensitiveKeyParts 入参/出参脱敏的键名片段（大小写不敏感，子串匹配）；与
 // kit/httpx 日志脱敏口径一致，宁可误打码不可漏打码。
-var sensitiveKeyParts = []string{"password", "secret", "token", "authorization", "api_key", "apikey"}
+var sensitiveKeyParts = []string{
+	"password", "passwd", "secret", "token", "authorization", "api_key", "apikey",
+	"private_key", "privatekey", "access_key", "accesskey", "cookie", "signature", "kubeconfig",
+}
 
 // maskedValue 脱敏替换值。
 const maskedValue = "***"
@@ -76,6 +79,7 @@ func isSensitiveKey(k string) bool {
 }
 
 // TruncateOutput 把超长工具输出截断为提示文本（保持合法 JSON），避免撑爆模型上下文。
+// 调用方须先脱敏再截断：截断后的 preview 是一段普通字符串，按键名的脱敏对它不再生效。
 func TruncateOutput(raw json.RawMessage) json.RawMessage {
 	if len(raw) <= maxToolOutputBytes {
 		return raw
@@ -83,7 +87,7 @@ func TruncateOutput(raw json.RawMessage) json.RawMessage {
 	msg := map[string]any{
 		"truncated": true,
 		"message":   "工具返回内容过长已截断，请缩小 page_size 或增加过滤条件后重试",
-		"preview":   string(raw[:1024]),
+		"preview":   strings.ToValidUTF8(string(raw[:1024]), ""),
 	}
 	out, _ := json.Marshal(msg)
 	return out
@@ -123,12 +127,13 @@ var loadToolsSchema = json.RawMessage(`{"type":"object","properties":{"modules":
 
 // moduleLabels 模块的中文说明（给模型判断该加载哪个模块）；未登记的模块只显示模块名。
 var moduleLabels = map[string]string{
-	"cmdb":    "资源管理（CMDB）：模型、属性、配置项、资源关联与拓扑、唯一规则、采集同步、统计",
-	"k8s":     "容器平台（只读）：集群与命名空间、资源列表与对象详情、事件、总览、指标、关联链路，以及 Pod / 工作负载诊断摘要（排查 Pod 起不来、反复重启、副本不足时优先用诊断摘要）",
-	"monitor": "监控告警：数据源与即时查询、规则分组与数据范围、告警规则（导入导出、变更历史、内置模板、模拟触发）、告警事件（认领、转交、备注、关闭、转工单）、屏蔽规则与抑制规则、告警订阅、升级策略、记录规则、告警统计、评估引擎状态",
-	"notify":  "通知管理：渠道、通知规则（路由）、模板、静默、订阅、生产者、事件与投递追踪、死信",
-	"oncall":  "值班管理：值班分组与成员、值班表、班次与值班日历、替班、当前值班人、公共日历地址、值班通知",
-	"system":  "系统管理：用户、角色与权限、登录日志、系统配置、个人资料",
+	"cmdb":      "资源管理（CMDB）：模型、属性、配置项、资源关联与拓扑、唯一规则、采集同步、统计",
+	"knowledge": "知识库：知识空间、知识文档（手册 / 规范 / 排查经验 / 故障复盘）的查看、新建草稿、版本、关联对象与导入任务；检索工具 KnowledgeService_Search 常驻，不需要加载本模块",
+	"k8s":       "容器平台（只读）：集群与命名空间、资源列表与对象详情、事件、总览、指标、关联链路，以及 Pod / 工作负载诊断摘要（排查 Pod 起不来、反复重启、副本不足时优先用诊断摘要）",
+	"monitor":   "监控告警：数据源与即时查询、规则分组与数据范围、告警规则（导入导出、变更历史、内置模板、模拟触发）、告警事件（认领、转交、备注、关闭、转工单）、屏蔽规则与抑制规则、告警订阅、升级策略、记录规则、告警统计、评估引擎状态",
+	"notify":    "通知管理：渠道、通知规则（路由）、模板、静默、订阅、生产者、事件与投递追踪、死信",
+	"oncall":    "值班管理：值班分组与成员、值班表、班次与值班日历、替班、当前值班人、公共日历地址、值班通知",
+	"system":    "系统管理：用户、角色与权限、登录日志、系统配置、个人资料",
 }
 
 // initModules 判断本轮是否按模块加载，并从历史恢复已加载的模块（模型加载过的、
@@ -175,7 +180,7 @@ func (r *run) offeredTools() []ToolSpec {
 	out := make([]ToolSpec, 0, len(r.tools)+1)
 	out = append(out, r.loadToolsSpec())
 	for _, spec := range r.tools {
-		if r.active[spec.Module] {
+		if spec.Resident || r.active[spec.Module] {
 			out = append(out, spec)
 		}
 	}
@@ -198,10 +203,9 @@ func (r *run) loadToolsSpec() ToolSpec {
 		if label == "" {
 			label = name
 		}
+		// 说明不带"已加载"之类随对话变化的内容：工具定义保持稳定才能命中模型侧的前缀缓存
+		//（加载结果已在对话历史的 tool 消息里）。
 		fmt.Fprintf(&desc, "%s = %s（%d 个工具）", name, label, counts[name])
-		if r.active[name] {
-			desc.WriteString("[已加载]")
-		}
 	}
 	desc.WriteString("。一次可以加载多个模块。")
 	return ToolSpec{Name: LoadToolsName, Description: desc.String(), InputSchema: loadToolsSchema}

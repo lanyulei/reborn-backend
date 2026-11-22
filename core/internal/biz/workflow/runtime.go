@@ -90,6 +90,10 @@ type InstanceFilter struct {
 	Initiator    string
 	// BusinessType 业务类型；InstanceFilterNoBusiness = 只看不挂业务对象的。
 	BusinessType string
+	// BusinessIDs 限定业务对象；StartAfter / StartBefore 发起时间窗（故障管理的变更关联用）。
+	BusinessIDs []string
+	StartAfter  *time.Time
+	StartBefore *time.Time
 }
 
 // InstanceFilterNoBusiness 实例列表按业务类型过滤时，表示「不挂业务对象的独立流程」的取值。

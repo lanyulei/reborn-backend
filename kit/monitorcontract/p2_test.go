@@ -94,7 +94,7 @@ func TestP2Literals(t *testing.T) {
 	}
 	wantEvents := []string{
 		"fire", "resolve", "close", "mute", "unmute", "inhibit", "uninhibit", "escalate", "notify", "ack", "unack", "transfer",
-		"comment", "ticket", "ticket_note", "workflow", "ai_summary", "action_failed",
+		"comment", "ticket", "ticket_note", "workflow", "ai_summary", "action_failed", "incident",
 	}
 	if got := AlertEventTypes(); !slices.Equal(got, wantEvents) {
 		t.Errorf("AlertEventTypes() = %v", got)

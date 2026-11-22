@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -315,7 +314,7 @@ func (uc *ShareUsecase) resolve(ctx context.Context, token string, from, to time
 		return nil, ErrShareLinkNotFound
 	}
 	cal := &PublicCalendar{ScopeType: link.ScopeType}
-	var keep func(sh *Shift) bool
+	var scope ShiftScope
 	switch link.ScopeType {
 	case ScopeGroup:
 		g, err := uc.groups.Get(ctx, link.ScopeID, "")
@@ -324,7 +323,7 @@ func (uc *ShareUsecase) resolve(ctx context.Context, token string, from, to time
 		}
 		cal.Title = g.Name
 		cal.Description = g.Description
-		keep = func(sh *Shift) bool { return sh.GroupID == link.ScopeID }
+		scope.GroupID = link.ScopeID
 	case ScopeSchedule:
 		s, err := uc.schedules.Get(ctx, link.ScopeID)
 		if err != nil {
@@ -335,7 +334,7 @@ func (uc *ShareUsecase) resolve(ctx context.Context, token string, from, to time
 		if s.GroupName != "" {
 			cal.Title = s.GroupName + " / " + s.Name
 		}
-		keep = func(sh *Shift) bool { return sh.ScheduleID == link.ScopeID }
+		scope.ScheduleID = link.ScopeID
 	default:
 		found, err := uc.users.Lookup(ctx, []string{link.ScopeID})
 		if err != nil {
@@ -346,13 +345,13 @@ func (uc *ShareUsecase) resolve(ctx context.Context, token string, from, to time
 			return nil, ErrShareLinkNotFound
 		}
 		cal.Title = u.DisplayName() + " 的值班"
-		keep = func(sh *Shift) bool { return sh.UserID == link.ScopeID }
+		scope.UserID = link.ScopeID
 	}
-	shifts, err := uc.shifts.ListRange(ctx, from, to)
+	shifts, err := uc.shifts.ListRangeScoped(ctx, from, to, scope)
 	if err != nil {
 		return nil, err
 	}
-	cal.Shifts = slices.DeleteFunc(shifts, func(sh *Shift) bool { return !keep(sh) })
+	cal.Shifts = shifts
 	if !link.ShowPhone {
 		for _, sh := range cal.Shifts {
 			sh.UserPhone = ""

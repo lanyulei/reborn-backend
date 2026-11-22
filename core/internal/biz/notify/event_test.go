@@ -2,6 +2,7 @@ package biz
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -122,6 +123,8 @@ func TestEventUsecase_Replay(t *testing.T) {
 	t.Parallel()
 	writer := &eventWriterStub{}
 	uc := NewEventUsecase(&eventRepoStub{}, writer)
+	now := time.Unix(1_800_000_000, 0)
+	uc.replays.now = func() time.Time { return now }
 	src := &Event{
 		ID: "018f3e1a-0000-7000-8000-000000000001", BizID: "monitor", EventType: "monitor.alert.firing", Severity: 3,
 		Title: "cpu", Payload: []byte(`{"host":"a"}`), DedupKey: "d1", GroupKey: "g1", Recipients: []string{"ops@example.com"}, Source: EventSourceAPI,
@@ -138,5 +141,21 @@ func TestEventUsecase_Replay(t *testing.T) {
 	}
 	if len(writer.inserted) != 1 || writer.inserted[0].ID != out.ID {
 		t.Fatalf("inserted = %+v", writer.inserted)
+	}
+	// 同一源事件冷却期内再次重发 429；别的源事件不受影响；冷却到期后放行。
+	if _, err := uc.Replay(context.Background(), src); !errors.Is(err, ErrEventReplayTooFrequent) {
+		t.Fatalf("second replay within cooldown error = %v, want ErrEventReplayTooFrequent", err)
+	}
+	other := *src
+	other.ID = "018f3e1a-0000-7000-8000-000000000002"
+	if _, err := uc.Replay(context.Background(), &other); err != nil {
+		t.Fatalf("other source must not be throttled: %v", err)
+	}
+	now = now.Add(ReplayCooldown)
+	if _, err := uc.Replay(context.Background(), src); err != nil {
+		t.Fatalf("after cooldown: %v", err)
+	}
+	if len(writer.inserted) != 3 {
+		t.Fatalf("inserted = %d, want 3", len(writer.inserted))
 	}
 }

@@ -23,6 +23,10 @@ message Bootstrap {
   Monitor monitor = 6;
   // k8s 容器平台域配置（与数据面之间的内部密钥、Agent 安装参数）。
   K8s k8s = 7;
+  // knowledge 知识库域配置（embedding 服务接入、索引与检索参数）。
+  Knowledge knowledge = 8;
+  // agent 运维 Agent 域配置（任务预算、并发、保留期）；整段可省略 = 停用。
+  Agent agent = 9;
 }
 
 // Server 是 HTTP 服务器配置（仅 HTTP 协议；gRPC 已停用）。
@@ -144,6 +148,31 @@ message Assistant {
   int32 max_concurrent_runs = 9;
 }
 
+// Agent 是运维 Agent 域配置；整段可省略（省略时 Agent 停用：不领取任务，接口返回 AGENT_DISABLED）。
+// 模型接入、API Key 与工具执行回环地址沿用 assistant 段（Agent 复用助手的模型客户端与回环执行器）。
+message Agent {
+  // enabled 是否启用；assistant.api_key 为空时即使 enabled 也不可用。
+  bool enabled = 1;
+  // task_timeout 单任务时限（Profile 预算未设置时的缺省），缺省 8m。
+  google.protobuf.Duration task_timeout = 2;
+  // max_steps 单任务最多模型调用次数（Profile 预算未设置时的缺省），缺省 20。
+  int32 max_steps = 3;
+  // max_concurrent_tasks 单实例并发任务数，缺省 3。
+  int32 max_concurrent_tasks = 4;
+  // daily_prompt_token_budget 全局日 prompt token 预算，缺省 2000000；耗尽后新任务直接 expired。
+  int64 daily_prompt_token_budget = 5;
+  // daily_completion_token_budget 全局日 completion token 预算，缺省 300000。
+  int64 daily_completion_token_budget = 6;
+  // tool_timeout_overrides 按工具（proto full method）的回环调用超时覆盖（日志 / 诊断类接口用），其余沿用 assistant.tool_timeout。
+  map<string, google.protobuf.Duration> tool_timeout_overrides = 7;
+  // retention 运行记录与其助手会话的保留期，缺省 2160h（90 天）。
+  google.protobuf.Duration retention = 8;
+  // queue_ttl 排队超时：超过未执行的任务直接 expired，缺省 10m。
+  google.protobuf.Duration queue_ttl = 9;
+  // retry_backoff 失败重试退避序列，缺省 [30s, 2m, 10m]；长度即最多重试次数。
+  repeated google.protobuf.Duration retry_backoff = 10;
+}
+
 // Monitor 是监控告警域配置；整段可省略。
 message Monitor {
   // site_url 前端站点地址（如 https://ops.example.com，不带结尾斜杠也可）。非空时告警通知里的详情
@@ -195,4 +224,30 @@ message K8s {
   }
   // kubeconfig 限时 kubeconfig 参数。
   Kubeconfig kubeconfig = 5;
+}
+
+// Knowledge 是知识库域配置；整段可省略（省略时知识库可用，检索退化为纯全文）。
+message Knowledge {
+  // Embedding 是向量化服务（OpenAI 兼容 /v1/embeddings）接入参数；与 assistant 的对话模型分离，
+  // 二者通常不是同一供应商。api_key 为空即不向量化。
+  message Embedding {
+    // base_url OpenAI 兼容接口根地址（如 https://api.siliconflow.cn/v1）。
+    string base_url = 1;
+    // api_key 一律经 KRATOS_KNOWLEDGE_EMBEDDING_API_KEY 环境变量注入（占位符 ${KNOWLEDGE_EMBEDDING_API_KEY}）；
+    // 为空即停用向量化，检索只走全文。
+    string api_key = 2;
+    // model 模型名（如 BAAI/bge-m3）。向量维度固定 1024：支持 dimensions 参数的模型按 1024 请求，
+    // 固定维度的模型须本身为 1024 维；维度不符的结果被拒绝并记入索引任务失败原因。
+    string model = 3;
+    // batch_size 单次请求的分块数上限；缺省 32，上限 128。
+    int32 batch_size = 4;
+    // timeout 单次请求超时；缺省 30s。
+    google.protobuf.Duration timeout = 5;
+  }
+  // embedding 向量化服务。
+  Embedding embedding = 1;
+  // search_log_retention 检索日志保留期；缺省 90 天（2160h = 7776000s）。
+  google.protobuf.Duration search_log_retention = 2;
+  // index_concurrency 单实例同时处理的索引任务数；缺省 2。
+  int32 index_concurrency = 3;
 }

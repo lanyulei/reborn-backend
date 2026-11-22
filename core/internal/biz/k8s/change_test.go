@@ -239,6 +239,14 @@ func (f *changeFakes) RefreshRequester(_ context.Context, id string, r *kc.Chang
 	return nil
 }
 
+// FailApproved implements ChangeRefresher：只动仍处于已批准状态的变更单。
+func (f *changeFakes) FailApproved(_ context.Context, id, message string) error {
+	if c := f.changes[id]; c != nil && c.Status == kc.ChangeApproved {
+		c.Status, c.Message = kc.ChangeFailed, message
+	}
+	return nil
+}
+
 func (f *changeFakes) EnabledRoleIDs(context.Context, string) (bool, []string, error) {
 	return f.admin, f.roleIDs, nil
 }

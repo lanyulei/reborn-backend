@@ -83,7 +83,9 @@ func NewOutboxRepo(data *basedata.Data) *outboxRepo { return &outboxRepo{data: d
 
 // ClaimTx implements biz.OutboxRepo。行锁 + SKIP LOCKED：别的实例正在处理的行直接跳过。
 // 同一事件更早入箱且尚未结束的行存在时，后入箱的不领取——恢复通知不会抢在触发通知之前发出
-// （更早的行即使正被别的实例锁着，其 status 仍是待派发，照样挡住后面的）。
+// （更早的行即使正被别的实例锁着，其 status 仍是待派发，照样挡住后面的）。例外：挡在前面的是
+// 一条「重复通知」时恢复通知可以越过它——告警已恢复，那条重复通知领取后只会被判为无需发送
+// （dispatch 对非告警中的事件跳过重复通知），让它在退避期里把恢复通知一并拖住没有意义。
 func (r *outboxRepo) ClaimTx(ctx context.Context, tx txrun.Tx, exclude []string) (*biz.OutboxItem, error) {
 	var it biz.OutboxItem
 	err := tx.QueryRow(ctx,
@@ -93,9 +95,11 @@ func (r *outboxRepo) ClaimTx(ctx context.Context, tx txrun.Tx, exclude []string)
 		   AND `+backoffDue("o")+`
 		   AND NOT EXISTS (
 		     SELECT 1 FROM monitor_notify_outbox p
-		     WHERE p.alert_id = o.alert_id AND p.status = $1 AND (p.create_time, p.id) < (o.create_time, o.id))
+		     WHERE p.alert_id = o.alert_id AND p.status = $1 AND (p.create_time, p.id) < (o.create_time, o.id)
+		       AND NOT (o.kind = $5 AND p.kind = $6))
 		 ORDER BY o.create_time, o.id LIMIT 1 FOR UPDATE OF o SKIP LOCKED`,
-		mc.OutboxPending, dbx.TextArray(exclude), outboxBackoffBaseSeconds, outboxBackoffMaxSeconds).
+		mc.OutboxPending, dbx.TextArray(exclude), outboxBackoffBaseSeconds, outboxBackoffMaxSeconds,
+		mc.NotifyKindResolved, mc.NotifyKindRepeat).
 		Scan(&it.ID, &it.AlertID, &it.Kind, &it.Seq, &it.Attempts, &it.Level)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil

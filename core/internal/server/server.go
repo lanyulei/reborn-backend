@@ -4,10 +4,11 @@
 package server
 
 import (
+	bizagent "github.com/lanyulei/reborn/backend/core/internal/biz/agent"
 	"github.com/lanyulei/reborn/backend/kit/loop"
 
 	"github.com/google/wire"
 )
 
 // ProviderSet is server providers.
-var ProviderSet = wire.NewSet(NewRoles, NewMetrics, wire.Bind(new(loop.Recorder), new(*Metrics)), NewHTTPServer)
+var ProviderSet = wire.NewSet(NewRoles, NewMetrics, wire.Bind(new(loop.Recorder), new(*Metrics)), wire.Bind(new(bizagent.Metrics), new(*Metrics)), NewHTTPServer)

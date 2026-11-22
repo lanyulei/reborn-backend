@@ -58,6 +58,28 @@ var excludedOperations = map[string]struct{}{
 	// 触发器的调用令牌明文不经过模型。
 	"/job.v1.JobTriggerService/CreateJobTrigger":     {},
 	"/job.v1.JobTriggerService/ResetJobTriggerToken": {},
+	// 知识库导入需要先上传文件，模型拿不到文件标识；索引重建是管理员的运维动作。
+	"/knowledge.v1.KnowledgeIngestService/CreateIngestJob": {},
+	"/knowledge.v1.KnowledgeAdminService/RebuildIndex":     {},
+	// 故障管理：分享链接令牌、接入源令牌、Webhook 签名密钥的明文不经过模型；凭令牌鉴权的公开页与开放接口
+	// 是给外部系统 / 匿名访客用的，不作为对话工具。
+	"/incident.v1.IncidentUpdateService/CreateShareLink":   {},
+	"/incident.v1.IncidentUpdateService/GetShareLinkToken": {},
+	"/incident.v1.IncidentUpdateService/ResetShareLink":    {},
+	"/incident.v1.IncidentUpdateService/GetPublicIncident": {},
+	"/incident.v1.IncidentConfigService/CreateSource":      {},
+	"/incident.v1.IncidentConfigService/ResetSourceToken":  {},
+	"/incident.v1.IncidentConfigService/CreateWebhook":     {},
+	"/incident.v1.IncidentConfigService/UpdateWebhook":     {},
+	"/incident.v1.IncidentOpenService/OpenCreateIncident":  {},
+	"/incident.v1.IncidentOpenService/OpenGetIncident":     {},
+	"/incident.v1.IncidentOpenService/OpenAppendNote":      {},
+	"/incident.v1.IncidentOpenService/OpenResolveIncident": {},
+}
+
+// residentOperations 常驻工具：工具按模块懒加载时也始终下发（跨模块的通用能力）。
+var residentOperations = map[string]struct{}{
+	"/knowledge.v1.KnowledgeService/Search": {},
 }
 
 // readOnlyOperations 用 POST 承载但不写任何数据的 RPC（预览 / 预检）：按读操作处理，
@@ -76,6 +98,11 @@ var readOnlyOperations = map[string]struct{}{
 	"/job.v1.JobScheduleService/PreviewJobSchedule": {},
 	// 指标面板查询：POST 只为承载目标参数，服务端固定模板查询监控数据源，无副作用。
 	"/k8s.v1.K8sInsightService/QueryMetrics": {},
+	// 知识库检索：POST 只为承载检索词与过滤条件，只读（会记一条检索日志，不改业务数据）。
+	"/knowledge.v1.KnowledgeService/Search": {},
+	// 监控数据源即时查询 / 区间查询：POST 只为承载查询表达式与时间窗，查的是时序库，不写任何数据。
+	"/monitor.v1.MonitorDatasourceService/QueryDatasource":      {},
+	"/monitor.v1.MonitorDatasourceService/QueryDatasourceRange": {},
 }
 
 // k8sToolOperations 容器平台域允许作为对话工具的接口：全部只读。助手只诊断、不动手——新增的容器平台
@@ -104,6 +131,10 @@ func NewToolCatalog() (biz.ToolCatalog, error) {
 	catalog := make(biz.ToolCatalog, 0, len(methods))
 	for _, m := range methods {
 		if _, skip := excludedOperations[m.Name]; skip {
+			continue
+		}
+		// 运维 Agent 域自身的接口（Profile / 任务 / 运行 / 统计）不作为工具：模型调度 Agent 没有意义，也避免递归。
+		if strings.HasPrefix(m.Name, "/agent.v1.") {
 			continue
 		}
 		// 容器平台接口只把确认过的只读接口作为对话工具（k8sToolOperations）：写接口会直接改动集群
@@ -149,6 +180,7 @@ func buildToolSpec(m systemservice.AuthorizableMethod) (biz.ToolSpec, error) {
 	if write {
 		desc += "；写操作，执行前需用户确认"
 	}
+	_, resident := residentOperations[m.Name]
 	return biz.ToolSpec{
 		Name:         name,
 		Module:       svc[:strings.IndexByte(svc+".", '.')],
@@ -157,6 +189,7 @@ func buildToolSpec(m systemservice.AuthorizableMethod) (biz.ToolSpec, error) {
 		Title:        m.Title,
 		Description:  desc,
 		Write:        write,
+		Resident:     resident,
 		HTTPMethod:   m.HTTPMethod,
 		PathTemplate: m.Path,
 		PathFields:   pathFields,

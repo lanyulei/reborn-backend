@@ -38,10 +38,14 @@ var pathVarPattern = regexp.MustCompile(`\{[a-zA-Z0-9_.]+(?:=[^}]*)?\}`)
 type LoopbackInvoker struct {
 	client  *http.Client
 	baseURL func() string
+	// timeout 单次调用的缺省超时；overrides 按 proto full method 覆盖（日志 / 诊断类接口更长）。
+	// http.Client.Timeout 取二者的最大值做兜底，逐次调用的时限由 ctx 控制。
+	timeout   time.Duration
+	overrides map[string]time.Duration
 }
 
-// NewLoopbackInvoker new a LoopbackInvoker（配置回环地址）。
-func NewLoopbackInvoker(c *conf.Assistant) *LoopbackInvoker {
+// NewLoopbackInvoker new a LoopbackInvoker（配置回环地址；按工具的超时覆盖来自 agent 段，助手与 Agent 共用执行器）。
+func NewLoopbackInvoker(c *conf.Assistant, a *conf.Agent) *LoopbackInvoker {
 	base := strings.TrimRight(strings.TrimSpace(c.GetLoopbackAddr()), "/")
 	if base == "" {
 		base = defaultLoopbackAddr
@@ -50,7 +54,34 @@ func NewLoopbackInvoker(c *conf.Assistant) *LoopbackInvoker {
 	if d := c.GetToolTimeout(); d != nil && d.AsDuration() > 0 {
 		timeout = d.AsDuration()
 	}
-	return NewLoopbackInvokerWithResolver(func() string { return base }, timeout)
+	inv := NewLoopbackInvokerWithResolver(func() string { return base }, timeout)
+	for op, d := range a.GetToolTimeoutOverrides() {
+		if d == nil || d.AsDuration() <= 0 {
+			continue
+		}
+		inv.WithToolTimeout(op, d.AsDuration())
+	}
+	return inv
+}
+
+// WithToolTimeout 为一个接口（proto full method）设置单独的调用超时，返回自身。
+func (l *LoopbackInvoker) WithToolTimeout(operation string, d time.Duration) *LoopbackInvoker {
+	if l.overrides == nil {
+		l.overrides = make(map[string]time.Duration, 4)
+	}
+	l.overrides[operation] = d
+	if d > l.client.Timeout {
+		l.client.Timeout = d
+	}
+	return l
+}
+
+// toolTimeout 一次调用的时限：按接口覆盖，否则缺省。
+func (l *LoopbackInvoker) toolTimeout(operation string) time.Duration {
+	if d, ok := l.overrides[operation]; ok {
+		return d
+	}
+	return l.timeout
 }
 
 // NewLoopbackInvokerWithResolver 以动态地址解析器构造（测试脚手架：httptest
@@ -58,6 +89,7 @@ func NewLoopbackInvoker(c *conf.Assistant) *LoopbackInvoker {
 func NewLoopbackInvokerWithResolver(baseURL func() string, timeout time.Duration) *LoopbackInvoker {
 	return &LoopbackInvoker{
 		baseURL: baseURL,
+		timeout: timeout,
 		client: &http.Client{
 			Timeout: timeout,
 			Transport: &http.Transport{
@@ -91,6 +123,8 @@ func (l *LoopbackInvoker) Invoke(ctx context.Context, spec biz.ToolSpec, input j
 	} else if q := encodeQuery(fields); q != "" {
 		target += "?" + q
 	}
+	ctx, cancel := context.WithTimeout(ctx, l.toolTimeout(spec.Operation))
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, spec.HTTPMethod, target, body)
 	if err != nil {
 		return nil, fmt.Errorf("build loopback request: %w", err)
@@ -101,6 +135,11 @@ func (l *LoopbackInvoker) Invoke(ctx context.Context, spec biz.ToolSpec, input j
 	req.Header.Set("Accept", "application/json")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	// 本请求来自回环地址，服务端据 X-Forwarded-For 取来源：透传发起对话的客户端 IP，
+	// 既有审计记录的才是真实来源而不是 127.0.0.1。
+	if ip := biz.ClientIPFromContext(ctx); ip != "" {
+		req.Header.Set("X-Forwarded-For", ip)
 	}
 	if rid, err := idgen.NewID(); err == nil {
 		req.Header.Set("X-Request-Id", "assistant-"+rid)
@@ -153,6 +192,11 @@ func bindPath(spec biz.ToolSpec, fields map[string]json.RawMessage) (string, err
 		val := scalarString(raw)
 		if !ok || val == "" {
 			bindErr = fmt.Errorf("缺少路径参数 %s", name)
+			return ""
+		}
+		// "." / ".." 转义后仍是点段：会被路由规整到别的路径上，一律拒绝。
+		if val == "." || val == ".." {
+			bindErr = fmt.Errorf("路径参数 %s 的取值不合法", name)
 			return ""
 		}
 		delete(fields, name)

@@ -9,6 +9,8 @@ import (
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/assistant"
 	basedata "github.com/lanyulei/reborn/backend/core/internal/data"
 	"github.com/lanyulei/reborn/backend/kit/dbx"
+
+	"github.com/jackc/pgx/v5"
 )
 
 var _ biz.ToolCallRepo = (*toolCallRepo)(nil)
@@ -65,14 +67,36 @@ func (r *toolCallRepo) Create(ctx context.Context, tc *biz.ToolCall) error {
 	return nil
 }
 
-// ListByConversation implements biz.ToolCallRepo：按发起时间正序。
-func (r *toolCallRepo) ListByConversation(ctx context.Context, conversationID string) ([]*biz.ToolCall, error) {
+// ListActive implements biz.ToolCallRepo：待确认的 + 指定 assistant 消息发起的，按发起时间正序。
+func (r *toolCallRepo) ListActive(ctx context.Context, conversationID, messageID string) ([]*biz.ToolCall, error) {
 	rows, err := r.data.Pool.Query(ctx,
-		"SELECT "+toolCallSelectColumns+" FROM assistant_tool_call WHERE conversation_id = $1 ORDER BY create_time, id",
-		conversationID)
+		"SELECT "+toolCallSelectColumns+" FROM assistant_tool_call"+
+			" WHERE conversation_id = $1 AND (status = $2 OR message_id = $3::uuid) ORDER BY create_time, id",
+		conversationID, biz.ToolStatusPending, dbx.NilIfEmpty(messageID))
+	if err != nil {
+		return nil, fmt.Errorf("list active assistant tool calls: %w", err)
+	}
+	return scanToolCalls(rows)
+}
+
+// ListSince implements biz.ToolCallRepo：since 及之后发起的（零值 = 全部），按发起时间正序。
+func (r *toolCallRepo) ListSince(ctx context.Context, conversationID string, since time.Time) ([]*biz.ToolCall, error) {
+	var from *time.Time
+	if !since.IsZero() {
+		from = &since
+	}
+	rows, err := r.data.Pool.Query(ctx,
+		"SELECT "+toolCallSelectColumns+" FROM assistant_tool_call"+
+			" WHERE conversation_id = $1 AND ($2::timestamptz IS NULL OR create_time >= $2) ORDER BY create_time, id",
+		conversationID, from)
 	if err != nil {
 		return nil, fmt.Errorf("list assistant tool calls: %w", err)
 	}
+	return scanToolCalls(rows)
+}
+
+// scanToolCalls 扫描审计记录结果集；负责关闭 rows。
+func scanToolCalls(rows pgx.Rows) ([]*biz.ToolCall, error) {
 	defer rows.Close()
 	items := make([]*biz.ToolCall, 0, 16)
 	for rows.Next() {

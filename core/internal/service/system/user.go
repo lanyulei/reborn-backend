@@ -63,6 +63,19 @@ func (s *UserService) CreateUser(ctx context.Context, req *v1.CreateUserRequest)
 	return resp, nil
 }
 
+// CreateMachineUser implements proto UserService/CreateMachineUser：机器账号没有口令、不绑内置角色，
+// 只绑指定角色；绑定角色走与 BindUserRoles 相同的守卫（非超管不能授予含超管语义的角色）。
+func (s *UserService) CreateMachineUser(ctx context.Context, req *v1.CreateMachineUserRequest) (*v1.CreateMachineUserResponse, error) {
+	if err := s.guardRoleBinding(ctx, "", req.GetRoleIds()); err != nil {
+		return nil, err
+	}
+	user, err := s.uc.CreateMachine(ctx, req.GetUsername(), req.GetNickname(), req.GetRoleIds())
+	if err != nil {
+		return nil, err
+	}
+	return &v1.CreateMachineUserResponse{User: toProtoUser(user)}, nil
+}
+
 // UpdateUser implements proto UserService/UpdateUser：携带 is_admin 时走
 // 超管标记变更守卫（仅超管可授予/撤销，且不能改自己的）；修改超管账号的
 // 资料须由超管操作（否则持「编辑用户」权限者可改超管邮箱/手机号）；其余
@@ -103,10 +116,10 @@ func (s *UserService) UpdateUserStatus(ctx context.Context, req *v1.UpdateUserSt
 }
 
 // ResetUserPassword implements proto UserService/ResetUserPassword：重置
-// 超管密码须由超管操作（否则持「重置密码」权限者可接管超管账号）；可重置
-// 自己的密码。
+// 超管密码须由超管操作（否则持「重置密码」权限者可接管超管账号）；不接受对
+// 本人操作——改自己的密码走 AuthService/ChangeMyPassword，必须核对现密码。
 func (s *UserService) ResetUserPassword(ctx context.Context, req *v1.ResetUserPasswordRequest) (*v1.ResetUserPasswordResponse, error) {
-	if err := s.guardMutation(ctx, req.GetId(), false); err != nil {
+	if err := s.guardMutation(ctx, req.GetId(), true); err != nil {
 		return nil, err
 	}
 	if err := s.uc.ResetPassword(ctx, req.GetId(), req.GetPassword()); err != nil {
@@ -147,6 +160,7 @@ func (s *UserService) ListUsers(ctx context.Context, req *v1.ListUsersRequest) (
 		Status:          req.Status,
 		DeptID:          req.GetDeptId(),
 		IncludeSubDepts: req.GetIncludeSubDepts(),
+		Kind:            req.Kind,
 	}
 	users, total, err := s.uc.List(ctx, filter, req.GetPage(), int64(req.GetPageSize()))
 	if err != nil {
@@ -252,9 +266,13 @@ func (s *UserService) guardRoleBinding(ctx context.Context, targetID string, rol
 	if err != nil {
 		return err
 	}
-	current, err := s.uc.ListRoles(ctx, targetID)
-	if err != nil {
-		return err
+	// 新建（机器账号）时没有目标用户：只允许授予操作者自己持有的角色。
+	var current []*biz.Role
+	if targetID != "" {
+		current, err = s.uc.ListRoles(ctx, targetID)
+		if err != nil {
+			return err
+		}
 	}
 	allowed := func(id string) bool {
 		return slices.ContainsFunc(held, func(r *biz.Role) bool { return r.ID == id }) ||
@@ -318,6 +336,7 @@ func toProtoUser(u *biz.User) *v1.User {
 		Gender:     u.Gender,
 		IsAdmin:    u.IsAdmin,
 		Status:     u.Status,
+		Kind:       u.Kind,
 		Avatar:     u.Avatar,
 		CreateTime: timestamppb.New(u.CreateTime),
 		UpdateTime: timestamppb.New(u.UpdateTime),

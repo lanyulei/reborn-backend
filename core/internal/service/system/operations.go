@@ -6,11 +6,14 @@ import (
 	"slices"
 	"sync"
 
+	agentv1 "github.com/lanyulei/reborn/backend/core/api/agent/v1"
 	assistantv1 "github.com/lanyulei/reborn/backend/core/api/assistant/v1"
 	cmdbv1 "github.com/lanyulei/reborn/backend/core/api/cmdb/v1"
 	filev1 "github.com/lanyulei/reborn/backend/core/api/file/v1"
+	incidentv1 "github.com/lanyulei/reborn/backend/core/api/incident/v1"
 	jobv1 "github.com/lanyulei/reborn/backend/core/api/job/v1"
 	k8sv1 "github.com/lanyulei/reborn/backend/core/api/k8s/v1"
+	knowledgev1 "github.com/lanyulei/reborn/backend/core/api/knowledge/v1"
 	monitorv1 "github.com/lanyulei/reborn/backend/core/api/monitor/v1"
 	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
 	oncallv1 "github.com/lanyulei/reborn/backend/core/api/oncall/v1"
@@ -94,6 +97,17 @@ var operationFiles = []protoreflect.FileDescriptor{
 	k8sv1.File_k8s_v1_helm_proto,
 	k8sv1.File_k8s_v1_governance_proto,
 	k8sv1.File_k8s_v1_change_proto,
+	knowledgev1.File_knowledge_v1_knowledge_proto,
+	incidentv1.File_incident_v1_incident_proto,
+	incidentv1.File_incident_v1_config_proto,
+	incidentv1.File_incident_v1_proposal_proto,
+	incidentv1.File_incident_v1_update_proto,
+	incidentv1.File_incident_v1_postmortem_proto,
+	incidentv1.File_incident_v1_stats_proto,
+	incidentv1.File_incident_v1_open_proto,
+	agentv1.File_agent_v1_profile_proto,
+	agentv1.File_agent_v1_task_proto,
+	agentv1.File_agent_v1_stats_proto,
 }
 
 // authzExemptOperations 是免授权检查的操作集合（proto full method），为鉴权
@@ -114,6 +128,8 @@ var authzExemptOperations = map[string]struct{}{
 	// 头像：上传为已认证用户的自助接口（只改本人）；读取为静态资源语义，随 authExempt 同步免 JWT。
 	v1.OperationAuthServiceUploadMyAvatar: {},
 	v1.OperationAuthServiceGetUserAvatar:  {},
+	// 自助修改密码：已认证用户只改本人（身份取自 claims，须核对现密码；仍须 JWT）。
+	v1.OperationAuthServiceChangeMyPassword: {},
 	// 公共值班日历（令牌即凭据，匿名可读）：随 authExempt 同步免 JWT。
 	oncallv1.OperationOncallShareServiceGetPublicCalendar: {},
 	// 通用附件：上传 / 查询 / 下载是已登录用户的自助能力（仍须 JWT）。访问控制不在
@@ -139,6 +155,16 @@ var authzExemptOperations = map[string]struct{}{
 	// 作业中心的开放触发接口（调用令牌 / 流程 Webhook 签名即凭据）：随 authExempt 同步免 JWT。它不是 proto 里的
 	// RPC，不会出现在可授权操作的枚举里；能触发哪个模板由触发器自身的配置决定。
 	OperationJobOpenFire: {},
+	// 故障的匿名状态页（分享令牌即凭据，库内只存哈希，可过期可作废；只返回公告与状态）：随 authExempt 同步免 JWT。
+	incidentv1.OperationIncidentUpdateServiceGetPublicIncident: {},
+	// 故障管理的开放接口（接入令牌即凭据，只能操作自己创建的故障）：随 authExempt 同步免 JWT。
+	incidentv1.OperationIncidentOpenServiceOpenCreateIncident:  {},
+	incidentv1.OperationIncidentOpenServiceOpenGetIncident:     {},
+	incidentv1.OperationIncidentOpenServiceOpenAppendNote:      {},
+	incidentv1.OperationIncidentOpenServiceOpenResolveIncident: {},
+	// 告警所属故障：告警详情页要展示它关联到了哪条故障，而看告警的人不一定有故障的任何接口权限（仍须 JWT）。
+	// 访问控制在故障域：只返回调用者按成员 / 接口权限能看到的故障，其余过滤掉。
+	incidentv1.OperationIncidentServiceListIncidentsByAlert: {},
 }
 
 // OperationK8sExecConnect 容器平台 Web 终端 WebSocket 入口（GET /api/v1/k8s/exec）在中间件链里的操作名。

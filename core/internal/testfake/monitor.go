@@ -815,6 +815,7 @@ func (v monitorAlertView) match(a *biz.Alert, f biz.AlertFilter) bool {
 		f.Keyword != "" && !strings.Contains(a.RuleName, f.Keyword),
 		f.FireStart != nil && a.FirstFireTime.Before(*f.FireStart),
 		f.FireEnd != nil && a.FirstFireTime.After(*f.FireEnd),
+		f.FireAfter != nil && cmp.Or(a.FirstFireTime.Compare(f.FireAfter.FirstFireTime), cmp.Compare(a.ID, f.FireAfter.ID)) <= 0,
 		f.HistorySince != nil && a.Status != mc.AlertFiring && a.LastFireTime.Before(*f.HistorySince):
 		return false
 	}
@@ -849,6 +850,9 @@ func (v monitorAlertView) filtered(f biz.AlertFilter) []*biz.Alert {
 		}
 	}
 	slices.SortFunc(out, func(a, b *biz.Alert) int {
+		if f.FireAfter != nil {
+			return cmp.Or(a.FirstFireTime.Compare(b.FirstFireTime), cmp.Compare(a.ID, b.ID))
+		}
 		return cmp.Or(b.LastFireTime.Compare(a.LastFireTime), cmp.Compare(b.ID, a.ID))
 	})
 	return out

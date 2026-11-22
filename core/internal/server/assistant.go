@@ -22,6 +22,9 @@ const (
 	ssePingInterval = 15 * time.Second
 	// sseMaxDuration 单个流的硬上限（biz 层另有可配置的单轮 timeout，此为兜底）。
 	sseMaxDuration = 15 * time.Minute
+	// sseWriteTimeout 单次写出的时限：客户端连着却不读（接收窗口写满）时 Write 会一直阻塞，
+	// 运行 goroutine 连同并发名额、会话租约都被占住；到点即判定断开并取消运行。
+	sseWriteTimeout = 30 * time.Second
 )
 
 // registerAssistantStream 以原生路由绑定 AssistantChatService 的 Chat/Confirm。
@@ -88,6 +91,9 @@ func streamHandler[T proto.Message](operation string, newReq func() T,
 		w.startPing(runCtx, cancel)
 		err := run(runCtx, in, emit)
 		w.stopPing()
+		// 本服务不设全局 WriteTimeout，连接上的写截止时间不会被下一个请求重置：流结束后清除，
+		// 以免连接复用时误伤后续响应。
+		w.clearDeadline()
 		if err != nil && !w.started() {
 			// 尚未写出任何事件：按普通错误响应（状态码随 reason 映射）。
 			return err
@@ -99,6 +105,7 @@ func streamHandler[T proto.Message](operation string, newReq func() T,
 // sseWriter 串行化 SSE 写出（事件与心跳来自不同 goroutine）。
 type sseWriter struct {
 	w       http.ResponseWriter
+	rc      *http.ResponseController
 	flusher http.Flusher
 	mu      sync.Mutex
 	headers bool
@@ -111,7 +118,17 @@ func newSSEWriter(w http.ResponseWriter) *sseWriter {
 	if !ok {
 		return nil
 	}
-	return &sseWriter{w: w, flusher: flusher}
+	return &sseWriter{w: w, rc: http.NewResponseController(w), flusher: flusher}
+}
+
+// arm 为接下来的一次写出设置截止时间；底层 writer 不支持时忽略（退回无时限写出）。
+func (s *sseWriter) arm() { _ = s.rc.SetWriteDeadline(time.Now().Add(sseWriteTimeout)) }
+
+// clearDeadline 清除连接上的写截止时间。
+func (s *sseWriter) clearDeadline() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_ = s.rc.SetWriteDeadline(time.Time{})
 }
 
 // writeHeaders 首次写出时设置 SSE 响应头（200）。
@@ -140,6 +157,7 @@ func (s *sseWriter) started() bool {
 func (s *sseWriter) event(name string, data []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.arm()
 	s.writeHeaders()
 	if _, err := s.w.Write([]byte("event: " + name + "\ndata: ")); err != nil {
 		return err
@@ -161,6 +179,7 @@ func (s *sseWriter) ping() error {
 	if !s.headers {
 		return nil
 	}
+	s.arm()
 	if _, err := s.w.Write([]byte(": ping\n\n")); err != nil {
 		return err
 	}

@@ -1,0 +1,393 @@
+syntax = "proto3";
+
+package agent.v1;
+
+import "agent/v1/profile.proto";
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/agent/v1;v1";
+
+// AgentTaskService 运维 Agent 的任务与运行：队列、人工召唤、取消、运行详情（两层可见）、评价。
+// 本域接口不作为助手工具暴露给模型。
+service AgentTaskService {
+  // ListTasks 分页查询任务。
+  rpc ListTasks(ListTasksRequest) returns (ListTasksResponse) {
+    option (google.api.http) = {get: "/api/v1/agent-task"};
+    option (system.v1.title) = "查询 Agent 任务";
+  }
+  // GetTask 查询任务详情（含其运行的摘要）。
+  rpc GetTask(GetTaskRequest) returns (GetTaskResponse) {
+    option (google.api.http) = {get: "/api/v1/agent-task/{id}"};
+    option (system.v1.title) = "查询 Agent 任务详情";
+  }
+  // RunForIncident 人工召唤：对一条故障立即入队一次诊断任务（不受小时配额与「人已在处理」限制）。
+  rpc RunForIncident(RunForIncidentRequest) returns (RunForIncidentResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/agent-task:run"
+      body: "*"
+    };
+    option (system.v1.title) = "召唤 Agent 分析故障";
+  }
+  // CancelTask 取消排队或进行中的任务。
+  rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/agent-task/{id}:cancel"
+      body: "*"
+    };
+    option (system.v1.title) = "取消 Agent 任务";
+  }
+  // GetRun 查询运行详情：阶段摘要、发现与建议引用对故障可见者开放；完整转录只对持有「Agent 任务」菜单者返回。
+  rpc GetRun(GetRunRequest) returns (GetRunResponse) {
+    option (google.api.http) = {get: "/api/v1/agent-run/{id}"};
+    option (system.v1.title) = "查询 Agent 运行详情";
+  }
+  // ListIncidentRuns 查询一条故障的全部运行（摘要级，故障详情「AI 诊断」页签）。
+  rpc ListIncidentRuns(ListIncidentRunsRequest) returns (ListIncidentRunsResponse) {
+    option (google.api.http) = {get: "/api/v1/agent-run"};
+    option (system.v1.title) = "查询故障的 Agent 运行";
+  }
+  // RateRun 指挥 / 处理人 / 管理员对一次运行的发现标记有用或无用（只保留最后一次）。
+  rpc RateRun(RateRunRequest) returns (RateRunResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/agent-run/{id}:rate"
+      body: "*"
+    };
+    option (system.v1.title) = "评价 Agent 运行";
+  }
+}
+
+// Task 一条任务。
+message Task {
+  // id 任务 ID。
+  string id = 1;
+  // profile Profile 引用（领取前可能为空）。
+  AgentNamedRef profile = 2;
+  // kind 任务类型：diagnose。
+  string kind = 3;
+  // source 来源：1=故障开启 / 升级 2=人工召唤 3=复盘完成 4=巡检计划 5=干跑。
+  int32 source = 4;
+  // dry_run 干跑（阶段 4 只捕获不写入）。
+  bool dry_run = 5;
+  // incident 故障引用（name 为故障编号）。
+  AgentNamedRef incident = 6;
+  // incident_title 故障标题快照。
+  string incident_title = 7;
+  // severity 故障等级（领取排序用）。
+  int32 severity = 8;
+  // status 状态：queued / running / succeeded / no_finding / failed / cancelled / skipped / expired。
+  string status = 9;
+  // attempts 已尝试次数。
+  int32 attempts = 10;
+  // reason 终态原因（skipped / cancelled / failed / expired 的说明）。
+  string reason = 11;
+  // run_id 运行 ID（领取后有）。
+  string run_id = 12;
+  // requester 人工召唤 / 干跑的发起人。
+  AgentNamedRef requester = 13;
+  // input 人工召唤附带的问题。
+  string input = 14;
+  // queued_time 入队时间。
+  google.protobuf.Timestamp queued_time = 15;
+  // start_time 开始时间。
+  google.protobuf.Timestamp start_time = 16;
+  // end_time 结束时间。
+  google.protobuf.Timestamp end_time = 17;
+  // next_time 下次重试时间（排队中）。
+  google.protobuf.Timestamp next_time = 18;
+  // update_time 更新时间。
+  google.protobuf.Timestamp update_time = 19;
+}
+
+// RunStage 一个阶段的轨迹。
+message RunStage {
+  // key 阶段键。
+  string key = 1;
+  // status 状态：pending / running / done / skipped / failed。
+  string status = 2;
+  // steps 模型调用次数。
+  int32 steps = 3;
+  // prompt_tokens prompt token 用量。
+  int64 prompt_tokens = 4;
+  // completion_tokens completion token 用量。
+  int64 completion_tokens = 5;
+  // duration_ms 耗时（毫秒）。
+  int64 duration_ms = 6;
+  // summary 本阶段的结构化结论（文本）。
+  string summary = 7;
+  // end_reason 结束原因：completed / max_steps / timeout / llm_rejected / error / denied。
+  string end_reason = 8;
+  // last_message_id 本阶段最后一条消息 ID（下一阶段的加载边界）。
+  string last_message_id = 9;
+}
+
+// RunFinding 运行产出的发现。
+message RunFinding {
+  // title 标题。
+  string title = 1;
+  // conclusion 结论。
+  string conclusion = 2;
+  // confidence 置信度 0-100。
+  int32 confidence = 3;
+  // evidence 证据引用。
+  repeated string evidence = 4;
+  // next_step 建议的下一步。
+  string next_step = 5;
+}
+
+// DeniedCall 运行中被拒绝的工具调用（权限与范围检查）。
+message DeniedCall {
+  // tool 工具名。
+  string tool = 1;
+  // reason 错误 reason。
+  string reason = 2;
+  // message 错误说明。
+  string message = 3;
+}
+
+// CapturedCall 干跑时捕获的写调用。
+message CapturedCall {
+  // tool 工具名。
+  string tool = 1;
+  // input 拟调用参数（JSON 文本，已脱敏）。
+  string input = 2;
+}
+
+// TranscriptToolCall 转录里的一次工具调用。
+message TranscriptToolCall {
+  // id 审计记录 ID。
+  string id = 1;
+  // tool 工具名。
+  string tool = 2;
+  // title 接口中文名。
+  string title = 3;
+  // write 是否写操作。
+  bool write = 4;
+  // status 状态。
+  string status = 5;
+  // input 入参（JSON 文本，已脱敏）。
+  string input = 6;
+  // output 出参（JSON 文本，已脱敏、截断）。
+  string output = 7;
+  // error 失败原因。
+  string error = 8;
+  // duration_ms 耗时（毫秒）。
+  int64 duration_ms = 9;
+}
+
+// TranscriptMessage 转录里的一条消息。
+message TranscriptMessage {
+  // id 消息 ID。
+  string id = 1;
+  // role 角色：user / assistant / tool。
+  string role = 2;
+  // content 正文。
+  string content = 3;
+  // reasoning 模型思考过程（有则返回）。
+  string reasoning = 4;
+  // tool_calls assistant 消息发起的工具调用。
+  repeated TranscriptToolCall tool_calls = 5;
+  // create_time 时间。
+  google.protobuf.Timestamp create_time = 6;
+}
+
+// Run 一次运行。
+message Run {
+  // id 运行 ID。
+  string id = 1;
+  // task_id 任务 ID。
+  string task_id = 2;
+  // profile Profile 引用。
+  AgentNamedRef profile = 3;
+  // incident 故障引用（name 为故障编号）。
+  AgentNamedRef incident = 4;
+  // agent_user 机器账号引用。
+  AgentNamedRef agent_user = 5;
+  // conversation_id 助手会话 ID（kind=agent）。
+  string conversation_id = 6;
+  // status 状态：running / succeeded / no_finding / failed / cancelled。
+  string status = 7;
+  // dry_run 干跑。
+  bool dry_run = 8;
+  // stages 阶段轨迹。
+  repeated RunStage stages = 9;
+  // prompt_tokens 总 prompt token。
+  int64 prompt_tokens = 10;
+  // completion_tokens 总 completion token。
+  int64 completion_tokens = 11;
+  // tokens_estimated token 用量为估算值（模型接口未回报）。
+  bool tokens_estimated = 12;
+  // finding 产出的发现（无结论时为空）。
+  RunFinding finding = 13;
+  // finding_event_id 发现落到时间线的记录 ID。
+  string finding_event_id = 14;
+  // proposals 提出的建议引用。
+  repeated AgentNamedRef proposals = 15;
+  // denied 被拒绝的工具调用。
+  repeated DeniedCall denied = 16;
+  // captured 干跑捕获的写调用。
+  repeated CapturedCall captured = 17;
+  // end_reason 结束原因。
+  string end_reason = 18;
+  // feedback 评价：0 未评 1 有用 2 无用。
+  int32 feedback = 19;
+  // feedback_user 评价人。
+  AgentNamedRef feedback_user = 20;
+  // feedback_note 评价说明。
+  string feedback_note = 21;
+  // feedback_time 评价时间。
+  google.protobuf.Timestamp feedback_time = 22;
+  // start_time 开始时间。
+  google.protobuf.Timestamp start_time = 23;
+  // end_time 结束时间。
+  google.protobuf.Timestamp end_time = 24;
+  // can_rate 当前用户可评价。
+  bool can_rate = 25;
+}
+
+// ListTasksRequest 任务列表请求。
+message ListTasksRequest {
+  // profile_id Profile 过滤，可选。
+  string profile_id = 1 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+  // incident_id 故障过滤，可选。
+  string incident_id = 2 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+  // status 状态过滤，可选。
+  string status = 3 [(buf.validate.field).string = {
+    in: [
+      "",
+      "queued",
+      "running",
+      "succeeded",
+      "no_finding",
+      "failed",
+      "cancelled",
+      "skipped",
+      "expired"
+    ]
+  }];
+  // source 来源过滤，0=全部。
+  int32 source = 4 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 5
+  }];
+  // page 页码，从 1 起。
+  int64 page = 5 [(buf.validate.field).int64.gte = 0];
+  // page_size 每页条数，至多 100。
+  int32 page_size = 6 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 100
+  }];
+}
+
+// ListTasksResponse 任务列表响应。
+message ListTasksResponse {
+  // items 当前页。
+  repeated Task items = 1;
+  // total 总数。
+  int64 total = 2;
+}
+
+// GetTaskRequest 任务详情请求。
+message GetTaskRequest {
+  // id 任务 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetTaskResponse 任务详情响应。
+message GetTaskResponse {
+  // task 任务。
+  Task task = 1;
+  // run 运行摘要（领取后有）。
+  Run run = 2;
+}
+
+// RunForIncidentRequest 人工召唤请求。
+message RunForIncidentRequest {
+  // incident_id 故障 ID。
+  string incident_id = 1 [(buf.validate.field).string.uuid = true];
+  // profile_id 指定 Profile，可选；为空按优先级取第一个适用的启用 Profile。
+  string profile_id = 2 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+  // input 附加的问题或关注点，至多 2000 字符。
+  string input = 3 [(buf.validate.field).string.max_len = 2000];
+}
+
+// RunForIncidentResponse 人工召唤响应：新建或已存在的进行中任务。
+message RunForIncidentResponse {
+  // task 任务。
+  Task task = 1;
+  // existing 返回的是已有的排队 / 进行中任务。
+  bool existing = 2;
+}
+
+// CancelTaskRequest 取消请求。
+message CancelTaskRequest {
+  // id 任务 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // note 说明，至多 255 字符。
+  string note = 2 [(buf.validate.field).string.max_len = 255];
+}
+
+// CancelTaskResponse 取消响应。
+message CancelTaskResponse {
+  // task 任务。
+  Task task = 1;
+}
+
+// GetRunRequest 运行详情请求。
+message GetRunRequest {
+  // id 运行 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetRunResponse 运行详情响应。
+message GetRunResponse {
+  // run 运行。
+  Run run = 1;
+  // transcript 完整转录（只对持有「Agent 任务」菜单者返回）。
+  repeated TranscriptMessage transcript = 2;
+  // transcript_visible 当前用户是否可见完整转录。
+  bool transcript_visible = 3;
+}
+
+// ListIncidentRunsRequest 故障运行列表请求。
+message ListIncidentRunsRequest {
+  // incident_id 故障 ID。
+  string incident_id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// ListIncidentRunsResponse 故障运行列表响应（最新在前，至多 50 条）。
+message ListIncidentRunsResponse {
+  // items 运行。
+  repeated Run items = 1;
+  // active_task 该故障当前排队 / 进行中的任务。
+  Task active_task = 2;
+}
+
+// RateRunRequest 评价请求。
+message RateRunRequest {
+  // id 运行 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // feedback 评价：1 有用 2 无用。
+  int32 feedback = 2 [(buf.validate.field).int32 = {
+    in: [1, 2]
+  }];
+  // note 说明，至多 500 字符。
+  string note = 3 [(buf.validate.field).string.max_len = 500];
+}
+
+// RateRunResponse 评价响应。
+message RateRunResponse {
+  // run 运行。
+  Run run = 1;
+}

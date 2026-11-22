@@ -7,13 +7,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/lanyulei/reborn/backend/kit/notifycontract"
 
 	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
+	"github.com/lanyulei/reborn/backend/core/internal/pkg/operator"
 	"github.com/lanyulei/reborn/backend/kit/idgen"
 	"github.com/lanyulei/reborn/backend/kit/paging"
 
@@ -117,14 +118,26 @@ var (
 	ErrChannelTestTooFrequent = errors.New(429, notifyv1.ErrorReason_NOTIFY_TEST_TOO_FREQUENT.String(), "test event too frequent for channel")
 )
 
-// TestEventCooldown 同一渠道两次连通性测试的最小间隔：测试事件真实投递到任意
-// 收件人，不节流即成免费发信口。进程内状态（多副本各自计数；人工按钮场景足够）。
+// TestEventCooldown 同一渠道两次连通性测试的最小间隔：测试事件真实投递到
+// 收件人，不节流即成免费发信口。进程内状态（见 cooldown）。
 const TestEventCooldown = 10 * time.Second
 
-// ChannelReferenceChecker 渠道引用计数窄接口（路由仓储实现）：删除渠道前
-// 确认无未删除路由绑定它。
+// WebhookHeaderMask Get/List 回显 webhook 请求头取值时的掩码：请求头取值一律按只写处理（自定义头
+// 常用来放令牌，键名黑名单挡不住 X-Token 之类的变体），更新时取值为空或等于掩码表示保留原值。
+// 取值本身仍明文存在 config 列里——管道发送时原样取用，这是与管道共享的数据契约（kit/notifycontract
+// WebhookConfig），改为密文落库须管道同步改为解密后再发，暂不引入。
+const WebhookHeaderMask = "******"
+
+// RobotTestRecipient 群机器人渠道的隐含收件标识（目标群由实例 secret 决定；与管道
+// recipient.go 的 robotTarget 同一字面量）。
+const RobotTestRecipient = "$bot"
+
+// ChannelReferenceChecker 渠道引用窄接口（路由仓储实现）：删除渠道前确认无未删除路由绑定它；
+// 连通性测试时取绑定路由的固定收件人（测试事件只允许发给这些人与操作者自己）。
 type ChannelReferenceChecker interface {
 	CountRoutesUsingChannel(ctx context.Context, channelID string) (int64, error)
+	// FixedRecipientsOfChannel 未删除路由中绑定该渠道的 recipient_policy.fixed 并集（去重；无则空）。
+	FixedRecipientsOfChannel(ctx context.Context, channelID string) ([]string, error)
 }
 
 // ChannelRepo 渠道仓储接口，由 data 层实现（依赖倒置）。
@@ -152,45 +165,19 @@ type ChannelUsecase struct {
 	events EventWriter
 	refs   ChannelReferenceChecker
 
-	now          func() time.Time
-	testCooldown time.Duration
-	testMu       sync.Mutex
-	lastTest     map[string]time.Time // channel → 上次测试事件时间（冷却）
+	// tests 连通性测试按渠道冷却。
+	tests *cooldown
 }
 
 // NewChannelUsecase new a ChannelUsecase.
 func NewChannelUsecase(repo ChannelRepo, events EventWriter, refs ChannelReferenceChecker) *ChannelUsecase {
-	return &ChannelUsecase{
-		repo: repo, events: events, refs: refs,
-		now: time.Now, testCooldown: TestEventCooldown, lastTest: map[string]time.Time{},
-	}
+	return &ChannelUsecase{repo: repo, events: events, refs: refs, tests: newCooldown(TestEventCooldown)}
 }
 
 // WithTestEventCooldown 覆盖连通性测试冷却（≤0 关闭；集成测试用）。
 func (uc *ChannelUsecase) WithTestEventCooldown(d time.Duration) *ChannelUsecase {
-	uc.testCooldown = d
+	uc.tests.d = d
 	return uc
-}
-
-// reserveTestSlot 按渠道冷却：间隔不足返回 ErrChannelTestTooFrequent，否则占用
-// 本次名额；顺带清掉已过冷却期的旧条目（map 不随渠道数无界增长）。
-func (uc *ChannelUsecase) reserveTestSlot(channelID string) error {
-	if uc.testCooldown <= 0 {
-		return nil
-	}
-	uc.testMu.Lock()
-	defer uc.testMu.Unlock()
-	now := uc.now()
-	if last, ok := uc.lastTest[channelID]; ok && now.Sub(last) < uc.testCooldown {
-		return fmt.Errorf("%w: retry after %s", ErrChannelTestTooFrequent, (uc.testCooldown - now.Sub(last)).Round(time.Second))
-	}
-	for id, at := range uc.lastTest {
-		if now.Sub(at) >= uc.testCooldown {
-			delete(uc.lastTest, id)
-		}
-	}
-	uc.lastTest[channelID] = now
-	return nil
 }
 
 // secretRequired 报告渠道类型是否必须携带 secret（webhook 的 HMAC 签名密钥可选）。
@@ -267,14 +254,46 @@ var sensitiveHeaderKeys = map[string]struct{}{
 	"api-key":             {},
 }
 
-// validateWebhookHeaders 拒绝凭据类请求头键名（大小写不敏感）。
+// validateWebhookHeaders 拒绝凭据类请求头键名（大小写不敏感）与空取值（取值只写不读：更新时空 / 掩码
+// 表示保留原值，不能落库）。
 func validateWebhookHeaders(headers map[string]string) error {
-	for key := range headers {
+	for key, value := range headers {
 		if _, bad := sensitiveHeaderKeys[strings.ToLower(strings.TrimSpace(key))]; bad {
 			return fmt.Errorf("%w: header %q carries credentials; use secret (HMAC signing) instead", ErrChannelConfigInvalid, key)
 		}
+		if strings.TrimSpace(value) == "" || value == WebhookHeaderMask {
+			return fmt.Errorf("%w: header %q has no value", ErrChannelConfigInvalid, key)
+		}
 	}
 	return nil
+}
+
+// mergeWebhookHeaders 更新时的保留语义：新配置里取值为空或为掩码的请求头沿用现有取值（前端回显的是
+// 掩码，原样提交即「不改」）；现有配置里没有的键取值为空则照常由校验拒绝。
+func mergeWebhookHeaders(next, cur *WebhookConfig) {
+	if next == nil || cur == nil {
+		return
+	}
+	for key, value := range next.Headers {
+		if strings.TrimSpace(value) != "" && value != WebhookHeaderMask {
+			continue
+		}
+		if old, ok := cur.Headers[key]; ok {
+			next.Headers[key] = old
+		}
+	}
+}
+
+// MaskWebhookHeaders 返回请求头取值全部替换为掩码的副本（Get/List 出参用；nil 原样返回）。
+func MaskWebhookHeaders(headers map[string]string) map[string]string {
+	if headers == nil {
+		return nil
+	}
+	out := make(map[string]string, len(headers))
+	for key := range headers {
+		out[key] = WebhookHeaderMask
+	}
+	return out
 }
 
 // Create 创建渠道：校验 type/config/secret 匹配，生成 ID 与审计时间后落库；
@@ -318,6 +337,9 @@ func (uc *ChannelUsecase) Update(ctx context.Context, id string, upd ChannelUpda
 			return err
 		}
 		if upd.Config != nil {
+			if upd.Config.Webhook != nil && ch.Config != nil {
+				mergeWebhookHeaders(upd.Config.Webhook, ch.Config.Webhook)
+			}
 			if err := validateConfigKind(ch.Type, upd.Config); err != nil {
 				return err
 			}
@@ -410,12 +432,15 @@ func (uc *ChannelUsecase) SendTestEvent(ctx context.Context, channelID string, s
 	if len(spec.Recipients) > maxEventRecipients {
 		return nil, fmt.Errorf("%w: recipients %d exceeds %d", ErrChannelConfigInvalid, len(spec.Recipients), maxEventRecipients)
 	}
+	if err := uc.checkTestRecipients(ctx, channel, spec.Recipients); err != nil {
+		return nil, err
+	}
 	payload, err := testEventPayload(channelID, spec.Payload)
 	if err != nil {
 		return nil, err
 	}
 	// 入参全部合法后才占用冷却名额（校验失败不消耗）。
-	if err := uc.reserveTestSlot(channelID); err != nil {
+	if err := uc.tests.reserve(channelID, ErrChannelTestTooFrequent); err != nil {
 		return nil, err
 	}
 	id, err := idgen.NewID()
@@ -441,6 +466,33 @@ func (uc *ChannelUsecase) SendTestEvent(ctx context.Context, channelID string, s
 		return nil, err
 	}
 	return event, nil
+}
+
+// checkTestRecipients 测试事件的显式收件只允许：操作者本人（用户 ID，管道解析为其邮箱）、绑定该渠道的
+// 路由里的固定收件人、群机器人渠道的隐含目标群 $bot。任意邮箱 / 群标识都放行的话，有渠道测试权限的人
+// 就能以平台名义给任何地址发信。留空仍交路由按收件策略解析。
+func (uc *ChannelUsecase) checkTestRecipients(ctx context.Context, channel *Channel, recipients []string) error {
+	if len(recipients) == 0 {
+		return nil
+	}
+	fixed, err := uc.refs.FixedRecipientsOfChannel(ctx, channel.ID)
+	if err != nil {
+		return err
+	}
+	self := strings.ToLower(operator.FromContext(ctx))
+	robot := channel.Type == ChannelTypeDingtalk || channel.Type == ChannelTypeWecom || channel.Type == ChannelTypeFeishu
+	for _, raw := range recipients {
+		r := strings.TrimSpace(raw)
+		switch {
+		case self != "" && strings.ToLower(r) == self:
+		case robot && r == RobotTestRecipient:
+		case slices.ContainsFunc(fixed, func(f string) bool { return strings.EqualFold(strings.TrimSpace(f), r) }):
+		default:
+			return fmt.Errorf("%w: recipient %q is not allowed for a test event (only yourself, the channel's fixed route recipients or %s)",
+				ErrChannelConfigInvalid, raw, RobotTestRecipient)
+		}
+	}
+	return nil
 }
 
 // testEventPayload 构造测试事件载荷：调用方附加载荷（须为 JSON 对象、

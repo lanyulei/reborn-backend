@@ -26,6 +26,8 @@ const (
 
 	// maxRecipients 单个事件的显式收件上限（与 notify 入参约束一致），超出则拆成多个事件。
 	maxRecipients = 20
+	// maxEventTitleBytes 通知事件标题的字节上限（biz/notify maxEventTitleLen：按 len() 即字节计）。
+	maxEventTitleBytes = 255
 	// severityInfo / severityWarning 事件级别。
 	severityInfo    int32 = 1
 	severityWarning int32 = 2
@@ -61,7 +63,7 @@ func (n *Notifier) emitIDs(ctx context.Context, tx txrun.Tx, eventType string, s
 	if err != nil {
 		return nil, fmt.Errorf("encode %s payload: %w", eventType, err)
 	}
-	title = truncate(title, 80) // title 列 varchar(255)，按字节计；80 个字符至多 240 字节
+	title = truncateBytes(title, maxEventTitleBytes) // 通知域按字节限长（title ≤ 255 字节），按字节截且不切开字符
 	chunks := [][]string{nil}
 	if recipients != nil {
 		chunks = slices.Collect(slices.Chunk(recipients, maxRecipients))

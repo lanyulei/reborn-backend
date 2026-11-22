@@ -36,6 +36,13 @@ var ErrTimeRangeInvalid = errors.BadRequest(notifyv1.ErrorReason_NOTIFY_TIME_RAN
 // ErrEventNotFound 目标事件不存在（或已按保留期清理）。
 var ErrEventNotFound = errors.NotFound(notifyv1.ErrorReason_NOTIFY_EVENT_NOT_FOUND.String(), "event not found")
 
+// ErrEventReplayTooFrequent 同一源事件两次重发间隔小于 ReplayCooldown（与连通性测试同一 reason：
+// 都是「人工触发的真实投递过于频繁」）。
+var ErrEventReplayTooFrequent = errors.New(429, notifyv1.ErrorReason_NOTIFY_TEST_TOO_FREQUENT.String(), "replay too frequent for event")
+
+// ReplayCooldown 同一源事件两次重发的最小间隔：重发与测试事件一样真实投递到收件人（见 cooldown）。
+const ReplayCooldown = TestEventCooldown
+
 // Event 事件领域模型（DO）：notify_event 运行表一行的排障视图（管道写 /
 // core 读，设计 §5.2）。Payload 为原始 JSON 字节（nil=无载荷），由 service
 // 层转 proto Struct；Recipients 空切片=交路由解析。append-only：无写路径、
@@ -101,11 +108,19 @@ type EventWriter interface {
 type EventUsecase struct {
 	repo   EventRepo
 	writer EventWriter
+	// replays 重发按源事件冷却。
+	replays *cooldown
 }
 
 // NewEventUsecase new an EventUsecase.
 func NewEventUsecase(repo EventRepo, writer EventWriter) *EventUsecase {
-	return &EventUsecase{repo: repo, writer: writer}
+	return &EventUsecase{repo: repo, writer: writer, replays: newCooldown(ReplayCooldown)}
+}
+
+// WithReplayCooldown 覆盖重发冷却（≤0 关闭；测试用）。
+func (uc *EventUsecase) WithReplayCooldown(d time.Duration) *EventUsecase {
+	uc.replays.d = d
+	return uc
 }
 
 // Get 查询事件详情。
@@ -116,6 +131,9 @@ func (uc *EventUsecase) Get(ctx context.Context, id string) (*Event, error) {
 // Replay 事件级重发：以源事件的类型/级别/标题/载荷/收件/分组直插一条新事件
 // （新 id、source=internal、不带 dedup_key——刻意再投，走完整路由链路）。
 func (uc *EventUsecase) Replay(ctx context.Context, source *Event) (*Event, error) {
+	if err := uc.replays.reserve(source.ID, ErrEventReplayTooFrequent); err != nil {
+		return nil, err
+	}
 	id, err := idgen.NewID()
 	if err != nil {
 		return nil, fmt.Errorf("generate replay event id: %w", err)

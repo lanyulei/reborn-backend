@@ -532,6 +532,8 @@ func TestCmdb_Hardening(t *testing.T) {
 	user := createUser(t, ts, admin, "claim_user")
 	ub := testBearer(t, svc.signer, user.Id)
 	role := createRole(t, ts, admin, "同步管理", "claim_user")
+	// 数据范围 fail-closed：没有范围行的角色什么都看不到，这里显式配成不限，让请求走到接口权限与业务校验。
+	mustOK(http.MethodPut, "/api/v1/cmdb/scope/role/"+role.Id, `{"modelCodes":[]}`)
 	grant := func(ops ...string) {
 		t.Helper()
 		apis := make([]string, 0, len(ops))

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/lanyulei/reborn/backend/kit/idgen"
 	"github.com/lanyulei/reborn/backend/kit/paging"
@@ -86,6 +87,18 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return string(r[:n])
+}
+
+// truncateBytes 按字节截断到至多 n 字节，且不切开字符（对方按字节限长时用）。
+// dup: biz/monitor 有一份同名同义的私有函数；各域 biz 包不能互相 import。
+func truncateBytes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // CanManage 报告 group（已含查询者身份）能否被 actor 管理。

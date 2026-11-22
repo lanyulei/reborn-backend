@@ -54,6 +54,17 @@ func (r *actionRepo) Claim(ctx context.Context, limit int, lease time.Duration) 
 	return items, rows.Err()
 }
 
+// Renew implements biz.ActionRepo。同样的围栏：仍是待执行且尝试次数等于领取时的值。
+func (r *actionRepo) Renew(ctx context.Context, a *biz.AlertAction, lease time.Duration) (bool, error) {
+	tag, err := r.data.Pool.Exec(ctx,
+		`UPDATE monitor_alert_action SET next_time = now() + make_interval(secs => $3::float8)
+		 WHERE id = $1 AND status = $4 AND attempts = $2`, a.ID, a.Attempts, lease.Seconds(), mc.ActionPending)
+	if err != nil {
+		return false, fmt.Errorf("renew monitor alert action: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
 // FinishTx implements biz.ActionRepo。围栏：仍是待执行且尝试次数等于领取时的值。
 func (r *actionRepo) FinishTx(ctx context.Context, tx txrun.Tx, a *biz.AlertAction, status int32, note string) (bool, error) {
 	n, err := tx.Exec(ctx,

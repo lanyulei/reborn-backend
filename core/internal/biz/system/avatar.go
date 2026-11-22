@@ -89,8 +89,12 @@ func (uc *AvatarUsecase) Upload(ctx context.Context, userID string, data []byte)
 	if err != nil {
 		return "", err
 	}
-	if _, err := uc.reader.GetUser(ctx, userID); err != nil {
+	u, err := uc.reader.GetUser(ctx, userID)
+	if err != nil {
 		return "", err
+	}
+	if u.IsMachine() {
+		return "", ErrMachineAccount
 	}
 	if _, err := uc.files.PutSingleton(ctx, userID, FileBizAvatar, userID, "avatar"+ext, mime, data, false); err != nil {
 		return "", err

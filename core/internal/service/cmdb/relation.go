@@ -5,7 +5,6 @@ import (
 
 	v1 "github.com/lanyulei/reborn/backend/core/api/cmdb/v1"
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/cmdb"
-	"github.com/lanyulei/reborn/backend/kit/paging"
 )
 
 // CmdbRelationService 实现 CmdbRelationServiceServer。
@@ -20,11 +19,27 @@ func NewCmdbRelationService(uc *biz.RelationUsecase, cis *biz.CIUsecase, scopes 
 	return &CmdbRelationService{uc: uc, cis: cis, guard: newScopeGuard(scopes)}
 }
 
-// requireAll 当前资源与全部目标资源都须在范围内。
+// requireAll 当前资源与全部目标资源都须存在且在范围内：范围解析一次、资源一条语句取齐。
 func (s *CmdbRelationService) requireAll(ctx context.Context, ids ...string) error {
+	scope, err := s.guard.resolve(ctx)
+	if err != nil {
+		return err
+	}
+	cis, err := s.cis.GetByIDs(ctx, ids)
+	if err != nil {
+		return err
+	}
+	byID := make(map[string]*biz.CI, len(cis))
+	for _, ci := range cis {
+		byID[ci.ID] = ci
+	}
 	for _, id := range ids {
-		if _, err := s.guard.requireCI(ctx, s.cis.GetByID, id); err != nil {
-			return err
+		ci, ok := byID[id]
+		if !ok {
+			return biz.ErrCINotFound
+		}
+		if !scope.Allows(ci.ModelCode, ci.Env) {
+			return biz.ErrScopeForbidden
 		}
 	}
 	return nil
@@ -110,23 +125,22 @@ func (s *CmdbRelationService) Neighbors(ctx context.Context, req *v1.NeighborsRe
 	return resp, nil
 }
 
-// ListRelated implements proto CmdbRelationService/ListRelated.
+// ListRelated implements proto CmdbRelationService/ListRelated：受限用户只看到范围内的对端
+// （过滤在仓储里完成，分页与总数按可见的算）。
 func (s *CmdbRelationService) ListRelated(ctx context.Context, req *v1.ListRelatedRequest) (*v1.ListRelatedResponse, error) {
-	if _, err := s.guard.requireCI(ctx, s.cis.GetByID, req.GetCiId()); err != nil {
-		return nil, err
-	}
 	scope, err := s.guard.resolve(ctx)
 	if err != nil {
 		return nil, err
 	}
-	var items []*biz.RelatedCI
-	var total int64
-	if scope.Unrestricted {
-		items, total, err = s.uc.ListRelated(ctx, req.GetCiId(), req.GetRelationType(), req.GetDirection(), req.GetKeyword(),
-			req.GetPage(), int64(req.GetPageSize()))
-	} else {
-		items, total, err = s.listRelatedInScope(ctx, scope, req)
+	ci, err := s.cis.GetByID(ctx, req.GetCiId())
+	if err != nil {
+		return nil, err
 	}
+	if !scope.Allows(ci.ModelCode, ci.Env) {
+		return nil, biz.ErrScopeForbidden
+	}
+	items, total, err := s.uc.ListRelatedScoped(ctx, scope, req.GetCiId(), req.GetRelationType(), req.GetDirection(), req.GetKeyword(),
+		req.GetPage(), int64(req.GetPageSize()))
 	if err != nil {
 		return nil, err
 	}
@@ -139,28 +153,4 @@ func (s *CmdbRelationService) ListRelated(ctx context.Context, req *v1.ListRelat
 		resp.Items = append(resp.Items, &v1.RelatedCI{RelationId: r.RelationID, Ci: p})
 	}
 	return resp, nil
-}
-
-// listRelatedInScope 受限用户的关联列表：范围外的对端不展示（不泄露名称与数量）。
-// 仓储分页不带范围条件，这里取全量后按范围过滤、再内存分页，保证各页 Total 一致。
-func (s *CmdbRelationService) listRelatedInScope(ctx context.Context, scope biz.Scope, req *v1.ListRelatedRequest) ([]*biz.RelatedCI, int64, error) {
-	visible := make([]*biz.RelatedCI, 0, 16)
-	for page := int64(1); ; page++ {
-		items, total, err := s.uc.ListRelated(ctx, req.GetCiId(), req.GetRelationType(), req.GetDirection(), req.GetKeyword(), page, paging.MaxPageSize)
-		if err != nil {
-			return nil, 0, err
-		}
-		for _, r := range items {
-			if scope.Allows(r.CI.ModelCode, r.CI.Env) {
-				visible = append(visible, r)
-			}
-		}
-		if len(items) == 0 || page*paging.MaxPageSize >= total {
-			break
-		}
-	}
-	page, pageSize := paging.Normalize(req.GetPage(), int64(req.GetPageSize()))
-	total := int64(len(visible))
-	start := min((page-1)*pageSize, total)
-	return visible[start:min(start+pageSize, total)], total, nil
 }

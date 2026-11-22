@@ -86,6 +86,9 @@ func (r *historyRepo) List(ctx context.Context, filter biz.HistoryFilter, page, 
 		args = append(args, value)
 		where = append(where, strings.ReplaceAll(cond, "?", "$"+strconv.Itoa(len(args))))
 	}
+	if len(filter.CIIDs) > 0 {
+		add("h.ci_id = ANY(?::uuid[])", dbx.TextArray(filter.CIIDs))
+	}
 	if len(filter.ModelCodes) > 0 {
 		add("c.model_code = ANY(?)", dbx.TextArray(filter.ModelCodes))
 	}

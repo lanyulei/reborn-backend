@@ -171,9 +171,11 @@ type ScheduleRepo interface {
 type ScheduleQueue interface {
 	// Due 到期（next_time <= 数据库 now()）的启用中的定时作业，至多 limit 条，并返回数据库当前时间。
 	Due(ctx context.Context, limit int) (items []*Schedule, now time.Time, err error)
-	// Advance 落账一次触发：仅当 next_time 仍等于 run.Fired 时推进（多实例下只有一个成功），
-	// 返回是否由本次调用推进。
-	Advance(ctx context.Context, id string, run ScheduleRun) (bool, error)
+	// Fire 在一个事务里认领并触发一条到期的定时作业：以 FOR UPDATE SKIP LOCKED 重新读取该条（要求 next_time
+	// 仍等于 planned、仍启用且未删除）——别的实例正持有或已经推进的直接返回 false、不调用 fn；认领到的
+	// 在持锁期间调用 fn 取得本次触发的结果并落账（next_time / last_time / last_execution_id / last_error），
+	// 提交后返回 true。fn 出错则整体回滚（这一次触发留待下一轮重做）。
+	Fire(ctx context.Context, id string, planned time.Time, fn func(ctx context.Context, s *Schedule) (ScheduleRun, error)) (bool, error)
 }
 
 // TriggerRepo 触发器仓储。
@@ -220,10 +222,16 @@ type SignalQueue interface {
 	Mark(ctx context.Context, fireID string, state int32, retryIn time.Duration) error
 }
 
-// AlertFeed 告警事件来源（组合根适配 monitor 域；按触发时间升序读取）。
+// AlertCursor 告警事件的读取位置：(首次触发时间, 事件 ID)；ID 为空表示该时刻之后的全部。
+type AlertCursor struct {
+	FirstFireTime time.Time
+	ID            string
+}
+
+// AlertFeed 告警事件来源（组合根适配 monitor 域；按 (首次触发时间, ID) 升序键集翻页）。
 type AlertFeed interface {
-	// FiringSince 首次触发时间晚于 since、仍在告警中且未被屏蔽的告警事件，按触发时间升序，至多 limit 条。
-	FiringSince(ctx context.Context, since time.Time, limit int) ([]*AlertEvent, error)
+	// FiringAfter (first_fire_time, id) 严格大于 after、仍在告警中且未被屏蔽的告警事件，按该序升序，至多 limit 条。
+	FiringAfter(ctx context.Context, after AlertCursor, limit int) ([]*AlertEvent, error)
 }
 
 // NotifyQueue 已结束、尚未通知的执行。

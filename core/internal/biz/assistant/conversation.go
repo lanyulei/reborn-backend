@@ -25,16 +25,26 @@ func (uc *ConversationUsecase) List(ctx context.Context, userID string, page, pa
 	return uc.convs.List(ctx, userID, page, pageSize)
 }
 
-// History 返回本人会话的全部消息与工具调用记录（service 层聚合为展示轮次）。
+// historyDisplayLimit 历史查询一次返回的消息条数上限（最近的这么多条）：绝大多数会话远小于它，
+// 行为与返回全量一致；极长的会话不再一次读出全部消息与工具输出。
+const historyDisplayLimit = 1000
+
+// History 返回本人会话的消息（至多最近 historyDisplayLimit 条）与对应的工具调用记录
+// （service 层聚合为展示轮次）。
 func (uc *ConversationUsecase) History(ctx context.Context, id, userID string) ([]*Message, []*ToolCall, error) {
 	if _, err := uc.convs.Get(ctx, id, userID); err != nil {
 		return nil, nil, err
 	}
-	msgs, err := uc.msgs.List(ctx, id)
+	msgs, err := uc.msgs.ListRecent(ctx, id, historyDisplayLimit)
 	if err != nil {
 		return nil, nil, err
 	}
-	calls, err := uc.calls.ListByConversation(ctx, id)
+	// 历史被截到最近一段时，审计记录也只取这一段时间内的。
+	var since time.Time
+	if len(msgs) >= historyDisplayLimit {
+		since = msgs[0].CreateTime
+	}
+	calls, err := uc.calls.ListSince(ctx, id, since)
 	if err != nil {
 		return nil, nil, err
 	}

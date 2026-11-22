@@ -719,6 +719,57 @@ func TestAction_AlertGoneUnknownKindAndBatchBound(t *testing.T) {
 	}
 }
 
+// 同批顺序执行：第二个及之后的动作开始前续租；续租未命中（租约已过期并被别的实例领走）的动作本实例不再执行。
+func TestAction_LeaseRenewedBeforeEachActionAndLostLeaseSkips(t *testing.T) {
+	a := newActionEnv(t, nil)
+	a.seed("ac-1", mc.ActionAISummary, mc.ActionPayload{})
+	a.seed("ac-2", mc.ActionAISummary, mc.ActionPayload{})
+	a.seed("ac-3", mc.ActionAISummary, mc.ActionPayload{})
+	renews := &renewSpy{ActionRepo: a.sync.Actions(), store: a.sync, steal: "ac-2"}
+	uc, err := biz.NewActionUsecase(biz.NewActionDeps(testfake.NewTxManager(), renews, a.env.store.Alerts(), a.world, a.world, a.world,
+		a.sync.CIIndex(), a.env.scopes, a.env.org, a.world, a.world, a.world, a.world, a.world, quietLog(), nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	uc.SetNow(func() time.Time { return a.now })
+	if n, err := uc.Run(context.Background()); err != nil || n != 3 {
+		t.Fatalf("Run() = %d, %v", n, err)
+	}
+	// 第一个不续租（刚领取），后两个各续一次。
+	if renews.calls != 2 {
+		t.Fatalf("renew calls = %d, want 2", renews.calls)
+	}
+	if row := a.status("ac-1"); row.Status != mc.ActionDone {
+		t.Fatalf("first action = %+v, want done", row)
+	}
+	if row := a.status("ac-3"); row.Status != mc.ActionDone || !row.NextTime.Equal(a.now.Add(5*time.Minute)) {
+		t.Fatalf("third action = %+v, want done after a renewed lease", row)
+	}
+	// 被别的实例领走的那个：本实例既不执行也不落账。
+	if row := a.status("ac-2"); row.Status != mc.ActionPending || row.Attempts != 2 || row.LastError != "" {
+		t.Fatalf("stolen action = %+v, want untouched", row)
+	}
+	if len(a.world.prompts) != 2 {
+		t.Fatalf("summaries generated = %d, want 2 (the stolen one was skipped)", len(a.world.prompts))
+	}
+}
+
+// renewSpy 统计续租次数，并在续租 steal 之前模拟另一个实例重新领取了它。
+type renewSpy struct {
+	biz.ActionRepo
+	store *testfake.MonitorSyncStore
+	steal string
+	calls int
+}
+
+func (s *renewSpy) Renew(ctx context.Context, a *biz.AlertAction, lease time.Duration) (bool, error) {
+	s.calls++
+	if a.ID == s.steal {
+		s.store.SetAction(a.ID, func(r *testfake.MonitorActionRow) { r.Attempts++ })
+	}
+	return s.ActionRepo.Renew(ctx, a, lease)
+}
+
 func TestAction_OverClaimedRowIsGivenUpWithoutExecuting(t *testing.T) {
 	a := newActionEnv(t, nil)
 	a.seed("ac-1", mc.ActionTicket, mc.ActionPayload{TemplateID: tplOK, AgentUserID: uAlice})

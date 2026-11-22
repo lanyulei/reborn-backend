@@ -1,0 +1,1223 @@
+syntax = "proto3";
+
+package incident.v1;
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "incident/v1/common.proto";
+import "system/v1/annotations.proto";
+
+option go_package = "github.com/lanyulei/reborn/backend/core/api/incident/v1;v1";
+
+// IncidentService 故障：记录、生命周期、角色、时间线、关联告警 / 变更、影响面、候选故障、上下文包与检索。
+// 可见性：持有故障读接口权限的用户全局可见；写操作按角色：指挥可做全部操作，处理人可认领 / 备注 / 关联 /
+// 置缓解与恢复 / 提出建议，有读权限的人可备注与加入关注。
+service IncidentService {
+  // ListIncidents 分页查询故障。
+  rpc ListIncidents(ListIncidentsRequest) returns (ListIncidentsResponse) {
+    option (google.api.http) = {get: "/api/v1/incident"};
+    option (system.v1.title) = "查询故障";
+  }
+  // GetIncident 故障详情（基本信息 + 角色 + 关联告警摘要 + 复盘状态）。
+  rpc GetIncident(GetIncidentRequest) returns (GetIncidentResponse) {
+    option (google.api.http) = {get: "/api/v1/incident/{id}"};
+    option (system.v1.title) = "查询故障详情";
+  }
+  // CreateIncident 手动开故障（可同时关联告警）。
+  rpc CreateIncident(CreateIncidentRequest) returns (CreateIncidentResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident"
+      body: "*"
+    };
+    option (system.v1.title) = "新建故障";
+  }
+  // UpdateIncident 编辑标题 / 摘要 / 业务 / 受影响资源 / 通知群 / 发生时间 / 演练标记。
+  rpc UpdateIncident(UpdateIncidentRequest) returns (UpdateIncidentResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/incident/{id}"
+      body: "*"
+    };
+    option (system.v1.title) = "编辑故障";
+  }
+  // ChangeSeverity 调整等级（重新评估通知与复盘要求）。
+  rpc ChangeSeverity(ChangeSeverityRequest) returns (IncidentResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident/{id}:severity"
+      body: "*"
+    };
+    option (system.v1.title) = "调整故障等级";
+  }
+  // TransitionIncident 状态流转：respond（响应）/ mitigate（缓解）/ resolve（恢复）/ close（关闭）/ reopen（重开）。
+  rpc TransitionIncident(TransitionIncidentRequest) returns (IncidentResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident/{id}:transition"
+      body: "*"
+    };
+    option (system.v1.title) = "故障状态流转";
+  }
+  // MergeIncident 把本故障合并到另一个故障（告警迁移、角色并入、本故障置已合并）。
+  rpc MergeIncident(MergeIncidentRequest) returns (IncidentResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident/{id}:merge"
+      body: "*"
+    };
+    option (system.v1.title) = "合并故障";
+  }
+  // AssignCommander 指派 / 转交指挥。
+  rpc AssignCommander(AssignCommanderRequest) returns (IncidentResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident/{id}:commander"
+      body: "*"
+    };
+    option (system.v1.title) = "指派故障指挥";
+  }
+  // UpdateMembers 添加 / 移除处理人与关注人（自己加入关注只需读权限）。
+  rpc UpdateMembers(UpdateMembersRequest) returns (IncidentResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident/{id}:members"
+      body: "*"
+    };
+    option (system.v1.title) = "维护故障成员";
+  }
+  // AddComment 备注（可带附件）。
+  rpc AddComment(AddCommentRequest) returns (TimelineItemResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident/{id}/comment"
+      body: "*"
+    };
+    option (system.v1.title) = "故障备注";
+  }
+  // PinEvent 钉住 / 取消钉住一条时间线记录。
+  rpc PinEvent(PinEventRequest) returns (TimelineItemResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident/{id}/event/{event_id}:pin"
+      body: "*"
+    };
+    option (system.v1.title) = "钉住故障时间线";
+  }
+  // ListTimeline 时间线（按时间升序分页，可按类型过滤）。
+  rpc ListTimeline(ListTimelineRequest) returns (ListTimelineResponse) {
+    option (google.api.http) = {get: "/api/v1/incident/{id}/timeline"};
+    option (system.v1.title) = "查询故障时间线";
+  }
+  // AttachAlerts 关联告警（告警已属于别的活跃故障返回 409；可指定 move=true 迁移过来）。
+  rpc AttachAlerts(AttachAlertsRequest) returns (AttachAlertsResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident/{id}/alert"
+      body: "*"
+    };
+    option (system.v1.title) = "关联告警到故障";
+  }
+  // DetachAlert 移出告警。
+  rpc DetachAlert(DetachAlertRequest) returns (IncidentResponse) {
+    option (google.api.http) = {delete: "/api/v1/incident/{id}/alert/{alert_id}"};
+    option (system.v1.title) = "从故障移出告警";
+  }
+  // ListIncidentAlerts 关联告警（带当前状态）。
+  rpc ListIncidentAlerts(ListIncidentAlertsRequest) returns (ListIncidentAlertsResponse) {
+    option (google.api.http) = {get: "/api/v1/incident/{id}/alert"};
+    option (system.v1.title) = "查询故障关联告警";
+  }
+  // ListIncidentsByAlert 一条告警所属的故障（活跃的在前）；告警详情页用。免接口授权：持有告警详情权限即可。
+  rpc ListIncidentsByAlert(ListIncidentsByAlertRequest) returns (ListIncidentsByAlertResponse) {
+    option (google.api.http) = {get: "/api/v1/incident-by-alert/{alert_id}"};
+    option (system.v1.title) = "查询告警所属故障";
+  }
+  // GetImpact 影响面：受影响资源及其下游。
+  rpc GetImpact(GetImpactRequest) returns (GetImpactResponse) {
+    option (google.api.http) = {get: "/api/v1/incident/{id}/impact"};
+    option (system.v1.title) = "查询故障影响面";
+  }
+  // ListChanges 变更关联：发生前回看窗口内与受影响资源相关的各域变更（已标注关系的优先）。
+  rpc ListChanges(ListChangesRequest) returns (ListChangesResponse) {
+    option (google.api.http) = {get: "/api/v1/incident/{id}/change"};
+    option (system.v1.title) = "查询故障关联变更";
+  }
+  // MarkChange 标注一条变更与故障的关系（疑似原因 / 已确认原因 / 无关）。
+  rpc MarkChange(MarkChangeRequest) returns (MarkChangeResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident/{id}/change"
+      body: "*"
+    };
+    option (system.v1.title) = "标注故障关联变更";
+  }
+  // CreateIncidentTicket 从故障创建工单（变更单）。
+  rpc CreateIncidentTicket(CreateIncidentTicketRequest) returns (CreateIncidentTicketResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident/{id}/ticket"
+      body: "*"
+    };
+    option (system.v1.title) = "故障转工单";
+  }
+  // GetIncidentContext 一次返回故障的全部上下文（故障、告警、资源与影响面、变更、时间线、公告、推荐预案、相似故障）：
+  // 页面首屏、AI 摘要、页内助手与 Agent 共用；摘要级字段，下钻走各域接口。
+  rpc GetIncidentContext(GetIncidentContextRequest) returns (GetIncidentContextResponse) {
+    option (google.api.http) = {get: "/api/v1/incident/{id}/context"};
+    option (system.v1.title) = "查询故障上下文";
+  }
+  // SearchIncidents 全文检索历史故障（相似故障推荐）。
+  rpc SearchIncidents(SearchIncidentsRequest) returns (SearchIncidentsResponse) {
+    option (google.api.http) = {get: "/api/v1/incident:search"};
+    option (system.v1.title) = "检索故障";
+  }
+  // RegenerateSummary 重新生成 AI 摘要（排队执行）。
+  rpc RegenerateSummary(RegenerateSummaryRequest) returns (IncidentResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident/{id}:summary"
+      body: "*"
+    };
+    option (system.v1.title) = "重新生成故障 AI 摘要";
+  }
+  // ListCandidates 候选故障（触发规则命中但未达开启门槛）。
+  rpc ListCandidates(ListCandidatesRequest) returns (ListCandidatesResponse) {
+    option (google.api.http) = {get: "/api/v1/incident-candidate"};
+    option (system.v1.title) = "查询候选故障";
+  }
+  // PromoteCandidate 把候选故障转正为故障。
+  rpc PromoteCandidate(PromoteCandidateRequest) returns (IncidentResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident-candidate/{id}:promote"
+      body: "*"
+    };
+    option (system.v1.title) = "候选故障转正";
+  }
+  // DismissCandidate 忽略候选故障。
+  rpc DismissCandidate(DismissCandidateRequest) returns (DismissCandidateResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident-candidate/{id}:dismiss"
+      body: "*"
+    };
+    option (system.v1.title) = "忽略候选故障";
+  }
+  // AcquireAgentLease 取得故障的 Agent 租约（同一时刻至多一个 Agent 任务）；持有者的发现 / 建议标记为 Agent。
+  rpc AcquireAgentLease(AgentLeaseRequest) returns (IncidentResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident/{id}/agent:acquire"
+      body: "*"
+    };
+    option (system.v1.title) = "获取故障 Agent 租约";
+  }
+  // ReleaseAgentLease 释放 Agent 租约（持有者自己释放，或指挥「停止 Agent」）。
+  rpc ReleaseAgentLease(AgentLeaseRequest) returns (IncidentResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident/{id}/agent:release"
+      body: "*"
+    };
+    option (system.v1.title) = "释放故障 Agent 租约";
+  }
+  // AddFinding Agent 回写一条发现（须持有租约；只能追加）。
+  rpc AddFinding(AddFindingRequest) returns (TimelineItemResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/incident/{id}/finding"
+      body: "*"
+    };
+    option (system.v1.title) = "写入故障 Agent 发现";
+  }
+  // ListIncidentOptions 候选项：值班表 / 通知群 / 用户等表单下拉用（最小披露）。
+  rpc ListIncidentOptions(ListIncidentOptionsRequest) returns (ListIncidentOptionsResponse) {
+    option (google.api.http) = {get: "/api/v1/incident-option"};
+    option (system.v1.title) = "查询故障表单候选项";
+  }
+}
+
+// Incident 故障。
+message Incident {
+  // 故障 ID。
+  string id = 1;
+  // 故障编号。
+  string number = 2;
+  // 标题。
+  string title = 3;
+  // severity 1-4（S1-S4）。
+  int32 severity = 4;
+  // 状态：1=待响应 2=处理中 3=已缓解 4=已解决 5=已关闭 6=已合并。
+  int32 status = 5;
+  // 复盘状态：0=无需 1=待复盘 2=进行中 3=已完成。
+  int32 review_status = 6;
+  // 来源：1=手工 2=规则 3=开放接口 4=Agent。
+  int32 source = 7;
+  // source_ref 来源对象（触发规则 / 接入源）。
+  NamedRef source_ref = 8;
+  // 所属业务。
+  NamedRef business = 9;
+  // 人工摘要。
+  string summary = 10;
+  // AI 摘要。
+  string ai_summary = 11;
+  // 根因分类编码。
+  string root_cause_code = 12;
+  // 根因说明。
+  string root_cause = 13;
+  // 解决说明。
+  string resolve_note = 14;
+  // 指挥官。
+  NamedRef commander = 15;
+  // 处理人。
+  repeated NamedRef responders = 16;
+  // 关注人。
+  repeated NamedRef watchers = 17;
+  // 受影响资源。
+  repeated NamedRef affected_cis = 18;
+  // 通知组。
+  repeated string groups = 19;
+  // 是否演练。
+  bool is_drill = 20;
+  // 发生时间。
+  google.protobuf.Timestamp occur_time = 21;
+  // 开启时间。
+  google.protobuf.Timestamp open_time = 22;
+  // 首次响应时间。
+  google.protobuf.Timestamp respond_time = 23;
+  // 缓解时间。
+  google.protobuf.Timestamp mitigate_time = 24;
+  // 解决时间。
+  google.protobuf.Timestamp resolve_time = 25;
+  // 首次解决时间（重开后保留）。
+  google.protobuf.Timestamp first_resolve_time = 26;
+  // 关闭时间。
+  google.protobuf.Timestamp close_time = 27;
+  // 重开次数。
+  int32 reopen_count = 28;
+  // 合并到的故障。
+  NamedRef merged_into = 29;
+  // 已升级到第几级。
+  int32 escalation_level = 30;
+  // 关联告警数。
+  int32 alert_count = 31;
+  // active_alert_count 关联告警中仍在告警中的数量。
+  int32 active_alert_count = 32;
+  // 公告数。
+  int32 update_count = 33;
+  // 待审批的处置建议数。
+  int32 proposal_pending = 34;
+  // 是否允许低风险建议自动通过。
+  bool auto_approve = 35;
+  // 当前持有处置租约的 Agent。
+  NamedRef agent_owner = 36;
+  // Agent 租约到期时间。
+  google.protobuf.Timestamp agent_lease_until = 37;
+  // 复盘截止时间。
+  google.protobuf.Timestamp review_due = 38;
+  // 最近活动时间。
+  google.protobuf.Timestamp last_activity_time = 39;
+  // can_manage 当前用户是指挥（或管理员）；can_handle 是处理人（含指挥）。
+  bool can_manage = 40;
+  // 当前用户能否处置。
+  bool can_handle = 41;
+  // 乐观锁版本。
+  int32 version = 42;
+  // 创建时间。
+  google.protobuf.Timestamp create_time = 43;
+  // 更新时间。
+  google.protobuf.Timestamp update_time = 44;
+  // 触发规则。
+  NamedRef rule = 45;
+}
+
+// ListIncidentsRequest 分页查询故障请求。
+message ListIncidentsRequest {
+  // 页码（从 1 起）。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // 每页条数（最多 100）。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // keyword 编号 / 标题模糊匹配。
+  optional string keyword = 3 [(buf.validate.field).string.max_len = 128];
+  // statuses 状态过滤；为空且 active=true 时取活跃（1-3）。
+  repeated int32 statuses = 4 [(buf.validate.field).repeated = {
+    max_items: 6
+    items: {
+      int32: {
+        gte: 1
+        lte: 6
+      }
+    }
+  }];
+  // active 只看活跃故障（状态 1-3）。
+  optional bool active = 5;
+  // 等级 1-4（多选）。
+  repeated int32 severities = 6 [(buf.validate.field).repeated = {
+    max_items: 4
+    items: {
+      int32: {
+        gte: 1
+        lte: 4
+      }
+    }
+  }];
+  // 业务 ID。
+  optional string business_id = 7 [(buf.validate.field).string.uuid = true];
+  // 指挥官用户 ID。
+  optional string commander_id = 8 [(buf.validate.field).string.uuid = true];
+  // mine 我参与的（指挥 / 处理人 / 关注人）。
+  optional bool mine = 9;
+  // 只看演练或非演练。
+  optional bool is_drill = 10;
+  // 复盘状态：1=待复盘 2=进行中 3=已完成。
+  optional int32 review_status = 11 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 3
+  }];
+  // review_overdue 复盘已超期。
+  optional bool review_overdue = 12;
+  // 开启时间下限（RFC3339）。
+  optional google.protobuf.Timestamp open_time_start = 13;
+  // 开启时间上限（RFC3339）。
+  optional google.protobuf.Timestamp open_time_end = 14;
+  // 受影响资源 ID。
+  optional string ci_id = 15 [(buf.validate.field).string.uuid = true];
+}
+
+// ListIncidentsResponse 分页查询故障响应。
+message ListIncidentsResponse {
+  // 故障列表。
+  repeated Incident items = 1;
+  // 总数。
+  int64 total = 2;
+}
+
+// GetIncidentRequest 故障详情请求。
+message GetIncidentRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetIncidentResponse 故障详情响应。
+message GetIncidentResponse {
+  // 故障。
+  Incident incident = 1;
+}
+
+// IncidentResponse 返回更新后的故障。
+message IncidentResponse {
+  // 故障。
+  Incident incident = 1;
+}
+
+// CreateIncidentRequest 手动开故障。
+message CreateIncidentRequest {
+  // 标题。
+  string title = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 255
+  }];
+  // 等级 1-4（1 最严重）。
+  int32 severity = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 4
+  }];
+  // 业务 ID。
+  string business_id = 3 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+  // 摘要。
+  string summary = 4 [(buf.validate.field).string.max_len = 4000];
+  // alert_ids 同时关联的告警，至多 200 条。
+  repeated string alert_ids = 5 [(buf.validate.field).repeated = {
+    max_items: 200
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+  // 受影响资源 ID。
+  repeated string affected_ci_ids = 6 [(buf.validate.field).repeated = {
+    max_items: 100
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+  // commander_id 指挥，可空（按业务字典 / 兜底值班表解析）。
+  string commander_id = 7 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+  // 处理人用户 ID。
+  repeated string responder_ids = 8 [(buf.validate.field).repeated = {
+    max_items: 50
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+  // groups 通知群标识（$ 开头，如 $group:ops；对应通知管理里群机器人渠道的群），至多 10 个。
+  repeated string groups = 9 [(buf.validate.field).repeated = {
+    max_items: 10
+    unique: true
+    items: {
+      string: {pattern: "^\\$[A-Za-z0-9:_.-]{1,63}$"}
+    }
+  }];
+  // 发生时间（RFC3339，缺省为现在）。
+  optional google.protobuf.Timestamp occur_time = 10;
+  // 是否演练。
+  bool is_drill = 11;
+}
+
+// CreateIncidentResponse 新建故障响应。
+message CreateIncidentResponse {
+  // 故障。
+  Incident incident = 1;
+}
+
+// UpdateIncidentRequest 编辑故障。
+message UpdateIncidentRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // 标题。
+  string title = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 255
+  }];
+  // 业务 ID。
+  string business_id = 3 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+  // 摘要。
+  string summary = 4 [(buf.validate.field).string.max_len = 4000];
+  // 受影响资源 ID（整体替换）。
+  repeated string affected_ci_ids = 5 [(buf.validate.field).repeated = {
+    max_items: 500
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+  // groups 通知群标识（$ 开头，如 $group:ops；对应通知管理里群机器人渠道的群），至多 10 个。
+  repeated string groups = 6 [(buf.validate.field).repeated = {
+    max_items: 10
+    unique: true
+    items: {
+      string: {pattern: "^\\$[A-Za-z0-9:_.-]{1,63}$"}
+    }
+  }];
+  // 发生时间（RFC3339）。
+  optional google.protobuf.Timestamp occur_time = 7;
+  // 是否演练。
+  bool is_drill = 8;
+  // 乐观锁版本。
+  int32 version = 9 [(buf.validate.field).int32.gte = 1];
+}
+
+// UpdateIncidentResponse 编辑故障响应。
+message UpdateIncidentResponse {
+  // 故障。
+  Incident incident = 1;
+}
+
+// ChangeSeverityRequest 调整等级。
+message ChangeSeverityRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // 新等级 1-4。
+  int32 severity = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 4
+  }];
+  // 说明。
+  string note = 3 [(buf.validate.field).string.max_len = 1000];
+}
+
+// TransitionIncidentRequest 状态流转。
+message TransitionIncidentRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // action respond / mitigate / resolve / close / reopen。
+  string action = 2 [(buf.validate.field).string = {
+    in: [
+      "respond",
+      "mitigate",
+      "resolve",
+      "close",
+      "reopen"
+    ]
+  }];
+  // note 说明：恢复时为恢复说明（必填），关闭 / 重开为原因。
+  string note = 3 [(buf.validate.field).string.max_len = 4000];
+  // root_cause_code 恢复时的根因分类初判，可空。
+  string root_cause_code = 4 [(buf.validate.field).string.max_len = 32];
+  // force 关闭时跳过复盘要求（需管理权限，原因记入时间线）。
+  bool force = 5;
+}
+
+// MergeIncidentRequest 合并故障。
+message MergeIncidentRequest {
+  // 被合并的故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // target_id 合并到的故障。
+  string target_id = 2 [(buf.validate.field).string.uuid = true];
+  // 说明。
+  string note = 3 [(buf.validate.field).string.max_len = 1000];
+}
+
+// AssignCommanderRequest 指派指挥。
+message AssignCommanderRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // 新指挥官用户 ID。
+  string user_id = 2 [(buf.validate.field).string.uuid = true];
+  // 说明。
+  string note = 3 [(buf.validate.field).string.max_len = 1000];
+}
+
+// UpdateMembersRequest 维护成员。
+message UpdateMembersRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // role 2=处理人 3=关注人。
+  int32 role = 2 [(buf.validate.field).int32 = {
+    in: [
+      2,
+      3
+    ]
+  }];
+  // 加入的用户 ID。
+  repeated string add_user_ids = 3 [(buf.validate.field).repeated = {
+    max_items: 50
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+  // 移出的用户 ID。
+  repeated string remove_user_ids = 4 [(buf.validate.field).repeated = {
+    max_items: 50
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+}
+
+// AddCommentRequest 备注。
+message AddCommentRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // 评论内容。
+  string text = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 8000
+  }];
+  // file_ids 附件（file 域），至多 10 个。
+  repeated string file_ids = 3 [(buf.validate.field).repeated = {
+    max_items: 10
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+}
+
+// PinEventRequest 钉住。
+message PinEventRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // 时间线记录 ID。
+  string event_id = 2 [(buf.validate.field).string.uuid = true];
+  // true=置顶 false=取消。
+  bool pinned = 3;
+}
+
+// EventDetail 时间线细节（各类型按需填充）。
+message EventDetail {
+  // 文字。
+  string text = 1;
+  // 变更前的值（等级 / 状态）。
+  int32 from = 2;
+  // 变更后的值。
+  int32 to = 3;
+  // 涉及的用户。
+  NamedRef user = 4;
+  // 涉及的告警 ID。
+  repeated string alert_ids = 5;
+  // 涉及的告警数。
+  int32 alert_count = 6;
+  // 涉及的故障。
+  NamedRef incident = 7;
+  // 涉及的建议。
+  NamedRef proposal = 8;
+  // 涉及的工单。
+  NamedRef ticket = 9;
+  // 涉及的公告。
+  NamedRef update = 10;
+  // 升级级别。
+  int32 level = 11;
+  // 复盘版本。
+  int32 version = 12;
+  // change 变更引用：domain / kind / ref_id / summary。
+  ChangeRef change = 13;
+  // finding Agent 发现。
+  Finding finding = 14;
+  // 附件 ID。
+  repeated string file_ids = 15;
+  // 执行载体类型。
+  string exec_kind = 16;
+  // 执行载体 ID。
+  string exec_ref = 17;
+  // 错误信息。
+  string error = 18;
+}
+
+// TimelineItem 一条时间线记录。
+message TimelineItem {
+  // 记录 ID。
+  string id = 1;
+  // 记录类型。
+  string type = 2;
+  // 操作者类型：1=用户 2=系统 3=Agent。
+  int32 actor_type = 3;
+  // 操作者。
+  NamedRef actor = 4;
+  // 细节。
+  EventDetail detail = 5;
+  // 是否置顶。
+  bool pinned = 6;
+  // 时间。
+  google.protobuf.Timestamp create_time = 7;
+}
+
+// TimelineItemResponse 返回写入的时间线记录。
+message TimelineItemResponse {
+  // 记录。
+  TimelineItem item = 1;
+}
+
+// ListTimelineRequest 时间线请求。
+message ListTimelineRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // 页码（从 1 起）。
+  int64 page = 2 [(buf.validate.field).int64.gte = 1];
+  // 每页条数（最多 200）。
+  int32 page_size = 3 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 200
+  }];
+  // types 类型过滤；为空不限。
+  repeated string types = 4 [(buf.validate.field).repeated = {
+    max_items: 30
+    items: {
+      string: {max_len: 32}
+    }
+  }];
+  // pinned_only 只看钉住的。
+  optional bool pinned_only = 5;
+}
+
+// ListTimelineResponse 时间线响应。
+message ListTimelineResponse {
+  // 记录列表（时间升序）。
+  repeated TimelineItem items = 1;
+  // 总数。
+  int64 total = 2;
+}
+
+// AttachAlertsRequest 关联告警。
+message AttachAlertsRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // 告警 ID（最多 200）。
+  repeated string alert_ids = 2 [(buf.validate.field).repeated = {
+    min_items: 1
+    max_items: 200
+    unique: true
+    items: {
+      string: {uuid: true}
+    }
+  }];
+  // move 告警已属于别的活跃故障时迁移过来（否则 409）。
+  bool move = 3;
+}
+
+// AttachAlertsResponse 关联告警响应。
+message AttachAlertsResponse {
+  // 故障。
+  Incident incident = 1;
+  // attached 实际关联的数量；skipped 已在本故障内的数量。
+  int32 attached = 2;
+  // 跳过（已关联到别的活跃故障且未选择移动）的条数。
+  int32 skipped = 3;
+}
+
+// DetachAlertRequest 移出告警。
+message DetachAlertRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // 告警 ID。
+  string alert_id = 2 [(buf.validate.field).string.uuid = true];
+}
+
+// IncidentAlert 关联的告警及其当前状态。
+message IncidentAlert {
+  // 告警 ID。
+  string alert_id = 1;
+  // 监控规则名。
+  string rule_name = 2;
+  // 告警等级。
+  int32 severity = 3;
+  // status 当前状态（监控域）：1=告警中 2=已恢复 3=已关闭；0=已不存在。
+  int32 status = 4;
+  map<string, string> labels = 5;
+  // 资源。
+  NamedRef ci = 6;
+  // 首次触发时间。
+  google.protobuf.Timestamp first_fire_time = 7;
+  // 恢复时间。
+  google.protobuf.Timestamp resolve_time = 8;
+  // 关联方式：1=规则 2=手工 3=合并。
+  int32 method = 9;
+  // 关联时间。
+  google.protobuf.Timestamp attach_time = 10;
+  // 关联人。
+  NamedRef attach_user = 11;
+  // can_view 当前用户能否打开告警详情（监控域数据范围）。
+  bool can_view = 12;
+  // 触发值。
+  string value = 13;
+}
+
+// ListIncidentAlertsRequest 关联告警请求。
+message ListIncidentAlertsRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // 页码（从 1 起）。
+  int64 page = 2 [(buf.validate.field).int64.gte = 1];
+  // 每页条数（最多 100）。
+  int32 page_size = 3 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+}
+
+// ListIncidentAlertsResponse 关联告警响应。
+message ListIncidentAlertsResponse {
+  // 告警列表。
+  repeated IncidentAlert items = 1;
+  // 总数。
+  int64 total = 2;
+}
+
+// ListIncidentsByAlertRequest 告警所属故障请求。
+message ListIncidentsByAlertRequest {
+  // 告警 ID。
+  string alert_id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// ListIncidentsByAlertResponse 告警所属故障响应。
+message ListIncidentsByAlertResponse {
+  // 关联到的故障（当前有效的在前）。
+  repeated Incident items = 1;
+}
+
+// ImpactNode 影响面里的一个资源。
+message ImpactNode {
+  // 资源 ID。
+  string id = 1;
+  // 资源名。
+  string name = 2;
+  // 资源类型编码。
+  string model_code = 3;
+  // 资源类型名。
+  string model_name = 4;
+  // depth 0=受影响资源本身，1-3=下游层级。
+  int32 depth = 5;
+  // 当前用户能否查看该资源。
+  bool can_view = 6;
+  // via 由哪个受影响资源扩散而来。
+  string via = 7;
+}
+
+// GetImpactRequest 影响面请求。
+message GetImpactRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // depth 下游层数 1-3，缺省 2。
+  int32 depth = 2 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 3
+  }];
+}
+
+// GetImpactResponse 影响面响应。
+message GetImpactResponse {
+  // 受影响资源与下游。
+  repeated ImpactNode nodes = 1;
+  // 是否已截断。
+  bool truncated = 2;
+  // model_counts 下游按模型计数。
+  map<string, int32> model_counts = 3;
+}
+
+// ChangeRef 一条变更引用。
+message ChangeRef {
+  // domain k8s / job / workflow / cmdb / cicd。
+  string domain = 1;
+  // kind 对象类型（change / audit / execution / instance / history …）。
+  string kind = 2;
+  // 变更对象 ID。
+  string ref_id = 3;
+  // 摘要。
+  string summary = 4;
+  // 变更时间。
+  google.protobuf.Timestamp ref_time = 5;
+  // relation 0=未标 1=疑似原因 2=已确认原因 3=无关。
+  int32 relation = 6;
+  // 操作人。
+  NamedRef operator = 7;
+  // ci 关联的受影响资源（能对应上时）。
+  NamedRef ci = 8;
+  // url 跳转到各域详情页的站内路径。
+  string url = 9;
+  // marked_by 标注人。
+  NamedRef marked_by = 10;
+}
+
+// ListChangesRequest 变更关联请求。
+message ListChangesRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // lookback_h 回看小时数，0 = 设置缺省（24），上限 72。
+  int32 lookback_h = 2 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 72
+  }];
+}
+
+// ListChangesResponse 变更关联响应。
+message ListChangesResponse {
+  // 变更列表（时间倒序）。
+  repeated ChangeRef items = 1;
+  // partial 某些域查询失败或被粗筛（如 k8s 变更只按集群过滤）时的说明。
+  repeated string notes = 2;
+}
+
+// MarkChangeRequest 标注变更关系。
+message MarkChangeRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // 变更来源域：k8s / job / workflow / cmdb / cicd / manual（处理人手填）。
+  string domain = 2 [(buf.validate.field).string = {
+    in: [
+      "k8s",
+      "job",
+      "workflow",
+      "cmdb",
+      "cicd",
+      "manual"
+    ]
+  }];
+  // 变更类型。
+  string kind = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 32
+  }];
+  // 变更对象 ID（manual 可空，其余域必填——由服务端校验）。
+  string ref_id = 4 [
+    (buf.validate.field).string.max_len = 64,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+  // 摘要。
+  string summary = 5 [(buf.validate.field).string.max_len = 255];
+  // 变更时间（RFC3339）。
+  optional google.protobuf.Timestamp ref_time = 6;
+  // 关联关系：1=疑似原因 2=已排除 3=修复操作。
+  int32 relation = 7 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 3
+  }];
+}
+
+// MarkChangeResponse 标注响应。
+message MarkChangeResponse {
+  // 变更。
+  ChangeRef change = 1;
+}
+
+// CreateIncidentTicketRequest 故障转工单。
+message CreateIncidentTicketRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // 工单模板 ID。
+  string template_id = 2 [(buf.validate.field).string.uuid = true];
+  // 工单标题（缺省用故障标题）。
+  string title = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 255
+  }];
+  // priority 工单优先级，0 = 按等级映射。
+  int32 priority = 4 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 4
+  }];
+  // 工单描述（缺省用故障摘要）。
+  string description = 5 [(buf.validate.field).string.max_len = 4000];
+  // request_id 幂等键，可空。
+  string request_id = 6 [(buf.validate.field).string.max_len = 64];
+}
+
+// CreateIncidentTicketResponse 转工单响应。
+message CreateIncidentTicketResponse {
+  // 工单。
+  NamedRef ticket = 1;
+  // 工单编号。
+  string ticket_number = 2;
+}
+
+// IncidentUpdateBrief 公告摘要（上下文用）。
+message IncidentUpdateBrief {
+  // 公告 ID。
+  string id = 1;
+  // 公告类型：1=进展 2=缓解 3=解决。
+  int32 kind = 2;
+  // 内容。
+  string content = 3;
+  // 发布人。
+  NamedRef author = 4;
+  // 发布时间。
+  google.protobuf.Timestamp create_time = 5;
+}
+
+// PlaybookBrief 推荐预案摘要。
+message PlaybookBrief {
+  // 预案 ID。
+  string id = 1;
+  // 名称。
+  string name = 2;
+  // 说明。
+  string description = 3;
+  // 步骤数。
+  int32 step_count = 4;
+}
+
+// SimilarIncident 相似故障。
+message SimilarIncident {
+  // 故障 ID。
+  string id = 1;
+  // 编号。
+  string number = 2;
+  // 标题。
+  string title = 3;
+  // 等级。
+  int32 severity = 4;
+  // 根因分类编码。
+  string root_cause_code = 5;
+  // 根因说明。
+  string root_cause = 6;
+  // 开启时间。
+  google.protobuf.Timestamp open_time = 7;
+  // score 相似度（越大越相似）。
+  float score = 8;
+}
+
+// GetIncidentContextRequest 上下文请求。
+message GetIncidentContextRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// GetIncidentContextResponse 上下文响应（各段限量）。
+message GetIncidentContextResponse {
+  // 故障。
+  Incident incident = 1;
+  // 关联告警（限量）。
+  repeated IncidentAlert alerts = 2;
+  // 影响面。
+  repeated ImpactNode impact = 3;
+  // 近期变更。
+  repeated ChangeRef changes = 4;
+  // 最近时间线。
+  repeated TimelineItem timeline = 5;
+  // 最近公告。
+  repeated IncidentUpdateBrief updates = 6;
+  // 推荐预案。
+  repeated PlaybookBrief playbooks = 7;
+  // 相似历史故障。
+  repeated SimilarIncident similar = 8;
+  // pending_proposals 待审批的动作建议数。
+  int32 pending_proposals = 9;
+  // 截断等说明。
+  repeated string notes = 10;
+}
+
+// SearchIncidentsRequest 检索。
+message SearchIncidentsRequest {
+  // 关键词。
+  string q = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 256
+  }];
+  // exclude_id 排除的故障（当前故障）。
+  string exclude_id = 2 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+  // 返回条数上限（最多 50）。
+  int32 limit = 3 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 50
+  }];
+}
+
+// SearchIncidentsResponse 检索响应。
+message SearchIncidentsResponse {
+  // 命中的故障。
+  repeated SimilarIncident items = 1;
+}
+
+// RegenerateSummaryRequest 重新生成 AI 摘要。
+message RegenerateSummaryRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+// Candidate 候选故障。
+message Candidate {
+  // 候选 ID。
+  string id = 1;
+  // 触发规则。
+  NamedRef rule = 2;
+  // 聚合键。
+  string correlation_key = 3;
+  // 告警数。
+  int32 alert_count = 4;
+  // 涉及资源数。
+  int32 ci_count = 5;
+  // alerts 前若干条告警摘要。
+  repeated IncidentAlert alerts = 6;
+  // 状态：1=待定 2=已升级 3=已忽略 4=已过期。
+  int32 status = 7;
+  // 升级成的故障。
+  NamedRef incident = 8;
+  // 首条告警时间。
+  google.protobuf.Timestamp first_time = 9;
+  // 更新时间。
+  google.protobuf.Timestamp update_time = 10;
+}
+
+// ListCandidatesRequest 候选故障请求。
+message ListCandidatesRequest {
+  // 页码（从 1 起）。
+  int64 page = 1 [(buf.validate.field).int64.gte = 1];
+  // 每页条数（最多 100）。
+  int32 page_size = 2 [(buf.validate.field).int32 = {
+    gte: 1
+    lte: 100
+  }];
+  // status 0=全部 1=待定 2=已转正 3=已忽略 4=已过期。
+  int32 status = 3 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 4
+  }];
+}
+
+// ListCandidatesResponse 候选故障响应。
+message ListCandidatesResponse {
+  // 候选列表。
+  repeated Candidate items = 1;
+  // 总数。
+  int64 total = 2;
+}
+
+// PromoteCandidateRequest 候选转正。
+message PromoteCandidateRequest {
+  // 候选 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // title 可覆盖规则生成的标题。
+  string title = 2 [(buf.validate.field).string.max_len = 255];
+  // severity 0 = 按规则。
+  int32 severity = 3 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 4
+  }];
+}
+
+// DismissCandidateRequest 忽略候选。
+message DismissCandidateRequest {
+  // 候选 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // 说明。
+  string note = 2 [(buf.validate.field).string.max_len = 500];
+}
+
+// DismissCandidateResponse 忽略候选响应。
+message DismissCandidateResponse {}
+
+// AgentLeaseRequest 租约请求。
+message AgentLeaseRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // ttl_s 租约时长（秒），获取时用；0 = 缺省 1800，上限 7200。
+  int32 ttl_s = 2 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 7200
+  }];
+}
+
+// Finding Agent 发现。
+message Finding {
+  // 发现标题。
+  string title = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 255
+  }];
+  // 结论。
+  string conclusion = 2 [(buf.validate.field).string.max_len = 4000];
+  // confidence 置信度 0-100。
+  int32 confidence = 3 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 100
+  }];
+  // evidence 证据引用（告警 ID / 变更引用 / 查询表达式与结果片段），至多 20 条。
+  repeated string evidence = 4 [(buf.validate.field).repeated = {
+    max_items: 20
+    items: {
+      string: {max_len: 2000}
+    }
+  }];
+  // 建议的下一步。
+  string next_step = 5 [(buf.validate.field).string.max_len = 2000];
+  // run_id 产出该发现的 Agent 运行 ID（Agent 写入时携带；点击发现可跳到运行详情）。
+  string run_id = 6 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+}
+
+// AddFindingRequest 写入发现。
+message AddFindingRequest {
+  // 故障 ID。
+  string id = 1 [(buf.validate.field).string.uuid = true];
+  // 发现内容。
+  Finding finding = 2 [(buf.validate.field).required = true];
+}
+
+// ListIncidentOptionsRequest 候选项请求。
+message ListIncidentOptionsRequest {
+  // kinds 要取的候选项种类：schedules / businesses / root_causes / templates / playbooks。
+  repeated string kinds = 1 [(buf.validate.field).repeated = {
+    max_items: 10
+    items: {
+      string: {max_len: 32}
+    }
+  }];
+}
+
+// ListIncidentOptionsResponse 候选项响应。
+message ListIncidentOptionsResponse {
+  // 启用的值班表。
+  repeated NamedRef schedules = 1;
+  // 启用的业务。
+  repeated NamedRef businesses = 3;
+  // 根因分类。
+  repeated RootCause root_causes = 4;
+  // 可用的工单模板。
+  repeated NamedRef ticket_templates = 5;
+  // 启用的预案。
+  repeated PlaybookBrief playbooks = 6;
+}

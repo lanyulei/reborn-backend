@@ -600,14 +600,19 @@ const monitorSummaryBytes = 4 * mc.MaxAISummaryBytes
 // errMonitorSummaryFull 输出已达读取上限，中止流式读取（内部控制流）。
 var errMonitorSummaryFull = errors.New("monitor: summary output limit reached")
 
+// monitorSummaryConcurrency 同时进行的摘要生成数上限：摘要直接调模型客户端，不经过对话的并发
+// 名额；告警集中爆发时不加限制会挤占对话的模型连接并触发上游限流。
+const monitorSummaryConcurrency = 2
+
 type monitorSummarizer struct {
 	agent *bizassistant.AgentUsecase
 	model bizassistant.ChatModel
+	sem   chan struct{}
 }
 
 // NewMonitorSummarizer 构造监控域的文本摘要适配器：直接调助手域的模型客户端，不带任何工具、不落会话。
 func NewMonitorSummarizer(agent *bizassistant.AgentUsecase, model bizassistant.ChatModel) bizmonitor.Summarizer {
-	return monitorSummarizer{agent: agent, model: model}
+	return monitorSummarizer{agent: agent, model: model, sem: make(chan struct{}, monitorSummaryConcurrency)}
 }
 
 // Available implements bizmonitor.Summarizer.
@@ -615,6 +620,13 @@ func (m monitorSummarizer) Available() bool { return m.agent.Enabled() }
 
 // Summarize implements bizmonitor.Summarizer.
 func (m monitorSummarizer) Summarize(ctx context.Context, system, prompt string) (string, error) {
+	// 排队等名额：等到调用方的超时为止（超时按失败返回，由动作队列按既有策略重试）。
+	select {
+	case m.sem <- struct{}{}:
+		defer func() { <-m.sem }()
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
 	var b strings.Builder
 	out, err := m.model.Stream(ctx, bizassistant.ChatRequest{
 		System: system, Messages: []*bizassistant.Message{{Role: bizassistant.RoleUser, Content: prompt}},

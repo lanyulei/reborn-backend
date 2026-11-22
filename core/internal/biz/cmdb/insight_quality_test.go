@@ -82,3 +82,37 @@ func (s *slowOverview) Quality(context.Context, OverviewFilter, time.Time) ([]*Q
 	<-s.release
 	return []*QualityRow{{ModelCode: "host"}}, nil
 }
+
+// 运营概览按（范围，天数）缓存：同一组合在有效期内只算一次；天数不同各算各的；返回值是副本。
+func TestInsightUsecase_OverviewCache(t *testing.T) {
+	t.Parallel()
+	repo := &countingStats{}
+	uc := NewInsightUsecase(nil, nil, repo, nil, nil, nil)
+	ctx := context.Background()
+	a1, err := uc.Overview(ctx, OverviewFilter{}, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a1.ByModel[0].Count = 99 // 改写返回值不得污染缓存
+	a2, _ := uc.Overview(ctx, OverviewFilter{}, 7)
+	if repo.calls != 1 || a2.ByModel[0].Count != 1 || a2.Days != 7 {
+		t.Fatalf("same scope and days must hit the cache: calls=%d overview=%+v", repo.calls, a2)
+	}
+	if _, _ = uc.Overview(ctx, OverviewFilter{}, 30); repo.calls != 2 {
+		t.Fatalf("different days must not share the entry: calls=%d", repo.calls)
+	}
+	if _, _ = uc.Overview(ctx, OverviewFilter{ModelCodes: []string{}}, 7); repo.calls != 3 {
+		t.Fatalf("empty scope must not share the unrestricted entry: calls=%d", repo.calls)
+	}
+}
+
+type countingStats struct{ calls int }
+
+func (c *countingStats) Stats(context.Context, OverviewFilter) (*Overview, error) {
+	c.calls++
+	return &Overview{ByModel: []OverviewCount{{Key: "host", Count: int64(c.calls)}}}, nil
+}
+
+func (c *countingStats) Quality(context.Context, OverviewFilter, time.Time) ([]*QualityRow, error) {
+	return nil, nil
+}

@@ -59,7 +59,8 @@ func (s *AssistantService) ListMessages(ctx context.Context, req *v1.ListMessage
 	}
 	byID := make(map[string]*biz.ToolCall, len(calls))
 	for _, c := range calls {
-		byID[c.CallID] = c
+		// 模型侧调用 ID 只在一条 assistant 消息内唯一（有的接口跨轮复用），须连同消息 ID 作键。
+		byID[c.MessageID+"/"+c.CallID] = c
 	}
 	resp := &v1.ListMessagesResponse{Items: make([]*v1.AssistantMessage, 0, len(msgs))}
 	var turn *v1.AssistantMessage
@@ -93,7 +94,7 @@ func (s *AssistantService) ListMessages(ctx context.Context, req *v1.ListMessage
 				reasons = append(reasons, m.Reasoning)
 			}
 			for _, ref := range m.ToolCalls {
-				if tc, ok := byID[ref.ID]; ok {
+				if tc, ok := byID[m.ID+"/"+ref.ID]; ok {
 					turn.ToolCalls = append(turn.ToolCalls, toProtoToolCall(tc))
 				}
 			}
@@ -155,7 +156,10 @@ func (s *AssistantChatService) StreamChat(ctx context.Context, req *v1.ChatReque
 	}
 	in.ConversationID = req.GetConversationId()
 	in.Content = req.GetContent()
-	return s.uc.Run(ctx, in, emit)
+	if c := req.GetContext(); c != nil {
+		in.Context = &biz.ChatContext{Type: c.GetType(), ID: c.GetId()}
+	}
+	return s.uc.Run(biz.WithClientIP(ctx, systemservice.ClientIP(ctx)), in, emit)
 }
 
 // StreamConfirm 对待确认操作做裁决并继续本轮对话。
@@ -166,7 +170,7 @@ func (s *AssistantChatService) StreamConfirm(ctx context.Context, req *v1.Confir
 	}
 	in.ConversationID = req.GetConversationId()
 	in.Confirm = &biz.Confirmation{ToolCallID: req.GetToolCallId(), Approved: req.GetApproved()}
-	return s.uc.Run(ctx, in, emit)
+	return s.uc.Run(biz.WithClientIP(ctx, systemservice.ClientIP(ctx)), in, emit)
 }
 
 // runInput 取操作者身份与其访问令牌（回环调用以同一身份执行，权限由既有中间件判定）。

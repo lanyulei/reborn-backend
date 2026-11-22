@@ -73,8 +73,13 @@ enum ErrorReason {
   DEPT_MOVE_INVALID = 26 [(errors.code) = 400];
   // DEPT_DEPTH_EXCEEDED 部门层级超过上限，映射 HTTP 400。
   DEPT_DEPTH_EXCEEDED = 27 [(errors.code) = 400];
+  // USER_MACHINE_ACCOUNT 机器账号不能登录、不能改密码 / 资料 / 头像，也不能被当作人类账号编辑，映射 HTTP 400。
+  USER_MACHINE_ACCOUNT = 40 [(errors.code) = 400];
   // DEPT_LIMIT_EXCEEDED 部门总数或单个用户所属部门数超过上限，映射 HTTP 400。
   DEPT_LIMIT_EXCEEDED = 28 [(errors.code) = 400];
   // IMAGE_TYPE_INVALID 上传的 logo / 头像不是允许的图片格式（按文件内容判定，不看声明的类型），映射 HTTP 400。
   IMAGE_TYPE_INVALID = 29 [(errors.code) = 400];
+  // PASSWORD_MISMATCH 自助修改密码时提供的现密码不正确，映射 HTTP 400（已认证用户的自助接口，不走 401
+  // 以免客户端误判为令牌失效）。
+  PASSWORD_MISMATCH = 30 [(errors.code) = 400];
 }

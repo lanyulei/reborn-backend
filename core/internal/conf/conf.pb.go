@@ -7,14 +7,13 @@
 package conf
 
 import (
-	reflect "reflect"
-	sync "sync"
-	unsafe "unsafe"
-
 	kitconf "github.com/lanyulei/reborn/backend/kit/kitconf"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	durationpb "google.golang.org/protobuf/types/known/durationpb"
+	reflect "reflect"
+	sync "sync"
+	unsafe "unsafe"
 )
 
 const (
@@ -40,7 +39,11 @@ type Bootstrap struct {
 	// monitor 监控告警域配置（通知链接的站点地址、出站地址限制）。
 	Monitor *Monitor `protobuf:"bytes,6,opt,name=monitor,proto3" json:"monitor,omitempty"`
 	// k8s 容器平台域配置（与数据面之间的内部密钥、Agent 安装参数）。
-	K8S           *K8S `protobuf:"bytes,7,opt,name=k8s,proto3" json:"k8s,omitempty"`
+	K8S *K8S `protobuf:"bytes,7,opt,name=k8s,proto3" json:"k8s,omitempty"`
+	// knowledge 知识库域配置（embedding 服务接入、索引与检索参数）。
+	Knowledge *Knowledge `protobuf:"bytes,8,opt,name=knowledge,proto3" json:"knowledge,omitempty"`
+	// agent 运维 Agent 域配置（任务预算、并发、保留期）；整段可省略 = 停用。
+	Agent         *Agent `protobuf:"bytes,9,opt,name=agent,proto3" json:"agent,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -120,6 +123,20 @@ func (x *Bootstrap) GetMonitor() *Monitor {
 func (x *Bootstrap) GetK8S() *K8S {
 	if x != nil {
 		return x.K8S
+	}
+	return nil
+}
+
+func (x *Bootstrap) GetKnowledge() *Knowledge {
+	if x != nil {
+		return x.Knowledge
+	}
+	return nil
+}
+
+func (x *Bootstrap) GetAgent() *Agent {
+	if x != nil {
+		return x.Agent
 	}
 	return nil
 }
@@ -476,6 +493,134 @@ func (x *Assistant) GetMaxConcurrentRuns() int32 {
 	return 0
 }
 
+// Agent 是运维 Agent 域配置；整段可省略（省略时 Agent 停用：不领取任务，接口返回 AGENT_DISABLED）。
+// 模型接入、API Key 与工具执行回环地址沿用 assistant 段（Agent 复用助手的模型客户端与回环执行器）。
+type Agent struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// enabled 是否启用；assistant.api_key 为空时即使 enabled 也不可用。
+	Enabled bool `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	// task_timeout 单任务时限（Profile 预算未设置时的缺省），缺省 8m。
+	TaskTimeout *durationpb.Duration `protobuf:"bytes,2,opt,name=task_timeout,json=taskTimeout,proto3" json:"task_timeout,omitempty"`
+	// max_steps 单任务最多模型调用次数（Profile 预算未设置时的缺省），缺省 20。
+	MaxSteps int32 `protobuf:"varint,3,opt,name=max_steps,json=maxSteps,proto3" json:"max_steps,omitempty"`
+	// max_concurrent_tasks 单实例并发任务数，缺省 3。
+	MaxConcurrentTasks int32 `protobuf:"varint,4,opt,name=max_concurrent_tasks,json=maxConcurrentTasks,proto3" json:"max_concurrent_tasks,omitempty"`
+	// daily_prompt_token_budget 全局日 prompt token 预算，缺省 2000000；耗尽后新任务直接 expired。
+	DailyPromptTokenBudget int64 `protobuf:"varint,5,opt,name=daily_prompt_token_budget,json=dailyPromptTokenBudget,proto3" json:"daily_prompt_token_budget,omitempty"`
+	// daily_completion_token_budget 全局日 completion token 预算，缺省 300000。
+	DailyCompletionTokenBudget int64 `protobuf:"varint,6,opt,name=daily_completion_token_budget,json=dailyCompletionTokenBudget,proto3" json:"daily_completion_token_budget,omitempty"`
+	// tool_timeout_overrides 按工具（proto full method）的回环调用超时覆盖（日志 / 诊断类接口用），其余沿用 assistant.tool_timeout。
+	ToolTimeoutOverrides map[string]*durationpb.Duration `protobuf:"bytes,7,rep,name=tool_timeout_overrides,json=toolTimeoutOverrides,proto3" json:"tool_timeout_overrides,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// retention 运行记录与其助手会话的保留期，缺省 2160h（90 天）。
+	Retention *durationpb.Duration `protobuf:"bytes,8,opt,name=retention,proto3" json:"retention,omitempty"`
+	// queue_ttl 排队超时：超过未执行的任务直接 expired，缺省 10m。
+	QueueTtl *durationpb.Duration `protobuf:"bytes,9,opt,name=queue_ttl,json=queueTtl,proto3" json:"queue_ttl,omitempty"`
+	// retry_backoff 失败重试退避序列，缺省 [30s, 2m, 10m]；长度即最多重试次数。
+	RetryBackoff  []*durationpb.Duration `protobuf:"bytes,10,rep,name=retry_backoff,json=retryBackoff,proto3" json:"retry_backoff,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Agent) Reset() {
+	*x = Agent{}
+	mi := &file_conf_conf_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Agent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Agent) ProtoMessage() {}
+
+func (x *Agent) ProtoReflect() protoreflect.Message {
+	mi := &file_conf_conf_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Agent.ProtoReflect.Descriptor instead.
+func (*Agent) Descriptor() ([]byte, []int) {
+	return file_conf_conf_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *Agent) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
+func (x *Agent) GetTaskTimeout() *durationpb.Duration {
+	if x != nil {
+		return x.TaskTimeout
+	}
+	return nil
+}
+
+func (x *Agent) GetMaxSteps() int32 {
+	if x != nil {
+		return x.MaxSteps
+	}
+	return 0
+}
+
+func (x *Agent) GetMaxConcurrentTasks() int32 {
+	if x != nil {
+		return x.MaxConcurrentTasks
+	}
+	return 0
+}
+
+func (x *Agent) GetDailyPromptTokenBudget() int64 {
+	if x != nil {
+		return x.DailyPromptTokenBudget
+	}
+	return 0
+}
+
+func (x *Agent) GetDailyCompletionTokenBudget() int64 {
+	if x != nil {
+		return x.DailyCompletionTokenBudget
+	}
+	return 0
+}
+
+func (x *Agent) GetToolTimeoutOverrides() map[string]*durationpb.Duration {
+	if x != nil {
+		return x.ToolTimeoutOverrides
+	}
+	return nil
+}
+
+func (x *Agent) GetRetention() *durationpb.Duration {
+	if x != nil {
+		return x.Retention
+	}
+	return nil
+}
+
+func (x *Agent) GetQueueTtl() *durationpb.Duration {
+	if x != nil {
+		return x.QueueTtl
+	}
+	return nil
+}
+
+func (x *Agent) GetRetryBackoff() []*durationpb.Duration {
+	if x != nil {
+		return x.RetryBackoff
+	}
+	return nil
+}
+
 // Monitor 是监控告警域配置；整段可省略。
 type Monitor struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -503,7 +648,7 @@ type Monitor struct {
 
 func (x *Monitor) Reset() {
 	*x = Monitor{}
-	mi := &file_conf_conf_proto_msgTypes[6]
+	mi := &file_conf_conf_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -515,7 +660,7 @@ func (x *Monitor) String() string {
 func (*Monitor) ProtoMessage() {}
 
 func (x *Monitor) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[6]
+	mi := &file_conf_conf_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -528,7 +673,7 @@ func (x *Monitor) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Monitor.ProtoReflect.Descriptor instead.
 func (*Monitor) Descriptor() ([]byte, []int) {
-	return file_conf_conf_proto_rawDescGZIP(), []int{6}
+	return file_conf_conf_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *Monitor) GetSiteUrl() string {
@@ -594,7 +739,7 @@ type K8S struct {
 
 func (x *K8S) Reset() {
 	*x = K8S{}
-	mi := &file_conf_conf_proto_msgTypes[7]
+	mi := &file_conf_conf_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -606,7 +751,7 @@ func (x *K8S) String() string {
 func (*K8S) ProtoMessage() {}
 
 func (x *K8S) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[7]
+	mi := &file_conf_conf_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -619,7 +764,7 @@ func (x *K8S) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use K8S.ProtoReflect.Descriptor instead.
 func (*K8S) Descriptor() ([]byte, []int) {
-	return file_conf_conf_proto_rawDescGZIP(), []int{7}
+	return file_conf_conf_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *K8S) GetInternalKey() string {
@@ -657,6 +802,70 @@ func (x *K8S) GetKubeconfig() *K8S_Kubeconfig {
 	return nil
 }
 
+// Knowledge 是知识库域配置；整段可省略（省略时知识库可用，检索退化为纯全文）。
+type Knowledge struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// embedding 向量化服务。
+	Embedding *Knowledge_Embedding `protobuf:"bytes,1,opt,name=embedding,proto3" json:"embedding,omitempty"`
+	// search_log_retention 检索日志保留期；缺省 90 天（2160h = 7776000s）。
+	SearchLogRetention *durationpb.Duration `protobuf:"bytes,2,opt,name=search_log_retention,json=searchLogRetention,proto3" json:"search_log_retention,omitempty"`
+	// index_concurrency 单实例同时处理的索引任务数；缺省 2。
+	IndexConcurrency int32 `protobuf:"varint,3,opt,name=index_concurrency,json=indexConcurrency,proto3" json:"index_concurrency,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *Knowledge) Reset() {
+	*x = Knowledge{}
+	mi := &file_conf_conf_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Knowledge) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Knowledge) ProtoMessage() {}
+
+func (x *Knowledge) ProtoReflect() protoreflect.Message {
+	mi := &file_conf_conf_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Knowledge.ProtoReflect.Descriptor instead.
+func (*Knowledge) Descriptor() ([]byte, []int) {
+	return file_conf_conf_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *Knowledge) GetEmbedding() *Knowledge_Embedding {
+	if x != nil {
+		return x.Embedding
+	}
+	return nil
+}
+
+func (x *Knowledge) GetSearchLogRetention() *durationpb.Duration {
+	if x != nil {
+		return x.SearchLogRetention
+	}
+	return nil
+}
+
+func (x *Knowledge) GetIndexConcurrency() int32 {
+	if x != nil {
+		return x.IndexConcurrency
+	}
+	return 0
+}
+
 // Upload 是上传文件的存储配置。
 type Data_Upload struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -675,7 +884,7 @@ type Data_Upload struct {
 
 func (x *Data_Upload) Reset() {
 	*x = Data_Upload{}
-	mi := &file_conf_conf_proto_msgTypes[8]
+	mi := &file_conf_conf_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -687,7 +896,7 @@ func (x *Data_Upload) String() string {
 func (*Data_Upload) ProtoMessage() {}
 
 func (x *Data_Upload) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[8]
+	mi := &file_conf_conf_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -749,7 +958,7 @@ type Data_Upload_S3 struct {
 
 func (x *Data_Upload_S3) Reset() {
 	*x = Data_Upload_S3{}
-	mi := &file_conf_conf_proto_msgTypes[9]
+	mi := &file_conf_conf_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -761,7 +970,7 @@ func (x *Data_Upload_S3) String() string {
 func (*Data_Upload_S3) ProtoMessage() {}
 
 func (x *Data_Upload_S3) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[9]
+	mi := &file_conf_conf_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -838,7 +1047,7 @@ type Security_Authz struct {
 
 func (x *Security_Authz) Reset() {
 	*x = Security_Authz{}
-	mi := &file_conf_conf_proto_msgTypes[10]
+	mi := &file_conf_conf_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -850,7 +1059,7 @@ func (x *Security_Authz) String() string {
 func (*Security_Authz) ProtoMessage() {}
 
 func (x *Security_Authz) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[10]
+	mi := &file_conf_conf_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -888,7 +1097,7 @@ type Security_Password struct {
 
 func (x *Security_Password) Reset() {
 	*x = Security_Password{}
-	mi := &file_conf_conf_proto_msgTypes[11]
+	mi := &file_conf_conf_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -900,7 +1109,7 @@ func (x *Security_Password) String() string {
 func (*Security_Password) ProtoMessage() {}
 
 func (x *Security_Password) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[11]
+	mi := &file_conf_conf_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -955,7 +1164,7 @@ type Security_Jwt struct {
 
 func (x *Security_Jwt) Reset() {
 	*x = Security_Jwt{}
-	mi := &file_conf_conf_proto_msgTypes[12]
+	mi := &file_conf_conf_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -967,7 +1176,7 @@ func (x *Security_Jwt) String() string {
 func (*Security_Jwt) ProtoMessage() {}
 
 func (x *Security_Jwt) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[12]
+	mi := &file_conf_conf_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1024,7 +1233,7 @@ type K8S_Agent struct {
 
 func (x *K8S_Agent) Reset() {
 	*x = K8S_Agent{}
-	mi := &file_conf_conf_proto_msgTypes[13]
+	mi := &file_conf_conf_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1036,7 +1245,7 @@ func (x *K8S_Agent) String() string {
 func (*K8S_Agent) ProtoMessage() {}
 
 func (x *K8S_Agent) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[13]
+	mi := &file_conf_conf_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1049,7 +1258,7 @@ func (x *K8S_Agent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use K8S_Agent.ProtoReflect.Descriptor instead.
 func (*K8S_Agent) Descriptor() ([]byte, []int) {
-	return file_conf_conf_proto_rawDescGZIP(), []int{7, 0}
+	return file_conf_conf_proto_rawDescGZIP(), []int{8, 0}
 }
 
 func (x *K8S_Agent) GetServerUrl() string {
@@ -1080,7 +1289,7 @@ type K8S_Kubeconfig struct {
 
 func (x *K8S_Kubeconfig) Reset() {
 	*x = K8S_Kubeconfig{}
-	mi := &file_conf_conf_proto_msgTypes[14]
+	mi := &file_conf_conf_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1092,7 +1301,7 @@ func (x *K8S_Kubeconfig) String() string {
 func (*K8S_Kubeconfig) ProtoMessage() {}
 
 func (x *K8S_Kubeconfig) ProtoReflect() protoreflect.Message {
-	mi := &file_conf_conf_proto_msgTypes[14]
+	mi := &file_conf_conf_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1105,7 +1314,7 @@ func (x *K8S_Kubeconfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use K8S_Kubeconfig.ProtoReflect.Descriptor instead.
 func (*K8S_Kubeconfig) Descriptor() ([]byte, []int) {
-	return file_conf_conf_proto_rawDescGZIP(), []int{7, 1}
+	return file_conf_conf_proto_rawDescGZIP(), []int{8, 1}
 }
 
 func (x *K8S_Kubeconfig) GetServerUrl() string {
@@ -1122,11 +1331,96 @@ func (x *K8S_Kubeconfig) GetMaxTtl() *durationpb.Duration {
 	return nil
 }
 
+// Embedding 是向量化服务（OpenAI 兼容 /v1/embeddings）接入参数；与 assistant 的对话模型分离，
+// 二者通常不是同一供应商。api_key 为空即不向量化。
+type Knowledge_Embedding struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// base_url OpenAI 兼容接口根地址（如 https://api.siliconflow.cn/v1）。
+	BaseUrl string `protobuf:"bytes,1,opt,name=base_url,json=baseUrl,proto3" json:"base_url,omitempty"`
+	// api_key 一律经 KRATOS_KNOWLEDGE_EMBEDDING_API_KEY 环境变量注入（占位符 ${KNOWLEDGE_EMBEDDING_API_KEY}）；
+	// 为空即停用向量化，检索只走全文。
+	ApiKey string `protobuf:"bytes,2,opt,name=api_key,json=apiKey,proto3" json:"api_key,omitempty"`
+	// model 模型名（如 BAAI/bge-m3）。向量维度固定 1024：支持 dimensions 参数的模型按 1024 请求，
+	// 固定维度的模型须本身为 1024 维；维度不符的结果被拒绝并记入索引任务失败原因。
+	Model string `protobuf:"bytes,3,opt,name=model,proto3" json:"model,omitempty"`
+	// batch_size 单次请求的分块数上限；缺省 32，上限 128。
+	BatchSize int32 `protobuf:"varint,4,opt,name=batch_size,json=batchSize,proto3" json:"batch_size,omitempty"`
+	// timeout 单次请求超时；缺省 30s。
+	Timeout       *durationpb.Duration `protobuf:"bytes,5,opt,name=timeout,proto3" json:"timeout,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Knowledge_Embedding) Reset() {
+	*x = Knowledge_Embedding{}
+	mi := &file_conf_conf_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Knowledge_Embedding) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Knowledge_Embedding) ProtoMessage() {}
+
+func (x *Knowledge_Embedding) ProtoReflect() protoreflect.Message {
+	mi := &file_conf_conf_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Knowledge_Embedding.ProtoReflect.Descriptor instead.
+func (*Knowledge_Embedding) Descriptor() ([]byte, []int) {
+	return file_conf_conf_proto_rawDescGZIP(), []int{9, 0}
+}
+
+func (x *Knowledge_Embedding) GetBaseUrl() string {
+	if x != nil {
+		return x.BaseUrl
+	}
+	return ""
+}
+
+func (x *Knowledge_Embedding) GetApiKey() string {
+	if x != nil {
+		return x.ApiKey
+	}
+	return ""
+}
+
+func (x *Knowledge_Embedding) GetModel() string {
+	if x != nil {
+		return x.Model
+	}
+	return ""
+}
+
+func (x *Knowledge_Embedding) GetBatchSize() int32 {
+	if x != nil {
+		return x.BatchSize
+	}
+	return 0
+}
+
+func (x *Knowledge_Embedding) GetTimeout() *durationpb.Duration {
+	if x != nil {
+		return x.Timeout
+	}
+	return nil
+}
+
 var File_conf_conf_proto protoreflect.FileDescriptor
 
 const file_conf_conf_proto_rawDesc = "" +
 	"\n" +
-	"\x0fconf/conf.proto\x12\x04conf\x1a\x1egoogle/protobuf/duration.proto\x1a\x14kitconf/common.proto\"\x98\x02\n" +
+	"\x0fconf/conf.proto\x12\x04conf\x1a\x1egoogle/protobuf/duration.proto\x1a\x14kitconf/common.proto\"\xea\x02\n" +
 	"\tBootstrap\x12$\n" +
 	"\x06server\x18\x01 \x01(\v2\f.conf.ServerR\x06server\x12\x1e\n" +
 	"\x04data\x18\x02 \x01(\v2\n" +
@@ -1135,7 +1429,9 @@ const file_conf_conf_proto_rawDesc = "" +
 	"\x06notify\x18\x04 \x01(\v2\f.conf.NotifyR\x06notify\x12-\n" +
 	"\tassistant\x18\x05 \x01(\v2\x0f.conf.AssistantR\tassistant\x12'\n" +
 	"\amonitor\x18\x06 \x01(\v2\r.conf.MonitorR\amonitor\x12\x1b\n" +
-	"\x03k8s\x18\a \x01(\v2\t.conf.K8sR\x03k8s\"A\n" +
+	"\x03k8s\x18\a \x01(\v2\t.conf.K8sR\x03k8s\x12-\n" +
+	"\tknowledge\x18\b \x01(\v2\x0f.conf.KnowledgeR\tknowledge\x12!\n" +
+	"\x05agent\x18\t \x01(\v2\v.conf.AgentR\x05agent\"A\n" +
 	"\x06Server\x12!\n" +
 	"\x04http\x18\x01 \x01(\v2\r.kitconf.HTTPR\x04http\x12\x14\n" +
 	"\x05roles\x18\x02 \x03(\tR\x05roles\"\x83\x03\n" +
@@ -1189,7 +1485,22 @@ const file_conf_conf_proto_rawDesc = "" +
 	"\x13llm_connect_timeout\x18\x06 \x01(\v2\x19.google.protobuf.DurationR\x11llmConnectTimeout\x12<\n" +
 	"\ftool_timeout\x18\a \x01(\v2\x19.google.protobuf.DurationR\vtoolTimeout\x12\x1b\n" +
 	"\tmax_steps\x18\b \x01(\x05R\bmaxSteps\x12.\n" +
-	"\x13max_concurrent_runs\x18\t \x01(\x05R\x11maxConcurrentRuns\"\x99\x02\n" +
+	"\x13max_concurrent_runs\x18\t \x01(\x05R\x11maxConcurrentRuns\"\x9e\x05\n" +
+	"\x05Agent\x12\x18\n" +
+	"\aenabled\x18\x01 \x01(\bR\aenabled\x12<\n" +
+	"\ftask_timeout\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\vtaskTimeout\x12\x1b\n" +
+	"\tmax_steps\x18\x03 \x01(\x05R\bmaxSteps\x120\n" +
+	"\x14max_concurrent_tasks\x18\x04 \x01(\x05R\x12maxConcurrentTasks\x129\n" +
+	"\x19daily_prompt_token_budget\x18\x05 \x01(\x03R\x16dailyPromptTokenBudget\x12A\n" +
+	"\x1ddaily_completion_token_budget\x18\x06 \x01(\x03R\x1adailyCompletionTokenBudget\x12[\n" +
+	"\x16tool_timeout_overrides\x18\a \x03(\v2%.conf.Agent.ToolTimeoutOverridesEntryR\x14toolTimeoutOverrides\x127\n" +
+	"\tretention\x18\b \x01(\v2\x19.google.protobuf.DurationR\tretention\x126\n" +
+	"\tqueue_ttl\x18\t \x01(\v2\x19.google.protobuf.DurationR\bqueueTtl\x12>\n" +
+	"\rretry_backoff\x18\n" +
+	" \x03(\v2\x19.google.protobuf.DurationR\fretryBackoff\x1ab\n" +
+	"\x19ToolTimeoutOverridesEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12/\n" +
+	"\x05value\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\x05value:\x028\x01\"\x99\x02\n" +
 	"\aMonitor\x12\x19\n" +
 	"\bsite_url\x18\x01 \x01(\tR\asiteUrl\x12%\n" +
 	"\x0eblock_loopback\x18\x02 \x01(\bR\rblockLoopback\x12$\n" +
@@ -1213,7 +1524,18 @@ const file_conf_conf_proto_rawDesc = "" +
 	"Kubeconfig\x12\x1d\n" +
 	"\n" +
 	"server_url\x18\x01 \x01(\tR\tserverUrl\x122\n" +
-	"\amax_ttl\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\x06maxTtlB<Z:github.com/lanyulei/reborn/backend/core/internal/conf;confb\x06proto3"
+	"\amax_ttl\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\x06maxTtl\"\xea\x02\n" +
+	"\tKnowledge\x127\n" +
+	"\tembedding\x18\x01 \x01(\v2\x19.conf.Knowledge.EmbeddingR\tembedding\x12K\n" +
+	"\x14search_log_retention\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\x12searchLogRetention\x12+\n" +
+	"\x11index_concurrency\x18\x03 \x01(\x05R\x10indexConcurrency\x1a\xa9\x01\n" +
+	"\tEmbedding\x12\x19\n" +
+	"\bbase_url\x18\x01 \x01(\tR\abaseUrl\x12\x17\n" +
+	"\aapi_key\x18\x02 \x01(\tR\x06apiKey\x12\x14\n" +
+	"\x05model\x18\x03 \x01(\tR\x05model\x12\x1d\n" +
+	"\n" +
+	"batch_size\x18\x04 \x01(\x05R\tbatchSize\x123\n" +
+	"\atimeout\x18\x05 \x01(\v2\x19.google.protobuf.DurationR\atimeoutB<Z:github.com/lanyulei/reborn/backend/core/internal/conf;confb\x06proto3"
 
 var (
 	file_conf_conf_proto_rawDescOnce sync.Once
@@ -1227,64 +1549,76 @@ func file_conf_conf_proto_rawDescGZIP() []byte {
 	return file_conf_conf_proto_rawDescData
 }
 
-var (
-	file_conf_conf_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
-	file_conf_conf_proto_goTypes  = []any{
-		(*Bootstrap)(nil),           // 0: conf.Bootstrap
-		(*Server)(nil),              // 1: conf.Server
-		(*Data)(nil),                // 2: conf.Data
-		(*Security)(nil),            // 3: conf.Security
-		(*Notify)(nil),              // 4: conf.Notify
-		(*Assistant)(nil),           // 5: conf.Assistant
-		(*Monitor)(nil),             // 6: conf.Monitor
-		(*K8S)(nil),                 // 7: conf.K8s
-		(*Data_Upload)(nil),         // 8: conf.Data.Upload
-		(*Data_Upload_S3)(nil),      // 9: conf.Data.Upload.S3
-		(*Security_Authz)(nil),      // 10: conf.Security.Authz
-		(*Security_Password)(nil),   // 11: conf.Security.Password
-		(*Security_Jwt)(nil),        // 12: conf.Security.Jwt
-		(*K8S_Agent)(nil),           // 13: conf.K8s.Agent
-		(*K8S_Kubeconfig)(nil),      // 14: conf.K8s.Kubeconfig
-		(*kitconf.HTTP)(nil),        // 15: kitconf.HTTP
-		(*kitconf.Database)(nil),    // 16: kitconf.Database
-		(*kitconf.Master)(nil),      // 17: kitconf.Master
-		(*durationpb.Duration)(nil), // 18: google.protobuf.Duration
-	}
-)
-
+var file_conf_conf_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
+var file_conf_conf_proto_goTypes = []any{
+	(*Bootstrap)(nil),           // 0: conf.Bootstrap
+	(*Server)(nil),              // 1: conf.Server
+	(*Data)(nil),                // 2: conf.Data
+	(*Security)(nil),            // 3: conf.Security
+	(*Notify)(nil),              // 4: conf.Notify
+	(*Assistant)(nil),           // 5: conf.Assistant
+	(*Agent)(nil),               // 6: conf.Agent
+	(*Monitor)(nil),             // 7: conf.Monitor
+	(*K8S)(nil),                 // 8: conf.K8s
+	(*Knowledge)(nil),           // 9: conf.Knowledge
+	(*Data_Upload)(nil),         // 10: conf.Data.Upload
+	(*Data_Upload_S3)(nil),      // 11: conf.Data.Upload.S3
+	(*Security_Authz)(nil),      // 12: conf.Security.Authz
+	(*Security_Password)(nil),   // 13: conf.Security.Password
+	(*Security_Jwt)(nil),        // 14: conf.Security.Jwt
+	nil,                         // 15: conf.Agent.ToolTimeoutOverridesEntry
+	(*K8S_Agent)(nil),           // 16: conf.K8s.Agent
+	(*K8S_Kubeconfig)(nil),      // 17: conf.K8s.Kubeconfig
+	(*Knowledge_Embedding)(nil), // 18: conf.Knowledge.Embedding
+	(*kitconf.HTTP)(nil),        // 19: kitconf.HTTP
+	(*kitconf.Database)(nil),    // 20: kitconf.Database
+	(*kitconf.Master)(nil),      // 21: kitconf.Master
+	(*durationpb.Duration)(nil), // 22: google.protobuf.Duration
+}
 var file_conf_conf_proto_depIdxs = []int32{
 	1,  // 0: conf.Bootstrap.server:type_name -> conf.Server
 	2,  // 1: conf.Bootstrap.data:type_name -> conf.Data
 	3,  // 2: conf.Bootstrap.security:type_name -> conf.Security
 	4,  // 3: conf.Bootstrap.notify:type_name -> conf.Notify
 	5,  // 4: conf.Bootstrap.assistant:type_name -> conf.Assistant
-	6,  // 5: conf.Bootstrap.monitor:type_name -> conf.Monitor
-	7,  // 6: conf.Bootstrap.k8s:type_name -> conf.K8s
-	15, // 7: conf.Server.http:type_name -> kitconf.HTTP
-	16, // 8: conf.Data.database:type_name -> kitconf.Database
-	8,  // 9: conf.Data.upload:type_name -> conf.Data.Upload
-	11, // 10: conf.Security.password:type_name -> conf.Security.Password
-	12, // 11: conf.Security.jwt:type_name -> conf.Security.Jwt
-	10, // 12: conf.Security.authz:type_name -> conf.Security.Authz
-	17, // 13: conf.Notify.master:type_name -> kitconf.Master
-	18, // 14: conf.Notify.dedup_ttl:type_name -> google.protobuf.Duration
-	18, // 15: conf.Assistant.timeout:type_name -> google.protobuf.Duration
-	18, // 16: conf.Assistant.llm_connect_timeout:type_name -> google.protobuf.Duration
-	18, // 17: conf.Assistant.tool_timeout:type_name -> google.protobuf.Duration
-	18, // 18: conf.Monitor.ai_summary_timeout:type_name -> google.protobuf.Duration
-	13, // 19: conf.K8s.agent:type_name -> conf.K8s.Agent
-	18, // 20: conf.K8s.plane_timeout:type_name -> google.protobuf.Duration
-	14, // 21: conf.K8s.kubeconfig:type_name -> conf.K8s.Kubeconfig
-	9,  // 22: conf.Data.Upload.s3:type_name -> conf.Data.Upload.S3
-	18, // 23: conf.Security.Authz.policy_ttl:type_name -> google.protobuf.Duration
-	18, // 24: conf.Security.Jwt.access_ttl:type_name -> google.protobuf.Duration
-	18, // 25: conf.Security.Jwt.refresh_ttl:type_name -> google.protobuf.Duration
-	18, // 26: conf.K8s.Kubeconfig.max_ttl:type_name -> google.protobuf.Duration
-	27, // [27:27] is the sub-list for method output_type
-	27, // [27:27] is the sub-list for method input_type
-	27, // [27:27] is the sub-list for extension type_name
-	27, // [27:27] is the sub-list for extension extendee
-	0,  // [0:27] is the sub-list for field type_name
+	7,  // 5: conf.Bootstrap.monitor:type_name -> conf.Monitor
+	8,  // 6: conf.Bootstrap.k8s:type_name -> conf.K8s
+	9,  // 7: conf.Bootstrap.knowledge:type_name -> conf.Knowledge
+	6,  // 8: conf.Bootstrap.agent:type_name -> conf.Agent
+	19, // 9: conf.Server.http:type_name -> kitconf.HTTP
+	20, // 10: conf.Data.database:type_name -> kitconf.Database
+	10, // 11: conf.Data.upload:type_name -> conf.Data.Upload
+	13, // 12: conf.Security.password:type_name -> conf.Security.Password
+	14, // 13: conf.Security.jwt:type_name -> conf.Security.Jwt
+	12, // 14: conf.Security.authz:type_name -> conf.Security.Authz
+	21, // 15: conf.Notify.master:type_name -> kitconf.Master
+	22, // 16: conf.Notify.dedup_ttl:type_name -> google.protobuf.Duration
+	22, // 17: conf.Assistant.timeout:type_name -> google.protobuf.Duration
+	22, // 18: conf.Assistant.llm_connect_timeout:type_name -> google.protobuf.Duration
+	22, // 19: conf.Assistant.tool_timeout:type_name -> google.protobuf.Duration
+	22, // 20: conf.Agent.task_timeout:type_name -> google.protobuf.Duration
+	15, // 21: conf.Agent.tool_timeout_overrides:type_name -> conf.Agent.ToolTimeoutOverridesEntry
+	22, // 22: conf.Agent.retention:type_name -> google.protobuf.Duration
+	22, // 23: conf.Agent.queue_ttl:type_name -> google.protobuf.Duration
+	22, // 24: conf.Agent.retry_backoff:type_name -> google.protobuf.Duration
+	22, // 25: conf.Monitor.ai_summary_timeout:type_name -> google.protobuf.Duration
+	16, // 26: conf.K8s.agent:type_name -> conf.K8s.Agent
+	22, // 27: conf.K8s.plane_timeout:type_name -> google.protobuf.Duration
+	17, // 28: conf.K8s.kubeconfig:type_name -> conf.K8s.Kubeconfig
+	18, // 29: conf.Knowledge.embedding:type_name -> conf.Knowledge.Embedding
+	22, // 30: conf.Knowledge.search_log_retention:type_name -> google.protobuf.Duration
+	11, // 31: conf.Data.Upload.s3:type_name -> conf.Data.Upload.S3
+	22, // 32: conf.Security.Authz.policy_ttl:type_name -> google.protobuf.Duration
+	22, // 33: conf.Security.Jwt.access_ttl:type_name -> google.protobuf.Duration
+	22, // 34: conf.Security.Jwt.refresh_ttl:type_name -> google.protobuf.Duration
+	22, // 35: conf.Agent.ToolTimeoutOverridesEntry.value:type_name -> google.protobuf.Duration
+	22, // 36: conf.K8s.Kubeconfig.max_ttl:type_name -> google.protobuf.Duration
+	22, // 37: conf.Knowledge.Embedding.timeout:type_name -> google.protobuf.Duration
+	38, // [38:38] is the sub-list for method output_type
+	38, // [38:38] is the sub-list for method input_type
+	38, // [38:38] is the sub-list for extension type_name
+	38, // [38:38] is the sub-list for extension extendee
+	0,  // [0:38] is the sub-list for field type_name
 }
 
 func init() { file_conf_conf_proto_init() }
@@ -1298,7 +1632,7 @@ func file_conf_conf_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_conf_conf_proto_rawDesc), len(file_conf_conf_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   15,
+			NumMessages:   19,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
