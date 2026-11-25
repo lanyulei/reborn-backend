@@ -181,6 +181,14 @@ func SendKey(eventID, channelID, recipient, dispatchID string) string {
 	return hex.EncodeToString(sum[:16])
 }
 
+// 落库列宽（与 core/migrations 的 DDL 一致）：写入前按列宽截断，超出会以 22001 让所在事务整体回滚。
+const (
+	// maxRecipientLen notify_dispatch.recipient / notify_dlq.recipient varchar(255)。
+	maxRecipientLen = 255
+	// maxProviderMsgIDLen notify_delivery_log.provider_msg_id varchar(128)。
+	maxProviderMsgIDLen = 128
+)
+
 // Truncate 把错误文案截到落库列宽（varchar(512)），按 rune 边界。
 func Truncate(s string, max int) string {
 	if len(s) <= max {

@@ -111,6 +111,27 @@ func TestCmdb_DataScope(t *testing.T) {
 	if code != http.StatusOK || !strings.Contains(body, `"unrestricted":false`) || !strings.Contains(body, `"host"`) || strings.Contains(body, `"switch"`) {
 		t.Fatalf("my scope: %d %s", code, body)
 	}
+	// 类型不限 + 仅 prod：类型放开（我的范围回显全部类型，含 switch），环境仍受限——此前这种配置被当成完全不限。
+	if code, body := doRequestWithToken(t, http.MethodPut, ts.URL+"/api/v1/cmdb/scope/role/"+roleID, admin, `{"modelCodes":[],"envs":["prod"]}`); code != http.StatusOK {
+		t.Fatalf("set all-models scope: %d %s", code, body)
+	}
+	if code, body = doRequestWithToken(t, http.MethodGet, ts.URL+"/api/v1/cmdb/scope/me", userBearer, ""); code != http.StatusOK ||
+		!strings.Contains(body, `"unrestricted":false`) || !strings.Contains(body, `"switch"`) || !strings.Contains(body, `"prod"`) {
+		t.Fatalf("my all-models scope: %d %s", code, body)
+	}
+	if code, body := doRequestWithToken(t, http.MethodGet, ts.URL+"/api/v1/cmdb/ci/"+sw.ID, userBearer, ""); code != http.StatusOK {
+		t.Fatalf("all-models scope must see the prod switch: %d %s", code, body)
+	}
+	if code, body := doRequestWithToken(t, http.MethodGet, ts.URL+"/api/v1/cmdb/ci/"+hostTest.ID, userBearer, ""); code != http.StatusForbidden || !strings.Contains(body, "CMDB_SCOPE_FORBIDDEN") {
+		t.Fatalf("all-models + prod-only scope must not see the test env: %d %s", code, body)
+	}
+	if code, body := doRequestWithToken(t, http.MethodGet, ts.URL+"/api/v1/cmdb/ci?page=1&pageSize=10", userBearer, ""); code != http.StatusOK ||
+		strings.Contains(body, "h-test") || !strings.Contains(body, "sw-1") {
+		t.Fatalf("all-models + prod-only list: %d %s", code, body)
+	}
+	if code, body := doRequestWithToken(t, http.MethodPut, ts.URL+"/api/v1/cmdb/scope/role/"+roleID, admin, `{"modelCodes":["host","part"],"envs":["prod"]}`); code != http.StatusOK {
+		t.Fatalf("restore scope: %d %s", code, body)
+	}
 	// 列表：不带类型 → 只有 host/part 且 prod；带范围外类型 → 空。
 	code, body = doRequestWithToken(t, http.MethodGet, ts.URL+"/api/v1/cmdb/ci?page=1&pageSize=10", userBearer, "")
 	if code != http.StatusOK || !strings.Contains(body, `"total":"2"`) || strings.Contains(body, "h-test") || strings.Contains(body, "sw-1") {

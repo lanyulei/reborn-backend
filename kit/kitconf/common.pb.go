@@ -9,13 +9,12 @@
 package kitconf
 
 import (
-	reflect "reflect"
-	sync "sync"
-	unsafe "unsafe"
-
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	durationpb "google.golang.org/protobuf/types/known/durationpb"
+	reflect "reflect"
+	sync "sync"
+	unsafe "unsafe"
 )
 
 const (
@@ -231,16 +230,13 @@ func file_kitconf_common_proto_rawDescGZIP() []byte {
 	return file_kitconf_common_proto_rawDescData
 }
 
-var (
-	file_kitconf_common_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
-	file_kitconf_common_proto_goTypes  = []any{
-		(*HTTP)(nil),                // 0: kitconf.HTTP
-		(*Database)(nil),            // 1: kitconf.Database
-		(*Master)(nil),              // 2: kitconf.Master
-		(*durationpb.Duration)(nil), // 3: google.protobuf.Duration
-	}
-)
-
+var file_kitconf_common_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_kitconf_common_proto_goTypes = []any{
+	(*HTTP)(nil),                // 0: kitconf.HTTP
+	(*Database)(nil),            // 1: kitconf.Database
+	(*Master)(nil),              // 2: kitconf.Master
+	(*durationpb.Duration)(nil), // 3: google.protobuf.Duration
+}
 var file_kitconf_common_proto_depIdxs = []int32{
 	3, // 0: kitconf.HTTP.timeout:type_name -> google.protobuf.Duration
 	3, // 1: kitconf.Database.max_conn_idle_time:type_name -> google.protobuf.Duration

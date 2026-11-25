@@ -76,11 +76,13 @@ func (h k8sHosts) FindByIP(ctx context.Context, userID, ip string) ([]bizk8s.Hos
 	}
 	filter := bizcmdb.SearchFilter{Query: ip, Limit: bizcmdb.SearchMaxLimit}
 	if !scope.Unrestricted {
-		if len(scope.Models) == 0 {
-			return nil, nil
-		}
-		for code := range scope.Models {
-			filter.ModelCodes = append(filter.ModelCodes, code)
+		if !scope.ModelUnrestricted {
+			if len(scope.Models) == 0 {
+				return nil, nil
+			}
+			for code := range scope.Models {
+				filter.ModelCodes = append(filter.ModelCodes, code)
+			}
 		}
 		if !scope.EnvUnrestricted {
 			for env := range scope.Envs {

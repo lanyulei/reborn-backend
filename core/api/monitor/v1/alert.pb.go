@@ -1341,7 +1341,8 @@ type AlertTimelineItem struct {
 	// type 类型：fire 触发 / resolve 恢复 / close 关闭 / mute 被屏蔽 / unmute 屏蔽解除 / inhibit 被抑制 /
 	// uninhibit 抑制解除 / escalate 升级 / notify 通知说明 / ack 认领 / unack 取消认领 / transfer 转交 /
 	// comment 备注 / ticket 转工单 / ticket_note 在工单上追加了恢复记录 / workflow 触发流程 / ai_summary 生成 AI 摘要 /
-	// action_failed 事件动作失败 / notification 一次通知（此时 notify_log 有值，detail 为空）。
+	// action_failed 事件动作失败 / notification 一次通知（此时 notify_log 有值，detail 为空）/
+	// incident 被关联到故障或从故障移出（故障管理域写入，detail.text 为说明）。
 	Type string `protobuf:"bytes,2,opt,name=type,proto3" json:"type,omitempty"`
 	// time 发生时间。
 	Time *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=time,proto3" json:"time,omitempty"`

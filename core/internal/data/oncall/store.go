@@ -176,6 +176,20 @@ func (t *txn) DeleteMember(ctx context.Context, groupID, userID string) error {
 	return err
 }
 
+// HasPendingOverrides implements biz.Tx。结束时间以数据库时钟为准（与提醒任务判定班次是否
+// 未结束是同一个时钟）。
+func (t *txn) HasPendingOverrides(ctx context.Context, groupID, userID string) (bool, error) {
+	var found bool
+	err := t.tx.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM oncall_shift
+		 WHERE group_id = $1::uuid AND user_id = $2::uuid AND source = $3::smallint AND end_time > now())`,
+		groupID, userID, biz.SourceOverride).Scan(&found)
+	if err != nil {
+		return false, fmt.Errorf("check pending oncall overrides: %w", err)
+	}
+	return found, nil
+}
+
 // LockSchedule implements biz.Tx.
 func (t *txn) LockSchedule(ctx context.Context, id string) (*biz.Schedule, error) {
 	s, err := scanSchedule(t.tx.QueryRow(ctx,
@@ -280,12 +294,33 @@ func (t *txn) DeleteSchedule(ctx context.Context, id, actor string) error {
 	return err
 }
 
-// ListShiftsFrom implements biz.Tx.
-func (t *txn) ListShiftsFrom(ctx context.Context, scheduleID string, from time.Time) ([]*biz.Shift, error) {
-	rows, err := t.tx.Query(ctx,
-		"SELECT "+shiftSelectColumns+shiftJoins+" WHERE sh.schedule_id = $1 AND sh.end_time > $2 ORDER BY sh.start_time, sh.role", scheduleID, from)
+// shiftsFromSQL 值班表中结束时间晚于 from 的班次（ListShiftsFrom / LockShiftsFrom 共用）。
+const shiftsFromSQL = "SELECT " + shiftSelectColumns + shiftJoins + " WHERE sh.schedule_id = $1 AND sh.end_time > $2 ORDER BY sh.start_time, sh.role"
+
+// ListShiftsRange implements biz.Tx：与 shiftRepo.ListRange 同一条语句，走事务连接。
+func (t *txn) ListShiftsRange(ctx context.Context, from, to time.Time) ([]*biz.Shift, error) {
+	rows, err := t.tx.Query(ctx, shiftsRangeSQL, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("list oncall shifts in tx: %w", err)
+	}
+	return collectShifts(rows)
+}
+
+// ListShiftsFrom implements biz.Tx.
+func (t *txn) ListShiftsFrom(ctx context.Context, scheduleID string, from time.Time) ([]*biz.Shift, error) {
+	rows, err := t.tx.Query(ctx, shiftsFromSQL, scheduleID, from)
+	if err != nil {
+		return nil, fmt.Errorf("list oncall shifts in tx: %w", err)
+	}
+	return collectShifts(rows)
+}
+
+// LockShiftsFrom implements biz.Tx：行锁读取（只锁班次行；用户信息是只读投影）。提醒任务对班次行
+// 用 SKIP LOCKED，与本读取互斥，之后按读到的标记改写不会覆盖掉它刚置的位。
+func (t *txn) LockShiftsFrom(ctx context.Context, scheduleID string, from time.Time) ([]*biz.Shift, error) {
+	rows, err := t.tx.Query(ctx, shiftsFromSQL+" FOR UPDATE OF sh", scheduleID, from)
+	if err != nil {
+		return nil, fmt.Errorf("lock oncall shifts in tx: %w", err)
 	}
 	return collectShifts(rows)
 }
@@ -481,6 +516,22 @@ func (t *txn) ListDueReminders(ctx context.Context, now time.Time, limit int) ([
 // SetRemindedMask implements biz.Tx.
 func (t *txn) SetRemindedMask(ctx context.Context, shiftID string, mask int32) error {
 	_, err := t.exec(ctx, "set oncall shift reminded mask", "UPDATE oncall_shift SET reminded_mask = $2 WHERE id = $1", shiftID, mask)
+	return err
+}
+
+// UpdateRemindedMasks implements biz.Tx：单语句批量覆盖（修改提醒提前量时按值重映射已提醒标记）。
+func (t *txn) UpdateRemindedMasks(ctx context.Context, masks []biz.ShiftMask) error {
+	if len(masks) == 0 {
+		return nil
+	}
+	ids, values := make([]string, len(masks)), make([]int32, len(masks))
+	for i, m := range masks {
+		ids[i], values[i] = m.ShiftID, m.Mask
+	}
+	_, err := t.exec(ctx, "remap oncall shift reminded masks",
+		`UPDATE oncall_shift sh SET reminded_mask = x.mask
+		 FROM unnest($1::uuid[], $2::smallint[]) AS x(id, mask)
+		 WHERE sh.id = x.id`, ids, values)
 	return err
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -503,12 +504,15 @@ func (u *userClients) helmAsync(audit *biz.AuditEvent, run func(ctx context.Cont
 }
 
 func (u *userClients) helmAsyncWait(audit *biz.AuditEvent, wait time.Duration, run func(ctx context.Context, ou *userClients) helmResult) (any, []*biz.AuditEvent, error) {
-	// 执行变更单：全部核对（Chart、渲染结果、版本号）都已通过，从这里起才真正改动集群。
-	if err := u.markStarted(); err != nil {
-		return nil, nil, err
-	}
 	octx, done, err := u.c.m.helm.begin(u.c.cluster.ID, k8scontract.HelmOpTimeout)
 	if err != nil {
+		return nil, nil, err
+	}
+	// 执行变更单：全部核对（Chart、渲染结果、版本号）都已通过，从这里起才真正改动集群。
+	// 先拿到并发名额再记「已开始」：名额暂满或进程正在关停时集群没有被改动，这时不能留下 started
+	// （否则变更单会被记为失败，而不是放回队列稍后重试，见 biz.ChangeRunner.execute）。
+	if err := u.markStarted(); err != nil {
+		done()
 		return nil, nil, err
 	}
 	ou := &userClients{ctx: context.WithValue(octx, identityKey{}, u.id), id: u.id, dyn: u.dyn, kube: u.kube, c: u.c}
@@ -592,6 +596,7 @@ func (u *userClients) helmApply(req k8scontract.HelmApplyRequest, upgrade bool) 
 		cr := toRelease(in.current)
 		patch["previous"] = map[string]any{"chart": cr.Chart, "version": cr.ChartVersion, "revision": cr.Revision, "values": biz.MaskValues(in.current.Config)}
 	}
+	fitHelmAuditPatch(patch)
 	return u.helmAsync(helmAudit(act, req.Namespace, req.Name, patch), func(ctx context.Context, ou *userClients) helmResult {
 		cfg, cerr := ou.helmConfig(req.Namespace)
 		if cerr != nil {
@@ -606,6 +611,44 @@ func (u *userClients) helmApply(req k8scontract.HelmApplyRequest, upgrade bool) 
 		in.ReleaseName, in.Namespace, in.Timeout = req.Name, req.Namespace, k8scontract.HelmOpTimeout
 		return releaseResult(in.RunWithContext(ctx, ch, vals))
 	})
+}
+
+const (
+	// helmAuditValuesBytes 审计 patch 超限时其中每份 values 保留的文本字节数。
+	helmAuditValuesBytes = 64 << 10
+	// helmAuditPatchSlack 截断后给之后写入的键（revision）留出的余量。
+	helmAuditPatchSlack = 256
+)
+
+// fitHelmAuditPatch 安装 / 升级的审计 patch 超过审计单个字段的上限时，把其中的 values（本次提交的，以及升级时
+// 上一个版本的；合计可达 1MiB）换成截断后的文本并标注 truncated。不处理的话整份 patch 会被丢弃
+// （见 biz.Auditor.Record）：仓库、Chart、版本、上一个版本这些关键事实会一起丢失。
+func fitHelmAuditPatch(patch map[string]any) {
+	size := func() int {
+		raw, err := json.Marshal(patch)
+		if err != nil {
+			return k8scontract.MaxAuditObjectBytes + 1
+		}
+		return len(raw)
+	}
+	if size() <= k8scontract.MaxAuditObjectBytes {
+		return // 未超限：保持原样
+	}
+	patch["truncated"] = true
+	prev, _ := patch["previous"].(map[string]any)
+	for _, part := range []map[string]any{patch, prev} {
+		if m, ok := part["values"].(map[string]any); ok {
+			part["values"] = truncateText(valuesYAML(m), helmAuditValuesBytes)
+		}
+	}
+	if size() <= k8scontract.MaxAuditObjectBytes-helmAuditPatchSlack {
+		return
+	}
+	// 文本经 JSON 转义后仍超限（极端内容）：values 不再保留，只留下「被截断」与其余事实。
+	patch["values"] = nil
+	if prev != nil {
+		prev["values"] = nil
+	}
 }
 
 // manifestHash 渲染清单的摘要（变更单据此确认执行时渲染出的内容与审批时一致）。

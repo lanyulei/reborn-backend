@@ -71,15 +71,18 @@ func (r Roles) List() []string {
 	return out
 }
 
-// Metrics 数据面可观测指标（OTel → Prometheus /metrics）。
+// Metrics 数据面可观测指标（OTel → Prometheus /metrics）：
+//   - cmdb_loop_runs_total{loop,result} / cmdb_loop_items_total{loop}：各后台循环的迭代次数与处理条数；
+//   - cmdb_table_rows_estimate{table}：只增不删的表的估算行数（观察增长趋势用，不是精确计数）。
 type Metrics struct {
 	provider *sdkmetric.MeterProvider
 	loopRuns metric.Int64Counter
 	items    metric.Int64Counter
 }
 
-// NewMetrics 构造指标与导出器。
-func NewMetrics() (*Metrics, func(), error) {
+// NewMetrics 构造指标与导出器。表增长观测指标在每次抓取时现查（一条只读系统目录的估算查询），
+// 查询失败则本次不上报该指标（不让抓取整体失败）。
+func NewMetrics(stats biz.TableStats) (*Metrics, func(), error) {
 	exporter, err := prometheus.New()
 	if err != nil {
 		return nil, nil, fmt.Errorf("init prometheus exporter: %w", err)
@@ -91,6 +94,9 @@ func NewMetrics() (*Metrics, func(), error) {
 		return nil, nil, err
 	}
 	if m.items, err = meter.Int64Counter("cmdb_loop_items_total", metric.WithDescription("items processed by worker loop")); err != nil {
+		return nil, nil, err
+	}
+	if err := registerTableRows(meter, stats); err != nil {
 		return nil, nil, err
 	}
 	return m, func() { _ = provider.Shutdown(context.Background()) }, nil
@@ -135,7 +141,9 @@ func NewHTTPServer(c *conf.Server, roles Roles, logger *slog.Logger, pinger biz.
 	httpx.HardenServer(srv)
 	srv.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		if err := pinger.Ping(); err != nil {
-			http.Error(w, "database unreachable: "+err.Error(), http.StatusServiceUnavailable)
+			// /healthz 不鉴权：驱动的连接错误带着主机 / 用户 / 库名，只进日志，不回显给调用方。
+			logger.Warn("healthz: database unreachable", "error", err)
+			http.Error(w, "database unreachable", http.StatusServiceUnavailable)
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")

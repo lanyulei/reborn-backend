@@ -17,8 +17,11 @@ import (
 
 // 投递参数。
 const (
-	outboxBatch       = 20
-	outboxLease       = time.Minute
+	outboxBatch = 20
+	// outboxLease 一批出站箱行的租约。整批是串行投递的，租约必须覆盖「批大小 × 单次投递上限」：租约先于整批
+	// 到期时，多副本下还没轮到的行会被别的副本重新领取并重复投递（尝试次数也被多算，提前丢弃）。余量留给领取
+	// 与落账。代价：实例在一批中途崩溃时，这些行要等租约到期才会被重领。
+	outboxLease       = time.Duration(outboxBatch)*WebhookSendMax + time.Minute
 	outboxBackoffBase = 30 * time.Second
 	outboxBackoffMax  = 30 * time.Minute
 	outboxMaxAttempts = 8

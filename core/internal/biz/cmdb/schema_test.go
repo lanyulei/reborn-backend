@@ -138,6 +138,13 @@ func TestCheckRequired(t *testing.T) {
 	if err := checkRequired(fields, map[string]any{"ip": nil}); err == nil {
 		t.Fatal("nil required field must fail")
 	}
+	if err := checkRequired(fields, map[string]any{"ip": "1", "kind": ""}); err != nil {
+		t.Fatalf("empty optional string must pass, got %v", err)
+	}
+	numeric := []*Field{{Code: "cores", Type: FieldTypeInt, Required: true}, {Code: "on", Type: FieldTypeBool, Required: true}}
+	if err := checkRequired(numeric, map[string]any{"cores": int64(0), "on": false}); err != nil {
+		t.Fatalf("zero / false are valid values, got %v", err)
+	}
 }
 
 func TestDropEmptyLabels(t *testing.T) {

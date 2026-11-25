@@ -530,12 +530,11 @@ func (u *userClients) diagnosePod(ref k8scontract.Ref) (k8scontract.PodDiagnosis
 				}
 			}
 			// 只读有问题的容器的日志，且至多 4 个容器：把输出控制在助手的工具输出上限以内。
+			// 名额只算真正读了日志的容器：waiting 且没重启过的容器没有日志可读，不能把名额占掉。
 			completedInit := group.init && d.State == "terminated" && d.Reason == "Completed"
-			if st != nil && !completedInit && (!d.Ready || d.RestartCount > 0) && logs < 4 {
+			if st != nil && !completedInit && (d.State != "waiting" || d.RestartCount > 0) && (!d.Ready || d.RestartCount > 0) && logs < 4 {
 				logs++
-				if d.State != "waiting" || d.RestartCount > 0 {
-					d.LogTail, d.LogError = u.logTail(ref.Namespace, ref.Name, d.Name, false)
-				}
+				d.LogTail, d.LogError = u.logTail(ref.Namespace, ref.Name, d.Name, false)
 				if d.RestartCount > 0 {
 					d.PreviousLogTail, _ = u.logTail(ref.Namespace, ref.Name, d.Name, true)
 				}
@@ -602,6 +601,20 @@ func (u *userClients) diagnoseWorkload(ref k8scontract.Ref) (k8scontract.Workloa
 
 // ---- 主机定位 ----
 
+// nodeByIP 按内网地址定位节点：与节点的每一个 InternalIP 比较（不只第一个）；IPv4-mapped 的写法
+// （::ffff:10.0.0.1）两侧都归一成 IPv4 再比。没有返回 nil。
+func nodeByIP(entries []*biz.Entry, addr netip.Addr) *biz.Entry {
+	addr = addr.Unmap()
+	for _, e := range entries {
+		for _, ip := range e.InternalIPs {
+			if a, err := netip.ParseAddr(ip); err == nil && a.Unmap() == addr {
+				return e
+			}
+		}
+	}
+	return nil
+}
+
 // locateMaxPods 定位时节点上至多统计的 Pod 数。
 const locateMaxPods = 2000
 
@@ -634,15 +647,7 @@ func (u *userClients) locateNode(req k8scontract.LocateNodeRequest) (k8scontract
 	if err != nil {
 		return out, err
 	}
-	var node *biz.Entry
-	for _, e := range nodes.store.snapshot(nil) {
-		if ip, _ := e.Row.Cells["internalIP"].(string); ip != "" {
-			if a, err := netip.ParseAddr(ip); err == nil && a == addr {
-				node = e
-				break
-			}
-		}
-	}
+	node := nodeByIP(nodes.store.snapshot(nil), addr)
 	if node == nil {
 		return out, nil
 	}

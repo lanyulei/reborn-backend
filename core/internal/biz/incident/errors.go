@@ -94,13 +94,21 @@ func kratosCodeIs(err error, code int32) bool {
 	return e != nil && e.Code == code
 }
 
-// truncate 按字符截断（不切开字符）；n 为字符数上限。
+// truncate 按字符截断（不切开字符）；返回值不超过 n 个字符（超长时末位是省略号）。
+// 此前超长时返回 n+1 个字符：按列宽 255 截断的标题落库报 22001，规则开故障因此在关联器里
+// 无限重试，全平台告警都不归并。
 func truncate(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
 	if utf8.RuneCountInString(s) <= n {
 		return s
 	}
+	if n == 1 {
+		return "…"
+	}
 	r := []rune(s)
-	return string(r[:n]) + "…"
+	return string(r[:n-1]) + "…"
 }
 
 // truncateBytes 按字节截断且不切开字符。

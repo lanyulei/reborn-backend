@@ -144,7 +144,8 @@ type StagingRepo interface {
 // ReconcileRepo 对账仓储：集合 SQL，一类型一事务。
 type ReconcileRepo interface {
 	// ReconcileModel 对单一类型执行 touch / update / insert / disappear / retire，并写历史；
-	// manualKeys 为人工归属字段（同步不得覆盖）；唯一约束由 data 层按唯一规则在库内判定。
+	// manualKeys 为人工归属字段（同步不得覆盖）；syncKeys 为同步归属字段（来源侧不再给出的键从资源上
+	// 删除）；唯一约束由 data 层按唯一规则在库内判定。
 	ReconcileModel(ctx context.Context, p ReconcileParams) (Counts, []cmdbcontract.RunError, error)
 	// HasActive 报告该来源在该类型下是否仍有未退役、未删除的资源（按类型空集保护的告警依据）。
 	HasActive(ctx context.Context, modelCode, source string) (bool, error)
@@ -160,6 +161,9 @@ type ReconcileParams struct {
 	Env        string
 	Grace      time.Duration
 	ManualKeys []string
+	// SyncKeys 同步归属（owner=sync）字段：以本轮暂存行的键为准，暂存行里没有的从资源属性中删除。
+	// both / manual 归属的字段不在其中，同步只写不删。
+	SyncKeys []string
 	// SkipDisappear 为真时不做消失/退役判定（本次采集整体或该类型为空集、类型停用时的保护）。
 	SkipDisappear bool
 }

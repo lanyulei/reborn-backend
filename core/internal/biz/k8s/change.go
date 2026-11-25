@@ -15,6 +15,7 @@ import (
 	"github.com/lanyulei/reborn/backend/core/internal/pkg/txrun"
 	"github.com/lanyulei/reborn/backend/kit/idgen"
 	kc "github.com/lanyulei/reborn/backend/kit/k8scontract"
+	"github.com/lanyulei/reborn/backend/kit/paging"
 
 	"github.com/go-kratos/kratos/v3/errors"
 )
@@ -212,6 +213,22 @@ type ChangeTickets interface {
 	Cancel(ctx context.Context, ticketID, userID string) error
 }
 
+// ApprovalEvidence 一张审批工单的流程里「有人真的审批过」的证据（见 workflow 域的 ApprovalEvidence）。
+type ApprovalEvidence struct {
+	// Skipped 审批环节因解析不出处理人被流程引擎自动跳过的次数。
+	Skipped int
+	// Approved 由人（变更发起人以外）点「同意」的次数。
+	Approved int
+}
+
+// ApprovalProof 审批证据的来源（组合根以工单 / 流程域的用例实现）。独立于 ChangeTickets：ChangeSyncer 被
+// 登记到流程引擎的监听器，不能经构造函数依赖流程用例（成环），由 ChangeUsecase 装配时登记。
+type ApprovalProof interface {
+	// Proof 在流程引擎的事务内读出工单流程（含各级子流程）的审批证据；except 为不计入「由人同意」的用户。
+	// 读取失败返回 error：无法证明有人审批过就不能批准。
+	Proof(ctx context.Context, tx txrun.Tx, ticketID, except string) (ApprovalEvidence, error)
+}
+
 // TicketNotes 把执行结果写回工单（评论）。独立于 ChangeTickets：接口不超过三个方法。
 type TicketNotes interface {
 	Comment(ctx context.Context, ticketID, userID, content string) error
@@ -296,7 +313,8 @@ func NewChangeDeps(store ChangeStore, reader ChangeReader, flow ChangeFlow, sett
 	}
 }
 
-// NewChangeUsecase new a ChangeUsecase，并把自己登记为数据面写操作的审批关口、集群表单里模板的校验器。
+// NewChangeUsecase new a ChangeUsecase，并把自己登记为数据面写操作的审批关口、集群表单里模板的校验器，
+// 把审批证据的来源（工单适配器）登记到 ChangeSyncer。
 func NewChangeUsecase(d ChangeDeps, planes *PlaneUsecase, clusterUC *ClusterUsecase, syncer *ChangeSyncer, site ChangeSiteURL, logger *slog.Logger) *ChangeUsecase {
 	uc := &ChangeUsecase{
 		store: d.Store, reader: d.Reader, flow: d.Flow, settings: d.Settings, clusters: d.Clusters, plane: d.Plane, planes: planes,
@@ -306,6 +324,13 @@ func NewChangeUsecase(d ChangeDeps, planes *PlaneUsecase, clusterUC *ClusterUsec
 	planes.gate = uc
 	planes.debug = d.Bypass
 	clusterUC.templates = d.Tickets
+	// 落批准之前要能查审批证据：ChangeSyncer 不能经构造函数依赖流程用例（成环），在这里登记。
+	// 工单适配器没有这项能力是装配缺陷：此后所有「通过」都会按未经审批处理（宁可不批准），启动时就要看得见。
+	proof, ok := d.Tickets.(ApprovalProof)
+	if !ok {
+		logger.Error("k8s change tickets adapter provides no approval evidence; approved tickets will be treated as unreviewed")
+	}
+	syncer.evidence = proof
 	return uc
 }
 
@@ -475,6 +500,8 @@ func (uc *ChangeUsecase) submit(ctx context.Context, c *Change, exec, templateID
 	if finished {
 		// 流程在发起时即已结束（全部节点被跳过）：监听器触发时变更单还没有挂上工单，这里补落结果。
 		// 这种「通过」没有经过任何人：变更审批要求至少有一位他人同意，按未通过处理。
+		// 与 Resolve 里「审批环节被跳过且无人同意 → 未通过」同一口径，且更严：发起的那一刻不可能有人
+		// 审批过，所以不看审批证据、一律不批准（连没有审批环节的流程也是——这是既有行为，保持不变）。
 		if status == TicketApproved {
 			status = TicketUnreviewed
 		}
@@ -567,6 +594,9 @@ func changeVisible(access Access, c *Change) bool {
 
 // List 分页查询变更单。mine 只看自己提交的；否则看数据范围内（按集群与命名空间）的全部，外加自己提交的。
 func (uc *ChangeUsecase) List(ctx context.Context, caller Caller, mine bool, filter ChangeFilter, page, pageSize int64) ([]*Change, int64, error) {
+	// 与本域其余列表同一口径：proto 只约束了 page >= 1，不夹紧的话超大页码会让 OFFSET 溢出成负数，
+	// 被 PostgreSQL 拒绝成 500。
+	page, pageSize = paging.Normalize(page, pageSize)
 	if mine {
 		filter.RequesterID = caller.UserID
 		return uc.reader.List(ctx, filter, page, pageSize)
@@ -849,19 +879,6 @@ const (
 	TicketUnreviewed int32 = -1
 )
 
-// ChangeSyncer 工单流程结束时把结果落到变更单上。独立于 ChangeUsecase：它被登记到流程引擎的监听器，
-// 而 ChangeUsecase 经 ChangeTickets 依赖工单 / 流程用例——合在一起会成环（与作业审批同一做法）。
-type ChangeSyncer struct {
-	flow  ChangeFlow
-	roles RoleSource
-	ttl   time.Duration
-}
-
-// NewChangeSyncer new a ChangeSyncer.
-func NewChangeSyncer(flow ChangeFlow, roles RoleSource) *ChangeSyncer {
-	return &ChangeSyncer{flow: flow, roles: roles, ttl: kc.DefaultChangeTTL}
-}
-
 // ErrSelfApproval 变更的发起人不能审批自己的变更；也不接受超时自动同意。
 var ErrSelfApproval = errors.Forbidden(v1.ErrorReason_K8S_CHANGE_STATE.String(), "a change must be approved by someone other than its requester")
 
@@ -879,8 +896,31 @@ func (s *ChangeSyncer) CheckApprover(ctx context.Context, tx txrun.Tx, ticketID,
 	return nil
 }
 
+// ChangeSyncer 工单流程结束时把结果落到变更单上。独立于 ChangeUsecase：它被登记到流程引擎的监听器，
+// 而 ChangeUsecase 经 ChangeTickets 依赖工单 / 流程用例——合在一起会成环（与作业审批同一做法）。
+type ChangeSyncer struct {
+	flow  ChangeFlow
+	roles RoleSource
+	// evidence 审批证据的来源，由 ChangeUsecase 装配时登记；nil = 没有证据来源，无法证明有人审批过。
+	evidence ApprovalProof
+	ttl      time.Duration
+}
+
+// NewChangeSyncer new a ChangeSyncer.
+func NewChangeSyncer(flow ChangeFlow, roles RoleSource) *ChangeSyncer {
+	return &ChangeSyncer{flow: flow, roles: roles, ttl: kc.DefaultChangeTTL}
+}
+
+// msgUnreviewed 流程以「通过」结束、却没有任何人审批过时写在变更单上的原因。
+const msgUnreviewed = "审批流程未产生有效审批：审批环节因处理人为空被自动跳过，没有任何人实际审批，变更未获批准"
+
 // Resolve 在流程引擎的事务内落审批结果：通过 → 已批准（记下发起人此刻的启用角色与是否超管，数据面据此
 // 以发起人身份执行）；驳回 / 终止 → 审批未通过；撤回 → 已撤回。工单没有对应的待审批变更单时什么都不做。
+//
+// 「通过」不等于有人审批过：CheckApprover 只守住每一次「同意」，而流程引擎对解析不出处理人的审批节点是
+// 自动跳过（角色暂时没有成员、部门没有负责人……），流程会以通过结束。所以落批准之前先看审批证据——
+// 流程里确有审批环节被跳过、又没有任何人点过同意 → 按未通过处理，不执行。流程本来就没有审批环节（或这次
+// 走的分支上没有）时没有「被跳过的审批」，不在此列，维持原行为。
 func (s *ChangeSyncer) Resolve(ctx context.Context, tx txrun.Tx, ticketID string, ticketStatus int32) error {
 	c, err := s.flow.PendingByTicketTx(ctx, tx, ticketID)
 	if err != nil || c == nil {
@@ -890,6 +930,13 @@ func (s *ChangeSyncer) Resolve(ctx context.Context, tx txrun.Tx, ticketID string
 	case TicketUnreviewed:
 		return s.flow.ResolveTx(ctx, tx, c.ID, kc.ChangeRejected, "审批流程未经任何人审批即结束（流程没有可用的审批环节），变更未获批准", nil, 0)
 	case TicketApproved:
+		reviewed, err := s.reviewed(ctx, tx, ticketID, c.RequesterID)
+		if err != nil {
+			return err
+		}
+		if !reviewed {
+			return s.flow.ResolveTx(ctx, tx, c.ID, kc.ChangeRejected, msgUnreviewed, nil, 0)
+		}
 		// 角色查询复用事务连接（事务里再占一条连接，在连接池打满时会互相等死）。
 		isAdmin, roleIDs, err := s.roles.EnabledRoleIDs(txrun.NewContext(ctx, tx), c.RequesterID)
 		if err != nil {
@@ -907,6 +954,19 @@ func (s *ChangeSyncer) Resolve(ctx context.Context, tx txrun.Tx, ticketID string
 	default:
 		return s.flow.ResolveTx(ctx, tx, c.ID, kc.ChangeRejected, "审批流程被终止", nil, 0)
 	}
+}
+
+// reviewed 报告这次「通过」能否落为批准：流程里有审批环节被自动跳过、又没有任何人（发起人以外）点过
+// 同意 → false。没有证据来源时同样 false，证据读不出来则返回错误——无法证明有人审批过就不批准。
+func (s *ChangeSyncer) reviewed(ctx context.Context, tx txrun.Tx, ticketID, requesterID string) (bool, error) {
+	if s.evidence == nil {
+		return false, nil
+	}
+	ev, err := s.evidence.Proof(ctx, tx, ticketID, requesterID)
+	if err != nil {
+		return false, fmt.Errorf("read approval evidence of k8s change: %w", err)
+	}
+	return ev.Approved > 0 || ev.Skipped == 0, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -1040,12 +1100,10 @@ func (w *ChangeWorker) grant(ctx context.Context, c *Change) error {
 	if err != nil {
 		return err
 	}
-	cur, err := w.scopes.Get(ctx, roleID)
-	if err != nil {
-		return err
-	}
 	det, _ := json.Marshal(map[string]any{"changeId": c.ID, "clusterId": c.ClusterID, "namespace": req.Namespace, "level": req.Level})
-	return w.scopes.Replace(ctx, roleID, MergeScope(cur, c.ClusterID, req.Namespace, req.Level), &AuditEntry{
+	// 并入必须是一个原子动作（同一事务 + 角色级锁）：多实例下同一用户的两张申请被两个实例同时领取时，
+	// 各自「读出 → 合并 → 整组替换」会互相覆盖，其中一张已标执行成功、授权却不在。
+	return w.scopes.Grant(ctx, roleID, &RoleScope{ClusterID: c.ClusterID, Namespace: req.Namespace, Level: req.Level}, &AuditEntry{
 		UserID: c.RequesterID, Username: c.RequesterName, ClientIP: c.ClientIP, RequestID: c.ID,
 		Resource: kc.AuditResourceRoleScope, Action: kc.ActionScopeReplace, Detail: det,
 	})

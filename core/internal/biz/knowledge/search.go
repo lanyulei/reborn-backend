@@ -143,6 +143,19 @@ func (uc *SearchUsecase) VectorEnabled() bool {
 // Search 检索：只在用户可见空间内召回，结果按文档去重，附命中所在整节与片段，并记一条检索日志。
 func (uc *SearchUsecase) Search(ctx context.Context, userID, source string, in SearchInput) (*SearchResult, error) {
 	started := uc.now()
+	if strings.TrimSpace(in.Query) == "" {
+		return nil, ErrInvalidArgument
+	}
+	acc, err := uc.spaces.Resolve(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	return uc.searchAs(ctx, acc, userID, source, in, started)
+}
+
+// searchAs 以已解析好的权限视图 acc（须是 userID 的）检索：调用方在同一请求里已经解析过权限时
+// 直接传入，不必再解析一遍（每次解析是两条查询，其中一条对全部空间做相关子查询）。
+func (uc *SearchUsecase) searchAs(ctx context.Context, acc *Access, userID, source string, in SearchInput, started time.Time) (*SearchResult, error) {
 	query := strings.TrimSpace(in.Query)
 	if query == "" {
 		return nil, ErrInvalidArgument
@@ -153,10 +166,6 @@ func (uc *SearchUsecase) Search(ctx context.Context, userID, source string, in S
 	}
 	if topK > MaxTopK {
 		topK = MaxTopK
-	}
-	acc, err := uc.spaces.Resolve(ctx, userID)
-	if err != nil {
-		return nil, err
 	}
 	unrestricted, spaceIDs, ok := scopeSpaces(acc, in.SpaceIDs)
 	res := &SearchResult{Hits: []*SearchHit{}, Degraded: !uc.VectorEnabled()}

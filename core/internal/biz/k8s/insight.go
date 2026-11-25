@@ -9,12 +9,14 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	kc "github.com/lanyulei/reborn/backend/kit/k8scontract"
 	"github.com/lanyulei/reborn/backend/kit/paging"
 
 	kerrors "github.com/go-kratos/kratos/v3/errors"
+	"golang.org/x/sync/errgroup"
 )
 
 // Access 调用者在容器平台的数据范围（k8s_role_scope 的并集）。只用于 core 自己读库的查询
@@ -352,29 +354,53 @@ func (uc *InsightUsecase) QueryMetrics(ctx context.Context, caller Caller, clust
 		return out, nil
 	}
 	out.Configured = true
+	picked := make([]MetricPanel, 0, len(panels))
 	for _, p := range panels {
 		if len(panelIDs) > 0 && !slices.Contains(panelIDs, p.ID) {
 			continue
 		}
-		res := &MetricPanelResult{ID: p.ID, Title: p.Title, Unit: p.Unit, Series: []MetricSeries{}}
-		for _, q := range p.Queries {
-			points, err := uc.metrics.QueryRange(ctx, c.DatasourceID, q.Expr, s, e, step)
-			if err != nil {
-				if ctx.Err() != nil {
-					return nil, ctx.Err()
+		out.Panels = append(out.Panels, &MetricPanelResult{ID: p.ID, Title: p.Title, Unit: p.Unit, Series: []MetricSeries{}})
+		picked = append(picked, p)
+	}
+	// 面板之间有界并发（一个页面十来个面板、每个一到三条区间查询，串行时总耗时是各条之和）；面板内的
+	// 查询仍按顺序、遇错即停。每个 goroutine 只写自己那一个面板的结果，面板顺序在上面已经定好，
+	// 所以结果与串行逐字段相同。goroutine 的退出路径：QueryRange 随 ctx 结束，g.Wait 在返回前收齐。
+	var g errgroup.Group
+	g.SetLimit(metricsPanelConcurrency)
+	var cancelled atomic.Bool
+	for i, p := range picked {
+		res := out.Panels[i]
+		g.Go(func() error {
+			for _, q := range p.Queries {
+				if cancelled.Load() {
+					return nil // 请求已取消，整个结果都不会返回，不必再查
 				}
-				res.Error = kerrors.FromError(err).Message
-				break
+				points, err := uc.metrics.QueryRange(ctx, c.DatasourceID, q.Expr, s, e, step)
+				if err != nil {
+					if ctx.Err() != nil {
+						cancelled.Store(true)
+						return nil
+					}
+					res.Error = kerrors.FromError(err).Message
+					break
+				}
+				if points == nil {
+					points = [][2]float64{}
+				}
+				res.Series = append(res.Series, MetricSeries{Name: q.Name, Points: points})
 			}
-			if points == nil {
-				points = [][2]float64{}
-			}
-			res.Series = append(res.Series, MetricSeries{Name: q.Name, Points: points})
-		}
-		out.Panels = append(out.Panels, res)
+			return nil
+		})
+	}
+	_ = g.Wait() // 各 goroutine 恒返回 nil：单个面板的失败记在面板上，取消经 cancelled 传出
+	if cancelled.Load() {
+		return nil, ctx.Err()
 	}
 	return out, nil
 }
+
+// metricsPanelConcurrency 一次指标请求里同时在查的面板数上限（面板内的查询串行，所以也是对数据源的并发上限）。
+const metricsPanelConcurrency = 4
 
 // SanitizePoints 去掉 NaN / Inf（JSON 无法表示）。
 func SanitizePoints(points [][2]float64) [][2]float64 {

@@ -58,7 +58,14 @@ func (s *CmdbScopeService) GetMyScope(ctx context.Context, _ *v1.GetMyScopeReque
 	}
 	resp := &v1.GetMyScopeResponse{Unrestricted: scope.Unrestricted, ModelCodes: []string{}, Envs: []string{}}
 	if !scope.Unrestricted {
-		resp.ModelCodes = keys(scope.Models)
+		// 类型不限时回显全部类型编码：前端按 modelCodes 过滤可见类型，回空会被当成什么都看不到。
+		if scope.ModelUnrestricted {
+			if resp.ModelCodes, err = s.uc.AllModelCodes(ctx); err != nil {
+				return nil, err
+			}
+		} else {
+			resp.ModelCodes = keys(scope.Models)
+		}
 		if !scope.EnvUnrestricted {
 			resp.Envs = keys(scope.Envs)
 		}

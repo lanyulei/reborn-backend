@@ -94,6 +94,9 @@ message LoginResponse {
   string refresh_token = 3;
   // user 登录用户实体（不含密码）。
   User user = 4;
+  // password_change_required 当前口令是系统预置的初始口令（内置超管从未改过密码）：前端应在登录后
+  // 提示并引导用户立即修改。仅为提示，不限制接口调用。
+  bool password_change_required = 5;
 }
 
 // RefreshTokenRequest 刷新令牌请求。
@@ -145,6 +148,8 @@ message GetLoginProfileResponse {
   repeated string biz_scope = 6;
   // biz_unrestricted 通知 biz 不受限（超管或任一启用角色 scope 为空）。
   bool biz_unrestricted = 7;
+  // password_change_required 同 LoginResponse.password_change_required：当前口令仍是系统预置的初始口令。
+  bool password_change_required = 8;
 }
 
 // UploadMyAvatarRequest 上传头像请求。

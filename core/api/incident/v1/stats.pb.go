@@ -170,7 +170,7 @@ type GetOverviewResponse struct {
 	TodayOpened int32 `protobuf:"varint,7,opt,name=today_opened,json=todayOpened,proto3" json:"today_opened,omitempty"`
 	// 今日解决。
 	TodayResolved int32 `protobuf:"varint,8,opt,name=today_resolved,json=todayResolved,proto3" json:"today_resolved,omitempty"`
-	// 待定候选数。
+	// 待定候选数。带业务过滤时只含规则固定指向该业务的候选（按告警标签动态匹配业务的规则的候选不计入）。
 	Candidates    int32 `protobuf:"varint,9,opt,name=candidates,proto3" json:"candidates,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

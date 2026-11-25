@@ -89,11 +89,8 @@ func (s *NotifyDispatchService) GetDispatch(ctx context.Context, req *notifyv1.G
 		return nil, err
 	}
 	if err := s.guard.requireRow(ctx, func() (string, error) {
-		ch, err := s.channels.Get(ctx, dispatch.ChannelID)
-		if err != nil {
-			return "", err
-		}
-		return ch.BizID, nil
+		// 已删渠道同样取得到归属：渠道删掉之后，它保留期内的任务对受限操作者不能变成「渠道不存在」。
+		return s.channels.Biz(ctx, dispatch.ChannelID)
 	}); err != nil {
 		return nil, err
 	}

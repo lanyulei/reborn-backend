@@ -151,6 +151,9 @@ type ChannelRepo interface {
 	DeleteChannel(ctx context.Context, id string) error
 	// GetChannel 按 ID 查询未删除渠道（不含 secret）；不存在返回 ErrChannelNotFound。
 	GetChannel(ctx context.Context, id string) (*Channel, error)
+	// ChannelBiz 按 ID 取渠道所属 biz；已软删的渠道同样返回（任务 / 死信按所属渠道的 biz 判数据范围，
+	// 渠道删掉之后其保留期内的任务、未处理完的死信仍要能查看与重放）。不存在返回 ErrChannelNotFound。
+	ChannelBiz(ctx context.Context, id string) (string, error)
 	// ListChannelsByIDs 按 ID 集合单条查询未删除渠道（不含 secret；缺失的 ID
 	// 不在结果中、不报错），供路由绑定批量校验；空输入返回空集。
 	ListChannelsByIDs(ctx context.Context, ids []string) ([]*Channel, error)
@@ -367,6 +370,12 @@ func (uc *ChannelUsecase) Delete(ctx context.Context, id string) error {
 // Get 查询渠道详情（不含 secret）。
 func (uc *ChannelUsecase) Get(ctx context.Context, id string) (*Channel, error) {
 	return uc.repo.GetChannel(ctx, id)
+}
+
+// Biz 渠道所属 biz；已软删的渠道同样返回。数据范围守卫用它，而不是 Get：渠道解绑路由后被删，
+// 其保留期内的任务与未重放完的死信对受限操作者不能因此变成「渠道不存在」。
+func (uc *ChannelUsecase) Biz(ctx context.Context, id string) (string, error) {
+	return uc.repo.ChannelBiz(ctx, id)
 }
 
 // List 分页查询渠道；分页参数先规整再委托仓储。

@@ -569,12 +569,12 @@ func (m *Manager) loadChartData(ctx context.Context, repoID, chartName, version 
 		return nil, nil, nil, err
 	}
 	var data []byte
-	release, err := m.apps.acquireFetch(ctx)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	defer release()
 	if a.typ == k8scontract.HelmRepoOCI {
+		release, err := m.apps.acquireFetch(ctx)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		defer release()
 		rc, done, cerr := ociClient(a)
 		if cerr != nil {
 			return nil, nil, nil, cerr
@@ -590,6 +590,8 @@ func (m *Manager) loadChartData(ctx context.Context, repoID, chartName, version 
 		}
 		data = res.Chart.Data
 	} else {
+		// 先取索引、再占下载名额：名额只在下载 Chart 包时持有。索引未缓存时它的下载自己也要占一个名额
+		// （见 httpIndex），持着名额去等它，helmFetchParallel 个并发请求就会各占一个名额互相等死。
 		ix, ierr := m.httpIndex(ctx, r, a, false)
 		if ierr != nil {
 			return nil, nil, nil, ierr
@@ -603,6 +605,11 @@ func (m *Manager) loadChartData(ctx context.Context, repoID, chartName, version 
 		if uerr != nil {
 			return nil, nil, nil, errHelmRepo("chart %s has an unsupported download address", chartName)
 		}
+		release, aerr := m.apps.acquireFetch(ctx)
+		if aerr != nil {
+			return nil, nil, nil, aerr
+		}
+		defer release()
 		c, cerr := repoHTTPClient(a)
 		if cerr != nil {
 			return nil, nil, nil, cerr

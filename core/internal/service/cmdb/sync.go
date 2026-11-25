@@ -207,13 +207,18 @@ func (s *CmdbSyncService) ListRuns(ctx context.Context, req *v1.ListRunsRequest)
 	return resp, nil
 }
 
-// ListConflicts implements proto CmdbSyncService/ListConflicts。
+// ListConflicts implements proto CmdbSyncService/ListConflicts：清单与「是否封顶」都按调用者数据范围
+// 过滤——受限角色不该读到范围外类型的采集资源名称与外部标识（认领接口本就要求目标资源在范围内）。
 func (s *CmdbSyncService) ListConflicts(ctx context.Context, req *v1.ListConflictsRequest) (*v1.ListConflictsResponse, error) {
-	items, total, err := s.uc.ListConflicts(ctx, req.GetId(), req.GetPage(), int64(req.GetPageSize()))
+	scope, err := s.guard.resolve(ctx)
 	if err != nil {
 		return nil, err
 	}
-	capped, err := s.uc.ConflictsCapped(ctx, req.GetId())
+	items, total, err := s.uc.ListConflicts(ctx, scope, req.GetId(), req.GetPage(), int64(req.GetPageSize()))
+	if err != nil {
+		return nil, err
+	}
+	capped, err := s.uc.ConflictsCapped(ctx, scope, req.GetId())
 	if err != nil {
 		return nil, err
 	}

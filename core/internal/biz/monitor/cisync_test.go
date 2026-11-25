@@ -333,6 +333,35 @@ func TestCISync_FailureRollsBackTheWholeRun(t *testing.T) {
 	}
 }
 
+// monitor-ci-sync 的单轮时限（core-monitor-config 优化项 C）：CMDB 读卡住时不得永久停在这一轮——超时按失败
+// 返回、整轮回滚、同步锁释放，下一轮照常对账。
+func TestCISync_StuckSourceTimesOutAndReleasesTheLock(t *testing.T) {
+	if biz.CISyncTimeout <= 0 || biz.CISyncTimeout >= time.Hour {
+		t.Fatalf("default timeout = %v: must be bounded and shorter than the reconcile interval", biz.CISyncTimeout)
+	}
+	e := newSyncEnv(t, nil)
+	e.cmdb.put(host("ci-a", "a", e.now.Add(-time.Hour)))
+	e.cmdb.blockOn = make(chan struct{}) // 永不放行：只有 ctx 到期才返回
+	e.uc.SetTimeout(30 * time.Millisecond)
+	start := time.Now()
+	if _, err := e.uc.Run(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Run() error = %v, want a deadline error", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("Run() took %v with a 30ms budget", elapsed)
+	}
+	if e.store.CI("ci-a") != nil || e.version() != 0 {
+		t.Fatal("a timed-out run must not leave partial writes or bump the version")
+	}
+	// 锁已释放、超时那轮不算对过账：来源恢复后下一轮完成对账。
+	e.cmdb.blockOn = nil
+	e.uc.SetTimeout(biz.CISyncTimeout)
+	e.run()
+	if e.store.CI("ci-a") == nil || e.cmdb.upCalls != 1 {
+		t.Fatalf("retry after timeout: ci = %v, topology reads = %d", e.store.CI("ci-a"), e.cmdb.upCalls)
+	}
+}
+
 func TestCISync_ConcurrentRunsDoNotDoubleWork(t *testing.T) {
 	e := newSyncEnv(t, nil)
 	other, err := biz.NewCISyncUsecase(e.cmdb, e.store.CIIndex(), quietLog(), nil)

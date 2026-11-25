@@ -232,10 +232,11 @@ message GetRolePermissionsResponse {
 message SetRolePermissionsRequest {
   // id 角色唯一标识，取自路径参数。
   string id = 1 [(buf.validate.field).string.uuid = true];
-  // menus 授权的菜单（页面）码全量集合，上限 64 条；须登记在权限目录内
-  // （service 层校验）。仅控制前端菜单可见性，不产生接口授权。
+  // menus 授权的菜单（页面）码全量集合，上限 256 条；须登记在权限目录内
+  // （service 层校验）。仅控制前端菜单可见性，不产生接口授权。上限须大于权限目录
+  // 的菜单总数（否则勾选全部菜单的角色保存即 400），由 operations_test 守护。
   repeated string menus = 2 [(buf.validate.field).repeated = {
-    max_items: 64
+    max_items: 256
     items: {
       string: {
         min_len: 2
@@ -244,10 +245,10 @@ message SetRolePermissionsRequest {
       }
     }
   }];
-  // elements 授权的页面元素码全量集合，上限 128 条；须登记在权限目录内。
-  // 仅控制前端页面元素（按钮等）可见性，不产生接口授权。
+  // elements 授权的页面元素码全量集合，上限 1024 条；须登记在权限目录内。
+  // 仅控制前端页面元素（按钮等）可见性，不产生接口授权。上限须大于目录的元素总数。
   repeated string elements = 3 [(buf.validate.field).repeated = {
-    max_items: 128
+    max_items: 1024
     items: {
       string: {
         min_len: 2
@@ -257,10 +258,11 @@ message SetRolePermissionsRequest {
     }
   }];
   // apis 接口操作 code（32 位小写 md5 hex，取自 ListOperations）直接授权
-  // 全量集合，上限 256 条；元素须在 ListOperations 枚举范围内（service 层
-  // 校验）。统一用 code 而非 name 定位接口，规避字符集兼容问题。
+  // 全量集合，上限 2048 条；元素须在 ListOperations 枚举范围内（service 层
+  // 校验）。统一用 code 而非 name 定位接口，规避字符集兼容问题。上限须大于
+  // 可授权接口总数。
   repeated string apis = 4 [(buf.validate.field).repeated = {
-    max_items: 256
+    max_items: 2048
     items: {
       string: {
         min_len: 32

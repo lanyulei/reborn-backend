@@ -385,7 +385,10 @@ func (m *ExecManager) Attach(ctx context.Context, clusterID string, id Identity,
 	}
 	m.auditor.Record(ctx, c, id, []*AuditEvent{audit})
 	rec := &ExecSession{ID: sid, Identity: id, ClusterID: c.ID, ClusterName: c.Name, Params: p}
-	if err := m.repo.Start(sctx, rec); err != nil {
+	// 会话记录的写入有时限：数据库卡顿时不能卡在这里——会话已登记，却没有管理循环（空闲 / 最长时长靠它收尾）。
+	wctx, cancel := context.WithTimeout(sctx, 5*time.Second)
+	defer cancel()
+	if err := m.repo.Start(wctx, rec); err != nil {
 		m.log.Error("write exec session failed", "session", sid, "error", err)
 	}
 	m.obs.StreamDelta("exec", 1)

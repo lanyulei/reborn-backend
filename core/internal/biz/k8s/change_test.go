@@ -35,6 +35,13 @@ type changeFakes struct {
 	ticketStatus int32 // 非 0：流程在发起时即结束
 	cancelled    []string
 	templateErr  error
+	// evidence 审批工单的流程上的审批证据（缺省：既没有被跳过的审批环节，也没有人同意）；
+	// proofErr 非空时读取失败；noProof 时不提供证据来源。
+	evidence ApprovalEvidence
+	proofErr error
+	noProof  bool
+	// listPage / listSize 最近一次列表查询收到的分页参数。
+	listPage, listSize int64
 
 	admin    bool
 	roleIDs  []string
@@ -88,7 +95,8 @@ func (f *changeFakes) Approval(context.Context, string) (*ClusterApproval, error
 	return &a, nil
 }
 
-func (f *changeFakes) List(_ context.Context, filter ChangeFilter, _, _ int64) ([]*Change, int64, error) {
+func (f *changeFakes) List(_ context.Context, filter ChangeFilter, page, pageSize int64) ([]*Change, int64, error) {
+	f.listPage, f.listSize = page, pageSize
 	var out []*Change
 	for _, c := range f.changes {
 		if filter.RequesterID != "" && c.RequesterID != filter.RequesterID {
@@ -207,15 +215,41 @@ type fakeChangeTickets struct{ f *changeFakes }
 func (t fakeChangeTickets) CheckTemplate(context.Context, string) error { return t.f.templateErr }
 
 func (t fakeChangeTickets) Create(_ context.Context, in ChangeTicket) (string, string, bool, int32, error) {
-	if t.f.ticketErr != nil {
-		return "", "", false, 0, t.f.ticketErr
-	}
-	t.f.tickets = append(t.f.tickets, in)
-	return "ticket-1", "CHG-1", t.f.ticketStatus != 0, t.f.ticketStatus, nil
+	return createTicket(t.f, in)
 }
 
 func (t fakeChangeTickets) Cancel(_ context.Context, ticketID, userID string) error {
-	t.f.cancelled = append(t.f.cancelled, ticketID+"/"+userID)
+	return cancelTicket(t.f, ticketID, userID)
+}
+
+// Proof implements ApprovalProof：给出夹具里的审批证据。
+func (t fakeChangeTickets) Proof(context.Context, txrun.Tx, string, string) (ApprovalEvidence, error) {
+	return t.f.evidence, t.f.proofErr
+}
+
+func createTicket(f *changeFakes, in ChangeTicket) (string, string, bool, int32, error) {
+	if f.ticketErr != nil {
+		return "", "", false, 0, f.ticketErr
+	}
+	f.tickets = append(f.tickets, in)
+	return "ticket-1", "CHG-1", f.ticketStatus != 0, f.ticketStatus, nil
+}
+
+// ticketsWithoutProof 只实现 ChangeTickets 的工单适配器：没有审批证据来源（装配缺陷的模拟）。
+type ticketsWithoutProof struct{ f *changeFakes }
+
+func (t ticketsWithoutProof) CheckTemplate(context.Context, string) error { return t.f.templateErr }
+
+func (t ticketsWithoutProof) Create(_ context.Context, in ChangeTicket) (string, string, bool, int32, error) {
+	return createTicket(t.f, in)
+}
+
+func (t ticketsWithoutProof) Cancel(_ context.Context, ticketID, userID string) error {
+	return cancelTicket(t.f, ticketID, userID)
+}
+
+func cancelTicket(f *changeFakes, ticketID, userID string) error {
+	f.cancelled = append(f.cancelled, ticketID+"/"+userID)
 	return nil
 }
 
@@ -311,6 +345,13 @@ func (s fakeScopeRepo) Replace(_ context.Context, roleID string, items []*RoleSc
 	return nil
 }
 
+// Grant implements ScopeRepo：与仓储一致——并入已有的数据范围，不动其它条目。
+func (s fakeScopeRepo) Grant(_ context.Context, roleID string, item *RoleScope, a *AuditEntry) error {
+	s.f.scopes[roleID] = MergeScope(s.f.scopes[roleID], item.ClusterID, item.Namespace, item.Level)
+	s.f.audits = append(s.f.audits, a)
+	return nil
+}
+
 func newChangeUC(f *changeFakes) (*ChangeUsecase, *PlaneUsecase, *ChangeSyncer) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	plane := fakeChangePlane{f}
@@ -318,7 +359,11 @@ func newChangeUC(f *changeFakes) (*ChangeUsecase, *PlaneUsecase, *ChangeSyncer) 
 	NewAccessResolver(f, f, planes)
 	clusterUC := &ClusterUsecase{}
 	syncer := NewChangeSyncer(f, f)
-	uc := NewChangeUsecase(NewChangeDeps(f, f, f, fakeSettings{f}, fakeChangeClusters{f}, plane, f, fakeChangeTickets{f}, f, f, nil, fakeTxm{}),
+	var tickets ChangeTickets = fakeChangeTickets{f}
+	if f.noProof {
+		tickets = ticketsWithoutProof{f}
+	}
+	uc := NewChangeUsecase(NewChangeDeps(f, f, f, fakeSettings{f}, fakeChangeClusters{f}, plane, f, tickets, f, f, nil, fakeTxm{}),
 		planes, clusterUC, syncer, "https://ops.example.com/", log)
 	return uc, planes, syncer
 }
@@ -758,7 +803,9 @@ func TestScopeSummary(t *testing.T) {
 	}
 }
 
-// 代理地址的账号：响应里打码；表单原样带回时沿用已保存的，改了地址或自带账号则按输入。
+// 代理地址的账号：响应里打码；表单原样带回时沿用已保存的，自带账号则按输入。
+// 带占位符而地址变了：占位符不是账号，已保存的账号又属于旧地址——拒绝，不落库（原先原样保存
+// http://REDACTED@新地址，数据面拿 REDACTED 当账号去认证，响应里仍然打码、用户无从察觉）。
 func TestProxyUserinfo(t *testing.T) {
 	t.Parallel()
 	stored := "http://user:p%40ss@proxy.local:3128" //nolint:gosec // 测试数据
@@ -770,16 +817,27 @@ func TestProxyUserinfo(t *testing.T) {
 		t.Fatal("URLs without userinfo must stay unchanged")
 	}
 	for in, want := range map[string]string{ //nolint:gosec // 测试数据
-		masked:                             stored,
-		"http://proxy.local:3128":          stored,
-		"http://new:pw@proxy.local:3128":   "http://new:pw@proxy.local:3128",
-		"http://other.local:3128":          "http://other.local:3128",
-		"http://REDACTED@other.local:3128": "http://REDACTED@other.local:3128",
-		"":                                 "",
+		masked:                           stored,
+		"http://proxy.local:3128":        stored,
+		"http://new:pw@proxy.local:3128": "http://new:pw@proxy.local:3128",
+		"http://other.local:3128":        "http://other.local:3128",
+		"":                               "",
 	} {
-		if got := keepProxyUserinfo(in, stored); got != want {
-			t.Errorf("keepProxyUserinfo(%q) = %q, want %q", in, got, want)
+		if got, err := keepProxyUserinfo(in, stored); err != nil || got != want {
+			t.Errorf("keepProxyUserinfo(%q) = %q, %v; want %q", in, got, err, want)
 		}
+	}
+	// 占位符 + 地址变了（主机、端口或协议任一不同）：拒绝。
+	for _, in := range []string{
+		"http://REDACTED@other.local:3128", "http://REDACTED@proxy.local:9090", "https://REDACTED@proxy.local:3128",
+	} {
+		if _, err := keepProxyUserinfo(in, stored); !isReason(err, v1.ErrorReason_K8S_CLUSTER_INVALID) {
+			t.Errorf("keepProxyUserinfo(%q) error = %v, want K8S_CLUSTER_INVALID", in, err)
+		}
+	}
+	// 已保存的本来就没有账号：占位符同样不能当账号落库。
+	if _, err := keepProxyUserinfo(masked, "http://proxy.local:3128"); !isReason(err, v1.ErrorReason_K8S_CLUSTER_INVALID) {
+		t.Errorf("placeholder without a saved account: error = %v, want K8S_CLUSTER_INVALID", err)
 	}
 }
 

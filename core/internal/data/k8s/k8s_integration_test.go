@@ -111,7 +111,12 @@ func TestClusterRepo(t *testing.T) {
 	if e.cfg(kc.CfgCluster) != v0+2 {
 		t.Fatalf("cfg version not bumped per write")
 	}
-	dup := &biz.Cluster{ID: agent.ID[:35] + "f", Name: "prod-1", AccessMode: kc.AccessAgent, AgentLocation: 1}
+	// 换一个确定不同的 ID（末位翻转）：直接把末位写成 "f" 时，随机 ID 恰好以 f 结尾（1/16）会撞主键而不是撞名称。
+	last := "f"
+	if agent.ID[35:] == "f" {
+		last = "0"
+	}
+	dup := &biz.Cluster{ID: agent.ID[:35] + last, Name: "prod-1", AccessMode: kc.AccessAgent, AgentLocation: 1}
 	if err := e.clusters.Create(ctx, dup, nil, nil); !kerrors.Is(err, biz.ErrClusterNameExists) {
 		t.Fatalf("duplicate name: %v", err)
 	}

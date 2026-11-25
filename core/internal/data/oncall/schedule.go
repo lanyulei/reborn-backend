@@ -268,11 +268,14 @@ type shiftRepo struct {
 // NewShiftRepo new a shiftRepo.
 func NewShiftRepo(data *basedata.Data) *shiftRepo { return &shiftRepo{data: data} }
 
+// shiftsRangeSQL 未删除值班表中与 [$1, $2) 相交的班次（ShiftRepo.ListRange 与事务内的
+// Tx.ListShiftsRange 共用同一条语句，两条读路径口径恒一致）。
+const shiftsRangeSQL = "SELECT " + shiftSelectColumns + shiftJoins + ` WHERE sh.start_time < $2 AND sh.end_time > $1
+		 ORDER BY sh.start_time, sh.schedule_id, sh.role`
+
 // ListRange implements biz.ShiftRepo.
 func (r *shiftRepo) ListRange(ctx context.Context, from, to time.Time) ([]*biz.Shift, error) {
-	rows, err := r.data.Pool.Query(ctx,
-		"SELECT "+shiftSelectColumns+shiftJoins+` WHERE sh.start_time < $2 AND sh.end_time > $1
-		 ORDER BY sh.start_time, sh.schedule_id, sh.role`, from, to)
+	rows, err := r.data.Pool.Query(ctx, shiftsRangeSQL, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("list oncall shifts: %w", err)
 	}

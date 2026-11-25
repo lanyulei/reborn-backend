@@ -1,6 +1,7 @@
 package biz
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -72,7 +73,8 @@ type ActionRepo interface {
 	// FinishTx 在事务内把动作置为终态（已完成 / 已放弃 / 无需执行），以「仍是待执行且尝试次数未变」围栏；
 	// 围栏未命中（已被别的实例重新领取或已终结）返回 false。
 	FinishTx(ctx context.Context, tx txrun.Tx, a *AlertAction, status int32, note string) (bool, error)
-	// Retry 记下失败原因并在 backoff 之后重试（同样的围栏；未命中是空操作）。
+	// Retry 记下失败原因并在 backoff 之后重试（同样的围栏；未命中是空操作）。backoff 为 0 且原因为空时
+	// 即收回租约（Run 中途停下时用，见 release）。
 	Retry(ctx context.Context, a *AlertAction, backoff time.Duration, reason string) error
 }
 
@@ -159,13 +161,20 @@ func actionPermanent(format string, args ...any) error {
 // errFenceLost 落账时围栏未命中：这一行已被别的实例重新领取或已终结（内部控制流，整笔事务回滚）。
 var errFenceLost = errors.New("monitor: alert action is no longer held by this worker")
 
-// Run 处理一批到期的动作，返回处理的个数。单个动作的失败只记在它自己身上（退避重试 / 放弃），不作为
-// error 返回；error 只代表领取不了或落不了账。
+// Run 处理一批到期的动作，返回已落账的个数（已完成 / 已放弃 / 无需执行）。单个动作的失败只记在它自己身上
+// （退避重试 / 放弃），不作为 error 返回；error 代表领取不了，或这一批中途停下（数据库故障、正在停机）。
+//
+// 领取时整批的下次可领取时间都已推后一个租约。中途停下时，本批里还没有落账的动作——没轮到的、续租或落账
+// 出错的、停机时执行被取消的——由 release 收回租约：不必等租约到期，别的实例或下一轮可以立刻重领。进程被
+// 强杀时没有这一步，这些动作仍要等租约到期。
 func (uc *ActionUsecase) Run(ctx context.Context) (int, error) {
 	actions, err := uc.d.Actions.Claim(ctx, actionBatch, actionLease)
 	if err != nil {
 		return 0, err
 	}
+	// held 本批里仍由本实例持有租约、却还没有落账的动作：循环结束后收回租约。
+	var held []*AlertAction
+	var stopErr error
 	for i, a := range actions {
 		if i > 0 {
 			// 同批靠后的动作开始前先续租：前面的动作（AI 摘要最长 120 秒）可能已耗掉大半租约，不续租的话
@@ -173,18 +182,44 @@ func (uc *ActionUsecase) Run(ctx context.Context) (int, error) {
 			// 不再碰它。
 			ok, err := uc.d.Actions.Renew(ctx, a, actionLease)
 			if err != nil {
-				return 0, err
+				// 续租出错（数据库故障或正在停机）：这一条没有执行。同批后面的动作也不再执行——数据库不可用
+				// 时继续执行只会留下更多「已执行而落不了账」的动作——连同它们一起收回租约。
+				stopErr = err
+				held = append(held, actions[i:]...)
+				break
 			}
 			if !ok {
 				uc.d.Logger.WarnContext(ctx, "monitor alert action lease lost before execution, skipping", "action_id", a.ID, "alert_id", a.AlertID, "kind", a.Kind)
 				continue
 			}
 		}
-		if err := uc.handle(ctx, a); err != nil {
-			return 0, err
+		if err := uc.handle(ctx, a); err != nil || ctx.Err() != nil {
+			// 落不了账（数据库故障），或正在停机（执行被取消后不记失败）：这一条连同后面还没轮到的都还持有租约。
+			stopErr = cmp.Or(err, ctx.Err())
+			held = append(held, actions[i:]...)
+			break
 		}
 	}
+	if len(held) > 0 {
+		uc.release(ctx, held)
+		return len(actions) - len(held), stopErr
+	}
 	return len(actions), nil
+}
+
+// release 收回一批动作的租约：把下次可领取时间拉回现在，别的实例或下一轮可以立刻重领。这些动作这一轮并没有
+// 失败——尝试次数不动，也不记失败原因（last_error 清空）。以「仍是待执行且尝试次数未变」围栏：已落账或已被
+// 别的实例领走的行不受影响。不受停机取消影响，整批共用一个落账超时；收回失败的行保持原租约，到期后自然
+// 可以被重领。
+func (uc *ActionUsecase) release(ctx context.Context, actions []*AlertAction) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), actionFinishTimeout)
+	defer cancel()
+	for _, a := range actions {
+		if err := uc.d.Actions.Retry(ctx, a, 0, ""); err != nil {
+			uc.d.Logger.WarnContext(ctx, "monitor alert action lease not released, it will expire",
+				"action_id", a.ID, "alert_id", a.AlertID, "kind", a.Kind, "error", err)
+		}
+	}
 }
 
 // maxAttempts 该类动作的尝试次数上限。
@@ -217,7 +252,7 @@ func (uc *ActionUsecase) handle(ctx context.Context, a *AlertAction) error {
 		uc.d.Logger.WarnContext(ctx, "monitor alert action could not be recorded", "action_id", a.ID, "alert_id", a.AlertID, "kind", a.Kind, "error", err)
 	}
 	if ctx.Err() != nil {
-		// 正在停机：不记失败，留给租约到期后重做。
+		// 正在停机：不记失败；Run 随即收回租约，别的实例（或重启后的本实例）可以立刻重做。
 		return nil
 	}
 	reason := actionReason(a.Kind, err)

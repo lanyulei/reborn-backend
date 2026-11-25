@@ -19,7 +19,10 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-var _ biz.ModelRepo = (*modelRepo)(nil)
+var (
+	_ biz.ModelRepo        = (*modelRepo)(nil)
+	_ biz.ModelDeleteGuard = (*modelRepo)(nil)
+)
 
 // modelSelectColumns 类型查询列序（含未删除资源数子查询）。
 const modelSelectColumns = `m.code, m.name, m.category, m.icon, m.description, m.status, m.builtin,
@@ -178,4 +181,37 @@ func (r *modelRepo) SoftDelete(ctx context.Context, code string, at time.Time) e
 		return biz.ErrModelNotFound
 	}
 	return nil
+}
+
+// DeletedCICount implements biz.ModelDeleteGuard：回收站里该类型的资源数（走 idx_cmdb_ci_deleted）。
+func (r *modelRepo) DeletedCICount(ctx context.Context, modelCode string) (int64, error) {
+	var n int64
+	if err := r.data.Pool.QueryRow(ctx,
+		"SELECT count(*) FROM cmdb_ci WHERE model_code = $1::text AND delete_time IS NOT NULL", modelCode).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count deleted cmdb cis: %w", err)
+	}
+	return n, nil
+}
+
+// RefFields implements biz.ModelDeleteGuard：其它未删除类型下指向该类型、未废弃的 ref 字段。
+// 已废弃的字段不再接受写入，其遗留取值也不参与校验，不算引用。
+func (r *modelRepo) RefFields(ctx context.Context, modelCode string) ([]string, error) {
+	rows, err := r.data.Pool.Query(ctx,
+		`SELECT f.model_code || '.' || f.code
+		 FROM cmdb_model_field f JOIN cmdb_model m ON m.code = f.model_code AND m.delete_time IS NULL
+		 WHERE f.type = $1::text AND f.ref_model = $2::text AND NOT f.deprecated AND f.model_code <> $2::text
+		 ORDER BY f.model_code, f.code`, biz.FieldTypeRef, modelCode)
+	if err != nil {
+		return nil, fmt.Errorf("list cmdb ref fields: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var ref string
+		if err := rows.Scan(&ref); err != nil {
+			return nil, fmt.Errorf("scan cmdb ref field: %w", err)
+		}
+		out = append(out, ref)
+	}
+	return out, rows.Err()
 }

@@ -200,11 +200,15 @@ func (r *schedulerRepo) EnqueueDue(ctx context.Context, now time.Time) (int, err
 }
 
 // MarkStale implements biz.SchedulerRepo（仅同步来源、未退役、未删除的资源）。
+// 停用中的采集源不参与：停用是管理员的主动决定，其资源本来就不会再被同步确认，按周期整批标陈旧
+// 只会每小时发一次无从处理的 cmdb.sync.stale 告警。已删除的采集源照旧按周期判定陈旧（core 删除
+// 采集源时的既定语义），与它删除前是否启用无关。
 func (r *schedulerRepo) MarkStale(ctx context.Context, multiplier int32) (int, error) {
 	tag, err := r.data.Pool.Exec(ctx,
 		`UPDATE cmdb_ci c SET stale = true, update_time = now()
 		 FROM cmdb_sync_source s
 		 WHERE c.source = 'sync:' || s.id::text AND c.delete_time IS NULL AND NOT c.stale AND c.status <> $1
+		   AND (s.enabled OR s.delete_time IS NOT NULL)
 		   AND c.last_synced_at < now() - make_interval(secs => s.interval_seconds * $2)`,
 		cmdbcontract.CIStatusRetired, multiplier)
 	if err != nil {
@@ -214,11 +218,17 @@ func (r *schedulerRepo) MarkStale(ctx context.Context, multiplier int32) (int, e
 }
 
 // PurgeStaging implements biz.SchedulerRepo：运行已终态（或不存在）且开始时间早于阈值的暂存行。
+// 在途与否以任务租约为准：运行所属任务仍 running 且租约未过期时一律保留，无论它开始了多久——
+// 只按开始时间判定的话，staging_retention 一旦小于一次采集 + 对账的总耗时，调度器会在运行中途
+// 删掉它前面的暂存批次，缺失的部分随后被对账判为「消失」并在宽限期后退役。租约过期（进程已死、
+// 任务将被重领并换新的 run_id）的遗留行仍按原条件清理。
 func (r *schedulerRepo) PurgeStaging(ctx context.Context, olderThan time.Duration) (int, error) {
 	tag, err := r.data.Pool.Exec(ctx,
 		`DELETE FROM cmdb_sync_staging st WHERE NOT EXISTS (
-		   SELECT 1 FROM cmdb_sync_run r WHERE r.id = st.run_id AND r.status = $1 AND r.start_time > now() - $2::interval)`,
-		cmdbcontract.RunRunning, olderThan)
+		   SELECT 1 FROM cmdb_sync_run r WHERE r.id = st.run_id AND r.status = $1 AND r.start_time > now() - $2::interval)
+		 AND NOT EXISTS (
+		   SELECT 1 FROM cmdb_sync_task t WHERE t.run_id = st.run_id AND t.status = $3 AND t.lease_until > now())`,
+		cmdbcontract.RunRunning, olderThan, cmdbcontract.TaskRunning)
 	if err != nil {
 		return 0, fmt.Errorf("purge staging: %w", err)
 	}

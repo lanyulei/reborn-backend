@@ -52,6 +52,9 @@ type detectInput struct {
 	Shifts    []*Shift
 	From      time.Time
 	To        time.Time
+	// Now 此刻（零值 = 不判断已排班范围是否耗尽）。From 不能代替它：日历可以查看远在已排班范围
+	// 之后的月份，那里没有班次是正常的，不是「无人值班」。
+	Now time.Time
 }
 
 // detectIssues 检测五类排班异常；只检查启用的值班表。结果按开始时间、类型排序。
@@ -95,8 +98,11 @@ func detectIssues(in detectInput) []*Issue {
 		shifts := bySchedule[s.ID]
 
 		// 1 无人值班：已排班范围内主值班未覆盖的时间。
-		from, to := maxTime(in.From, s.AnchorTime), in.To
-		if s.GeneratedUntil != nil {
+		// 已排班范围在此刻之前就耗尽（补排持续失败、停机超过提前天数）时不再拿它截断终点：此刻起
+		// 本就无人值班，截断会让 to 早于 from、整张表什么都不报。范围还没耗尽时照旧只查到范围末尾
+		// ——之后的时间只是还没排到。
+		from, to := maxTime(in.From, coverageStart(s, shifts)), in.To
+		if s.GeneratedUntil != nil && (in.Now.IsZero() || s.GeneratedUntil.After(in.Now)) {
 			to = minTime(to, *s.GeneratedUntil)
 		}
 		cursor := from
@@ -210,6 +216,19 @@ func detectIssues(in detectInput) []*Issue {
 		return cmp.Or(a.Start.Compare(b.Start), cmp.Compare(a.Type, b.Type), cmp.Compare(a.ScheduleID, b.ScheduleID))
 	})
 	return mergeIssues(issues)
+}
+
+// coverageStart 值班表开始有人值班的位置：轮转起点，或更早的主值班班次的起点。只拿轮转起点
+// 当检测起点的话，把「首次交接时间」改到未来后，仍在进行的旧班次结束到新起点之间的空档
+// 会被整段跳过。
+func coverageStart(s *Schedule, shifts []*Shift) time.Time {
+	start := s.AnchorTime
+	for _, sh := range shifts {
+		if sh.Role == RolePrimary && sh.Start.Before(start) {
+			start = sh.Start
+		}
+	}
+	return start
 }
 
 // mergeIssues 合并同类、同表、同人且首尾相接或重叠的异常（如跨多个班次的主备同人）。

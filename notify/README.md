@@ -33,6 +33,9 @@ NATS JetStream 为可切换骨干（`pipeline.backbone: nats`，见「NATS 骨�
 - **BatchSend 全有或全无**：≤500 条同事务，任一条校验/scope 失败整批 400/403，生产者需按条重试。
 - **数据面只暴露 HTTP**（HMAC 签名绑定请求体）；无 gRPC ingress。
 - **删除渠道**前须先从路由解绑（否则 409 `NOTIFY_CHANNEL_IN_USE`）。
+- **渠道「连通性测试」只投递被测渠道**：测试事件（`payload.test=true` + `channel_id`）仍按常规路由
+  选路，但命中后只向被测渠道生成任务（同路由的其余渠道不发、也不进聚合）；被测渠道不在命中路由的
+  `channel_ids` 里时事件为 `failed`（路由没覆盖到它，本就说明配置不完整）。
 
 ## 组件与角色
 
@@ -149,6 +152,11 @@ JSON 体 `{event_id, biz_id, event_type, severity, title, subject, body, payload
   写入（delivery_log + 终态 + dlq 一个 pgx.Batch）；渲染后被放回（熔断/限流）则下次重渲染（模板按 id+version 缓存）；
   熔断打开的渠道暂停/放回到 open_until 为止，不再每 5s 声明再放回。
 - **router** 一批事件的终态单语句提交（unnest）。
+- **批内多行写一次往返**（AGENTS §13.7）：聚合组 upsert（pgx.Batch）、过期任务回收、整批放回、死信重放取内容。
+- **NATS 骨干的死锁重做**：relay 的「标记已发布」与 sender 的「声明任务」都是对同一批任务行的多行更新——relay 把消息
+  发进流之后才落账，消费侧可能抢在前面声明这些行；两条语句行序相反时会死锁，数据库回滚其中一个。两处都带围栏、
+  各自是一条自动提交语句，撞上死锁（40P01）/ 序列化失败（40001）就就地重做（至多 3 次，10ms 起退避）；
+  仍然失败才交给循环按原有退避重试，由超期重发与租约回收兜底。
 - **积压指标** `notify_events_pending` / `notify_dispatch_due` 有界计数，读数 10001 表示饱和（≥ 1 万）。
 - 群机器人实例 secret = access_token/key，目标群由实例决定；`config.at_mobiles` 作 @ 名单（钉钉/企微）。
 - **渠道适配器口径（第四批）**：群机器人正文按平台**字节**上限截断（钉钉 markdown 18000B、企微 text 2000B / markdown 4000B、
@@ -161,6 +169,11 @@ JSON 体 `{event_id, biz_id, event_type, severity, title, subject, body, payload
   `severity n`（info/warning/critical/fatal）、`json v`、`trunc s n`、`upper`、`lower`；缺省正文群机器人紧凑版、
   邮件/webhook 多行版，载荷以 JSON 打印；非对象载荷注入为 `{"_raw": …}`。
 - 控制面按 biz 隔离只约束 notify 域接口；system 域（用户/角色）权限模型不变。
+- **渠道配置不向前兼容**：core 与管道都按严格模式解码渠道 `config`（出现本版本不认识的字段即报错）。这是有意的——
+  更新渠道是「读出 → 整份配置按当前版本的结构写回」，容忍未知字段的话，滚动发布期间未升级的副本一保存就会把新字段
+  静默抹掉。因此**新增 config 字段有发布顺序约束**：先把 core 与 notify 全部升级到位，再开始使用新字段。已经写入新字段
+  之后还有旧副本在跑时：core 侧该渠道的读取 / 保存 / 试算报 500，管道侧把该渠道视为不健康、投递延后（不丢），
+  升级完成后自动恢复。
 
 ## 部署：数据库角色
 

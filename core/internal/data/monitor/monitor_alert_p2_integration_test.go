@@ -282,8 +282,9 @@ func TestAlertOpsRepo_EventsLinksStats(t *testing.T) {
 		events[1].Operator != "" || !events[1].Detail.Auto {
 		t.Fatalf("ListByAlert = %+v, %v", events, err)
 	}
-	if one, _ := ops.ListByAlert(ctx, a, 1); len(one) != 1 || one[0].ID != ev.ID {
-		t.Fatalf("limit not applied: %+v", one)
+	// 条数超过上限时保留最新的一条（仍按时间升序），而不是最早的 comment。
+	if one, _ := ops.ListByAlert(ctx, a, 1); len(one) != 1 || one[0].ID != events[1].ID {
+		t.Fatalf("limit must keep the latest event: %+v", one)
 	}
 
 	// 关联工单：只在尚未关联时写；已关联时返回现有的；事件不存在报错。

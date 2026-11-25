@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -45,7 +46,7 @@ func (s *RunnerService) Routes() map[string]http.HandlerFunc {
 }
 
 // endpoint 一个协议接口：解码请求体、调用用例，返回应答体。
-type endpoint func(ctx context.Context, r *biz.Runner, body *json.Decoder) (any, error)
+type endpoint func(ctx context.Context, r *biz.Runner, body io.Reader) (any, error)
 
 // handle 包装公共流程：只接受 POST → Bearer 令牌鉴权 → 调用接口 → 编码应答或错误。
 func (s *RunnerService) handle(ep endpoint) http.HandlerFunc {
@@ -61,23 +62,39 @@ func (s *RunnerService) handle(ep endpoint) http.HandlerFunc {
 			s.fail(w, req, "", err)
 			return
 		}
-		out, err := ep(ctx, runner, json.NewDecoder(req.Body))
+		out, err := ep(ctx, runner, req.Body)
 		if err != nil {
 			s.fail(w, req, runner.ID, err)
 			return
 		}
+		claim, _ := out.(*jobcontract.ClaimResponse)
+		claimed := claim != nil && claim.Task != nil
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
-		if err := json.NewEncoder(w).Encode(out); err != nil {
+		err = json.NewEncoder(w).Encode(out)
+		if err == nil && claimed {
+			err = delivered(ctx, w)
+		}
+		if err != nil {
 			s.log.WarnContext(ctx, "write runner api response failed", "path", req.URL.Path, "runner_id", runner.ID, "error", err)
-			if c, ok := out.(*jobcontract.ClaimResponse); ok && c.Task != nil {
-				s.uc.Unclaim(ctx, c.Task.ExecutionID, c.Task.LeaseToken)
+			if claimed {
+				s.uc.Unclaim(ctx, claim.Task.ExecutionID, claim.Task.LeaseToken)
 			}
 		}
 	}
 }
 
-func (s *RunnerService) heartbeat(ctx context.Context, r *biz.Runner, body *json.Decoder) (any, error) {
+// delivered 尽力确认带任务的领取应答送到了节点：Encode 不报错只说明数据进了 net/http 的缓冲。
+// 把缓冲推给连接（连接已断时在这里报错），再看请求 ctx——节点在领取期间断开的话，net/http 的后台读
+// 会取消它（前提是请求体已读尽，见 claim）。两者都只能发现「到此刻为止」的断开，之后才断的仍要等租约过期。
+func delivered(ctx context.Context, w http.ResponseWriter) error {
+	if err := http.NewResponseController(w).Flush(); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		return err
+	}
+	return ctx.Err()
+}
+
+func (s *RunnerService) heartbeat(ctx context.Context, r *biz.Runner, body io.Reader) (any, error) {
 	var in jobcontract.HeartbeatRequest
 	if err := decode(body, &in); err != nil {
 		return nil, err
@@ -85,8 +102,13 @@ func (s *RunnerService) heartbeat(ctx context.Context, r *biz.Runner, body *json
 	return s.uc.Heartbeat(ctx, r, &in)
 }
 
-// claim 领取没有请求内容（请求体可为空）。
-func (s *RunnerService) claim(ctx context.Context, r *biz.Runner, _ *json.Decoder) (any, error) {
+// claim 领取没有请求内容（请求体可为空），但要先把请求体读尽（监听层已限长）：net/http 读到请求体
+// 末尾才启动后台读，之后节点断开才会取消请求 ctx。不读的话，节点在领取期间断开时应答照样「写成功」、
+// ctx 也没有错，从未运行过的执行要等租约过期，再被判成「结果未知：作业可能仍在运行」。
+func (s *RunnerService) claim(ctx context.Context, r *biz.Runner, body io.Reader) (any, error) {
+	if _, err := io.Copy(io.Discard, body); err != nil {
+		return nil, bodyError(err)
+	}
 	task, err := s.uc.Claim(ctx, r)
 	if err != nil {
 		return nil, err
@@ -94,7 +116,7 @@ func (s *RunnerService) claim(ctx context.Context, r *biz.Runner, _ *json.Decode
 	return &jobcontract.ClaimResponse{Task: task}, nil
 }
 
-func (s *RunnerService) report(ctx context.Context, r *biz.Runner, body *json.Decoder) (any, error) {
+func (s *RunnerService) report(ctx context.Context, r *biz.Runner, body io.Reader) (any, error) {
 	var in jobcontract.ReportRequest
 	if err := decode(body, &in); err != nil {
 		return nil, err
@@ -102,7 +124,7 @@ func (s *RunnerService) report(ctx context.Context, r *biz.Runner, body *json.De
 	return s.uc.Report(ctx, r, &in)
 }
 
-func (s *RunnerService) finish(ctx context.Context, r *biz.Runner, body *json.Decoder) (any, error) {
+func (s *RunnerService) finish(ctx context.Context, r *biz.Runner, body io.Reader) (any, error) {
 	var in jobcontract.FinishRequest
 	if err := decode(body, &in); err != nil {
 		return nil, err
@@ -117,15 +139,20 @@ func (s *RunnerService) finish(ctx context.Context, r *biz.Runner, body *json.De
 var errBodyTooLarge = errors.New("request body too large")
 
 // decode 解码 JSON 请求体；未知字段忽略（新旧版本节点共存）。
-func decode(body *json.Decoder, v any) error {
-	if err := body.Decode(v); err != nil {
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
-			return errBodyTooLarge
-		}
-		return fmt.Errorf("%w: malformed json body", biz.ErrInvalidRequest)
+func decode(body io.Reader, v any) error {
+	if err := json.NewDecoder(body).Decode(v); err != nil {
+		return bodyError(err)
 	}
 	return nil
+}
+
+// bodyError 把读取 / 解码请求体的错误映射为协议错误：超限 413，其余 400。
+func bodyError(err error) error {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		return errBodyTooLarge
+	}
+	return fmt.Errorf("%w: malformed json body", biz.ErrInvalidRequest)
 }
 
 // bearerToken 取 Authorization: Bearer <令牌>；没有或格式不对返回空串（随后鉴权失败）。

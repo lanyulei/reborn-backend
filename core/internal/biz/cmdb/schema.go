@@ -51,8 +51,10 @@ func ValidateAttrs(fields []*Field, attrs map[string]any, partial bool) (map[str
 	return out, nil
 }
 
-// checkRequired 合并后的属性须包含全部启用的必填字段。只看键是否存在且非空：
-// 存量值不重校验（字段规则 / 枚举值收紧后不阻塞无关更新），已废弃字段的遗留键忽略。
+// checkRequired 合并后的属性须包含全部启用的必填字段。只看键是否存在且非 nil：存量值不重校验
+// （字段规则 / 枚举值收紧后不阻塞无关更新），已废弃字段的遗留键忽略。存量的空串在这里不拦——
+// 本次写入的空串由 validateAttrs（formschema.Validate）拒绝，存量的由质量看板的缺必填提示
+// （data 层 qualityMissingRequired 把空串计入）。
 func checkRequired(fields []*Field, attrs map[string]any) error {
 	if err := formschema.CheckRequired(schemaFields(fields), attrs); err != nil {
 		return attrError(err)

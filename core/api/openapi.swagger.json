@@ -26798,7 +26798,7 @@
         },
         "type": {
           "type": "string",
-          "title": "type 类型：fire 触发 / resolve 恢复 / close 关闭 / mute 被屏蔽 / unmute 屏蔽解除 / inhibit 被抑制 /\nuninhibit 抑制解除 / escalate 升级 / notify 通知说明 / ack 认领 / unack 取消认领 / transfer 转交 /\ncomment 备注 / ticket 转工单 / ticket_note 在工单上追加了恢复记录 / workflow 触发流程 / ai_summary 生成 AI 摘要 /\naction_failed 事件动作失败 / notification 一次通知（此时 notify_log 有值，detail 为空）。"
+          "title": "type 类型：fire 触发 / resolve 恢复 / close 关闭 / mute 被屏蔽 / unmute 屏蔽解除 / inhibit 被抑制 /\nuninhibit 抑制解除 / escalate 升级 / notify 通知说明 / ack 认领 / unack 取消认领 / transfer 转交 /\ncomment 备注 / ticket 转工单 / ticket_note 在工单上追加了恢复记录 / workflow 触发流程 / ai_summary 生成 AI 摘要 /\naction_failed 事件动作失败 / notification 一次通知（此时 notify_log 有值，detail 为空）/\nincident 被关联到故障或从故障移出（故障管理域写入，detail.text 为说明）。"
         },
         "time": {
           "type": "string",
@@ -27484,7 +27484,7 @@
         },
         "name": {
           "type": "string",
-          "title": "name 规则名称（规则不存在时为空）。"
+          "title": "name 规则名称（规则不存在，或调用方对其所在分组不可读时为空）。"
         },
         "ok": {
           "type": "boolean",
@@ -34607,6 +34607,10 @@
         "bizUnrestricted": {
           "type": "boolean",
           "title": "biz_unrestricted 通知 biz 不受限（超管或任一启用角色 scope 为空）。"
+        },
+        "passwordChangeRequired": {
+          "type": "boolean",
+          "title": "password_change_required 同 LoginResponse.password_change_required：当前口令仍是系统预置的初始口令。"
         }
       },
       "title": "GetLoginProfileResponse 当前登录者信息响应。"
@@ -40685,6 +40689,10 @@
         "user": {
           "$ref": "#/definitions/User",
           "title": "user 登录用户实体（不含密码）。"
+        },
+        "passwordChangeRequired": {
+          "type": "boolean",
+          "title": "password_change_required 当前口令是系统预置的初始口令（内置超管从未改过密码）：前端应在登录后\n提示并引导用户立即修改。仅为提示，不限制接口调用。"
         }
       },
       "title": "LoginResponse 登录响应：双令牌 + 用户信息（前端免二次拉取）。"
@@ -46577,21 +46585,21 @@
           "items": {
             "type": "string"
           },
-          "title": "menus 授权的菜单（页面）码全量集合，上限 64 条；须登记在权限目录内\n（service 层校验）。仅控制前端菜单可见性，不产生接口授权。"
+          "title": "menus 授权的菜单（页面）码全量集合，上限 256 条；须登记在权限目录内\n（service 层校验）。仅控制前端菜单可见性，不产生接口授权。上限须大于权限目录\n的菜单总数（否则勾选全部菜单的角色保存即 400），由 operations_test 守护。"
         },
         "elements": {
           "type": "array",
           "items": {
             "type": "string"
           },
-          "title": "elements 授权的页面元素码全量集合，上限 128 条；须登记在权限目录内。\n仅控制前端页面元素（按钮等）可见性，不产生接口授权。"
+          "title": "elements 授权的页面元素码全量集合，上限 1024 条；须登记在权限目录内。\n仅控制前端页面元素（按钮等）可见性，不产生接口授权。上限须大于目录的元素总数。"
         },
         "apis": {
           "type": "array",
           "items": {
             "type": "string"
           },
-          "title": "apis 接口操作 code（32 位小写 md5 hex，取自 ListOperations）直接授权\n全量集合，上限 256 条；元素须在 ListOperations 枚举范围内（service 层\n校验）。统一用 code 而非 name 定位接口，规避字符集兼容问题。"
+          "title": "apis 接口操作 code（32 位小写 md5 hex，取自 ListOperations）直接授权\n全量集合，上限 2048 条；元素须在 ListOperations 枚举范围内（service 层\n校验）。统一用 code 而非 name 定位接口，规避字符集兼容问题。上限须大于\n可授权接口总数。"
         }
       },
       "title": "SetRolePermissionsRequest 全量覆盖角色权限请求；三类均传空表示清空授权。"
@@ -49390,7 +49398,7 @@
         },
         "force": {
           "type": "boolean",
-          "title": "force 关闭时跳过复盘要求（需管理权限，原因记入时间线）。"
+          "title": "force 关闭时跳过复盘要求（仅故障指挥或超级管理员；须填写原因，原因记入时间线）。"
         }
       },
       "title": "TransitionIncidentRequest 状态流转。"
@@ -51650,7 +51658,7 @@
         },
         "provider": {
           "type": "string",
-          "title": "provider 提供方：aliyun / vmware。"
+          "title": "provider 提供方：aliyun / tencent / aws / vmware（与 kit/cmdbcontract.Providers 一致；\n此前只放行 aliyun / vmware，腾讯云与 AWS 的采集器永远跑不到）。"
         },
         "config": {
           "type": "object",
@@ -51897,7 +51905,7 @@
         "candidates": {
           "type": "integer",
           "format": "int32",
-          "title": "待定候选数。"
+          "title": "待定候选数。带业务过滤时只含规则固定指向该业务的候选（按告警标签动态匹配业务的规则的候选不计入）。"
         }
       }
     },

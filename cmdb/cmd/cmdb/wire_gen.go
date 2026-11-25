@@ -56,7 +56,8 @@ func wireApp(confServer *conf.Server, confData *conf.Data, sync *conf.Sync, noti
 	maintenanceRepo := data.NewMaintenanceRepo(dataData)
 	maintenanceUsecase := biz.NewMaintenanceUsecase(maintenanceRepo, logger)
 	locker := data.NewLocker(dataData)
-	metrics, cleanup2, err := server.NewMetrics()
+	tableStatsRepo := data.NewTableStatsRepo(dataData)
+	metrics, cleanup2, err := server.NewMetrics(tableStatsRepo)
 	if err != nil {
 		cleanup()
 		return nil, nil, err

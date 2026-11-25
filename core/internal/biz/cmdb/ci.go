@@ -245,6 +245,35 @@ type CIBatchUpdater interface {
 	UpdateBatch(ctx context.Context, items []*CI, histories []*History) error
 }
 
+// CIBatchLookup 仓储可选能力：GetByName 的批量版本，一条语句取某类型下多个名称对应的已存在资源。
+// 导入用它一次取齐本批名称与关系目标（此前逐行 GetByName）；结果口径须与 GetByName 完全一致
+// （同一组列、不含已删除）。仓储不具备该能力或查询失败时导入退回逐行查询。
+type CIBatchLookup interface {
+	// GetByNames 返回 modelCode 下名称在 names 内的未删除资源；不存在的名称不在结果里，顺序不保证。
+	GetByNames(ctx context.Context, modelCode string, names []string) ([]*CI, error)
+}
+
+// RetireEdge 退役闭包展开用的一条出边：SrcID 经关系类型 TypeCode（OnDelete 为其删除策略）指向未删除的对端。
+type RetireEdge struct {
+	SrcID    string
+	TypeCode string
+	OnDelete string
+	CI       *CI
+}
+
+// RetireGraphRepo 关系仓储的可选能力：一条语句取齐退役闭包展开要读的全部出边。此前闭包内每个
+// 资源 × 每个适用的关系类型都要计数 + 分页列举（见 retireClosureByType），上千台虚拟机的宿主机
+// 退役即数千次往返。生产仓储必须实现（编译期断言）；仓储不具备该能力时（内存桩）退回逐类型遍历。
+type RetireGraphRepo interface {
+	// RetireEdges 取以 rootID 为根的闭包的出边。会被展开的资源 = 根，加上沿「关系类型未删除、
+	// cascade_retire、以该资源的类型为源端适用」的出边可达、且未删除未退役的对端（已退役 / 已删除的
+	// 对端不再展开）。返回这些资源的全部出边：关系类型未删除且以该资源的类型为源端适用、对端未删除
+	// （任何删除策略；已退役的对端也包含在内，是否跳过由用例层判定）。
+	// 行序：资源、关系类型（create_time, code）、对端（name, id）升序——用例层据此重放逐类型遍历的
+	// 判定顺序（先遇到的拒绝原因胜出、闭包内资源的顺序），见 retireClosureOf。
+	RetireEdges(ctx context.Context, rootID string) ([]*RetireEdge, error)
+}
+
 // HistoryRepo 变更历史只读接口（写入随资源/关系操作同事务）。
 type HistoryRepo interface {
 	ListByCI(ctx context.Context, ciID string, page, pageSize int64) ([]*History, int64, error)
@@ -286,8 +315,20 @@ func NewCIUsecase(models ModelRepo, fields FieldRepo, relTypes RelationTypeRepo,
 	return &CIUsecase{models: models, fields: fields, relTypes: relTypes, cis: cis, relations: relations, history: history, relationUC: relationUC, owners: owners}
 }
 
-// Create 创建资源：类型须启用；属性按字段定义全量校验；ref 字段指向存在的资源。
-func (uc *CIUsecase) Create(ctx context.Context, actor Actor, ci *CI) (*CI, error) {
+// Create 创建资源：类型须启用；属性按字段定义全量校验；ref 字段指向存在且在调用者数据范围
+// 内的资源（scope）。资源本身的环境是否在范围内由调用方（守卫）先行校验。
+// 返回值重新读取并脱敏（与 Get / List 口径一致）。
+func (uc *CIUsecase) Create(ctx context.Context, actor Actor, scope Scope, ci *CI) (*CI, error) {
+	created, err := uc.create(ctx, actor, scope, ci)
+	if err != nil {
+		return nil, err
+	}
+	return uc.getMasked(ctx, created.ID)
+}
+
+// create Create 的校验与写入，返回写入后的资源（未回读、未脱敏）。导入走这里：它只用到资源 ID，
+// 每行写入后不必再读一遍（也不存在「已写入、回读失败、这一行却被报成 error」的窗口）。
+func (uc *CIUsecase) create(ctx context.Context, actor Actor, scope Scope, ci *CI) (*CI, error) {
 	m, err := uc.models.Get(ctx, ci.ModelCode)
 	if err != nil {
 		return nil, err
@@ -303,7 +344,7 @@ func (uc *CIUsecase) Create(ctx context.Context, actor Actor, ci *CI) (*CI, erro
 	if err != nil {
 		return nil, err
 	}
-	if err := uc.checkRefs(ctx, fields, attrs); err != nil {
+	if err := uc.checkRefs(ctx, scope, fields, attrs); err != nil {
 		return nil, err
 	}
 	id, err := idgen.NewID()
@@ -327,7 +368,7 @@ func (uc *CIUsecase) Create(ctx context.Context, actor Actor, ci *CI) (*CI, erro
 	if err := uc.cis.Create(ctx, ci, h); err != nil {
 		return nil, err
 	}
-	return uc.getMasked(ctx, ci.ID)
+	return ci, nil
 }
 
 // getMasked 读取资源并脱敏（写接口的返回值；与 Get / List 口径一致）。
@@ -356,8 +397,9 @@ func (uc *CIUsecase) GetByIDs(ctx context.Context, ids []string) ([]*CI, error) 
 	return uc.cis.GetByIDs(ctx, ids)
 }
 
-// Get 资源详情 + 各适用关系类型两个方向的关联统计。
-func (uc *CIUsecase) Get(ctx context.Context, id string) (*CI, []RelationSummary, error) {
+// Get 资源详情 + 各适用关系类型两个方向的关联统计。受限调用者（scope）的统计只计范围内的
+// 对端，与关联列表同口径；资源本身是否在范围内由调用方（守卫）校验。
+func (uc *CIUsecase) Get(ctx context.Context, scope Scope, id string) (*CI, []RelationSummary, error) {
 	ci, err := uc.cis.Get(ctx, id)
 	if err != nil {
 		return nil, nil, err
@@ -369,7 +411,7 @@ func (uc *CIUsecase) Get(ctx context.Context, id string) (*CI, []RelationSummary
 	if err != nil {
 		return nil, nil, err
 	}
-	counts, err := uc.relations.CountByCI(ctx, id)
+	counts, err := uc.relationCounts(ctx, scope, id)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -389,6 +431,22 @@ func (uc *CIUsecase) Get(ctx context.Context, id string) (*CI, []RelationSummary
 		}
 	}
 	return ci, summaries, nil
+}
+
+// relationCounts 当前资源各关系类型两个方向的关联数。受限调用者只计范围内的对端：关联列表
+// （ListRelatedScoped）对范围外对端「不泄露名称与数量」，统计若仍按全部对端计，数字减去
+// 列表条数就是范围外对端数。仓储不具备按范围计数的能力（仅内存桩）时不下发统计——
+// 宁可少显示，也不退回不按范围计数。
+func (uc *CIUsecase) relationCounts(ctx context.Context, scope Scope, ciID string) (map[RelationKey]int64, error) {
+	if scope.Unrestricted {
+		return uc.relations.CountByCI(ctx, ciID)
+	}
+	r, ok := uc.relations.(ScopedRelationRepo)
+	if !ok {
+		return map[RelationKey]int64{}, nil
+	}
+	modelCodes, envs := scopeLists(scope)
+	return r.CountByCIIn(ctx, ciID, modelCodes, envs)
 }
 
 // Search 全局搜索（limit 非法时取 20，上限 SearchMaxLimit）。
@@ -449,14 +507,21 @@ func (uc *CIUsecase) List(ctx context.Context, filter CIFilter, page, pageSize i
 	return items, total, nil
 }
 
-// ListHistory 全局变更审计（diff 中的敏感属性脱敏）。
+// ListHistory 全局变更审计，不按调用者数据范围裁剪（系统链路用：故障管理的变更关联等）。
+// 面向用户的查询走 ListHistoryScoped。
 func (uc *CIUsecase) ListHistory(ctx context.Context, filter HistoryFilter, page, pageSize int64) ([]*History, int64, error) {
+	return uc.ListHistoryScoped(ctx, Scope{Unrestricted: true}, filter, page, pageSize)
+}
+
+// ListHistoryScoped 全局变更审计（diff 中的敏感属性脱敏；受限调用者的关联历史抹去范围外的对端，
+// 见 maskHistories）。filter 的 ModelCodes / Envs 由数据范围守卫叠加。
+func (uc *CIUsecase) ListHistoryScoped(ctx context.Context, scope Scope, filter HistoryFilter, page, pageSize int64) ([]*History, int64, error) {
 	page, pageSize = paging.Normalize(page, pageSize)
 	items, total, err := uc.history.List(ctx, filter, page, pageSize)
 	if err != nil {
 		return nil, 0, err
 	}
-	if err := uc.maskHistories(ctx, items); err != nil {
+	if err := uc.maskHistories(ctx, scope, items); err != nil {
 		return nil, 0, err
 	}
 	return items, total, nil
@@ -488,8 +553,9 @@ func (uc *CIUsecase) maskAll(ctx context.Context, items []*CI) error {
 	return nil
 }
 
-// maskHistories 历史 diff 的 before/after.attrs 中敏感键脱敏。
-func (uc *CIUsecase) maskHistories(ctx context.Context, items []*History) error {
+// maskHistories 历史 diff 的脱敏：before/after.attrs 中的敏感键替换为占位值；受限调用者（scope）
+// 的 link / unlink 记录里抹去范围外对端的 target（见 maskHistoryTargets）。
+func (uc *CIUsecase) maskHistories(ctx context.Context, scope Scope, items []*History) error {
 	byModel := map[string][]string{}
 	for _, h := range items {
 		if h == nil || h.ModelCode == "" {
@@ -513,6 +579,60 @@ func (uc *CIUsecase) maskHistories(ctx context.Context, items []*History) error 
 					MaskAttrs(attrs, codes)
 				}
 			}
+		}
+	}
+	return uc.maskHistoryTargets(ctx, scope, items)
+}
+
+// maskHistoryTargets 受限调用者的关联历史：target 带着对端的 id / name / modelCode，范围内资源
+// 的历史会带出范围外对端的名称与 ID。对端类型不在范围内的直接抹去；环境受限时对端环境要回查
+// （一页一次批量取），已删除或环境不在范围内的同样抹去——不存在与越权同形，也不泄露数量。
+// 记录本身保留：动作、关系类型与方向是当前资源自己的历史。
+func (uc *CIUsecase) maskHistoryTargets(ctx context.Context, scope Scope, items []*History) error {
+	if scope.Unrestricted {
+		return nil
+	}
+	needEnv := !scope.EnvUnrestricted
+	ids := make([]string, 0, len(items))
+	for _, h := range items {
+		if h == nil || (h.Action != ActionLink && h.Action != ActionUnlink) {
+			continue
+		}
+		target, ok := h.Diff["target"].(map[string]any)
+		if !ok {
+			continue
+		}
+		id, _ := target["id"].(string)
+		model, _ := target["modelCode"].(string)
+		if !scope.AllowsModel(model) || !idgen.IsUUIDFold(id) {
+			delete(h.Diff, "target")
+			continue
+		}
+		if needEnv {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	peers, err := uc.cis.GetByIDs(ctx, ids)
+	if err != nil {
+		return err
+	}
+	visible := make(map[string]bool, len(peers))
+	for _, p := range peers {
+		visible[p.ID] = scope.AllowsEnv(p.Env)
+	}
+	for _, h := range items {
+		if h == nil || (h.Action != ActionLink && h.Action != ActionUnlink) {
+			continue
+		}
+		target, ok := h.Diff["target"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if id, _ := target["id"].(string); !visible[id] {
+			delete(h.Diff, "target")
 		}
 	}
 	return nil
@@ -552,83 +672,74 @@ func dropMaskedValues(fields []*Field, patch map[string]any) map[string]any {
 	return patch
 }
 
-// Update 更新资源：乐观锁；属性按键合并后全量重校验；只记录真实变化。
-func (uc *CIUsecase) Update(ctx context.Context, actor Actor, id string, expectedVersion int64, upd CIUpdate) (*CI, error) {
+// rejectExternalIDChange 同步托管资源的外部标识是采集对账的锚点（对账按它匹配已存在的资源）：
+// 人工改掉它之后，下一次同步会匹配不上——该资源被判「消失」、宽限期后退役，采集行则作为新资源重建
+// （历史断裂）。要改先解除同步托管（Unclaim）；同步来源自己写入时不受限。
+func rejectExternalIDChange(actor Actor, cur *CI, upd CIUpdate) error {
+	if upd.ExternalID == nil || *upd.ExternalID == cur.ExternalID {
+		return nil
+	}
+	if actor.source() != SourceManual || !cmdbcontract.IsSyncSource(cur.Source) {
+		return nil
+	}
+	return detail(ErrCIInvalid, "external id of a sync-managed resource is the reconciliation anchor; unclaim it before changing it")
+}
+
+// Update 更新资源：乐观锁；属性按键合并后全量重校验；只记录真实变化。校验与合并见 applyUpdate
+// （导入试运行的预演走同一实现）；scope 为调用者数据范围，用于 ref 字段引用的范围校验。
+// 返回值：有变化时重新读取并脱敏，无变化时返回当前资源（脱敏）。
+func (uc *CIUsecase) Update(ctx context.Context, actor Actor, scope Scope, id string, expectedVersion int64, upd CIUpdate) (*CI, error) {
+	next, changed, err := uc.update(ctx, actor, scope, id, expectedVersion, upd)
+	if err != nil {
+		return nil, err
+	}
+	if !changed {
+		if err := uc.mask(ctx, next); err != nil {
+			return nil, err
+		}
+		return next, nil
+	}
+	return uc.getMasked(ctx, id)
+}
+
+// update Update 的校验、合并与写入：返回合并后的资源（未回读、未脱敏）与是否有真实变化。
+func (uc *CIUsecase) update(ctx context.Context, actor Actor, scope Scope, id string, expectedVersion int64, upd CIUpdate) (next *CI, changed bool, err error) {
 	cur, err := uc.cis.Get(ctx, id)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if cur.Version != expectedVersion {
-		return nil, ErrCIVersionConflict
+		return nil, false, ErrCIVersionConflict
 	}
+	return uc.updateCurrent(ctx, actor, scope, cur, upd)
+}
+
+// updateCurrent 对刚读取的当前资源做校验、合并与写入（乐观锁条件 = 该读取的版本），返回合并后的资源
+// （未回读、未脱敏）与是否有真实变化。导入走这里：它读一次当下状态后判定 skip / update，
+// 不必像 Update 那样再读一遍做版本比对（导入行本来就不携带期望版本）。
+func (uc *CIUsecase) updateCurrent(ctx context.Context, actor Actor, scope Scope, cur *CI, upd CIUpdate) (next *CI, changed bool, err error) {
 	fields, err := uc.fields.ListByModel(ctx, cur.ModelCode)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	next := *cur
-	next.Attrs = cloneAttrs(cur.Attrs)
-	if upd.Name != nil {
-		next.Name = *upd.Name
+	next, _, err = uc.applyUpdate(ctx, actor, scope, cur, fields, upd)
+	if err != nil {
+		return nil, false, err
 	}
-	if upd.Env != nil {
-		next.Env = *upd.Env
-	}
-	if upd.Owner != nil {
-		next.Owner = *upd.Owner
-	}
-	if upd.ExternalID != nil {
-		next.ExternalID = *upd.ExternalID
-	}
-	if upd.Tags != nil {
-		next.Tags = slices.Clone(*upd.Tags)
-	}
-	if upd.Attrs != nil {
-		upd.Attrs = dropMaskedValues(fields, cloneAttrs(upd.Attrs))
-		// 同步只读字段不接受人工修改（同步来源可写）。只对由采集源维护的资源生效：人工资源
-		// （含解除同步托管后的资源）没有同步来写这些字段，须允许人工维护。
-		if actor.source() == SourceManual && cmdbcontract.IsSyncSource(cur.Source) {
-			if err := rejectSyncOwned(fields, cur.Attrs, upd.Attrs); err != nil {
-				return nil, err
-			}
-		}
-		// 增量校验改动的键（partial），再合并；清空的键从结果移除。
-		patch, err := ValidateAttrs(fields, upd.Attrs, true)
-		if err != nil {
-			return nil, err
-		}
-		for key, v := range upd.Attrs {
-			if v == nil {
-				delete(next.Attrs, key)
-			}
-		}
-		for key, v := range patch {
-			next.Attrs[key] = v
-		}
-		// 合并后只校验必填（防止清空必填字段）；存量值与已废弃字段的遗留键不重校验。
-		if err := checkRequired(fields, next.Attrs); err != nil {
-			return nil, err
-		}
-		if err := uc.checkRefs(ctx, fields, patch); err != nil {
-			return nil, err
-		}
-	}
-	before, after := diffCI(cur, &next)
+	before, after := diffCI(cur, next)
 	if len(after) == 0 {
-		if err := uc.mask(ctx, cur); err != nil {
-			return nil, err
-		}
-		return cur, nil
+		return cur, false, nil
 	}
 	next.Version = cur.Version + 1
 	next.UpdateUser, next.UpdateTime = actor.UserID, time.Now()
-	h, err := newHistory(actor, id, ActionUpdate, map[string]any{"before": before, "after": after})
+	h, err := newHistory(actor, cur.ID, ActionUpdate, map[string]any{"before": before, "after": after})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	if err := uc.cis.Update(ctx, &next, expectedVersion, h); err != nil {
-		return nil, err
+	if err := uc.cis.Update(ctx, next, cur.Version, h); err != nil {
+		return nil, false, err
 	}
-	return uc.getMasked(ctx, id)
+	return next, true, nil
 }
 
 // Transition 状态流转：状态机校验；退役时按关系类型策略级联退役 dst 资源（restrict 则拒绝）。
@@ -696,7 +807,87 @@ func (uc *CIUsecase) updateAll(ctx context.Context, items []*CI, histories []*Hi
 // 广度优先遍历，visited 去重（环与菱形各只处理一次）；cascade_retire 的未退役 dst 纳入
 // 闭包并继续展开，restrict 且仍有关联则拒绝；已退役的 dst 跳过；越权的 dst 整体拒绝。
 // 返回的资源带读取时的当前版本。
+// 展开要读的边由仓储一条语句取齐（RetireGraphRepo），判定在内存里按同样的遍历顺序重放
+// （retireClosureOf）；仓储不具备该能力时退回逐类型分页遍历（retireClosureByType）。
 func (uc *CIUsecase) retireClosure(ctx context.Context, scope Scope, root *CI) ([]*CI, error) {
+	repo, ok := uc.relations.(RetireGraphRepo)
+	if !ok {
+		return uc.retireClosureByType(ctx, scope, root)
+	}
+	edges, err := repo.RetireEdges(ctx, root.ID)
+	if err != nil {
+		return nil, err
+	}
+	return retireClosureOf(scope, root, edges)
+}
+
+// retireOutgoing 一个资源的出边按关系类型分组；order 为类型首次出现的顺序（即仓储行序里
+// 关系类型的顺序）。
+type retireOutgoing struct {
+	order  []*retireGroup
+	byType map[string]*retireGroup
+}
+
+// retireGroup 某资源在一个关系类型下的出边（对端按仓储行序）。
+type retireGroup struct {
+	code, onDelete string
+	cis            []*CI
+}
+
+// retireClosureOf 在取齐的出边上重放逐类型遍历，判定与 retireClosureByType 逐条一致：每个资源
+// 依次处理它的各关系类型；非 cascade_retire 的类型只要有未删除的对端就拒绝整个退役（报错带条数），
+// 处理时机同逐类型遍历——排在前面的类型先判定，所以同时命中多种拒绝原因时返回的错误相同；
+// cascade_retire 的对端按行序 visited 去重，已退役的跳过且不展开，越权的整体拒绝，其余入闭包。
+func retireClosureOf(scope Scope, root *CI, edges []*RetireEdge) ([]*CI, error) {
+	outgoing := make(map[string]*retireOutgoing)
+	for _, e := range edges {
+		out, ok := outgoing[e.SrcID]
+		if !ok {
+			out = &retireOutgoing{byType: map[string]*retireGroup{}}
+			outgoing[e.SrcID] = out
+		}
+		group, ok := out.byType[e.TypeCode]
+		if !ok {
+			group = &retireGroup{code: e.TypeCode, onDelete: e.OnDelete}
+			out.byType[e.TypeCode] = group
+			out.order = append(out.order, group)
+		}
+		group.cis = append(group.cis, e.CI)
+	}
+	visited := map[string]struct{}{root.ID: {}}
+	var deps []*CI
+	for queue := []*CI{root}; len(queue) > 0; queue = queue[1:] {
+		ci := queue[0]
+		out, ok := outgoing[ci.ID]
+		if !ok {
+			continue
+		}
+		for _, group := range out.order {
+			if group.onDelete != OnDeleteCascadeRetire {
+				return nil, detail(ErrCIInUse, "%d resources linked via %s", len(group.cis), group.code)
+			}
+			for _, peer := range group.cis {
+				if _, ok := visited[peer.ID]; ok {
+					continue
+				}
+				visited[peer.ID] = struct{}{}
+				if peer.Status == CIStatusRetired {
+					continue
+				}
+				if !scope.Allows(peer.ModelCode, peer.Env) {
+					return nil, ErrScopeForbidden
+				}
+				deps = append(deps, peer)
+				queue = append(queue, peer)
+			}
+		}
+	}
+	return deps, nil
+}
+
+// retireClosureByType 逐类型分页遍历的闭包计算（RetireGraphRepo 的退化路径，语义见 retireClosure）：
+// 每个资源 × 每个适用的关系类型一次计数 + 逐页列举。
+func (uc *CIUsecase) retireClosureByType(ctx context.Context, scope Scope, root *CI) ([]*CI, error) {
 	visited := map[string]struct{}{root.ID: {}}
 	typesByModel := map[string][]*RelationType{}
 	var deps []*CI
@@ -926,8 +1117,8 @@ func revertFields(state *CI, before map[string]any, full bool) {
 	}
 }
 
-// History 分页查询资源变更历史。
-func (uc *CIUsecase) History(ctx context.Context, id string, page, pageSize int64) ([]*History, int64, error) {
+// History 分页查询资源变更历史（diff 脱敏；受限调用者的关联历史抹去范围外对端，见 maskHistories）。
+func (uc *CIUsecase) History(ctx context.Context, scope Scope, id string, page, pageSize int64) ([]*History, int64, error) {
 	ci, err := uc.cis.Get(ctx, id)
 	if err != nil {
 		return nil, 0, err
@@ -942,35 +1133,95 @@ func (uc *CIUsecase) History(ctx context.Context, id string, page, pageSize int6
 			h.ModelCode, h.CIName = ci.ModelCode, ci.Name
 		}
 	}
-	if err := uc.maskHistories(ctx, items); err != nil {
+	if err := uc.maskHistories(ctx, scope, items); err != nil {
 		return nil, 0, err
 	}
 	return items, total, nil
 }
 
-// checkRefs ref 字段的值必须是对应类型下存在的资源 ID。
-func (uc *CIUsecase) checkRefs(ctx context.Context, fields []*Field, attrs map[string]any) error {
+// checkRefs ref 字段的值必须是对应类型下存在的资源 ID。受限调用者（scope）还要求被引用的资源
+// 在其数据范围内：范围外的引用与不存在返回同一文案——否则成功与否就成了对范围外资源的存在性探测。
+func (uc *CIUsecase) checkRefs(ctx context.Context, scope Scope, fields []*Field, attrs map[string]any) error {
+	// 受限路径的被引用资源：首个需要回查的字段触发、一次取齐（见 refTargets），键为小写 ID。
+	var targets map[string]*CI
 	for _, f := range fields {
-		if f.Type != FieldTypeRef || f.Deprecated {
-			continue
-		}
-		v, ok := attrs[f.Code]
-		if !ok || v == nil {
-			continue
-		}
-		id, _ := v.(string)
-		if !idgen.IsUUIDFold(id) {
-			return detail(ErrCIInvalid, "field %q must be a resource id", f.Code)
-		}
-		exists, err := uc.cis.ExistsInModel(ctx, f.RefModel, id)
+		id, ok, err := refValue(f, attrs)
 		if err != nil {
 			return err
 		}
-		if !exists {
-			return detail(ErrCIInvalid, "field %q references a missing %s resource", f.Code, f.RefModel)
+		if !ok {
+			continue
+		}
+		if scope.Unrestricted {
+			exists, err := uc.cis.ExistsInModel(ctx, f.RefModel, id)
+			if err != nil {
+				return err
+			}
+			if !exists {
+				return missingRef(f)
+			}
+			continue
+		}
+		if targets == nil {
+			if targets, err = uc.refTargets(ctx, fields, attrs); err != nil {
+				return err
+			}
+		}
+		// GetByIDs 只返回未删除的资源：不存在、已删除、类型不符、范围外，一律按「不存在」报错。
+		target, found := targets[strings.ToLower(id)]
+		if !found || target.ModelCode != f.RefModel || !scope.Allows(target.ModelCode, target.Env) {
+			return missingRef(f)
 		}
 	}
 	return nil
+}
+
+// refValue 取 ref 字段本次写入的资源 ID：不是 ref 字段 / 已废弃 / 未给值返回 ok=false；值不是合法 ID 报错。
+func refValue(f *Field, attrs map[string]any) (id string, ok bool, err error) {
+	if f.Type != FieldTypeRef || f.Deprecated {
+		return "", false, nil
+	}
+	v, present := attrs[f.Code]
+	if !present || v == nil {
+		return "", false, nil
+	}
+	id, _ = v.(string)
+	if !idgen.IsUUIDFold(id) {
+		return "", false, detail(ErrCIInvalid, "field %q must be a resource id", f.Code)
+	}
+	return id, true, nil
+}
+
+// refTargets 把本次写入的全部 ref 字段指向的资源一次取齐（此前每个 ref 字段各查一次）。
+// 格式不合法的值跳过——它所在的字段轮到时由 checkRefs 报错，报错顺序与逐个查询时一致。
+// 键统一为小写：库里返回的 ID 是小写，而入参允许大写。
+func (uc *CIUsecase) refTargets(ctx context.Context, fields []*Field, attrs map[string]any) (map[string]*CI, error) {
+	ids := make([]string, 0, 2)
+	for _, f := range fields {
+		if id, ok, err := refValue(f, attrs); err == nil && ok && !slices.Contains(ids, id) {
+			ids = append(ids, id)
+		}
+	}
+	cis, err := uc.cis.GetByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]*CI, len(cis))
+	for _, ci := range cis {
+		out[strings.ToLower(ci.ID)] = ci
+	}
+	return out, nil
+}
+
+func missingRef(f *Field) error {
+	return detail(ErrCIInvalid, "field %q references a missing %s resource", f.Code, f.RefModel)
+}
+
+// syncMaintained 资源是否仍由采集源维护：来源是同步来源，且该采集源尚未删除。采集源删除后
+// 不会再有同步写这些字段，owner=sync 的字段应放回人工维护——否则其下资源的同步字段永久不可
+// 编辑，只能逐台解除托管。
+func syncMaintained(ci *CI) bool {
+	return cmdbcontract.IsSyncSource(ci.Source) && !ci.SourceDeleted
 }
 
 // rejectSyncOwned 人工更新不得改动 owner=sync 的字段（值不变允许回传）。

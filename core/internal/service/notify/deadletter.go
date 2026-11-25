@@ -78,11 +78,8 @@ func (s *NotifyDeadLetterService) ReplayDeadLetter(ctx context.Context, req *not
 		if err != nil {
 			return "", err
 		}
-		ch, err := s.channels.Get(ctx, dl.ChannelID)
-		if err != nil {
-			return "", err
-		}
-		return ch.BizID, nil
+		// 已删渠道同样取得到归属：否则它名下未重放完的死信对受限操作者恒为「渠道不存在」，无从重放。
+		return s.channels.Biz(ctx, dl.ChannelID)
 	}); err != nil {
 		return nil, err
 	}
@@ -101,11 +98,7 @@ func (s *NotifyDeadLetterService) GetDeadLetter(ctx context.Context, req *notify
 		return nil, err
 	}
 	if err := s.guard.requireRow(ctx, func() (string, error) {
-		ch, err := s.channels.Get(ctx, letter.ChannelID)
-		if err != nil {
-			return "", err
-		}
-		return ch.BizID, nil
+		return s.channels.Biz(ctx, letter.ChannelID)
 	}); err != nil {
 		return nil, err
 	}

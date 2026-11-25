@@ -353,7 +353,7 @@ func nonNilMap(m map[string]any) map[string]any {
 	return m
 }
 
-// writeState 以 upsert 批量回写本次命令新增或变化的执行位置 / 任务（连同其处理人），
+// writeState 以 upsert 批量回写本次命令新增或变化的执行位置 / 任务（连同其名下变化的处理人），
 // 并追加本次的历史。全部语句经一个 pgx.Batch 单次往返；实例行锁保证同一实例无并发
 // 写入，upsert 不会相互覆盖。只写变化的部分：命令的写入量与实例已有的任务数无关。
 func writeState(ctx context.Context, tx pgx.Tx, s *biz.State) error {
@@ -373,7 +373,9 @@ func writeState(ctx context.Context, tx pgx.Tx, s *biz.State) error {
 			// 任务已了结：它名下还没到期的超时 / 提醒作业不必留到到期再作废。
 			batch.Queue("UPDATE workflow_job SET status = 3, update_time = now() WHERE task_id = $1 AND status = 1", t.ID)
 		}
-		for _, a := range t.Assignees {
+		// 只写变化的席位：upsert 的 DO UPDATE 列与 biz.State 的席位基线字段一一对应，未变化的席位
+		// 重写一遍也是原值。
+		for _, a := range s.ChangedAssignees(t) {
 			batch.Queue(`INSERT INTO workflow_task_assignee (id, task_id, instance_id, user_id, seq, status, comment, create_time, action_time,
 					origin, owner_id, on_behalf)
 				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)

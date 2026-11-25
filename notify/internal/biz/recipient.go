@@ -78,7 +78,7 @@ func ClassifyRecipients(recipients []string, users map[string]string) *ExplicitR
 // ResolveTargets 按路由收件策略解析目标集合（设计 §4.4，去重 (channel, recipient)）：
 //   - 渠道缺失（已删除）/ 停用 → 跳过（停用实例被路由跳过，§5.1.1）；
 //   - email：显式邮箱非空时以其替代策略；否则 fixed + 订阅者邮箱；
-//   - webhook：收件 = 实例 url（显式/fixed/订阅均不适用）；
+//   - webhook：收件 = 实例 url（显式/fixed/订阅均不适用；超过列宽时截断）；
 //   - 群机器人：显式群标识非空时以其替代策略；否则 fixed → 订阅者该类型目标群
 //     → 实例隐含 "$bot"。
 //
@@ -123,7 +123,10 @@ func ResolveTargets(snap *Snapshot, route *Route, explicit *ExplicitRecipients, 
 			}
 		case ChannelTypeWebhook:
 			if ch.Webhook != nil {
-				add(id, ch.Webhook.URL)
+				// webhook 的收件标识只用于展示与幂等键（发送用的是实例 URL）。列宽 recipient varchar(255)
+				// 远小于 URL 上限（2048）：原样写入会以 22001 让整批路由事务回滚，该事件永远排在
+				// 待路由队列最前，全局路由随之停摆——按列宽截断落库。
+				add(id, Truncate(ch.Webhook.URL, maxRecipientLen))
 			}
 		default: // 群机器人
 			if explicit != nil && len(explicit.Groups) > 0 {

@@ -83,9 +83,41 @@ func TestRenderTitle(t *testing.T) {
 			}
 		})
 	}
-	// 超长标题按字符截到 255 再补省略号。
-	if got := renderTitle(strings.Repeat("x", 300), a, "", 1); utf8.RuneCountInString(got) != 256 || !strings.HasSuffix(got, "…") {
-		t.Fatalf("renderTitle() = %d runes, want 255 + ellipsis", utf8.RuneCountInString(got))
+	// 超长标题截到不超过 255 个字符（列宽 varchar(255)），末位是省略号。
+	if got := renderTitle(strings.Repeat("x", 300), a, "", 1); utf8.RuneCountInString(got) != 255 || !strings.HasSuffix(got, "…") {
+		t.Fatalf("renderTitle() = %d runes, want at most 255 with a trailing ellipsis", utf8.RuneCountInString(got))
+	}
+}
+
+// truncate 的返回值不得超过列宽：此前超长时返回 n+1 个字符，按 255 截断的标题落库报 22001。
+func TestTruncateNeverExceedsLimit(t *testing.T) {
+	t.Parallel()
+	if got := truncate(strings.Repeat("标", 300), 255); utf8.RuneCountInString(got) != 255 || !strings.HasSuffix(got, "…") {
+		t.Fatalf("truncate() = %d runes, want 255", utf8.RuneCountInString(got))
+	}
+	if got := truncate("abc", 255); got != "abc" {
+		t.Fatalf("short input must be kept, got %q", got)
+	}
+	if got := truncate("abc", 3); got != "abc" {
+		t.Fatalf("input of exactly n must be kept, got %q", got)
+	}
+	for _, c := range []struct {
+		n    int
+		want string
+	}{{2, "a…"}, {1, "…"}, {0, ""}} {
+		if got := truncate("abc", c.n); got != c.want {
+			t.Errorf("truncate(abc, %d) = %q, want %q", c.n, got, c.want)
+		}
+	}
+}
+
+// correlationKey 含中文标签值时按字节硬切会产生非法 UTF-8（落库 22021）：必须在字符边界截断。
+func TestCorrelationKeyStaysValidUTF8AtColumnWidth(t *testing.T) {
+	t.Parallel()
+	a := &AlertRef{Labels: map[string]string{"env": strings.Repeat("环", 400)}}
+	key := correlationKey(&RuleSpec{Correlation: RuleCorrelation{Keys: []string{"label:env"}}}, a, "", nil)
+	if len(key) > 255 || !utf8.ValidString(key) {
+		t.Fatalf("correlationKey() bytes=%d valid=%v, want <=255 bytes of valid UTF-8", len(key), utf8.ValidString(key))
 	}
 }
 

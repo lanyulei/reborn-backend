@@ -269,12 +269,17 @@ func (s *Store) Fail(_ context.Context, executionID, leaseToken, reason string) 
 	return nil
 }
 
-// Release implements biz.QueueRepo.
+// Release implements biz.QueueRepo。与 data 层一致：领取之后已被请求取消的执行落为已取消，不回队列。
 func (s *Store) Release(_ context.Context, executionID, leaseToken string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if e, ok := s.execs[executionID]; ok && e.Status == jobcontract.StatusRunning && e.LeaseToken == leaseToken {
-		e.Status, e.RunnerID, e.LeaseToken, e.LeaseUntil, e.Started = jobcontract.StatusQueued, "", "", time.Time{}, false
+		if e.CancelRequested {
+			e.Status, e.Finished = jobcontract.StatusCanceled, true
+		} else {
+			e.Status = jobcontract.StatusQueued
+		}
+		e.RunnerID, e.LeaseToken, e.LeaseUntil, e.Started = "", "", time.Time{}, false
 	}
 	return nil
 }

@@ -591,7 +591,7 @@ func (v jobExecutionView) CreateTx(_ context.Context, _ biz.Tx, items []biz.NewE
 		v.s.payloads[row.ID] = it.Payload
 		for i, h := range it.Hosts {
 			v.s.hosts[row.ID] = append(v.s.hosts[row.ID], &biz.ExecutionHost{
-				Seq: int32(i + 1), CIID: h.CIID, Name: h.Name, Env: h.Env, Address: h.Address, Port: row.Spec.Options.Port, //nolint:gosec // 测试数据
+				Seq: int32(i + 1), CIID: h.CIID, Name: h.Name, Env: h.Env, Address: h.Address, Port: row.Spec.Options.Port,
 			})
 		}
 	}

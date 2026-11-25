@@ -43,7 +43,7 @@ func main() {
 			}
 		}
 		for i, msg := range file.GetMessageType() {
-			walk(msg, file.GetPackage(), []int32{tagFileMessage, int32(i)}, comments, docs) //nolint:gosec // 消息数量远小于 int32 上限
+			walk(msg, file.GetPackage(), []int32{tagFileMessage, int32(i)}, comments, docs)
 		}
 	}
 	// encoding/json 按键排序输出：结果稳定，便于评审差异。

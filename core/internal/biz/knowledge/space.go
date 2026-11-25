@@ -163,6 +163,14 @@ func (uc *SpaceUsecase) Create(ctx context.Context, userID string, in CreateSpac
 	if in.Visibility != VisibilityPublic && in.Visibility != VisibilityRestricted {
 		return nil, ErrInvalidArgument
 	}
+	// proto 的 min_len 校验的是原始字符串，纯空白能通过；名称去掉首尾空白后不能为空。
+	if strings.TrimSpace(in.Name) == "" {
+		return nil, ErrInvalidArgument
+	}
+	isAdmin, _, err := uc.roles.EnabledRoleIDs(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
 	owner := in.OwnerID
 	if owner == "" {
 		owner = userID
@@ -183,8 +191,20 @@ func (uc *SpaceUsecase) Create(ctx context.Context, userID string, in CreateSpac
 	if err := uc.repo.Create(ctx, s); err != nil {
 		return nil, err
 	}
-	s.Level = LevelManage
+	s.Level = creatorLevel(isAdmin, owner == userID, s.Visibility)
 	return s, nil
+}
+
+// creatorLevel 新建空间的创建者对它的级别，口径同数据层的 Levels：超级管理员与负责人是管理级别；否则公开空间
+// 可读、受限空间不可见（刚建的空间还没有 ACL）。前端按这个级别渲染管理入口，不能恒报管理级别。
+func creatorLevel(isAdmin, isOwner bool, visibility int32) int32 {
+	switch {
+	case isAdmin || isOwner:
+		return LevelManage
+	case visibility == VisibilityPublic:
+		return LevelRead
+	}
+	return LevelNone
 }
 
 // SpacePatch 修改空间入参（nil = 不改）。
@@ -204,7 +224,11 @@ func (uc *SpaceUsecase) Update(ctx context.Context, userID, id string, p SpacePa
 		return nil, err
 	}
 	if p.Name != nil {
-		s.Name = strings.TrimSpace(*p.Name)
+		name := strings.TrimSpace(*p.Name)
+		if name == "" {
+			return nil, ErrInvalidArgument
+		}
+		s.Name = name
 	}
 	if p.Type != nil {
 		if _, ok := spaceTypes[*p.Type]; !ok {

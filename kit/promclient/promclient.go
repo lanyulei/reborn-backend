@@ -909,10 +909,19 @@ func labelKey(labels map[string]string) string {
 	return b.String()
 }
 
+// cleanFullMatchLen 凭据至少这么长才在说明里做全文替换。
+const cleanFullMatchLen = 8
+
 // clean 去除凭据并截断至 MaxErrorBytes（保持合法 UTF-8）。
+//
+// 凭据足够长时全文替换。Basic 认证的密码、Bearer 令牌也可以很短（"e"、"1"）：这么短的字符串在普通文字里
+// 太常见，逐处替换会把上游的说明改得没法读（"parse error at char 3" → "pars*** ***rror at char 3"），写进
+// 任务的 last_error 与判定记录后无从排查。短凭据只遮蔽确定形态的片段——请求实际带出的 Authorization 头的值。
 func (c *Client) clean(s string) string {
-	if c.secret != "" {
+	if len(c.secret) >= cleanFullMatchLen {
 		s = strings.ReplaceAll(s, c.secret, "***")
+	} else if authz := c.header.Get("Authorization"); authz != "" {
+		s = strings.ReplaceAll(s, authz, "***")
 	}
 	s = strings.ToValidUTF8(s, "?")
 	if len(s) <= MaxErrorBytes {

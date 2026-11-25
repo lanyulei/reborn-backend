@@ -201,26 +201,51 @@ func (uc *AgentUsecase) RunHeadless(ctx context.Context, spec HeadlessSpec) (*He
 	if n := len(r.messages); n > 0 {
 		res.LastMessageID = r.messages[n-1].ID
 	}
+	endReason, rethrow := headlessEndReason(ctx, err)
 	switch {
-	case err == nil:
-		if res.EndReason == "" {
-			res.EndReason = HeadlessCompleted
-		}
-	case errors.Is(err, ErrLLMRejected):
-		res.EndReason = HeadlessLLMRejected
-	case errors.Is(err, ErrSessionExpired):
-		res.EndReason = HeadlessSessionExpired
-	case errors.Is(err, ErrLLMUnavailable):
-		res.EndReason = HeadlessLLMUnavailable
-	case errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled):
-		// 调用方取消（停机）：原样返回，由调用方决定续跑；不是超时。
-		return res, context.Canceled
-	case errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil:
-		res.EndReason = HeadlessTimeout
-	default:
-		return res, err
+	case rethrow != nil:
+		return res, rethrow
+	case endReason != "":
+		res.EndReason = endReason
+	case res.EndReason == "":
+		res.EndReason = HeadlessCompleted
 	}
 	return res, nil
+}
+
+// headlessEndReason 把一轮运行的结束错误归类：返回结束原因（空串 = 正常完成）与须原样上抛的错误
+// （rethrow 非 nil 时结束原因无意义）。
+func headlessEndReason(ctx context.Context, err error) (reason string, rethrow error) {
+	switch {
+	case err == nil:
+		return "", nil
+	case isLLMRejected(err):
+		return HeadlessLLMRejected, nil
+	case errors.Is(err, ErrSessionExpired):
+		return HeadlessSessionExpired, nil
+	case errors.Is(err, ErrLLMUnavailable):
+		return HeadlessLLMUnavailable, nil
+	case errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled):
+		// 调用方取消（停机）：原样返回，由调用方决定续跑；不是超时。
+		return "", context.Canceled
+	case errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil:
+		return HeadlessTimeout, nil
+	default:
+		return "", err
+	}
+}
+
+// isLLMRejected 报告 err 是否为「模型接口拒绝了请求本身」：包装链上必须有 ErrLLMRejected 哨兵本身
+// （指针同一性，见 data 层的 rejectedError）。ErrLLMRejected 与 ErrLLMUnavailable 是同一个 reason 的
+// Kratos 错误，errors.Is 按 code + reason 判等，两者互相「相等」——此前用 errors.Is 且「拒绝」分支在前，
+// 模型 5xx / 限流 / 网络错误全被归成「拒绝」，运维 Agent 据此不重试，一次瞬时抖动就让整个任务失败。
+func isLLMRejected(err error) bool {
+	for ; err != nil; err = errors.Unwrap(err) {
+		if err == ErrLLMRejected {
+			return true
+		}
+	}
+	return false
 }
 
 // wrapUpPrompt 步数耗尽后的收尾输入：不再提供工具，要求直接按 Schema 输出。

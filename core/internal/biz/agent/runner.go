@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	bizassistant "github.com/lanyulei/reborn/backend/core/internal/biz/assistant"
 	"github.com/lanyulei/reborn/backend/kit/idgen"
@@ -56,6 +57,9 @@ const (
 	logTailLines = 200
 	// logTailMinBytes 输出超过这么多字节才截尾。
 	logTailMinBytes = 4 << 10
+	// logTailMaxBytes 截尾后单个日志字段的字节预算：通用截断的阈值是 32KB，超过只留开头 1KB 预览；
+	// 留出余量给 JSON 转义与其余字段。
+	logTailMaxBytes = 24 << 10
 	// agentPriorNote 时间线里 Agent 先前产出的标记（设计 §5.3 自身产出打标）。
 	agentPriorNote = "[Agent 先前结论，待验证]"
 	// retryReason 任务放回队列时运行记录上的结束原因（恢复时据此续跑）。
@@ -117,7 +121,8 @@ func (uc *RunnerUsecase) Run(ctx context.Context) (int, error) {
 		return 0, nil
 	}
 	now := uc.now()
-	if n, err := uc.d.Tasks.ReleaseStale(ctx, now, housekeepingBatch); err != nil {
+	// 租约到期与否由数据库时钟判定（locked_until 也是数据库 now() 算出来的），不传实例本地时间。
+	if n, err := uc.d.Tasks.ReleaseStale(ctx, housekeepingBatch); err != nil {
 		return 0, err
 	} else if n > 0 {
 		uc.d.Logger.WarnContext(ctx, "agent: released stale running tasks", "count", n)
@@ -159,7 +164,8 @@ func (uc *RunnerUsecase) Run(ctx context.Context) (int, error) {
 					uc.d.Logger.ErrorContext(ctx, "agent: task panicked", "task", t.ID, "panic", r)
 					fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finalizeTimeout)
 					defer cancel()
-					uc.retryOrFail(fctx, t, fmt.Sprintf("运行器异常：%v", r))
+					// panic 原文只进日志（上面那条）：result 列经接口返回，不带内部细节。
+					uc.retryOrFail(fctx, t, "运行器内部异常")
 				}
 			}()
 			uc.runTask(ctx, t)
@@ -169,19 +175,16 @@ func (uc *RunnerUsecase) Run(ctx context.Context) (int, error) {
 }
 
 // Purge 保留期清理：删除结束时间早于保留期的运行及其助手会话（物理删除）、终态任务。
+// 运行与它的会话由仓储在同一事务里删除：分两步删的话，会话清理失败时运行已经没了，
+// 再没有任何记录指向那些会话，它们会永久残留。
 func (uc *RunnerUsecase) Purge(ctx context.Context) (int, error) {
 	before := uc.now().Add(-uc.d.Config.Retention)
-	convs, err := uc.d.Runs.PurgeBefore(ctx, before, purgeBatch)
+	runs, err := uc.d.Runs.PurgeBefore(ctx, before, purgeBatch)
 	if err != nil {
 		return 0, err
 	}
-	if len(convs) > 0 {
-		if err := uc.d.Conversations.Purge(ctx, convs); err != nil {
-			return len(convs), err
-		}
-	}
 	n, err := uc.d.Tasks.Purge(ctx, before, purgeBatch)
-	return len(convs) + n, err
+	return runs + n, err
 }
 
 // runState 一次运行里裁决 / 观察 / 改写回调要用的可变状态。
@@ -230,9 +233,21 @@ func (uc *RunnerUsecase) runTask(ctx context.Context, t *Task) {
 		}
 		uc.metrics().TaskFinished(fctx, status)
 	}
+	// retry 可重试的失败。收尾写入不随运行 ctx 取消：停机时照样把任务放回队列，否则任务停在 running，
+	// 要等领取租约（任务时限 + 2 分钟）过期被回收后才重新排队。
+	// 内部错误原文只进日志：result 列经任务列表 / 详情接口返回，不能带驱动报错细节。
+	retry := func(result string, cause error) {
+		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finalizeTimeout)
+		defer cancel()
+		if cause != nil {
+			log.WarnContext(fctx, "agent: task attempt failed", "result", result, "error", cause)
+		}
+		uc.retryOrFail(fctx, t, result)
+	}
 	inc, err := uc.d.Incidents.Snapshot(ctx, t.IncidentID)
 	if err != nil {
-		finish(TaskFailed, "故障不存在或读取失败："+err.Error())
+		log.WarnContext(ctx, "agent: read incident snapshot", "error", err)
+		finish(TaskFailed, "故障不存在或读取失败")
 		return
 	}
 	kind := t.Kind
@@ -247,7 +262,7 @@ func (uc *RunnerUsecase) runTask(ctx context.Context, t *Task) {
 	fctx := context.WithoutCancel(ctx)
 	profile, skip, err := uc.pickProfile(ctx, t, kind)
 	if err != nil {
-		uc.retryOrFail(ctx, t, "选择 Profile 失败："+err.Error())
+		retry("选择 Profile 失败，稍后重试", err)
 		return
 	}
 	if profile == nil {
@@ -265,7 +280,7 @@ func (uc *RunnerUsecase) runTask(ctx context.Context, t *Task) {
 		if t.Source == SourceIncident || t.Source == SourcePostmortem {
 			hour, err := uc.d.Budgets.Get(ctx, profile.ID, hourKey(now))
 			if err != nil {
-				uc.retryOrFail(ctx, t, "读取配额失败："+err.Error())
+				retry("读取配额失败，稍后重试", err)
 				return
 			}
 			if hour.Tasks >= profile.Spec.HourlyLimit {
@@ -275,7 +290,7 @@ func (uc *RunnerUsecase) runTask(ctx context.Context, t *Task) {
 		}
 		day, err := uc.d.Budgets.Total(ctx, dayKey(now))
 		if err != nil {
-			uc.retryOrFail(ctx, t, "读取预算失败："+err.Error())
+			retry("读取预算失败，稍后重试", err)
 			return
 		}
 		if day.PromptTokens >= uc.d.Config.DailyPromptBudget || day.CompletionTokens >= uc.d.Config.DailyCompletion {
@@ -286,7 +301,7 @@ func (uc *RunnerUsecase) runTask(ctx context.Context, t *Task) {
 	}
 	machine, err := uc.d.Accounts.IsMachine(ctx, profile.Spec.AgentUserID)
 	if err != nil {
-		uc.retryOrFail(ctx, t, "读取机器账号失败："+err.Error())
+		retry("读取机器账号失败，稍后重试", err)
 		return
 	}
 	if !machine {
@@ -300,7 +315,8 @@ func (uc *RunnerUsecase) runTask(ctx context.Context, t *Task) {
 	}
 	token, _, err := uc.d.Accounts.IssueToken(ctx, profile.Spec.AgentUserID, timeout+tokenGrace)
 	if err != nil {
-		finish(TaskFailed, "签发机器令牌失败："+err.Error())
+		log.WarnContext(ctx, "agent: issue machine token", "error", err)
+		finish(TaskFailed, "签发机器令牌失败")
 		return
 	}
 	// 租约：诊断任务对活跃故障必取；经验沉淀不写故障，不取租约；干跑的历史故障多已关闭，取不到就全程捕获。
@@ -309,7 +325,7 @@ func (uc *RunnerUsecase) runTask(ctx context.Context, t *Task) {
 		res, err := uc.loopback(ctx, toolAcquireLease, map[string]any{"id": inc.ID, "ttlS": int(timeout.Seconds()) + leaseGraceS}, token)
 		switch {
 		case err != nil:
-			uc.retryOrFail(ctx, t, "获取 Agent 租约失败："+err.Error())
+			retry("获取 Agent 租约失败，稍后重试", err)
 			return
 		case res.StatusCode >= 200 && res.StatusCode < 300:
 			leaseHeld = true
@@ -321,12 +337,18 @@ func (uc *RunnerUsecase) runTask(ctx context.Context, t *Task) {
 			uc.countDenial(ctx, profile, true)
 			return
 		default:
-			uc.retryOrFail(ctx, t, fmt.Sprintf("获取 Agent 租约失败（HTTP %d %s）", res.StatusCode, res.Reason))
+			retry(fmt.Sprintf("获取 Agent 租约失败（HTTP %d %s）", res.StatusCode, res.Reason), nil)
 			return
 		}
 	}
+	// lost 任务已易主（本实例失联期间被回收并由别的实例接手）。
+	lost := false
 	if leaseHeld {
 		defer func() {
+			if lost {
+				// 故障租约按机器账号可重入：新持有者用的是同一把租约，这里释放会把它正在用的租约放掉。
+				return
+			}
 			rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 			defer cancel()
 			if _, err := uc.loopback(rctx, toolReleaseLease, map[string]any{"id": inc.ID}, token); err != nil {
@@ -337,7 +359,7 @@ func (uc *RunnerUsecase) runTask(ctx context.Context, t *Task) {
 	// 运行：重试时复用任务上已绑定的运行与会话（历史延续，已完成的阶段不重做）。
 	run, resumed, err := uc.openRun(ctx, t, profile, inc, kind, now)
 	if err != nil {
-		uc.retryOrFail(ctx, t, "创建运行失败："+err.Error())
+		retry("创建运行失败，稍后重试", err)
 		return
 	}
 	if !resumed {
@@ -380,14 +402,19 @@ func (uc *RunnerUsecase) runTask(ctx context.Context, t *Task) {
 	case outcomeRetry:
 		// 放回队列：运行保持 running，记下原因；重新领取时续跑未完成的阶段。
 		run.Status, run.EndReason, run.EndTime = RunRunning, retryReason, nil
+	case outcomeLost:
+		lost = true
 	default:
 		run.Status, run.EndReason = RunFailed, outcome.reason
 	}
 	sctx, scancel := context.WithTimeout(fctx, finalizeTimeout)
 	defer scancel()
-	// 只在运行仍为 running 时写回：运行中途被取消（Cancel 已置 cancelled）时不覆盖终态。
-	owned, err := uc.d.Runs.SaveRunning(sctx, run)
-	if err != nil {
+	if lost {
+		// 任务已易主：运行记录（仍为 running）现在归新持有者续跑，本实例一个字都不能再写——无论是
+		// 这里的 SaveRunning 还是 finish 里的 closeRun，都会把新持有者正在跑的运行收口成终态。
+		log.WarnContext(sctx, "agent: task taken over by another runner, result discarded", "run", run.ID)
+	} else if owned, err := uc.d.Runs.SaveRunning(sctx, run); err != nil {
+		// 只在运行仍为 running 时写回：运行中途被取消（Cancel 已置 cancelled）时不覆盖终态。
 		log.ErrorContext(sctx, "agent: save run", "error", err)
 	} else if !owned {
 		log.WarnContext(sctx, "agent: run already closed elsewhere, result discarded", "run", run.ID)
@@ -408,12 +435,14 @@ func (uc *RunnerUsecase) runTask(ctx context.Context, t *Task) {
 		finish(TaskCancelled, outcome.message)
 	case outcomeRetry:
 		uc.retryOrFail(sctx, t, outcome.message)
+	case outcomeLost:
+		// 任务终态由新持有者写；本实例的令牌已失效，写也写不进去。
 	default:
 		finish(TaskFailed, outcome.message)
 	}
 	uc.countDenial(sctx, profile, st.authDenied)
 	uc.checkBreaker(sctx, profile)
-	if run.EndTime != nil {
+	if run.EndTime != nil && !lost {
 		log.InfoContext(ctx, "agent: task finished", "run", run.ID, "status", run.Status, "reason", run.EndReason,
 			"prompt_tokens", run.PromptTokens, "completion_tokens", run.CompletionTokens, "duration_ms", run.EndTime.Sub(run.StartTime).Milliseconds())
 	}
@@ -423,9 +452,16 @@ func (uc *RunnerUsecase) runTask(ctx context.Context, t *Task) {
 func (uc *RunnerUsecase) openRun(ctx context.Context, t *Task, profile *Profile, inc *IncidentSnapshot, kind string, now time.Time) (*Run, bool, error) {
 	if t.RunID != "" {
 		run, err := uc.d.Runs.Get(ctx, t.RunID)
-		if err == nil && run.Status == RunRunning && run.TaskID == t.ID && run.ProfileID == profile.ID {
+		// 机器账号也要一致：会话归属建运行时的账号，重试期间 Profile 换了账号的话，新账号读不了旧会话，
+		// 每次续跑都会被记成一次模型不可用，一路重试到失败。
+		if err == nil && run.Status == RunRunning && run.TaskID == t.ID && run.ProfileID == profile.ID && run.AgentUserID == profile.Spec.AgentUserID {
 			run.EndReason = ""
 			return run, true, nil
+		}
+		if err == nil && run.Status == RunRunning && run.TaskID == t.ID {
+			// 本任务的旧运行不能续跑（Profile 或机器账号变了）：先收口再另起一条，否则它永远停在 running
+			//（保留期清理只删已结束的运行）。
+			uc.closeRun(ctx, run.ID, TaskCancelled)
 		}
 	}
 	convID, err := uc.d.Conversations.Create(ctx, profile.Spec.AgentUserID, "Agent · "+inc.Number)
@@ -471,16 +507,23 @@ func (uc *RunnerUsecase) rebuildState(ctx context.Context, st *runState) {
 	if err != nil {
 		uc.d.Logger.WarnContext(ctx, "agent: rebuild state from transcript", "run", st.run.ID, "error", err)
 	}
+	// written 转录里成功的 AddFinding 入参里的发现：写入成功后、阶段落库前崩溃时，运行记录上还没有它。
+	var written *Finding
 	for _, c := range calls {
 		if c.Status != bizassistant.ToolStatusSucceeded && c.Status != bizassistant.ToolStatusCaptured {
 			continue
 		}
+		if c.ToolName == toolAddFinding && c.Status == bizassistant.ToolStatusSucceeded {
+			if f := parseFinding(c.Input); f != nil {
+				written = f
+			}
+		}
 		// 写入计数也要接上：续跑不能再多发评论 / 再建一篇草稿。
-		switch c.ToolName {
-		case "IncidentService_AddComment":
+		switch {
+		case c.ToolName == "IncidentService_AddComment":
 			st.comments++
-		case toolCreateDocument:
-			st.documents++
+		case c.ToolName == toolCreateDocument && c.Status == bizassistant.ToolStatusCaptured:
+			st.documents++ // 真正成功的建文档由下面的 observe 计数
 		}
 		if c.Status != bizassistant.ToolStatusSucceeded || len(c.Output) == 0 {
 			continue
@@ -488,7 +531,17 @@ func (uc *RunnerUsecase) rebuildState(ctx context.Context, st *runState) {
 		st.observe(c, c.Output)
 	}
 	st.findingDone = st.run.FindingEventID != ""
-	st.finding = st.run.Finding
+	// 发现内容：运行记录上有就用它；没有（发现已写入故障、但阶段还没落库就崩溃了）则从转录恢复——
+	// AddFinding 的入参，或上面 observe 从建文档结果里得到的。否则运行以 succeeded 结束却没有发现内容，
+	// 自动通过的判定（要看置信度）也恒为否。
+	switch {
+	case st.run.Finding != nil:
+		st.finding = st.run.Finding
+	case st.findingDone && st.finding == nil:
+		st.finding = written
+	case !st.findingDone:
+		st.finding = nil
+	}
 	// 运行记录上已有的产出与转录里恢复出来的合并（按 ID 去重：上次放回队列前已同步过一次）。
 	for _, ref := range st.run.Proposals {
 		if !slices.ContainsFunc(st.proposalsRefs, func(r Ref) bool { return r.ID == ref.ID }) {
@@ -522,6 +575,8 @@ const (
 	outcomeFailed    = "failed"
 	outcomeRetry     = "retry"
 	outcomeCancelled = "cancelled"
+	// outcomeLost 任务已易主：本实例失联超过领取租约，任务被回收后由别的实例接手（或正等待接手）。
+	outcomeLost = "lost"
 )
 
 // outcome 分阶段运行的整体结果。
@@ -578,8 +633,8 @@ func (uc *RunnerUsecase) runStages(ctx context.Context, t *Task, st *runState, t
 			prev = "（上一阶段因预算或时间不足被跳过）"
 			continue
 		}
-		if ok, err := uc.d.Tasks.Renew(ctx, t.ID, t.LockToken, remaining+claimLeaseGrace); err != nil || !ok {
-			return outcome{kind: outcomeCancelled, reason: "cancelled", message: "任务已被取消"}
+		if oc, ok := uc.renew(ctx, t, remaining+claimLeaseGrace, log); !ok {
+			return oc
 		}
 		maxSteps := int(stage.MaxSteps)
 		if left := int(profile.Spec.Budget.MaxSteps) - totalSteps; left < maxSteps {
@@ -617,10 +672,12 @@ func (uc *RunnerUsecase) runStages(ctx context.Context, t *Task, st *runState, t
 			if errors.Is(err, bizassistant.ErrDisabled) {
 				return outcome{kind: outcomeFailed, reason: "disabled", message: "助手模型未配置"}
 			}
+			// 错误原文只进日志：message 会写进任务的 result 列并经接口返回。
+			log.WarnContext(ctx, "agent: stage failed", "stage", key, "error", err)
 			if isConclude {
-				return outcome{kind: outcomeFailed, reason: "error", message: "结论阶段出错，不再重试：" + err.Error()}
+				return outcome{kind: outcomeFailed, reason: "error", message: "结论阶段出错，不再重试"}
 			}
-			return outcome{kind: outcomeRetry, reason: "error", message: "运行出错：" + err.Error()}
+			return outcome{kind: outcomeRetry, reason: "error", message: "运行出错，稍后重试"}
 		}
 		uc.absorb(st, trace, res)
 		totalSteps += res.Steps
@@ -721,8 +778,8 @@ func (uc *RunnerUsecase) runStages(ctx context.Context, t *Task, st *runState, t
 // 「运行仍为 running」写回。返回 ok=false 时携带应返回的结果。
 func (uc *RunnerUsecase) checkpoint(ctx context.Context, t *Task, st *runState, deadline time.Time, log stageLogger) (outcome, bool) {
 	st.syncRun()
-	if ok, err := uc.d.Tasks.Renew(ctx, t.ID, t.LockToken, deadline.Sub(uc.now())+claimLeaseGrace); err != nil || !ok {
-		return outcome{kind: outcomeCancelled, reason: "cancelled", message: "任务已被取消或已易主"}, false
+	if oc, ok := uc.renew(ctx, t, deadline.Sub(uc.now())+claimLeaseGrace, log); !ok {
+		return oc, false
 	}
 	owned, err := uc.d.Runs.SaveRunning(ctx, st.run)
 	if err != nil {
@@ -735,6 +792,32 @@ func (uc *RunnerUsecase) checkpoint(ctx context.Context, t *Task, st *runState, 
 	return outcome{}, true
 }
 
+// renew 续租并确认任务仍归自己。返回 ok=false 时携带应返回的结果：
+//   - 数据库错误 → 可重试的失败。一次瞬时错误（连接重置、连接池超时）不等于任务被取消，
+//     不能把运行与任务写成 cancelled；
+//   - 没续上、且任务仍在排队 / 进行中 → 已易主（本实例失联期间被回收，别的实例已接手或即将接手）；
+//   - 其余（任务已到终态、读不到）→ 用户取消。
+func (uc *RunnerUsecase) renew(ctx context.Context, t *Task, lease time.Duration, log stageLogger) (outcome, bool) {
+	ok, err := uc.d.Tasks.Renew(ctx, t.ID, t.LockToken, lease)
+	if err != nil {
+		if ctx.Err() != nil {
+			return outcome{kind: outcomeRetry, reason: "shutdown", message: "运行器停机，稍后续跑"}, false
+		}
+		log.WarnContext(ctx, "agent: renew task lease", "error", err)
+		return outcome{kind: outcomeRetry, reason: "error", message: "任务续租失败，稍后重试"}, false
+	}
+	if ok {
+		return outcome{}, true
+	}
+	// 没续上有两种可能，要分开：用户取消时 Cancel 已把运行收口，照常按取消收尾即可；易主时运行仍是
+	// running、归新持有者，按取消收尾会把它正在续跑的运行写成 cancelled。
+	// 续租语句带着本实例的令牌却没命中，所以任务只要还没到终态，持有者就一定不是本实例。
+	if cur, gerr := uc.d.Tasks.Get(ctx, t.ID); gerr == nil && cur.Active() {
+		return outcome{kind: outcomeLost, reason: "lost", message: "任务已易主"}, false
+	}
+	return outcome{kind: outcomeCancelled, reason: "cancelled", message: "任务已被取消"}, false
+}
+
 // writeFinding 运行器代模型写入发现（结论阶段给出了结构化发现但没调用 IncidentService_AddFinding 时）。
 func (uc *RunnerUsecase) writeFinding(ctx context.Context, st *runState, token string) {
 	st.mu.Lock()
@@ -742,7 +825,7 @@ func (uc *RunnerUsecase) writeFinding(ctx context.Context, st *runState, token s
 	st.mu.Unlock()
 	args := map[string]any{"id": st.inc.ID, "finding": map[string]any{
 		"title": clip(f.Title, maxFindingTitle), "conclusion": clip(f.Conclusion, maxFindingText), "confidence": clampInt(int(f.Confidence), 0, 100),
-		"evidence": f.Evidence, "nextStep": clip(f.NextStep, maxFindingText), "runId": st.run.ID,
+		"evidence": f.Evidence, "nextStep": clip(f.NextStep, maxNextStep), "runId": st.run.ID,
 	}}
 	raw, _ := json.Marshal(args)
 	if st.dryRun {
@@ -782,6 +865,9 @@ func (uc *RunnerUsecase) absorb(st *runState, trace *StageTrace, res *bizassista
 	}
 	for _, c := range res.Captured {
 		st.captured = append(st.captured, CapturedCall{Tool: c.Tool, Input: string(c.Input)})
+		if c.Tool == toolCreateDocument {
+			st.documents++ // 干跑里被捕获的建文档同样占用「一次运行只建一篇」的名额（它不会触发 observe）
+		}
 	}
 	for _, w := range res.Writes {
 		if w.Tool == toolAddFinding {
@@ -1029,7 +1115,7 @@ func (s *runState) decide(_ context.Context, tc *bizassistant.ToolCall, raw json
 		}
 		f["title"] = clip(title, maxFindingTitle)
 		f["conclusion"] = clip(str(f["conclusion"]), maxFindingText)
-		f["nextStep"] = clip(firstStr(f, "nextStep", "next_step"), maxFindingText)
+		f["nextStep"] = clip(firstStr(f, "nextStep", "next_step"), maxNextStep)
 		delete(f, "next_step")
 		f["confidence"] = clampInt(f["confidence"], 0, 100)
 		f["evidence"] = strList(f["evidence"], maxEvidence)
@@ -1127,7 +1213,14 @@ func (s *runState) decide(_ context.Context, tc *bizassistant.ToolCall, raw json
 		delete(args, "ownerId")
 		delete(args, "owner_id")
 		delete(args, "slug")
-		s.documents++
+		// 写入计数在成功之后才累加（见 observe / absorb / rebuildState）：裁决时就 +1 的话，首次调用
+		// 失败（标签超长、命中敏感信息、回环超时、5xx）后模型重试会被拒，任务以「无结论」收场。
+		if s.dryRun {
+			// 干跑不真正建文档，但按「已创建」处理：否则结论阶段识别不出产出，经验沉淀类 Profile 的
+			// 干跑恒为「无结论」（与诊断类干跑对 AddFinding 的处理一致）。
+			s.findingDone = true
+			s.finding = &Finding{Title: clip(title, maxFindingTitle), Conclusion: "（干跑）将创建知识草稿「" + clip(title, maxFindingTitle) + "」，供人工审阅发布"}
+		}
 		return write(args)
 	default:
 		if tc.Write {
@@ -1189,12 +1282,18 @@ func (s *runState) clampWindow(args map[string]any, startKey, endKey string, wit
 	return args
 }
 
-// clampInstant 即时查询的时间点夹在允许的时间窗内（缺省取窗口上界 = 最新）。
+// clampInstant 即时查询的时间点夹在允许的时间窗内。缺省（以及模型给出未来时刻时）取「窗口内最新的
+// 时刻」= min(上界, 现在)：未解决故障的上界是 now+30min（给后续的恢复态留的），直接取上界等于以未来
+// 时刻查询，Prometheus 的回看窗口里没有样本，结果恒为空，验证阶段的结论因此失真。
 func (s *runState) clampInstant(args map[string]any) map[string]any {
 	lo, hi := s.window()
+	latest := time.Now()
+	if hi.Before(latest) {
+		latest = hi
+	}
 	at := parseTime(args["time"])
-	if at.IsZero() || at.After(hi) {
-		at = hi
+	if at.IsZero() || at.After(latest) {
+		at = latest
 	}
 	if at.Before(lo) {
 		at = lo
@@ -1220,7 +1319,9 @@ func (s *runState) transform(tc *bizassistant.ToolCall, output json.RawMessage) 
 	return nil
 }
 
-// tailLogs 把输出里较长的多行字符串字段只保留尾部 logTailLines 行（日志越新越有价值；通用截断会砍掉尾部）。
+// tailLogs 把输出里较长的多行字符串字段只保留尾部：至多 logTailLines 行、且不超过 logTailMaxBytes 字节。
+// 日志越新越有价值，而通用截断会砍掉尾部；只按行数留的话，行稍长（均长超过 160 字节）时留下的 200 行
+// 仍超过通用截断的阈值，最新的日志照样被切掉。
 func tailLogs(output json.RawMessage) json.RawMessage {
 	if len(output) < logTailMinBytes {
 		return nil
@@ -1248,11 +1349,12 @@ func tailLogs(output json.RawMessage) json.RawMessage {
 				return t
 			}
 			lines := strings.Split(t, "\n")
-			if len(lines) <= logTailLines {
+			kept := tailWithin(lines, logTailLines, logTailMaxBytes)
+			if len(kept) == len(lines) && len(kept[0]) == len(lines[0]) {
 				return t
 			}
 			changed = true
-			return fmt.Sprintf("（日志共 %d 行，只保留最后 %d 行）\n", len(lines), logTailLines) + strings.Join(lines[len(lines)-logTailLines:], "\n")
+			return fmt.Sprintf("（日志共 %d 行，只保留最后 %d 行）\n", len(lines), len(kept)) + strings.Join(kept, "\n")
 		}
 		return x
 	}
@@ -1265,6 +1367,29 @@ func tailLogs(output json.RawMessage) json.RawMessage {
 		return nil
 	}
 	return out
+}
+
+// tailWithin 从尾部保留至多 maxLines 行、合计不超过 maxBytes 字节（含换行）；最后一行自己就超出预算时
+// 保留它的尾部（按 UTF-8 字符边界切）。lines 非空。
+func tailWithin(lines []string, maxLines, maxBytes int) []string {
+	from, size := len(lines), 0
+	for from > 0 && len(lines)-from < maxLines {
+		n := len(lines[from-1]) + 1
+		if size+n > maxBytes {
+			break
+		}
+		size += n
+		from--
+	}
+	if from < len(lines) {
+		return lines[from:]
+	}
+	last := lines[len(lines)-1]
+	cut := len(last) - maxBytes
+	for cut < len(last) && !utf8.RuneStart(last[cut]) {
+		cut++
+	}
+	return []string{last[cut:]}
 }
 
 // markAgentEvents 给时间线里操作者类型为 Agent（3）的记录加标记：它们是待验证的假设，不是事实。
@@ -1345,7 +1470,9 @@ func (s *runState) observe(tc *bizassistant.ToolCall, output json.RawMessage) {
 			s.proposalsRefs = append(s.proposalsRefs, Ref{ID: resp.Proposal.ID, Name: resp.Proposal.Title})
 		}
 	case toolCreateDocument:
-		// 经验沉淀：知识草稿 ID 记为「发现」产出（运行状态据此判成功）。
+		// 经验沉淀：知识草稿 ID 记为「发现」产出（运行状态据此判成功）。走到这里调用已经成功，
+		// 计入「一次运行只建一篇」的上限。
+		s.documents++
 		var resp struct {
 			Document struct {
 				ID    string `json:"id"`

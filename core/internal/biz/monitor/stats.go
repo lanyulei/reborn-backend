@@ -153,7 +153,8 @@ func statsLocation(name string) (*time.Location, string, error) {
 	if name == "Local" {
 		return nil, "", detail(ErrQueryInvalid, "unknown timezone %q", name)
 	}
-	loc, err := time.LoadLocation(name)
+	// 带进程内缓存的加载（time.LoadLocation 每次都读时区库）；结果与直接加载相同。
+	loc, err := mc.LoadLocation(name)
 	if err != nil {
 		return nil, "", detail(ErrQueryInvalid, "unknown timezone %q", truncate(name, 64))
 	}

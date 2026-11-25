@@ -622,7 +622,8 @@ type CreateSourceRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// name 名称，1-64。
 	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	// provider 提供方：aliyun / vmware。
+	// provider 提供方：aliyun / tencent / aws / vmware（与 kit/cmdbcontract.Providers 一致；
+	// 此前只放行 aliyun / vmware，腾讯云与 AWS 的采集器永远跑不到）。
 	Provider string `protobuf:"bytes,2,opt,name=provider,proto3" json:"provider,omitempty"`
 	// config 提供方配置（结构随 provider，见 kit/cmdbcontract；不含凭据）。
 	Config *structpb.Struct `protobuf:"bytes,3,opt,name=config,proto3" json:"config,omitempty"`
@@ -1826,10 +1827,10 @@ const file_cmdb_v1_sync_proto_rawDesc = "" +
 	"\x10GetSourceRequest\x12\x18\n" +
 	"\x02id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\"@\n" +
 	"\x11GetSourceResponse\x12+\n" +
-	"\x06source\x18\x01 \x01(\v2\x13.cmdb.v1.SyncSourceR\x06source\"\xd0\x03\n" +
+	"\x06source\x18\x01 \x01(\v2\x13.cmdb.v1.SyncSourceR\x06source\"\xde\x03\n" +
 	"\x13CreateSourceRequest\x12\x1d\n" +
-	"\x04name\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@R\x04name\x121\n" +
-	"\bprovider\x18\x02 \x01(\tB\x15\xbaH\x12r\x10R\x06aliyunR\x06vmwareR\bprovider\x127\n" +
+	"\x04name\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@R\x04name\x12?\n" +
+	"\bprovider\x18\x02 \x01(\tB#\xbaH r\x1eR\x06aliyunR\atencentR\x03awsR\x06vmwareR\bprovider\x127\n" +
 	"\x06config\x18\x03 \x01(\v2\x17.google.protobuf.StructB\x06\xbaH\x03\xc8\x01\x01R\x06config\x12*\n" +
 	"\n" +
 	"credential\x18\x04 \x01(\tB\n" +

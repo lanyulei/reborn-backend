@@ -181,7 +181,11 @@ func (s *ExecutionService) CancelJobExecution(ctx context.Context, req *v1.Cance
 	if err != nil {
 		return nil, err
 	}
-	out, err := toProtoExecution(e, true)
+	// 响应原本带着完整的执行内容（命令 / 脚本、参数、目标）：调用者按「执行记录」的可见性口径无权查看
+	// 这条执行时（只有「执行」按钮权限、且不是自己提交或审批的），不回显内容——与详情 / 主机 / 日志
+	// 读接口同一口径。能否取消仍只由「取消执行」的接口权限决定，这里不收紧。
+	visible := s.uc.RequireVisible(ctx, userID, e.ID) == nil
+	out, err := toProtoExecution(e, visible)
 	if err != nil {
 		return nil, err
 	}

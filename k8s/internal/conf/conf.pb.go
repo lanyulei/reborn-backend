@@ -210,7 +210,9 @@ type Plane struct {
 	CacheSyncTimeout *durationpb.Duration `protobuf:"bytes,7,opt,name=cache_sync_timeout,json=cacheSyncTimeout,proto3" json:"cache_sync_timeout,omitempty"`
 	// audit_retention 审计与终端会话记录的保留期，缺省 180d；显式 0s = 永久保留。
 	AuditRetention *durationpb.Duration `protobuf:"bytes,8,opt,name=audit_retention,json=auditRetention,proto3" json:"audit_retention,omitempty"`
-	// qps / burst 对单个集群 API Server 的客户端限速，缺省 50 / 100。
+	// qps / burst 客户端限速的速率与突发，缺省 50 / 100。按「客户端」各计一份，不是每个集群的总限额：
+	// 同一集群的用户请求与平台流量（缓存同步、探活、Helm）各自有独立的限速器，所以对单个 API Server 的
+	// 合计速率高于这个值。要收紧对 API Server 的总压力，同时调小 qps 与 burst，或减少并发访问的集群数。
 	Qps   float32 `protobuf:"fixed32,9,opt,name=qps,proto3" json:"qps,omitempty"`
 	Burst int32   `protobuf:"varint,10,opt,name=burst,proto3" json:"burst,omitempty"`
 	// debug_images 调试容器的镜像允许清单，第一个为缺省；空 = 只允许 docker.io/library/busybox:1.36。

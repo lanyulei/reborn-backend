@@ -103,6 +103,82 @@ type RelationRepo interface {
 	CountSide(ctx context.Context, typeCode, direction, id string) (int64, error)
 }
 
+// ScopedRelationRepo 关系仓储的可选能力：按调用者数据范围过滤对端的关联统计与拓扑展开。
+// 关联列表已在 SQL 里过滤（ListRelatedIn）；统计与拓扑若先全量取回再由调用方剔除，面板数字
+// 就与列表对不上（差额即范围外对端数），范围外节点还会占掉 maxNodes 预算。
+// 生产仓储必须实现（编译期断言）；未实现时（内存桩）用例退回保守行为，见各调用处。
+type ScopedRelationRepo interface {
+	// CountByCIIn 同 CountByCI，但只计对端类型在 modelCodes 内、环境在 envs 内的关系
+	// （nil = 该维度不限，空集合 = 什么都不计）。
+	CountByCIIn(ctx context.Context, ciID string, modelCodes, envs []string) (map[RelationKey]int64, error)
+	// NeighborsIn 同 Neighbors，但范围外的对端不展开、不占节点预算；根节点不受限。
+	NeighborsIn(ctx context.Context, ciID, flow string, depth, maxNodes int32, modelCodes, envs []string) (nodes []*TopologyNode, edges []*TopologyEdge, truncated bool, err error)
+}
+
+// RelationPrecheckRepo 仓储的可选能力：Link 预检的批量版本。一次关联多个目标时，逐个目标的
+// Exists + CountSide（每个目标 2–3 次往返，上限 100 个目标）换成各一条语句。结果口径须与
+// RelationRepo.Exists / CountSide 完全一致；仓储不具备该能力时 Link 退回逐个查询。
+type RelationPrecheckRepo interface {
+	// ExistingPeers 返回 peerIDs 中已与 ciID 建立该类型关系的对端 ID 集合；direction 是 ciID 的视角
+	//（outgoing：ciID 为 src、对端为 dst；incoming 反之）。
+	ExistingPeers(ctx context.Context, typeCode, direction, ciID string, peerIDs []string) (map[string]struct{}, error)
+	// CountSides CountSide 的批量版本：返回 id → 该端已有关系数，没有关系的 id 不出现在结果里。
+	CountSides(ctx context.Context, typeCode, direction string, ids []string) (map[string]int64, error)
+}
+
+// linkPrecheck 一次 Link 调用内预取的预检结果（见 RelationUsecase.precheck）。nil 表示没有预取，
+// 一律逐个查询。
+type linkPrecheck struct {
+	// existing 已与当前资源建立关系的目标 ID。
+	existing map[string]struct{}
+	// side 为 sideCounts 对应的端（DirectionIncoming / DirectionOutgoing）；空串表示没有预取计数。
+	side string
+	// sideCounts 目标在 side 端已有的关系数：预取过的目标都有条目（没有关系的为 0），
+	// 查不到条目说明该 ID 不在预取范围内（如当前资源自己那一端），仍走单条查询。
+	sideCounts map[string]int64
+}
+
+// precheck 预取多目标关联的预检数据：目标是否已关联（一条语句），以及目标所在端的已有关系数
+// （仅当该端受基数约束时，一条语句）。当前资源自己那一端不预取——逐个查询时它至多被查两次
+// （第二个目标就会因批内计数报基数冲突）。
+// 与逐个查询的差别只在读取时刻（集中在循环之前）；预检本来就是无锁的提示性检查，并发安全
+// 由仓储写入事务内的加锁复核保证，结论不依赖这一点。
+// 单个目标（含导入逐条建关系）或仓储不具备批量能力时返回 nil。
+func (uc *RelationUsecase) precheck(ctx context.Context, t *RelationType, ci *CI, direction string, targets []*CI) (*linkPrecheck, error) {
+	repo, ok := uc.relations.(RelationPrecheckRepo)
+	if !ok || len(targets) < 2 {
+		return nil, nil
+	}
+	ids := make([]string, 0, len(targets))
+	for _, target := range targets {
+		ids = append(ids, target.ID)
+	}
+	existing, err := repo.ExistingPeers(ctx, t.Code, direction, ci.ID, ids)
+	if err != nil {
+		return nil, err
+	}
+	pre := &linkPrecheck{existing: existing}
+	// 目标所在端：outgoing 时目标是 dst（incoming 端），one_to_one / one_to_many 受约束；
+	// incoming 时目标是 src（outgoing 端），只有 one_to_one 受约束。
+	switch {
+	case direction == DirectionOutgoing && (t.Cardinality == CardinalityOneToOne || t.Cardinality == CardinalityOneToMany):
+		pre.side = DirectionIncoming
+	case direction != DirectionOutgoing && t.Cardinality == CardinalityOneToOne:
+		pre.side = DirectionOutgoing
+	default:
+		return pre, nil
+	}
+	counts, err := repo.CountSides(ctx, t.Code, pre.side, ids)
+	if err != nil {
+		return nil, err
+	}
+	pre.sideCounts = make(map[string]int64, len(ids))
+	for _, id := range ids {
+		pre.sideCounts[id] = counts[id]
+	}
+	return pre, nil
+}
+
 // RelationUsecase 关系用例：类型/方向/基数校验，关联、解除、迁移、关联查询。
 type RelationUsecase struct {
 	relTypes  RelationTypeRepo
@@ -137,6 +213,10 @@ func (uc *RelationUsecase) Link(ctx context.Context, actor Actor, ciID, typeCode
 	for _, target := range targets {
 		byID[target.ID] = target
 	}
+	pre, err := uc.precheck(ctx, t, ci, direction, targets)
+	if err != nil {
+		return 0, err
+	}
 	for _, targetID := range targetIDs {
 		if targetID == ciID {
 			return 0, detail(ErrRelationNotAllowed, "cannot link a resource to itself")
@@ -145,7 +225,7 @@ func (uc *RelationUsecase) Link(ctx context.Context, actor Actor, ciID, typeCode
 		if !ok {
 			return 0, ErrCINotFound
 		}
-		rel, err := uc.buildRelation(ctx, actor, t, ci, target, direction, batch)
+		rel, err := uc.buildRelation(ctx, actor, t, ci, target, direction, batch, pre)
 		if err != nil {
 			return 0, err
 		}
@@ -217,7 +297,7 @@ func (uc *RelationUsecase) Move(ctx context.Context, actor Actor, ciID, typeCode
 	} else {
 		batch["dst:"+ciID] = -1
 	}
-	next, err := uc.buildRelation(ctx, actor, t, ci, to, direction, batch)
+	next, err := uc.buildRelation(ctx, actor, t, ci, to, direction, batch, nil)
 	if err != nil {
 		return err
 	}
@@ -258,11 +338,7 @@ func (uc *RelationUsecase) ListRelatedScoped(ctx context.Context, scope Scope, c
 		return nil, 0, err
 	}
 	page, pageSize = paging.Normalize(page, pageSize)
-	modelCodes := scopeKeyList(scope.Models) // 非 nil：空集合即什么都看不到
-	var envs []string
-	if !scope.EnvUnrestricted {
-		envs = scopeKeyList(scope.Envs)
-	}
+	modelCodes, envs := scopeLists(scope)
 	items, total, err := uc.relations.ListRelatedIn(ctx, ciID, typeCode, direction, keyword, modelCodes, envs, page, pageSize)
 	if err != nil {
 		return nil, 0, err
@@ -297,6 +373,18 @@ func scopeKeyList(set map[string]struct{}) []string {
 	return out
 }
 
+// scopeLists 数据范围的类型 / 环境集合，供仓储在 SQL 里过滤对端：nil = 该维度不限，
+// 非 nil 的空集合 = 什么都看不到。调用方须先判 scope.Unrestricted。
+func scopeLists(scope Scope) (modelCodes, envs []string) {
+	if !scope.ModelUnrestricted {
+		modelCodes = scopeKeyList(scope.Models)
+	}
+	if !scope.EnvUnrestricted {
+		envs = scopeKeyList(scope.Envs)
+	}
+	return modelCodes, envs
+}
+
 // 拓扑展开方向（影响分析）。
 const (
 	FlowDownstream = "downstream"
@@ -305,6 +393,26 @@ const (
 
 // Neighbors 资源拓扑：depth/maxNodes 非法值回退缺省（2 / 200）并封顶。
 func (uc *RelationUsecase) Neighbors(ctx context.Context, ciID, flow string, depth, maxNodes int32) ([]*TopologyNode, []*TopologyEdge, bool, error) {
+	return uc.neighbors(ctx, ciID, flow, depth, maxNodes, nil, nil)
+}
+
+// NeighborsScoped 按调用者数据范围展开拓扑：范围外的对端在 SQL 里就不展开，不占 maxNodes 预算
+// （事后剔除时，根资源的范围外邻居一旦多于预算，受限用户看到的拓扑就只剩根节点）。
+// 范围不限时等同 Neighbors。仓储不具备按范围展开的能力（仅内存桩）时退回全量展开，
+// 范围外节点仍由调用方事后剔除。
+func (uc *RelationUsecase) NeighborsScoped(ctx context.Context, scope Scope, ciID, flow string, depth, maxNodes int32) ([]*TopologyNode, []*TopologyEdge, bool, error) {
+	if scope.Unrestricted {
+		return uc.Neighbors(ctx, ciID, flow, depth, maxNodes)
+	}
+	modelCodes, envs := scopeLists(scope)
+	if _, ok := uc.relations.(ScopedRelationRepo); !ok {
+		return uc.Neighbors(ctx, ciID, flow, depth, maxNodes)
+	}
+	return uc.neighbors(ctx, ciID, flow, depth, maxNodes, modelCodes, envs)
+}
+
+// neighbors 拓扑展开的公共部分：根资源须存在；depth/maxNodes 规整；modelCodes / envs 皆 nil 时不叠加范围。
+func (uc *RelationUsecase) neighbors(ctx context.Context, ciID, flow string, depth, maxNodes int32, modelCodes, envs []string) ([]*TopologyNode, []*TopologyEdge, bool, error) {
 	if _, err := uc.cis.Get(ctx, ciID); err != nil {
 		return nil, nil, false, err
 	}
@@ -314,7 +422,11 @@ func (uc *RelationUsecase) Neighbors(ctx context.Context, ciID, flow string, dep
 	if maxNodes <= 0 {
 		maxNodes = 200
 	}
-	return uc.relations.Neighbors(ctx, ciID, flow, min(depth, TopologyMaxDepth), min(maxNodes, TopologyMaxNodes))
+	depth, maxNodes = min(depth, TopologyMaxDepth), min(maxNodes, TopologyMaxNodes)
+	if modelCodes == nil && envs == nil {
+		return uc.relations.Neighbors(ctx, ciID, flow, depth, maxNodes)
+	}
+	return uc.relations.(ScopedRelationRepo).NeighborsIn(ctx, ciID, flow, depth, maxNodes, modelCodes, envs)
 }
 
 func (uc *RelationUsecase) load(ctx context.Context, ciID, typeCode string) (*RelationType, *CI, error) {
@@ -329,8 +441,9 @@ func (uc *RelationUsecase) load(ctx context.Context, ciID, typeCode string) (*Re
 	return t, ci, nil
 }
 
-// buildRelation 校验两端类型与基数并构造关系；已存在返回 (nil, nil)。
-func (uc *RelationUsecase) buildRelation(ctx context.Context, actor Actor, t *RelationType, ci, target *CI, direction string, batch map[string]int64) (*Relation, error) {
+// buildRelation 校验两端类型与基数并构造关系；已存在返回 (nil, nil)。pre 为 Link 预取的预检结果
+// （可为 nil：逐个查询）。
+func (uc *RelationUsecase) buildRelation(ctx context.Context, actor Actor, t *RelationType, ci, target *CI, direction string, batch map[string]int64, pre *linkPrecheck) (*Relation, error) {
 	var src, dst *CI
 	if direction == DirectionOutgoing {
 		src, dst = ci, target
@@ -341,19 +454,23 @@ func (uc *RelationUsecase) buildRelation(ctx context.Context, actor Actor, t *Re
 		return nil, detail(ErrRelationNotAllowed, "%s requires %s → %s, got %s → %s",
 			t.Code, t.SrcModel, t.DstModel, src.ModelCode, dst.ModelCode)
 	}
-	if exists, err := uc.exists(ctx, t.Code, src.ID, dst.ID); err != nil {
+	if pre != nil {
+		if _, exists := pre.existing[target.ID]; exists {
+			return nil, nil
+		}
+	} else if exists, err := uc.exists(ctx, t.Code, src.ID, dst.ID); err != nil {
 		return nil, err
 	} else if exists {
 		return nil, nil
 	}
 	// 基数：one_to_one 两端各 ≤1；one_to_many 每个 dst 只属一个 src。
 	if t.Cardinality == CardinalityOneToOne || t.Cardinality == CardinalityOneToMany {
-		if err := uc.checkSide(ctx, t, DirectionIncoming, dst.ID, batch, "dst:"+dst.ID, dst.Name); err != nil {
+		if err := uc.checkSide(ctx, t, DirectionIncoming, dst.ID, batch, "dst:"+dst.ID, dst.Name, pre); err != nil {
 			return nil, err
 		}
 	}
 	if t.Cardinality == CardinalityOneToOne {
-		if err := uc.checkSide(ctx, t, DirectionOutgoing, src.ID, batch, "src:"+src.ID, src.Name); err != nil {
+		if err := uc.checkSide(ctx, t, DirectionOutgoing, src.ID, batch, "src:"+src.ID, src.Name, pre); err != nil {
 			return nil, err
 		}
 	}
@@ -369,10 +486,16 @@ func (uc *RelationUsecase) buildRelation(ctx context.Context, actor Actor, t *Re
 
 // checkSide 某端已有关系数（含批内增量）须为 0，否则基数冲突。
 // 此处为无锁预检（给出具体提示）；并发安全由仓储写入事务内的加锁复核保证。
-func (uc *RelationUsecase) checkSide(ctx context.Context, t *RelationType, side, id string, batch map[string]int64, key, name string) error {
-	n, err := uc.relations.CountSide(ctx, t.Code, side, id)
-	if err != nil {
-		return err
+func (uc *RelationUsecase) checkSide(ctx context.Context, t *RelationType, side, id string, batch map[string]int64, key, name string, pre *linkPrecheck) error {
+	n, prefetched := int64(0), false
+	if pre != nil && pre.side == side {
+		n, prefetched = pre.sideCounts[id]
+	}
+	if !prefetched {
+		var err error
+		if n, err = uc.relations.CountSide(ctx, t.Code, side, id); err != nil {
+			return err
+		}
 	}
 	if n+batch[key] > 0 {
 		return detail(ErrRelationCardinality, "%q already has a %s relation", name, t.Code)

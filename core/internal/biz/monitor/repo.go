@@ -153,7 +153,7 @@ type AlertStats interface {
 
 // NotifyLogReader 通知记录读仓储。
 type NotifyLogReader interface {
-	// ListByAlert 事件的通知时间线，按时间升序，至多 limit 条。
+	// ListByAlert 事件的通知时间线，按时间升序，至多 limit 条；超过 limit 条时保留最新的 limit 条。
 	ListByAlert(ctx context.Context, alertID string, limit int) ([]*NotifyLog, error)
 	// IsRecipient 用户是否出现在该事件任一通知记录的接收方里。
 	IsRecipient(ctx context.Context, alertID, userID string) (bool, error)

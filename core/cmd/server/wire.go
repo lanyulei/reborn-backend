@@ -41,11 +41,13 @@ import (
 // data 层因共享 Data 类型不能在顶层聚合各域（避免 import 环），
 // 各域 data ProviderSet 在此显式列出；biz/service 顶层已聚合。
 // service 层消费的 biz 窄接口（AdminResolver ← UserUsecase）在组合根绑定，避免 biz 反向依赖 service。
+// server 消费的 data 层能力（存活探测 Pinger、表增长观测 TableStats）同在此绑定：两层互不 import。
 func wireApp(*conf.Server, *conf.Data, *conf.Security, *conf.Notify, *conf.Assistant, *conf.Monitor, *conf.K8S, *conf.Knowledge, *conf.Agent, *slog.Logger) (*kratos.App, func(), error) {
 	panic(wire.Build(server.ProviderSet, data.ProviderSet, datasystem.ProviderSet, datanotify.ProviderSet, dataassistant.ProviderSet, datacmdb.ProviderSet, dataoncall.ProviderSet, datafile.ProviderSet, dataworkflow.ProviderSet, dataticket.ProviderSet, datamonitor.ProviderSet, datajob.ProviderSet, datak8s.ProviderSet, dataknowledge.ProviderSet, dataincident.ProviderSet, dataagent.ProviderSet, biz.ProviderSet, service.ProviderSet, worker.ProviderSet,
 		wire.Bind(new(servicesystem.AdminResolver), new(*bizsystem.UserUsecase)),
 		wire.Bind(new(serviceoncall.AdminResolver), new(*bizsystem.UserUsecase)),
 		wire.Bind(new(serviceworkflow.PermissionChecker), new(*bizsystem.AuthzUsecase)),
 		wire.Bind(new(server.Pinger), new(*data.Data)),
+		data.NewTableStatsRepo, wire.Bind(new(server.TableStats), new(*data.TableStatsRepo)),
 		newApp))
 }

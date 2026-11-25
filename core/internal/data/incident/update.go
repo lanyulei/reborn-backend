@@ -342,6 +342,29 @@ func (r *actionItemRepo) SaveTx(ctx context.Context, tx txrun.Tx, it *biz.Action
 	return nil
 }
 
+// SetTicketTx implements biz.ActionItemRepo：只写关联工单两列。建单是跨域调用，调用方手里的改进项是建单之前
+// 读出的；沿用 SaveTx 整体写回会把这期间用户对标题 / 负责人 / 期限的编辑覆盖成旧值。
+func (r *actionItemRepo) SetTicketTx(ctx context.Context, tx txrun.Tx, id, ticketID, ticketNumber string) error {
+	n, err := tx.Exec(ctx, "UPDATE incident_action_item SET ticket_id = $2, ticket_number = $3, update_time = now() WHERE id = $1",
+		id, nilIfEmpty(ticketID), ticketNumber)
+	if err != nil {
+		return fmt.Errorf("link action item ticket: %w", err)
+	}
+	if n == 0 {
+		return biz.ErrActionItemNotFound
+	}
+	return nil
+}
+
+// MarkDoneTx implements biz.ActionItemRepo：围栏「仍是待完成」，只改状态与更新时间（同上，不整体写回旧对象）。
+func (r *actionItemRepo) MarkDoneTx(ctx context.Context, tx txrun.Tx, id string) (bool, error) {
+	n, err := tx.Exec(ctx, "UPDATE incident_action_item SET status = 2, update_time = now() WHERE id = $1 AND status = 1", id)
+	if err != nil {
+		return false, fmt.Errorf("mark action item done: %w", err)
+	}
+	return n == 1, nil
+}
+
 // DeleteTx implements biz.ActionItemRepo.
 func (r *actionItemRepo) DeleteTx(ctx context.Context, tx txrun.Tx, incidentID, id string) error {
 	n, err := tx.Exec(ctx, "DELETE FROM incident_action_item WHERE incident_id = $1 AND id = $2", incidentID, id)

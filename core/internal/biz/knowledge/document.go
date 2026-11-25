@@ -726,7 +726,8 @@ func (uc *DocumentUsecase) ListRelated(ctx context.Context, userID, targetType, 
 		})
 	}
 	if q := strings.TrimSpace(query); q != "" && len(out) < limit {
-		res, err := uc.search.Search(ctx, userID, SearchSourceRelated, SearchInput{Query: q, TopK: limit})
+		// 权限视图上面已解析过：直接沿用，检索不再解析一遍（同一用户、同一请求，口径相同）。
+		res, err := uc.search.searchAs(ctx, acc, userID, SearchSourceRelated, SearchInput{Query: q, TopK: limit}, uc.search.now())
 		if err != nil {
 			return nil, err
 		}
@@ -804,10 +805,10 @@ func (uc *DocumentUsecase) GetOverview(ctx context.Context, userID string) (*Ove
 	if out.ReviewDue, err = query(DocumentFilter{OwnerID: userID, Status: &published, ReviewDueBefore: &due}); err != nil {
 		return nil, err
 	}
-	for _, list := range [][]*Document{out.Recent, out.Mine, out.PendingReview, out.ReviewDue} {
-		if err := uc.decorate(ctx, list, acc); err != nil {
-			return nil, err
-		}
+	// 四个列表合并后装饰一次：装饰按文档逐个原地补字段、与文档在哪个列表里无关，分四次做只是把
+	// 「列全部空间 + 查负责人名」重复四遍。
+	if err := uc.decorate(ctx, slices.Concat(out.Recent, out.Mine, out.PendingReview, out.ReviewDue), acc); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -1040,17 +1041,16 @@ func (uc *DocumentUsecase) decorate(ctx context.Context, docs []*Document, acc *
 	if len(docs) == 0 {
 		return nil
 	}
-	spaces, err := uc.spaces.repo.List(ctx, "", "")
-	if err != nil {
-		return err
-	}
-	spaceNames := make(map[string]string, len(spaces))
-	for _, s := range spaces {
-		spaceNames[s.ID] = s.Name
-	}
+	// 只取这批文档涉及的空间的名称（去重后按主键查），不再每次把全部空间整行列出来。
+	spaceIDs := make([]string, 0, len(docs))
 	ids := make([]string, 0, len(docs))
 	for _, d := range docs {
+		spaceIDs = append(spaceIDs, d.SpaceID)
 		ids = append(ids, d.OwnerID)
+	}
+	spaceNames, err := uc.spaces.repo.Names(ctx, slices.Compact(slices.Sorted(slices.Values(spaceIDs))))
+	if err != nil {
+		return err
 	}
 	names, err := uc.userNames(ctx, ids)
 	if err != nil {

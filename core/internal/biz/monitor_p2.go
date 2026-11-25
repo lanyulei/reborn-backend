@@ -569,8 +569,12 @@ func (m monitorShifts) Shifts(ctx context.Context, scheduleID string, from, to t
 	if err != nil {
 		return nil, false, err
 	}
-	out := make([]bizmonitor.ShiftSlot, 0, min(len(shifts), limit))
-	for _, sh := range shifts[:min(len(shifts), limit)] {
+	if len(shifts) > limit {
+		// 班次超过一次能统计的上限：明确报错而不是只返回前 limit 个——窗口后段的班次会看起来像「没有排班」。
+		return nil, true, bizmonitor.Detail(bizmonitor.ErrTimeRangeInvalid, "more than %d shifts in the time range, please narrow it down", limit)
+	}
+	out := make([]bizmonitor.ShiftSlot, 0, len(shifts))
+	for _, sh := range shifts {
 		out = append(out, bizmonitor.ShiftSlot{UserID: sh.UserID, UserName: sh.UserName, Role: sh.Role, Start: sh.Start, End: sh.End})
 	}
 	return out, true, nil

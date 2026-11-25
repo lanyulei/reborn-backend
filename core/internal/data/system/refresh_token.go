@@ -57,14 +57,30 @@ func NewRefreshTokenRepo(data *basedata.Data) *refreshTokenRepo {
 
 // insertRefreshToken 在事务内插入令牌行（审计时间由用例统一生成并显式落库）。
 // FamilyID 为空时族即自身（NULLIF → NULL，读取处 COALESCE(family_id, id)）。
+// IssuedForHash 非空（登录签发）时是条件插入：用户仍启用、未删除且口令哈希未变才落行，
+// 否则 0 行 → ErrTokenInvalid（签发与「重置口令 / 停用」并发时，新会话不得落在吊销之后）。
 func insertRefreshToken(ctx context.Context, tx pgx.Tx, t *biz.RefreshToken) error {
-	_, err := tx.Exec(ctx,
+	if t.IssuedForHash == "" {
+		_, err := tx.Exec(ctx,
+			`INSERT INTO system_refresh_token (id, user_id, family_id, token_hash, expire_time, create_time)
+			 VALUES ($1, $2, NULLIF($3, '')::uuid, $4, $5, $6)`,
+			t.ID, t.UserID, t.FamilyID, t.TokenHash, t.ExpireTime, t.CreateTime)
+		if err != nil {
+			// token_hash 唯一冲突（概率 2^-256）与外键违约均按基础设施错误原样上抛。
+			return fmt.Errorf("insert refresh token: %w", err)
+		}
+		return nil
+	}
+	tag, err := tx.Exec(ctx,
 		`INSERT INTO system_refresh_token (id, user_id, family_id, token_hash, expire_time, create_time)
-		 VALUES ($1, $2, NULLIF($3, '')::uuid, $4, $5, $6)`,
-		t.ID, t.UserID, t.FamilyID, t.TokenHash, t.ExpireTime, t.CreateTime)
+		 SELECT $1, $2, NULLIF($3, '')::uuid, $4, $5, $6
+		 WHERE EXISTS (SELECT 1 FROM "system_user" WHERE id = $2 AND status = 1 AND delete_time IS NULL AND password = $7)`,
+		t.ID, t.UserID, t.FamilyID, t.TokenHash, t.ExpireTime, t.CreateTime, t.IssuedForHash)
 	if err != nil {
-		// token_hash 唯一冲突（概率 2^-256）与外键违约均按基础设施错误原样上抛。
 		return fmt.Errorf("insert refresh token: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return biz.ErrTokenInvalid
 	}
 	return nil
 }

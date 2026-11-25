@@ -44,6 +44,10 @@ type ScopeRepo interface {
 	Get(ctx context.Context, roleID string) ([]*RoleScope, error)
 	// Replace 同事务整组替换、bump k8s_cfg_version 并追加审计；引用了不存在的集群返回 ErrScopeInvalid 的说明。
 	Replace(ctx context.Context, roleID string, items []*RoleScope, audit *AuditEntry) error
+	// Grant 把一条授权并入角色已有的数据范围（同一集群同一命名空间取较高档位）：读、合并、整组写入在同一
+	// 事务内并持有该角色的锁，与管理端的 Replace、其它实例的并发授予互斥，不会丢掉并发写入的授权。
+	// 审计与配置版本的处理同 Replace；引用了不存在的集群同样返回 ErrScopeInvalid 的说明。
+	Grant(ctx context.Context, roleID string, item *RoleScope, audit *AuditEntry) error
 }
 
 // AuditReader 审计与终端会话读取。

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lanyulei/reborn/backend/core/internal/pkg/txrun"
 	"github.com/lanyulei/reborn/backend/kit/idgen"
 	"github.com/lanyulei/reborn/backend/kit/paging"
 )
@@ -488,7 +489,9 @@ func (uc *IncidentUsecase) mutate(ctx context.Context, id string, actorType int3
 		if err != nil {
 			return err
 		}
-		members, err := uc.d.Members.List(ctx, inc.ID)
+		// 成员在本事务的连接上读（MemberRepo.List 认 ctx 里的事务句柄）：每次写都要读它，走连接池的话每个
+		// 写事务固定再占一条连接，并发写多时互相等待。此刻本事务还没有写入，读到的与走连接池相同。
+		members, err := uc.d.Members.List(txrun.NewContext(ctx, tx), inc.ID)
 		if err != nil {
 			return err
 		}
@@ -612,8 +615,9 @@ func (uc *IncidentUsecase) readableAlerts(ctx context.Context, userID string, id
 	if len(refs) != len(uniq(ids)) {
 		return nil, ErrAlertNotFound
 	}
+	reader := uc.alertReader(userID)
 	for _, a := range refs {
-		ok, err := uc.d.Alerts.CanRead(ctx, userID, a)
+		ok, err := reader.canRead(ctx, a)
 		if err != nil {
 			return nil, err
 		}
@@ -917,7 +921,14 @@ func (uc *IncidentUsecase) roleUsers(m *mutation) []string {
 }
 
 // applyReview 恢复时按等级设定复盘要求与到期日。
+//
+// 复盘允许在恢复之前就写、就完成（Save / Complete 不看故障状态），所以这里不能无条件置回「待复盘」：
+// 已完成的原样保留——此前恢复时被重置，用户得把同一份复盘再完成一次（或强制关闭）；已在起草的保持起草，
+// 只补上到期日（等级不要求复盘时仍按原口径清掉要求，否则一份没写完的草稿会挡住关闭）。
 func (uc *IncidentUsecase) applyReview(ctx context.Context, inc *Incident, settings *Settings) error {
+	if inc.ReviewStatus == ReviewDone {
+		return nil
+	}
 	days := settings.Sev(inc.Severity).ReviewDays
 	if days <= 0 || inc.IsDrill {
 		inc.ReviewStatus, inc.ReviewDue = ReviewNone, nil
@@ -931,7 +942,10 @@ func (uc *IncidentUsecase) applyReview(ctx context.Context, inc *Incident, setti
 	if err != nil {
 		return err
 	}
-	inc.ReviewStatus, inc.ReviewDue, inc.ReviewRemind = ReviewPending, &due, 0
+	inc.ReviewDue, inc.ReviewRemind = &due, 0
+	if inc.ReviewStatus != ReviewDrafting {
+		inc.ReviewStatus = ReviewPending
+	}
 	return nil
 }
 
@@ -1038,6 +1052,8 @@ func (uc *IncidentUsecase) transition(ctx context.Context, m *mutation, a access
 		m.action(ActionTicketNote, "", map[string]any{"status": StatusResolved})
 		m.touch()
 	case ActionClose:
+		// 关闭（含 force 跳过复盘）的权限是同一条：故障指挥或超级管理员（canManage）。force 不另设更高的
+		// 权限，只多要求填写原因并记入时间线。
 		if !a.canManage() {
 			return ErrForbidden
 		}
@@ -1070,9 +1086,20 @@ func (uc *IncidentUsecase) transition(ctx context.Context, m *mutation, a access
 		if inc.ResolveTime != nil && m.now.Sub(*inc.ResolveTime) > time.Duration(settings.ReopenWindowHours)*time.Hour {
 			return detail(ErrStateInvalid, "reopen window (%d hours) has passed", settings.ReopenWindowHours)
 		}
+		// 同规则、同归并键已有活跃故障时，重开会撞唯一索引 uk_incident_correlation：此前被报成「已被他人修改，
+		// 请刷新重试」，刷新重试仍然失败。先查出来，提示改用合并。
+		other, err := uc.activeByCorrelation(ctx, inc)
+		if err != nil {
+			return err
+		}
+		if other != nil {
+			return detail(ErrStateInvalid, "incident %s with the same correlation key is already active, merge into it instead", other.Number)
+		}
 		inc.Status = StatusResponding
 		inc.ResolveTime, inc.MitigateTime = nil, nil
 		inc.ReopenCount++
+		// 重开后复盘要求作废（再次恢复时按等级重算）：留着旧的到期日，处理中的故障也会收到「复盘即将到期 / 已超期」。
+		inc.ReviewStatus, inc.ReviewDue, inc.ReviewRemind = ReviewNone, nil, 0
 		m.touch()
 		m.event(EventReopen, EventDetail{Text: in.Note})
 	default:
@@ -1086,6 +1113,21 @@ func (uc *IncidentUsecase) transition(ctx context.Context, m *mutation, a access
 	m.notify(n)
 	m.hook("status", map[string]any{"from": from, "to": inc.Status, "action": in.Action})
 	return nil
+}
+
+// activeByCorrelation 同触发规则、同归并键的活跃故障（没有返回 nil）。uk_incident_correlation 保证至多一条。
+// 规则开出的故障才有归并键，手动 / 开放接口开出的（RuleID 为空）不存在这种冲突。
+func (uc *IncidentUsecase) activeByCorrelation(ctx context.Context, inc *Incident) (*Incident, error) {
+	if inc.RuleID == "" || inc.CorrelationKey == "" {
+		return nil, nil
+	}
+	items, _, err := uc.d.Incidents.List(ctx, IncidentFilter{
+		RuleID: inc.RuleID, CorrelationKey: inc.CorrelationKey, Statuses: []int32{StatusOpen, StatusResponding, StatusMitigated},
+	}, 1, 1)
+	if err != nil || len(items) == 0 {
+		return nil, err
+	}
+	return items[0], nil
 }
 
 func ptr(t time.Time) *time.Time { return &t }
@@ -1123,11 +1165,13 @@ func (uc *IncidentUsecase) Merge(ctx context.Context, userID, id, targetID, note
 		if src.ID != id {
 			src, dst = b, a
 		}
-		srcMembers, err := uc.d.Members.List(ctx, src.ID)
+		// 同 mutate：两次成员读取都在本事务的连接上（此刻尚无写入，结果与走连接池相同）。
+		txCtx := txrun.NewContext(ctx, tx)
+		srcMembers, err := uc.d.Members.List(txCtx, src.ID)
 		if err != nil {
 			return err
 		}
-		dstMembers, err := uc.d.Members.List(ctx, dst.ID)
+		dstMembers, err := uc.d.Members.List(txCtx, dst.ID)
 		if err != nil {
 			return err
 		}
@@ -1185,6 +1229,8 @@ func (uc *IncidentUsecase) Merge(ctx context.Context, userID, id, targetID, note
 		}
 		src.Status, src.MergedInto = StatusMerged, dst.ID
 		src.AgentOwner, src.AgentLeaseUntil = "", nil
+		// 已合并的故障不再有复盘：不清掉的话巡检会按旧的到期日照样提醒，而复盘接口对它已返回状态错误。
+		src.ReviewStatus, src.ReviewDue, src.ReviewRemind = ReviewNone, nil, 0
 		if err := uc.cancelPendingProposals(ctx, ms, "故障已合并到 "+dst.Number); err != nil {
 			return err
 		}
@@ -1249,6 +1295,8 @@ func (uc *IncidentUsecase) AssignCommander(ctx context.Context, userID, id, toUs
 			}
 		}
 		m.event(EventCommander, EventDetail{UserID: toUser, Text: cleanText(note)})
+		// Webhook 订阅里的 commander 事件此前只在可订阅列表中，从未发出。
+		m.hook("commander", map[string]any{"commander_id": toUser, "from": from})
 		if from != "" {
 			m.event(EventMemberRemove, EventDetail{UserID: from, From: RoleCommander, Text: "转交指挥"})
 		}

@@ -293,11 +293,9 @@ func correlationKey(spec *RuleSpec, a *AlertRef, businessID string, upstream []s
 			parts = append(parts, "l:"+k[6:]+"="+a.Labels[k[6:]])
 		}
 	}
-	key := strings.Join(parts, "|")
-	if len(key) > 255 {
-		key = key[:255]
-	}
-	return key
+	// 按字节截到列宽（varchar(255)）且不切开字符：按字节硬切会把中文标签值切成非法 UTF-8，
+	// 落库报 22021，关联器同样卡在这条信号上。
+	return truncateBytes(strings.Join(parts, "|"), 255)
 }
 
 // severityFor 规则开出故障的等级：固定或按告警级别映射（致命→S2、严重→S3、其余→S4）。

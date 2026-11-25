@@ -136,6 +136,17 @@ func (s *Store) GetChannel(_ context.Context, id string) (*biz.Channel, error) {
 	return cp, nil
 }
 
+// ChannelBiz implements biz.ChannelRepo：已软删的渠道同样返回其 biz（对齐 data 层不带软删过滤）。
+func (s *Store) ChannelBiz(_ context.Context, id string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	e, ok := s.channels[id]
+	if !ok {
+		return "", biz.ErrChannelNotFound
+	}
+	return e.ch.BizID, nil
+}
+
 // ListChannelsByIDs implements biz.ChannelRepo：ID 集合内未删除渠道（不含
 // secret），缺失 ID 静默跳过。
 func (s *Store) ListChannelsByIDs(_ context.Context, ids []string) ([]*biz.Channel, error) {

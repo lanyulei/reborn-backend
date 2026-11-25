@@ -58,8 +58,10 @@ func TestScopedListsAndRequesterRefresh(t *testing.T) {
 	changes := NewChangeRepo(e.data)
 	mk := func(clusterID, ns, requester string) string {
 		id, _ := idgen.NewID()
-		c := &biz.Change{ID: id, Kind: kc.ChangeKindOp, ClusterID: clusterID, ClusterName: "x", Namespace: ns, Action: "scale", Op: kc.OpScale,
-			Summary: "s", Display: &kc.ChangeDisplay{}, Status: kc.ChangePending, RequesterID: requester, RequesterName: "u"}
+		c := &biz.Change{
+			ID: id, Kind: kc.ChangeKindOp, ClusterID: clusterID, ClusterName: "x", Namespace: ns, Action: "scale", Op: kc.OpScale,
+			Summary: "s", Display: &kc.ChangeDisplay{}, Status: kc.ChangePending, RequesterID: requester, RequesterName: "u",
+		}
 		if err := changes.Create(ctx, c, nil); err != nil {
 			t.Fatal(err)
 		}

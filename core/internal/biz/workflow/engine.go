@@ -313,6 +313,21 @@ type State struct {
 	// 而不是每条命令都把整个实例重写一遍。新建的实例没有基线，全部视为变化。
 	baseTokens map[string]Token
 	baseTasks  map[string]string
+	// baseSeats 处理人席位的基线（席位 ID → 会被引擎改写的字段）：任务有变化时只回写变化的席位。
+	baseSeats map[string]seatBase
+}
+
+// seatBase 席位中「会被引擎改写、回写时会更新」的字段——与数据层 upsert 的 DO UPDATE 列一一对应
+// （status / comment / action_time / owner_id）；其余列只在插入时写入，席位建立后不变。
+type seatBase struct {
+	Status     int32
+	Comment    string
+	ActionTime time.Time
+	OwnerID    string
+}
+
+func seatBaseOf(a *TaskAssignee) seatBase {
+	return seatBase{Status: a.Status, Comment: a.Comment, ActionTime: a.ActionTime, OwnerID: a.OwnerID}
 }
 
 // taskDigest 任务及其处理人中「会被引擎改写」的字段的摘要。
@@ -339,8 +354,12 @@ func (s *State) snapshot() {
 		s.baseTokens[t.ID] = *t
 	}
 	s.baseTasks = make(map[string]string, len(s.Tasks))
+	s.baseSeats = make(map[string]seatBase, len(s.Tasks))
 	for _, t := range s.Tasks {
 		s.baseTasks[t.ID] = taskDigest(t)
+		for _, a := range t.Assignees {
+			s.baseSeats[a.ID] = seatBaseOf(a)
+		}
 	}
 }
 
@@ -355,12 +374,25 @@ func (s *State) ChangedTokens() []*Token {
 	return out
 }
 
-// ChangedTasks 相对基线新增或变化的任务（处理人随任务整体回写）。
+// ChangedTasks 相对基线新增或变化的任务（处理人只回写变化的席位，见 ChangedAssignees）。
 func (s *State) ChangedTasks() []*Task {
 	out := make([]*Task, 0, len(s.Tasks))
 	for _, t := range s.Tasks {
 		if base, ok := s.baseTasks[t.ID]; !ok || base != taskDigest(t) {
 			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// ChangedAssignees 任务 t 名下相对基线新增或变化的席位，保持原有顺序。会签任务可有上百个席位，
+// 每同意 / 改派一次只动其中一两个：未变化的席位库里已是同样的值，不必逐个再 upsert 一遍。
+// 比较用结构体判等（时间连同时区一起比）：宁可多写一条，不漏写任何一处变化。
+func (s *State) ChangedAssignees(t *Task) []*TaskAssignee {
+	out := make([]*TaskAssignee, 0, len(t.Assignees))
+	for _, a := range t.Assignees {
+		if base, ok := s.baseSeats[a.ID]; !ok || base != seatBaseOf(a) {
+			out = append(out, a)
 		}
 	}
 	return out

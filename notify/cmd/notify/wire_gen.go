@@ -20,6 +20,7 @@ import (
 
 import (
 	_ "go.uber.org/automaxprocs"
+	_ "time/tzdata"
 )
 
 // Injectors from wire.go:
@@ -81,7 +82,7 @@ func wireApp(confServer *conf.Server, confData *conf.Data, pipeline *conf.Pipeli
 	locker := data.NewLocker(dataData)
 	healthRepo := data.NewHealthRepo(dataData)
 	hooks := server.NewHooks(metrics)
-	set, err := worker.NewSet(pipeline, configCache, routerUsecase, sweeperUsecase, senderUsecase, dlqUsecase, maintenanceUsecase, relayUsecase, locker, healthRepo, hooks, logger)
+	set, err := worker.NewSet(pipeline, configCache, routerUsecase, sweeperUsecase, senderUsecase, dlqUsecase, maintenanceUsecase, relayUsecase, locker, healthRepo, producerAuth, ingressUsecase, hooks, logger)
 	if err != nil {
 		cleanup3()
 		cleanup2()

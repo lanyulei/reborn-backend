@@ -137,11 +137,11 @@ func TestSafeTar(t *testing.T) {
 		}
 	}
 	for entry, target := range map[string]string{"log/a": "/etc/passwd", "log/b": "../../etc/passwd", "log/sub/c": "../../../x", "log/d": ""} {
-		if SafeTarLink(entry, target) {
+		if SafeTarLink(entry, target, "log") {
 			t.Errorf("link %s -> %s must be dropped", entry, target)
 		}
 	}
-	if !SafeTarLink("log/sub/c", "../a.txt") || !SafeTarLink("log/a", "b") {
+	if !SafeTarLink("log/sub/c", "../a.txt", "log") || !SafeTarLink("log/a", "b", "log") {
 		t.Error("links inside the tree must be kept")
 	}
 }

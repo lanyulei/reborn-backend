@@ -164,7 +164,7 @@ type ShiftSlot struct {
 // Shifts 值班表的班次（oncall 域 ScheduleUsecase 适配）。
 type Shifts interface {
 	// Shifts 值班表里与 [from, to) 有交集的班次，按开始时间升序，至多 limit 个；exists 为 false 表示
-	// 值班表不存在。
+	// 值班表不存在。班次多于 limit 个时返回 ErrTimeRangeInvalid（提示缩小时间范围），而不是只给前 limit 个。
 	Shifts(ctx context.Context, scheduleID string, from, to time.Time, limit int) (slots []ShiftSlot, exists bool, err error)
 }
 

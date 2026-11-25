@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -38,10 +39,17 @@ func NewProducerRepo(data *basedata.Data, box *SecretBox) *producerRepo {
 	r := &producerRepo{data: data, box: box}
 	if data != nil && data.Pool != nil && box.Enabled() {
 		// 启动时一次性把存量裸哈希换成封存形态（幂等；失败不影响启动，下次启动 / 更新时再补）。
+		// 结果必须留痕：失败时存量裸哈希一直留在库里，运维要能从启动日志里看出来。
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), resealTimeout)
 			defer cancel()
-			_, _ = r.ResealLegacyKeys(ctx)
+			n, err := r.ResealLegacyKeys(ctx)
+			switch {
+			case err != nil:
+				slog.Default().WarnContext(ctx, "notify: re-sealing legacy producer keys failed; they stay as raw hashes until the next start or update", "error", err)
+			case n > 0:
+				slog.Default().InfoContext(ctx, "notify: re-sealed legacy producer keys", "count", n)
+			}
 		}()
 	}
 	return r

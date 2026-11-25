@@ -59,11 +59,13 @@ type ResolveSession struct {
 	now    time.Time
 	onDuty map[string][]string
 	byRole map[string][2][]string
+	// usable 本次会话里已经问过目录的用户是否可用（只收规范写法的用户 ID，见 activeOf）。
+	usable map[string]bool
 }
 
 // Session 开始一次解析会话；now 为取值班人的时刻。
 func (r *RecipientResolver) Session(now time.Time) *ResolveSession {
-	return &ResolveSession{r: r, now: now, onDuty: map[string][]string{}, byRole: map[string][2][]string{}}
+	return &ResolveSession{r: r, now: now, onDuty: map[string][]string{}, byRole: map[string][2][]string{}, usable: map[string]bool{}}
 }
 
 // usersOnDuty 各值班表当前值班人（主值班在前、备值班在后）；无人值班的记一条说明。
@@ -107,7 +109,7 @@ func (s *ResolveSession) active(ctx context.Context, users []string, notes *[]Re
 	if len(want) == 0 {
 		return nil, nil
 	}
-	active, err := s.r.dir.ActiveUserIDs(ctx, want)
+	active, err := s.activeOf(ctx, want)
 	if err != nil {
 		return nil, err
 	}
@@ -115,6 +117,74 @@ func (s *ResolveSession) active(ctx context.Context, users []string, notes *[]Re
 		*notes = append(*notes, ResolveNote{Kind: NoteUsersInactive})
 	}
 	return active, nil
+}
+
+// activeOf 从 want（已去重、非空）里筛出可用用户，保持顺序。一次会话内每个用户只问目录一次：一行发件箱要
+// 解析规则的通知对象外加至多 maxSubscriptionCandidates 条订阅，逐条各查一次就是数百次往返。
+//
+// 与直接调用 Directory.ActiveUserIDs 结果相同：目录对规范写法（小写）的用户 ID 是逐个筛选、保持入参顺序，
+// 所以「分开问再按 want 的顺序拼起来」与「一次问完」一致。want 里只要有一个不是规范写法（目录会先转小写、
+// 去重、丢掉非法 ID，结果不再与入参逐个对应），就原样转给目录、不走缓存。
+func (s *ResolveSession) activeOf(ctx context.Context, want []string) ([]string, error) {
+	var unknown []string
+	for _, id := range want {
+		if !idgen.IsUUID(id) {
+			return s.r.dir.ActiveUserIDs(ctx, want)
+		}
+		if _, ok := s.usable[id]; !ok {
+			unknown = append(unknown, id)
+		}
+	}
+	if err := s.askDirectory(ctx, unknown); err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(want))
+	for _, id := range want {
+		if s.usable[id] {
+			out = append(out, id)
+		}
+	}
+	return out, nil
+}
+
+// askDirectory 向目录问一批还没问过的用户（都是规范写法、互不重复）并记下结果。
+func (s *ResolveSession) askDirectory(ctx context.Context, unknown []string) error {
+	if len(unknown) == 0 {
+		return nil
+	}
+	active, err := s.r.dir.ActiveUserIDs(ctx, unknown)
+	if err != nil {
+		return err
+	}
+	for _, id := range unknown {
+		s.usable[id] = slices.Contains(active, id)
+	}
+	return nil
+}
+
+// Prefetch 把这些订阅里写明的用户接收方（指定用户、所有者本人）一次问完目录，随后逐条 Subscription 时不再
+// 各查一次。只是预热：不改变任何一条订阅的解析结果；值班表的值班人仍在解析到该订阅时才知道。
+func (s *ResolveSession) Prefetch(ctx context.Context, subs []*Subscription) error {
+	seen := map[string]struct{}{}
+	var unknown []string
+	add := func(id string) {
+		if _, dup := seen[id]; dup || !idgen.IsUUID(id) {
+			return
+		}
+		seen[id] = struct{}{}
+		if _, ok := s.usable[id]; !ok {
+			unknown = append(unknown, id)
+		}
+	}
+	for _, sub := range subs {
+		for _, id := range sub.Spec.Receivers.UserIDs {
+			add(id)
+		}
+		if sub.Spec.Receivers.Self {
+			add(sub.OwnerID)
+		}
+	}
+	return s.askDirectory(ctx, unknown)
 }
 
 // Rule 解析规则的通知对象：指定用户、值班表当前值班人、部门负责人，以及（规则勾选了「资源负责人」时）

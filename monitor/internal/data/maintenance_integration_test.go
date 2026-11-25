@@ -195,22 +195,35 @@ func TestRetention(t *testing.T) {
 			e.id(), alertID, kind, status, doneAgo)
 	}
 	outbox(oldResolved, 1, monitorcontract.OutboxDone, 200*day)
-	outbox(oldResolved, 3, monitorcontract.OutboxPending, 0) // 告警被清理时连带删除
+	outbox(oldResolved, 3, monitorcontract.OutboxPending, 0) // 仍待派发：事件先不清理，这一行终结后才连带删除
 	outbox(recent, 1, monitorcontract.OutboxDone, 200*day)
 	outbox(recent, 2, monitorcontract.OutboxDropped, 190*day)
 	outbox(recent, 3, monitorcontract.OutboxDone, 10*day)
 	outbox(active, 1, monitorcontract.OutboxPending, 0) // 待派发的行不论多旧都不删
 	outbox(active, 2, monitorcontract.OutboxDone, 170*day)
 
-	// 分批：每次至多 limit 个告警。
-	for i, want := range []int{1, 1, 0} {
+	// 分批：每次至多 limit 个告警。仍挂着待派发通知行的过期事件不清理（core 的派发事务先锁发件箱行再回写
+	// 告警行，与这里顺序相反，同时命中同一事件会互等）：最早到期的 oldResolved 被跳过，下一批为空。
+	for i, want := range []int{1, 0} {
 		n, err := repo.PurgeAlerts(ctx, 180*day, 1)
 		if err != nil || n != want {
 			t.Fatalf("PurgeAlerts batch %d = %d, %v; want %d", i, n, err, want)
 		}
 	}
 	left := func(id string) int { return e.count("SELECT count(*) FROM monitor_alert WHERE id = $1", id) }
-	if left(oldResolved) != 0 || left(oldClosed) != 0 || left(recent) != 1 || left(active) != 1 {
+	if left(oldResolved) != 1 || left(oldClosed) != 0 {
+		t.Fatal("an expired alert with a pending outbox row must stay until the row is settled; others are purged")
+	}
+	if e.count("SELECT count(*) FROM monitor_notify_outbox WHERE alert_id = $1 AND status = 1", oldResolved) != 1 {
+		t.Fatal("the pending outbox row must be left alone")
+	}
+	// core 把那一行终结（派发 / 丢弃）之后，事件才被清理，已终结的发件箱行随之删除。
+	e.exec("UPDATE monitor_notify_outbox SET status = $1::smallint, done_time = now() - interval '250 days' WHERE alert_id = $2 AND status = 1",
+		monitorcontract.OutboxDropped, oldResolved)
+	if n, err := repo.PurgeAlerts(ctx, 180*day, 1); err != nil || n != 1 {
+		t.Fatalf("PurgeAlerts() after the row settled = %d, %v; want 1", n, err)
+	}
+	if left(oldResolved) != 0 || left(recent) != 1 || left(active) != 1 {
 		t.Fatal("wrong alerts purged")
 	}
 	if e.count("SELECT count(*) FROM monitor_notify_log WHERE alert_id IN ($1, $2)", oldResolved, oldClosed) != 0 ||

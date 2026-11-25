@@ -80,11 +80,12 @@ func (s *CmdbCIService) ExportCIs(ctx context.Context, req *v1.ExportCIsRequest)
 	if filter.RelType != "" && filter.RelDirection == "" {
 		filter.RelDirection = biz.DirectionOutgoing
 	}
-	visible, err := s.guard.narrowFilter(ctx, &filter)
+	// 范围解析一次：既叠加到过滤上（同 narrowFilter），导出关联时也用它裁剪对端。
+	scope, err := s.guard.resolve(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if !visible {
+	if !narrowByScope(scope, &filter) {
 		return nil, biz.ErrScopeForbidden
 	}
 	items, fields, err := s.uc.Export(ctx, filter)
@@ -107,10 +108,6 @@ func (s *CmdbCIService) ExportCIs(ctx context.Context, req *v1.ExportCIsRequest)
 	}
 	var rels map[string][]biz.ImportRelation
 	if req.GetWithRelations() {
-		scope, err := s.guard.resolve(ctx)
-		if err != nil {
-			return nil, err
-		}
 		if rels, err = s.uc.ExportRelations(ctx, scope, items); err != nil {
 			return nil, err
 		}
@@ -412,14 +409,19 @@ func (s *CmdbCIService) ListCIs(ctx context.Context, req *v1.ListCIsRequest) (*v
 	return resp, nil
 }
 
-// GetCI implements proto CmdbCIService/GetCI.
+// GetCI implements proto CmdbCIService/GetCI。关联统计按调用者数据范围过滤：范围解析一次，
+// 先于读取资源——受限用户的统计只计可见对端。
 func (s *CmdbCIService) GetCI(ctx context.Context, req *v1.GetCIRequest) (*v1.GetCIResponse, error) {
-	ci, summaries, err := s.uc.Get(ctx, req.GetId())
+	scope, err := s.guard.resolve(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.guard.require(ctx, ci.ModelCode, ci.Env); err != nil {
+	ci, summaries, err := s.uc.Get(ctx, scope, req.GetId())
+	if err != nil {
 		return nil, err
+	}
+	if !scope.Allows(ci.ModelCode, ci.Env) {
+		return nil, biz.ErrScopeForbidden
 	}
 	p, err := toProtoCI(ci)
 	if err != nil {
@@ -440,10 +442,15 @@ func (s *CmdbCIService) CreateCI(ctx context.Context, req *v1.CreateCIRequest) (
 	if err != nil {
 		return nil, err
 	}
-	if err := s.guard.require(ctx, req.GetModelCode(), req.GetEnv()); err != nil {
+	// 数据范围同时用于两处：资源本身的类型 / 环境须在范围内，ref 字段引用的资源也须在范围内。
+	scope, err := s.guard.resolve(ctx)
+	if err != nil {
 		return nil, err
 	}
-	ci, err := s.uc.Create(ctx, actor, &biz.CI{
+	if !scope.Allows(req.GetModelCode(), req.GetEnv()) {
+		return nil, biz.ErrScopeForbidden
+	}
+	ci, err := s.uc.Create(ctx, actor, scope, &biz.CI{
 		ModelCode: req.GetModelCode(), Name: req.GetName(), Status: req.GetStatus(), Env: req.GetEnv(),
 		Owner: req.GetOwner(), Tags: req.GetTags(), ExternalID: req.GetExternalId(), Attrs: req.GetAttrs().AsMap(),
 	})
@@ -463,14 +470,22 @@ func (s *CmdbCIService) UpdateCI(ctx context.Context, req *v1.UpdateCIRequest) (
 	if err != nil {
 		return nil, err
 	}
-	cur, err := s.guard.requireCI(ctx, s.uc.GetByID, req.GetId())
+	// 范围解析一次：当前资源、变更后的环境、ref 字段引用的资源都按它校验。
+	scope, err := s.guard.resolve(ctx)
 	if err != nil {
 		return nil, err
 	}
+	cur, err := s.uc.GetByID(ctx, req.GetId())
+	if err != nil {
+		return nil, err
+	}
+	if !scope.Allows(cur.ModelCode, cur.Env) {
+		return nil, biz.ErrScopeForbidden
+	}
 	if req.Env != nil && req.GetEnv() != cur.Env {
 		// 环境变更后也须在范围内（防止把资源移出自己的可见范围之外）。
-		if err := s.guard.require(ctx, cur.ModelCode, req.GetEnv()); err != nil {
-			return nil, err
+		if !scope.Allows(cur.ModelCode, req.GetEnv()) {
+			return nil, biz.ErrScopeForbidden
 		}
 	}
 	upd := biz.CIUpdate{Name: req.Name, Env: req.Env, Owner: req.Owner, ExternalID: req.ExternalId}
@@ -484,7 +499,7 @@ func (s *CmdbCIService) UpdateCI(ctx context.Context, req *v1.UpdateCIRequest) (
 	if req.Attrs != nil {
 		upd.Attrs = req.GetAttrs().AsMap()
 	}
-	ci, err := s.uc.Update(ctx, actor, req.GetId(), req.GetVersion(), upd)
+	ci, err := s.uc.Update(ctx, actor, scope, req.GetId(), req.GetVersion(), upd)
 	if err != nil {
 		return nil, err
 	}
@@ -501,11 +516,8 @@ func (s *CmdbCIService) TransitionCI(ctx context.Context, req *v1.TransitionCIRe
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.guard.requireCI(ctx, s.uc.GetByID, req.GetId()); err != nil {
-		return nil, err
-	}
-	// 级联退役的依赖资源同样受数据范围约束。
-	scope, err := s.guard.resolve(ctx)
+	// 级联退役的依赖资源同样受数据范围约束：复用校验目标资源时解析出的范围。
+	_, scope, err := s.guard.requireCIScope(ctx, s.uc.GetByID, req.GetId())
 	if err != nil {
 		return nil, err
 	}
@@ -557,7 +569,8 @@ func (s *CmdbCIService) UnclaimCI(ctx context.Context, req *v1.UnclaimCIRequest)
 
 // GetCIAt implements proto CmdbCIService/GetCIAt。
 func (s *CmdbCIService) GetCIAt(ctx context.Context, req *v1.GetCIAtRequest) (*v1.GetCIAtResponse, error) {
-	if _, err := s.guard.requireCI(ctx, s.uc.GetByID, req.GetId()); err != nil {
+	_, scope, err := s.guard.requireCIScope(ctx, s.uc.GetByID, req.GetId())
+	if err != nil {
 		return nil, err
 	}
 	ci, deleted, err := s.uc.StateAt(ctx, req.GetId(), req.GetTime().AsTime())
@@ -565,8 +578,8 @@ func (s *CmdbCIService) GetCIAt(ctx context.Context, req *v1.GetCIAtRequest) (*v
 		return nil, err
 	}
 	// 历史时刻的环境也须在范围内（资源可能曾属于调用者不可见的环境）。
-	if err := s.guard.require(ctx, ci.ModelCode, ci.Env); err != nil {
-		return nil, err
+	if !scope.Allows(ci.ModelCode, ci.Env) {
+		return nil, biz.ErrScopeForbidden
 	}
 	p, err := toProtoCI(ci)
 	if err != nil {
@@ -672,7 +685,7 @@ func (s *CmdbCIService) BatchUpdateCIs(ctx context.Context, req *v1.BatchUpdateC
 			}
 			upd.Tags = &tags
 		}
-		_, err := s.uc.Update(ctx, actor, ci.ID, ci.Version, upd)
+		_, err := s.uc.Update(ctx, actor, scope, ci.ID, ci.Version, upd)
 		return err
 	})
 }
@@ -709,12 +722,21 @@ func (s *CmdbCIService) ListOwnerCandidates(ctx context.Context, req *v1.ListOwn
 	return resp, nil
 }
 
-// ListCIHistory implements proto CmdbCIService/ListCIHistory.
+// ListCIHistory implements proto CmdbCIService/ListCIHistory。关联历史里的对端按调用者数据范围裁剪：
+// 范围外的对端名称与 ID 不随历史带出。
 func (s *CmdbCIService) ListCIHistory(ctx context.Context, req *v1.ListCIHistoryRequest) (*v1.ListCIHistoryResponse, error) {
-	if _, err := s.guard.requireCI(ctx, s.uc.GetByID, req.GetId()); err != nil {
+	scope, err := s.guard.resolve(ctx)
+	if err != nil {
 		return nil, err
 	}
-	items, total, err := s.uc.History(ctx, req.GetId(), req.GetPage(), int64(req.GetPageSize()))
+	ci, err := s.uc.GetByID(ctx, req.GetId())
+	if err != nil {
+		return nil, err
+	}
+	if !scope.Allows(ci.ModelCode, ci.Env) {
+		return nil, biz.ErrScopeForbidden
+	}
+	items, total, err := s.uc.History(ctx, scope, req.GetId(), req.GetPage(), int64(req.GetPageSize()))
 	if err != nil {
 		return nil, err
 	}
@@ -736,15 +758,16 @@ func toProtoHistory(h *biz.History, diff *structpb.Struct) *v1.CmdbHistory {
 	}
 }
 
-// ListHistory implements proto CmdbCIService/ListHistory（数据范围叠加为类型/环境集合）。
+// ListHistory implements proto CmdbCIService/ListHistory（数据范围叠加为类型/环境集合；关联历史里
+// 范围外的对端由用例抹去）。范围只解析一次：既叠加到审计查询，也交给用例裁剪 diff。
 func (s *CmdbCIService) ListHistory(ctx context.Context, req *v1.ListHistoryRequest) (*v1.ListHistoryResponse, error) {
-	narrow := biz.CIFilter{}
-	visible, err := s.guard.narrowFilter(ctx, &narrow)
+	scope, err := s.guard.resolve(ctx)
 	if err != nil {
 		return nil, err
 	}
+	narrow := biz.CIFilter{}
 	resp := &v1.ListHistoryResponse{Items: []*v1.CmdbHistory{}}
-	if !visible {
+	if !narrowByScope(scope, &narrow) {
 		return resp, nil
 	}
 	filter := biz.HistoryFilter{
@@ -759,7 +782,7 @@ func (s *CmdbCIService) ListHistory(ctx context.Context, req *v1.ListHistoryRequ
 		to := req.GetTo().AsTime()
 		filter.To = &to
 	}
-	items, total, err := s.uc.ListHistory(ctx, filter, req.GetPage(), int64(req.GetPageSize()))
+	items, total, err := s.uc.ListHistoryScoped(ctx, scope, filter, req.GetPage(), int64(req.GetPageSize()))
 	if err != nil {
 		return nil, err
 	}

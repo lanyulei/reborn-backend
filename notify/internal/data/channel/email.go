@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	htmlpkg "html"
+	"io"
 	"mime"
 	"mime/quotedprintable"
 	"net"
@@ -116,14 +117,29 @@ func (s *EmailSender) Send(ctx context.Context, ch *biz.Channel, msg biz.Rendere
 	return biz.SendResult{ProviderMsgID: msg.SendKey}, nil
 }
 
-// smtpRetryable 按 SMTP 应答码分级：4xx 临时失败可重试，5xx 永久失败不可重试；
-// 非应答类错误（I/O）取 fallback。
+// smtpRetryable 按 SMTP 应答码分级：4xx 临时失败可重试，5xx 永久失败不可重试。
+// 非应答类错误分两种：网络 I/O 错误（超时、连接被重置、EOF、取消）与处在会话的哪个阶段无关，
+// 一律可重试——此前 AUTH / RCPT 阶段把它们判成永久失败，一次网络抖动就直接死信；其余
+// （未加密连接、认证配置错误等确定性错误）取 fallback。
 func smtpRetryable(err error, fallback bool) bool {
 	var te *textproto.Error
 	if errors.As(err, &te) {
 		return te.Code >= 400 && te.Code < 500
 	}
+	if isTransientIO(err) {
+		return true
+	}
 	return fallback
+}
+
+// isTransientIO 报告是否为网络 / 取消类错误（net.Error 覆盖超时、连接拒绝、连接被重置与
+// context.DeadlineExceeded；EOF 与 context.Canceled 单列）。
+func isTransientIO(err error) bool {
+	var ne net.Error
+	if errors.As(err, &ne) {
+		return true
+	}
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, context.Canceled)
 }
 
 // chooseAuth 按服务器 EHLO 通告的 AUTH 机制选择：PLAIN > LOGIN > CRAM-MD5；未通告时

@@ -49,6 +49,18 @@ func (r Rotation) index(t time.Time) int {
 	return k
 }
 
+// atBoundary 报告 t 是否恰为某个周期起点（含起点之前的周期）。
+func (r Rotation) atBoundary(t time.Time) bool {
+	k := int(t.Sub(r.Anchor) / r.Period())
+	for r.boundary(k).After(t) {
+		k--
+	}
+	for !r.boundary(k + 1).After(t) {
+		k++
+	}
+	return r.boundary(k).Equal(t)
+}
+
 // Plan 计算与 [from, to) 相交的全部周期的值班安排：首个周期在 from 处截断（不产生
 // 已过去的班次），末个周期保持完整。until 为已覆盖到的时刻（末个周期终点；无可排
 // 周期时为 to）。名单为空时不产生任何安排。
@@ -146,12 +158,15 @@ type overridePlan struct {
 	Created []*Shift
 	// Origins 被替下的原值班人（去重）。
 	Origins []string
+	// Displaced 被改派掉的替班人（去重）：他名下的替班班次被换给了别人，此刻本该他值班，
+	// 却既不是原值班人也不是新替班人——不单独记下就没人通知他。
+	Displaced []string
 }
 
 // planOverride 计算把 [start, end) 内 role 的值班人换成 userID 所需的改动。existing 为
 // 该值班表与区间相交的班次（按开始时间排序）。被覆盖的班次按边界切开；替班班次按原
-// 班次边界拆分并各自记录原值班人；区间内无人值班的空档直接由替班人填补；原本就是
-// 替班人的片段保持不动。没有任何实际变化时 Created 为空。
+// 班次边界拆分并各自记录原值班人，被改派掉的原替班人记入 Displaced；区间内无人值班的
+// 空档直接由替班人填补；原本就是替班人的片段保持不动。没有任何实际变化时 Created 为空。
 func planOverride(sched *Schedule, existing []*Shift, role int32, userID string, start, end time.Time, remark string) overridePlan {
 	var plan overridePlan
 	add := func(from, to time.Time, origin string) {
@@ -190,6 +205,9 @@ func planOverride(sched *Schedule, existing []*Shift, role int32, userID string,
 		origin := e.UserID
 		if e.Source == SourceOverride {
 			origin = e.OriginUserID
+			if !slices.Contains(plan.Displaced, e.UserID) {
+				plan.Displaced = append(plan.Displaced, e.UserID)
+			}
 		}
 		add(from, to, origin)
 		head, tail := e.Start.Before(from), to.Before(e.End)

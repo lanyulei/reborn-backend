@@ -339,7 +339,9 @@ func (uc *ClusterUsecase) Update(ctx context.Context, caller Caller, id string, 
 	case in.AccessMode != cur.AccessMode:
 		return nil, detail(ErrClusterInvalid, "access mode cannot be changed")
 	}
-	in.ProxyURL = keepProxyUserinfo(in.ProxyURL, cur.ProxyURL)
+	if in.ProxyURL, err = keepProxyUserinfo(in.ProxyURL, cur.ProxyURL); err != nil {
+		return nil, err
+	}
 	var sealed []byte
 	if !cred.empty() {
 		if in.AccessMode == kc.AccessAgent {
@@ -393,7 +395,9 @@ func (uc *ClusterUsecase) Test(ctx context.Context, caller Caller, in TestInput)
 			return nil, err
 		}
 		// 响应里的代理账号已打码：表单原样带回时换回已保存的。
-		probe.ProxyURL = keepProxyUserinfo(probe.ProxyURL, cur.ProxyURL)
+		if probe.ProxyURL, err = keepProxyUserinfo(probe.ProxyURL, cur.ProxyURL); err != nil {
+			return nil, err
+		}
 	}
 	req := kc.ClusterTestRequest{APIServer: probe.APIServer, ProxyURL: probe.ProxyURL, CACert: probe.CACert}
 	if in.Credential.empty() {
@@ -478,24 +482,38 @@ func MaskProxyURL(raw string) string {
 	return u.String()
 }
 
-// keepProxyUserinfo 编辑时沿用已保存的代理账号：输入不带账号或带的是占位，且其余部分与已保存的一致，
-// 则返回已保存的原文；否则按输入。
-func keepProxyUserinfo(in, stored string) string {
-	su, err := url.Parse(stored)
-	if err != nil || su.User == nil || in == "" {
-		return in
+// keepProxyUserinfo 编辑 / 测试连接时沿用已保存的代理账号：输入不带账号或带的是响应里的占位，且其余部分与
+// 已保存的一致，则返回已保存的原文；输入自带了账号按输入。
+//
+// 占位符不是账号，任何情况下都不能按输入落库：带占位符而地址已经变了（换了主机或端口）时，已保存的账号属于
+// 旧地址、不能跟着挪过去，输入里又没有可用的账号——返回 ErrClusterInvalid，请用户重新填写。否则数据面会拿
+// 「REDACTED」当账号去连新代理，而响应里仍然打码，用户无从察觉凭据已经丢了。
+func keepProxyUserinfo(in, stored string) (string, error) {
+	if in == "" {
+		return in, nil
 	}
 	iu, err := url.Parse(in)
 	if err != nil {
-		return in
+		return in, nil
 	}
-	if iu.User != nil && iu.User.String() != proxyUserMask {
-		return in
+	masked := iu.User != nil && iu.User.String() == proxyUserMask
+	su, err := url.Parse(stored)
+	if err != nil || su.User == nil {
+		if masked {
+			return "", detail(ErrClusterInvalid, "proxy url: %q is a placeholder, not an account; enter the proxy account and password", proxyUserMask)
+		}
+		return in, nil
+	}
+	if iu.User != nil && !masked {
+		return in, nil
 	}
 	bare := *su
 	bare.User, iu.User = nil, nil
 	if bare.String() != iu.String() {
-		return in
+		if masked {
+			return "", detail(ErrClusterInvalid, "proxy url: the proxy address changed, so the saved proxy account cannot be kept; enter the proxy account and password again")
+		}
+		return in, nil
 	}
-	return stored
+	return stored, nil
 }

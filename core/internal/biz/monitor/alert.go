@@ -19,7 +19,7 @@ const (
 	alertHistoryWindow = 7 * 24 * time.Hour
 	// alertMaxRange 时间范围的跨度上限。
 	alertMaxRange = 90 * 24 * time.Hour
-	// maxNotifyLogs 事件详情返回的通知记录条数上限。
+	// maxNotifyLogs 事件详情返回的通知记录条数上限（超过时保留最新的这些条）。
 	maxNotifyLogs = 200
 	// maxAggregates 聚合视图返回的行数上限。
 	maxAggregates = 200

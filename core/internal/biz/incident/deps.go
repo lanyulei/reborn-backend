@@ -149,10 +149,14 @@ type Alerts interface {
 	ListByIDs(ctx context.Context, ids []string) ([]*AlertRef, error)
 	// CountFiring ids 里当前仍在告警中（告警中且未被屏蔽 / 抑制，与关联器归并口径一致）的条数。
 	CountFiring(ctx context.Context, ids []string) (int, error)
+	// AnyUnresolved ids 里是否还有处于告警中的（监控域 status = 1），**不论是否被屏蔽 / 抑制**。判断
+	// 「关联告警是否全部恢复」用它：屏蔽 / 抑制只是不通知、不归并，告警本身并没有恢复。
+	AnyUnresolved(ctx context.Context, ids []string) (bool, error)
 	// RecentFiring 首次触发时间不早于 since 的告警（含已恢复的），至多 limit 条；试算用。
 	RecentFiring(ctx context.Context, since time.Time, limit int) ([]*AlertRef, error)
-	// CanRead userID 能否在监控域看到这条告警（数据范围）。
-	CanRead(ctx context.Context, userID string, alert *AlertRef) (bool, error)
+	// Reader userID 在监控域的告警可见性判定（数据范围）：范围只在这里解析一次，返回的函数对每条告警在
+	// 本地判断——一次请求往往要判断上百条告警，逐条解析范围就是上百次分组树 + 角色授权读取。
+	Reader(ctx context.Context, userID string) (func(alert *AlertRef) bool, error)
 	// Note 在告警时间线追加一条「关联故障」说明。
 	Note(ctx context.Context, alertID, operator, text string) error
 }
@@ -202,9 +206,13 @@ type ChangeItem struct {
 	URL        string
 }
 
+// MaxCardsPerLookup Cards 单次至多读取的资源数（多出的 ID 不返回）：调用方须按它分批，
+// 否则把「没读到」误判成「不存在」。
+const MaxCardsPerLookup = 200
+
 // CMDB 资源目录（cmdb 域）。
 type CMDB interface {
-	// Cards 批量取资源卡片（不存在的不在结果中）。
+	// Cards 批量取资源卡片（不存在的不在结果中）；一次至多读 MaxCardsPerLookup 个。
 	Cards(ctx context.Context, ids []string) ([]*CICard, error)
 	// Downstream 资源的下游（按部署配置的拓扑关系，上游影响下游）至多 depth 层、limit 个。
 	Downstream(ctx context.Context, ciID string, depth, limit int) ([]*CINode, bool, error)
@@ -352,6 +360,10 @@ type TokenCipher interface {
 	Seal(plaintext string) ([]byte, error)
 	Open(sealed []byte) (string, error)
 }
+
+// WebhookSendMax 单次 Webhook 投递的时间上限。WebhookSender 的实现以它为超时，出站箱一批的租约按「批大小 × 它」
+// 计算（WebhookUsecase 的 outboxLease）：两处必须是同一个值，所以定义在这里、由 data 层引用。
+const WebhookSendMax = 10 * time.Second
 
 // WebhookDelivery 一次 Webhook 投递。
 type WebhookDelivery struct {

@@ -270,7 +270,7 @@ func (uc *GroupUsecase) UpdateMemberRole(ctx context.Context, actor Actor, group
 	})
 }
 
-// RemoveMember 移出成员：仍在轮转名单内或为最后一名管理员时拒绝。
+// RemoveMember 移出成员：仍在轮转名单内、名下还有未结束的替班班次，或为最后一名管理员时拒绝。
 func (uc *GroupUsecase) RemoveMember(ctx context.Context, actor Actor, groupID, userID string) error {
 	return uc.store.WithinTx(ctx, func(tx Tx) error {
 		if _, err := lockManaged(ctx, tx, actor, groupID); err != nil {
@@ -282,6 +282,14 @@ func (uc *GroupUsecase) RemoveMember(ctx context.Context, actor Actor, groupID, 
 		}
 		if target.InRotation {
 			return ErrMemberInUse
+		}
+		// 替班人必须是分组的可用成员（CreateOverride 的不变量）。名下还有未结束的替班班次就移出，
+		// 这些班次会悬在一个已不在组里的人名下：提醒照发、日历与「当前值班」照常显示他，
+		// 而之后想再改派给别人补位又必须先由管理员逐条处理。先撤销或改派这些替班再移出。
+		if pending, err := tx.HasPendingOverrides(ctx, groupID, userID); err != nil {
+			return err
+		} else if pending {
+			return detail(ErrMemberInUse, "member still has override shifts that have not ended; revoke or reassign them first")
 		}
 		if target.Role == MemberRoleAdmin && admins <= 1 {
 			return ErrLastAdmin

@@ -45,7 +45,7 @@ func num(v int32, def int) int {
 // （失败即装配失败，禁止空配置上线）。
 func NewSet(c *conf.Pipeline, cfg *biz.ConfigCache, router *biz.RouterUsecase, sweeper *biz.SweeperUsecase,
 	sender *biz.SenderUsecase, dlq *biz.DlqUsecase, maintenance *biz.MaintenanceUsecase, relay *biz.RelayUsecase, locker biz.Locker,
-	health biz.ChannelHealthRepo, hooks *Hooks, logger *slog.Logger,
+	health biz.ChannelHealthRepo, producerAuth *biz.ProducerAuth, ingress *biz.IngressUsecase, hooks *Hooks, logger *slog.Logger,
 ) (*Set, error) {
 	sender.WithHealth(health)
 	if err := cfg.Load(context.Background()); err != nil {
@@ -66,6 +66,12 @@ func NewSet(c *conf.Pipeline, cfg *biz.ConfigCache, router *biz.RouterUsecase, s
 		hooks.OnBreaker(sender.Breaker())
 	}
 	ret := mc.GetRetention()
+	// ingress 入参此前从未接线（conf.proto 与 config.yaml 都已公布）：
+	//   - pipeline.ingress.clock_skew：HMAC 时间戳允许偏差（防重放窗口）；
+	//   - pipeline.maintenance.retention.dedup：按 conf.proto 注释「同时是 ingress 写入的 expire_time」。
+	// 两个 With* 都忽略非正值，未配置时保持缺省（5 分钟 / 24 小时）。
+	producerAuth.WithClockSkew(dur(c.GetIngress().GetClockSkew(), 5*time.Minute))
+	ingress.WithDedupTTL(dur(ret.GetDedup(), 24*time.Hour))
 	maintenance.WithPartitionsAhead(num(mc.GetPartitionsAhead(), 2)).WithRetention(biz.Retention{
 		Event: dur(ret.GetEvent(), 0), Dispatch: dur(ret.GetDispatch(), 0), DeliveryLog: dur(ret.GetDeliveryLog(), 0),
 		Dlq: dur(ret.GetDlq(), 0), Dedup: dur(ret.GetDedup(), 0), AggGroup: dur(ret.GetAggGroup(), 0),

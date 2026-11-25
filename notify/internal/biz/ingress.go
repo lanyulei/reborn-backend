@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/lanyulei/reborn/backend/kit/idgen"
@@ -99,6 +100,20 @@ func validateEvent(ev *Event) error {
 		return fmt.Errorf("%w: dedup/group key too long", ErrEventInvalid)
 	case len(ev.Recipients) > maxEventRecipients:
 		return fmt.Errorf("%w: too many recipients", ErrEventInvalid)
+	case hasNUL(ev.Title) || hasNUL(ev.DedupKey) || hasNUL(ev.GroupKey) || hasNUL(ev.Recipients...):
+		// PostgreSQL 的 text / varchar 拒绝 0x00（22021）：在入口拒绝并返回 400，而不是落库时
+		// 以驱动错误返回 500。
+		return fmt.Errorf("%w: text contains NUL", ErrEventInvalid)
 	}
 	return nil
+}
+
+// hasNUL 报告任一字符串是否含 NUL 字符。
+func hasNUL(ss ...string) bool {
+	for _, s := range ss {
+		if strings.ContainsRune(s, 0) {
+			return true
+		}
+	}
+	return false
 }

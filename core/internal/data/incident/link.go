@@ -57,8 +57,21 @@ func (r *linkRepo) query(ctx context.Context, what, tail string, args ...any) ([
 	return out, rows.Err()
 }
 
-// AttachTx implements biz.AlertLinkRepo.
+// activeStatuses 活跃故障状态（待响应 / 处理中 / 已缓解）：告警同一时刻只属于一个活跃故障。
+var activeStatuses = []int32{biz.StatusOpen, biz.StatusResponding, biz.StatusMitigated}
+
+// AttachTx implements biz.AlertLinkRepo。
+// 告警若仍挂在已非活跃的故障上（已恢复的故障不释放链接，见 Resolve），先释放那条旧链接：
+// 否则下面的 INSERT 会撞 uk_incident_alert_active（一条告警只能有一个未释放的归属）。
+// 本故障自身已有的链接不动——重复关联同一故障由主键冲突吸收。
 func (r *linkRepo) AttachTx(ctx context.Context, tx txrun.Tx, l *biz.AlertLink) (bool, error) {
+	if _, err := tx.Exec(ctx,
+		`UPDATE incident_alert l SET released = true
+		 WHERE l.alert_id = $2 AND NOT l.released AND l.incident_id <> $1
+		   AND EXISTS (SELECT 1 FROM incident_record i WHERE i.id = l.incident_id AND NOT (i.status = ANY($3::int[])))`,
+		l.IncidentID, l.AlertID, int32Array(activeStatuses)); err != nil {
+		return false, fmt.Errorf("release stale alert links: %w", err)
+	}
 	n, err := tx.Exec(ctx,
 		`INSERT INTO incident_alert (incident_id, alert_id, method, rule_name, severity, ci_id, first_fire_time, attach_user)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (incident_id, alert_id) DO NOTHING`,
@@ -82,11 +95,16 @@ func (r *linkRepo) DetachTx(ctx context.Context, tx txrun.Tx, incidentID, alertI
 }
 
 // MoveAllTx implements biz.AlertLinkRepo：目标已有同一告警时丢弃源的那条。
+// PostgreSQL 的数据修改语句只能出现在 WITH 子句里（不能作 FROM 子查询）——此前写成
+// `FROM (DELETE … RETURNING *)` 是语法错误，「合并故障」因此整体不可用。
 func (r *linkRepo) MoveAllTx(ctx context.Context, tx txrun.Tx, from, to string) (int, error) {
 	n, err := tx.Exec(ctx,
-		`INSERT INTO incident_alert (incident_id, alert_id, method, released, rule_name, severity, ci_id, first_fire_time, attach_time, attach_user)
-		 SELECT $2, alert_id, 4, false, rule_name, severity, ci_id, first_fire_time, attach_time, attach_user
-		 FROM (DELETE FROM incident_alert WHERE incident_id = $1 RETURNING *) moved
+		`WITH moved AS (
+			DELETE FROM incident_alert WHERE incident_id = $1
+			RETURNING alert_id, rule_name, severity, ci_id, first_fire_time, attach_time, attach_user
+		 )
+		 INSERT INTO incident_alert (incident_id, alert_id, method, released, rule_name, severity, ci_id, first_fire_time, attach_time, attach_user)
+		 SELECT $2, alert_id, 4, false, rule_name, severity, ci_id, first_fire_time, attach_time, attach_user FROM moved
 		 ON CONFLICT (incident_id, alert_id) DO NOTHING`, from, to)
 	if err != nil {
 		return 0, fmt.Errorf("move alerts: %w", err)
@@ -117,10 +135,15 @@ func (r *linkRepo) ListAll(ctx context.Context, incidentID string, limit int) ([
 	return r.query(ctx, "list all incident alerts", "l.incident_id = $1 ORDER BY l.attach_time, l.alert_id LIMIT $2", incidentID, limit)
 }
 
-// ActiveIncident implements biz.AlertLinkRepo.
+// ActiveIncident implements biz.AlertLinkRepo：告警当前所属的**活跃**故障（待响应 / 处理中 / 已缓解）。
+// 已恢复的故障不释放链接（其详情仍会列出这些告警），但不再占用告警——否则同一告警再次触发时
+// 关联器会直接返回，既不自动重开也不开新故障、也不通知。
 func (r *linkRepo) ActiveIncident(ctx context.Context, alertID string) (string, error) {
 	var id string
-	err := basedata.QueryerFrom(ctx, r.data.Pool).QueryRow(ctx, "SELECT incident_id::text FROM incident_alert WHERE alert_id = $1 AND NOT released", alertID).Scan(&id)
+	err := basedata.QueryerFrom(ctx, r.data.Pool).QueryRow(ctx,
+		`SELECT l.incident_id::text FROM incident_alert l
+		 JOIN incident_record i ON i.id = l.incident_id
+		 WHERE l.alert_id = $1 AND NOT l.released AND i.status = ANY($2::int[])`, alertID, int32Array(activeStatuses)).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}

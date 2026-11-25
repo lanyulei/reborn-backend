@@ -17,6 +17,9 @@ type dispatchRepoStub struct {
 	templateIDs []string
 	stale       bool
 	eventErr    error // GetEvent 瞬时错误（非 ErrEventNotFound）
+	// batchReleased 每次 ReleaseBatch 的行数；releaseErr 为其返回值。
+	batchReleased []int
+	releaseErr    error
 }
 
 func (s *dispatchRepoStub) Claim(context.Context, int, time.Duration, []string) ([]*ClaimedDispatch, error) {
@@ -38,6 +41,14 @@ func (s *dispatchRepoStub) Finish(_ context.Context, _ *ClaimedDispatch, res Fin
 func (s *dispatchRepoStub) Release(_ context.Context, _ *ClaimedDispatch, delay time.Duration) error {
 	s.released = append(s.released, delay)
 	return nil
+}
+
+func (s *dispatchRepoStub) ReleaseBatch(_ context.Context, ds []*ClaimedDispatch, delay time.Duration) error {
+	s.batchReleased = append(s.batchReleased, len(ds))
+	for range ds {
+		s.released = append(s.released, delay)
+	}
+	return s.releaseErr
 }
 
 func (s *dispatchRepoStub) ReapExpired(context.Context, int, int32, func(int32) time.Duration) (int, error) {
@@ -252,6 +263,46 @@ func TestSenderUsecase_TransientErrorReleases(t *testing.T) {
 	}
 	if len(repo.released) != 2 || repo.released[0] != releaseTransientDelay || len(repo.finished) != 0 || len(adapter.sent) != 0 {
 		t.Fatalf("transient error must release the batch: released=%v finished=%v sent=%d", repo.released, repo.finished, len(adapter.sent))
+	}
+}
+
+// 停用渠道与限流 / 熔断一样进入本实例的跳过名单：否则其积压每分钟被整批声明再放回。
+func TestSenderUsecase_DisabledChannelPaused(t *testing.T) {
+	t.Parallel()
+	repo := &dispatchRepoStub{claims: []*ClaimedDispatch{claimed("d1", chOff)}}
+	uc := newSender(t, repo, limiterStub{ok: true}, &senderStub{})
+	if _, err := uc.SendOnce(context.Background(), 10); err != nil {
+		t.Fatalf("SendOnce() error = %v", err)
+	}
+	if len(repo.released) != 1 || repo.released[0] != releaseDisabledDelay {
+		t.Fatalf("released = %v, want one release of %v", repo.released, releaseDisabledDelay)
+	}
+	if paused := uc.pausedChannels(); len(paused) != 1 || paused[0] != chOff {
+		t.Fatalf("paused channels = %v, want [%s]", paused, chOff)
+	}
+}
+
+// 整批放回走一次 ReleaseBatch（单语句），不再逐行 Release；放回失败只记日志，上报的仍是
+// 取事件的错误。
+func TestSenderUsecase_ReleaseAllIsOneBatch(t *testing.T) {
+	t.Parallel()
+	loadErr := errors.New("db hiccup")
+	repo := &dispatchRepoStub{
+		claims:   []*ClaimedDispatch{claimed("d1", chEmail), claimed("d2", chHook), claimed("d3", chEmail)},
+		eventErr: loadErr, releaseErr: errors.New("release failed"),
+	}
+	uc := newSender(t, repo, limiterStub{ok: true}, &senderStub{})
+	n, err := uc.SendOnce(context.Background(), 10)
+	if n != 0 || !errors.Is(err, loadErr) {
+		t.Fatalf("SendOnce() = %d, %v; want 0 and the load error", n, err)
+	}
+	if len(repo.batchReleased) != 1 || repo.batchReleased[0] != 3 {
+		t.Fatalf("batch releases = %v, want one call with all 3 dispatches", repo.batchReleased)
+	}
+	for _, d := range repo.released {
+		if d != releaseTransientDelay {
+			t.Fatalf("release delay = %v, want %v", d, releaseTransientDelay)
+		}
 	}
 }
 

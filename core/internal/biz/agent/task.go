@@ -273,13 +273,9 @@ func (uc *TaskUsecase) ListIncidentRuns(ctx context.Context, userID, incidentID 
 	if err != nil {
 		return nil, nil, err
 	}
-	views := make([]*RunView, 0, len(runs))
-	for _, r := range runs {
-		v, err := uc.runView(ctx, userID, r)
-		if err != nil {
-			return nil, nil, err
-		}
-		views = append(views, v)
+	views, err := uc.runViews(ctx, userID, runs)
+	if err != nil {
+		return nil, nil, err
 	}
 	active, err := uc.d.Tasks.ActiveByIncident(ctx, incidentID, KindDiagnose)
 	if err != nil {
@@ -391,25 +387,60 @@ func (uc *TaskUsecase) profileNames(ctx context.Context, ids []string) (map[stri
 
 // runView 补显示名与评价权。
 func (uc *TaskUsecase) runView(ctx context.Context, userID string, run *Run) (*RunView, error) {
-	profiles, err := uc.profileNames(ctx, []string{run.ProfileID})
+	views, err := uc.runViews(ctx, userID, []*Run{run})
 	if err != nil {
 		return nil, err
 	}
-	names, err := uc.d.Accounts.Names(ctx, uniq([]string{run.AgentUserID, run.FeedbackUser}))
+	return views[0], nil
+}
+
+// runViews 给一批运行补显示名与评价权，顺序与入参一致。Profile 名与用户名各批量取一次；故障编号、调用者在
+// 故障里的身份按故障各取一次（一条故障的运行列表里全是同一条故障）——逐条运行各查 4 次的话，故障详情
+// 「AI 诊断」页签一次加载就是 maxIncidentRuns × 4 次往返。取不到故障 / 身份时与单条时一样：编号留空、不可评价。
+func (uc *TaskUsecase) runViews(ctx context.Context, userID string, runs []*Run) ([]*RunView, error) {
+	if len(runs) == 0 {
+		return []*RunView{}, nil
+	}
+	profileIDs := make([]string, 0, len(runs))
+	userIDs := make([]string, 0, 2*len(runs))
+	for _, run := range runs {
+		profileIDs = append(profileIDs, run.ProfileID)
+		userIDs = append(userIDs, run.AgentUserID, run.FeedbackUser)
+	}
+	profiles, err := uc.profileNames(ctx, profileIDs)
 	if err != nil {
 		return nil, err
 	}
-	v := &RunView{Run: run, ProfileName: profiles[run.ProfileID], AgentUserName: names[run.AgentUserID], FeedbackUserName: names[run.FeedbackUser]}
-	if inc, err := uc.d.Incidents.Snapshot(ctx, run.IncidentID); err == nil {
-		v.IncidentNumber = inc.Number
+	names, err := uc.d.Accounts.Names(ctx, uniq(userIDs))
+	if err != nil {
+		return nil, err
 	}
-	if userID != "" && run.Status != RunRunning {
-		admin, commander, responder, err := uc.d.Incidents.MemberAccess(ctx, userID, run.IncidentID)
-		if err == nil {
-			v.CanRate = admin || commander || responder
+	numbers := map[string]string{}
+	canRate := map[string]bool{}
+	views := make([]*RunView, 0, len(runs))
+	for _, run := range runs {
+		v := &RunView{Run: run, ProfileName: profiles[run.ProfileID], AgentUserName: names[run.AgentUserID], FeedbackUserName: names[run.FeedbackUser]}
+		number, ok := numbers[run.IncidentID]
+		if !ok {
+			if inc, err := uc.d.Incidents.Snapshot(ctx, run.IncidentID); err == nil {
+				number = inc.Number
+			}
+			numbers[run.IncidentID] = number
 		}
+		v.IncidentNumber = number
+		if userID != "" && run.Status != RunRunning {
+			can, ok := canRate[run.IncidentID]
+			if !ok {
+				if admin, commander, responder, err := uc.d.Incidents.MemberAccess(ctx, userID, run.IncidentID); err == nil {
+					can = admin || commander || responder
+				}
+				canRate[run.IncidentID] = can
+			}
+			v.CanRate = can
+		}
+		views = append(views, v)
 	}
-	return v, nil
+	return views, nil
 }
 
 // ptr 取地址。

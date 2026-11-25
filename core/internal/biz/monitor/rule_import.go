@@ -305,6 +305,11 @@ func convertRule(index int, p parsedRule, opts *ImportOptions) *ImportItem {
 			}
 			continue
 		}
+		if value == "" {
+			// Prometheus 的空标签值等价于没有这个标签：跳过而不是让整条规则不合法。
+			item.Warnings = append(item.Warnings, fmt.Sprintf("附加标签 %s 的值为空，已忽略", name))
+			continue
+		}
 		if strings.Contains(value, "{{") {
 			item.Warnings = append(item.Warnings, fmt.Sprintf("附加标签 %s 的值含模板写法，将按原文保存（附加标签不支持模板）", name))
 		}
@@ -545,6 +550,11 @@ func (uc *RuleUsecase) Export(ctx context.Context, userID string, ids []string, 
 	if groupID != "" {
 		if err := scope.requireRead(groupID); err != nil {
 			return "", 0, err
+		}
+		// 分组不存在（含已删除）时明确报错，而不是回一份空文件（与新建 / 移动 / 导入同一口径）。放在可读
+		// 判定之后：对无权查看的分组仍按无权限处理，不泄露它是否存在。
+		if !scope.GroupExists(groupID) {
+			return "", 0, ErrGroupNotFound
 		}
 	}
 	var rules []*Rule

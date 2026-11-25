@@ -20,6 +20,9 @@ const (
 	// maxFindingText 发现各文本字段的字符上限。
 	maxFindingTitle = 200
 	maxFindingText  = 4000
+	// maxNextStep 发现的 next_step 上限：故障域接口对它的校验是 2000（比其余文本字段小），超过即 400，
+	// 运行器代写失败只记日志，整轮分析落「无结论」。
+	maxNextStep = 2000
 )
 
 // reformatPrompt 阶段输出不是 JSON 时的补救输入（一步、不带工具）。
@@ -168,29 +171,30 @@ func looseJSON(text string) json.RawMessage {
 	return nil
 }
 
-// parseFinding 从结论阶段输出里取发现（宽松：缺字段按空）。
+// parseFinding 从结论阶段输出（或 AddFinding 的入参）里取发现。宽松：缺字段按空，类型不符的字段各自
+// 按空 / 尽力转换处理——模型常把 confidence 写成 "85"、把 evidence 写成单个字符串，整体按结构体解码的话
+// 一个字段不合就把整条发现丢掉，任务落「无结论」。口径与 decide 的 AddFinding 分支一致。
 func parseFinding(raw json.RawMessage) *Finding {
 	if len(raw) == 0 {
 		return nil
 	}
 	var out struct {
-		Finding *Finding `json:"finding"`
+		Finding map[string]any `json:"finding"`
 	}
 	if err := json.Unmarshal(raw, &out); err != nil || out.Finding == nil {
 		return nil
 	}
-	f := out.Finding
-	f.Title = clip(strings.TrimSpace(f.Title), maxFindingTitle)
-	f.Conclusion = clip(strings.TrimSpace(f.Conclusion), maxFindingText)
-	f.NextStep = clip(strings.TrimSpace(f.NextStep), maxFindingText)
-	if f.Confidence < 0 {
-		f.Confidence = 0
+	m := out.Finding
+	evidence := firstAny(m, "evidence")
+	if one, ok := evidence.(string); ok {
+		evidence = []any{one}
 	}
-	if f.Confidence > 100 {
-		f.Confidence = 100
-	}
-	if len(f.Evidence) > maxEvidence {
-		f.Evidence = f.Evidence[:maxEvidence]
+	f := &Finding{
+		Title:      clip(strings.TrimSpace(str(m["title"])), maxFindingTitle),
+		Conclusion: clip(strings.TrimSpace(str(m["conclusion"])), maxFindingText),
+		Confidence: i32(clampInt(m["confidence"], 0, 100)),
+		Evidence:   strList(evidence, maxEvidence),
+		NextStep:   clip(strings.TrimSpace(firstStr(m, "next_step", "nextStep")), maxNextStep),
 	}
 	if f.Title == "" {
 		return nil

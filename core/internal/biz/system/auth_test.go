@@ -19,6 +19,7 @@ type refreshStoreStub struct {
 	deleted         []string                 // DeleteByUser 的 userID 调用记录
 	deletedFamilies []string                 // DeleteByFamily 的 familyID 调用记录
 	raceLoser       bool                     // 置位时 Rotate 模拟并发败者：旧行已被另一方轮换
+	rejectIssuance  bool                     // 置位时 Save 模拟 data 层的条件插入落不下行（口令已被改写 / 账号已不可用）
 }
 
 func newRefreshStoreStub() *refreshStoreStub {
@@ -34,6 +35,9 @@ func (s *refreshStoreStub) FindByHash(_ context.Context, tokenHash string) (*Ref
 }
 
 func (s *refreshStoreStub) Save(_ context.Context, token *RefreshToken) error {
+	if s.rejectIssuance {
+		return ErrTokenInvalid
+	}
 	now := time.Now()
 	for h, t := range s.tokens {
 		if t.UserID == token.UserID && t.ExpireTime.Before(now) {

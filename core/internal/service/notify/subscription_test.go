@@ -308,19 +308,26 @@ func TestNotifySubscriptionService_SelfIDCaseInsensitive(t *testing.T) {
 	}
 }
 
-// TestNotifySubscriptionService_OnBehalfBizScope 角色 biz_scope 只约束代管路径：
-// 受限管理员代管他人时目标 biz 须在范围内、列表须携带 biz；本人自助不受限。
+// TestNotifySubscriptionService_OnBehalfBizScope 角色 biz_scope 约束订阅的新建 / 修改
+// （本人自助与代管同口径）：目标 biz 须在范围内；代管列表须携带 biz；本人列表与
+// 本人删除不受限。
 func TestNotifySubscriptionService_OnBehalfBizScope(t *testing.T) {
 	t.Parallel()
 	ctx := subClaimsContext()
 	store := testfake.NewStore()
 	scoped := newSubscriptionServiceScoped(store, true, testfake.Scoped("ops"))
 
-	// 本人自助：default biz 不在范围内也允许（个人偏好非管理动作）。
+	// 本人自助到范围外 biz（缺省 default）：403——订阅会把该 biz 的通知内容发给订阅人。
 	if _, err := scoped.UpsertSubscription(ctx, &notifyv1.UpsertSubscriptionRequest{
 		EventPattern: "monitor.alert.*", ChannelPrefs: protoPrefs(),
+	}); !errors.Is(err, biz.ErrBizForbidden) {
+		t.Fatalf("self upsert outside scope error = %v, want ErrBizForbidden", err)
+	}
+	// 本人自助到范围内 biz：合法。
+	if _, err := scoped.UpsertSubscription(ctx, &notifyv1.UpsertSubscriptionRequest{
+		BizId: sptr("ops"), EventPattern: "monitor.alert.*", ChannelPrefs: protoPrefs(),
 	}); err != nil {
-		t.Fatalf("self upsert outside scope error = %v", err)
+		t.Fatalf("self upsert in scope error = %v", err)
 	}
 	// 代管他人到范围外 biz（缺省 default）：403。
 	if _, err := scoped.UpsertSubscription(ctx, &notifyv1.UpsertSubscriptionRequest{
@@ -365,5 +372,41 @@ func TestNotifySubscriptionService_OnBehalfBizScope(t *testing.T) {
 	}
 	if _, err := scoped.DeleteSubscription(ctx, &notifyv1.DeleteSubscriptionRequest{Id: resp.GetSubscription().GetId()}); !errors.Is(err, biz.ErrBizForbidden) {
 		t.Fatalf("on-behalf delete outside scope error = %v, want ErrBizForbidden", err)
+	}
+}
+
+// TestNotifySubscriptionService_SelfBizScope 本人自助订阅受 biz_scope 约束的边界：
+// 收紧之前留下的范围外订阅不清理、仍列得出，改不了（含停用）但删得掉；不限用户不受影响。
+func TestNotifySubscriptionService_SelfBizScope(t *testing.T) {
+	t.Parallel()
+	ctx := subClaimsContext()
+	store := testfake.NewStore()
+	full := newSubscriptionServiceOn(store, false)
+	scoped := newSubscriptionServiceScoped(store, false, testfake.Scoped("ops"))
+
+	// 不限用户：任意 biz 照旧可订阅（这里兼作「收紧之前建下的范围外订阅」）。
+	legacy, err := full.UpsertSubscription(ctx, &notifyv1.UpsertSubscriptionRequest{
+		BizId: sptr("billing"), EventPattern: "*", ChannelPrefs: protoPrefs(),
+	})
+	if err != nil {
+		t.Fatalf("unrestricted self upsert error = %v", err)
+	}
+	// 受限后：同自然键的修改（这里是停用）与新建一样被拒，库内订阅原样保留。
+	disabled := false
+	if _, err := scoped.UpsertSubscription(ctx, &notifyv1.UpsertSubscriptionRequest{
+		BizId: sptr("billing"), EventPattern: "*", ChannelPrefs: protoPrefs(), Enabled: &disabled,
+	}); !errors.Is(err, biz.ErrBizForbidden) {
+		t.Fatalf("self update outside scope error = %v, want ErrBizForbidden", err)
+	}
+	list, err := scoped.ListSubscriptions(ctx, &notifyv1.ListSubscriptionsRequest{Page: 1, PageSize: 10})
+	if err != nil || list.GetTotal() != 1 || list.GetItems()[0].GetBizId() != "billing" || !list.GetItems()[0].GetEnabled() {
+		t.Fatalf("self list after rejected update = %+v, %v; want the untouched legacy subscription", list.GetItems(), err)
+	}
+	// 本人删除范围外的历史订阅：始终允许。
+	if _, err := scoped.DeleteSubscription(ctx, &notifyv1.DeleteSubscriptionRequest{Id: legacy.GetSubscription().GetId()}); err != nil {
+		t.Fatalf("self delete outside scope error = %v", err)
+	}
+	if list, err := scoped.ListSubscriptions(ctx, &notifyv1.ListSubscriptionsRequest{Page: 1, PageSize: 10}); err != nil || list.GetTotal() != 0 {
+		t.Fatalf("self list after delete = %+v, %v", list, err)
 	}
 }

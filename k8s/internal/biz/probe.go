@@ -61,6 +61,10 @@ type OutboxRepo interface {
 
 const (
 	probeTimeout = 10 * time.Second
+	// selfCheckTimeout 首次探活的接入自检单独的预算，不与探活共用：自检是十几个请求（数据面里有界并发），
+	// 与探活挤在同一个 10 秒里时，链路延迟偏高的可达集群会被自检超时判成不可达，且每轮从头重来。
+	// 只放宽「可达之后」的那一步——探活本身仍是 probeTimeout，不可达的集群不会因此多等，也不会被判成可达。
+	selfCheckTimeout = 20 * time.Second
 	// probeFailThreshold 在线集群连续失败多少次才判为不可达。
 	probeFailThreshold = 3
 	probeConcurrency   = 8
@@ -113,12 +117,19 @@ func (p *Prober) Run(ctx context.Context) (int, error) {
 	}
 	p.mu.Unlock()
 
+	p.probeMany(ctx, clusters)
+	return 0, ctx.Err() // 恒返回 0：kit/loop 把 >0 视为「还有积压，立即再跑一轮」
+}
+
+// probeMany 有界并发（probeConcurrency）地各探活一次，全部结束才返回。各集群的探活互不依赖
+// （状态按集群分开、落库按集群一行），先后顺序不影响结果。
+func (p *Prober) probeMany(ctx context.Context, clusters []*Cluster) {
 	sem := make(chan struct{}, probeConcurrency)
 	var wg sync.WaitGroup
 	for _, c := range clusters {
 		sem <- struct{}{}
 		wg.Add(1)
-		go func(c *Cluster) { // 退出路径：probeOne 受 probeTimeout 约束，wg.Wait 在本函数返回前收齐
+		go func(c *Cluster) { // 退出路径：probeOne 受 probeTimeout / selfCheckTimeout 约束，wg.Wait 在本函数返回前收齐
 			defer wg.Done()
 			defer func() { <-sem }()
 			defer func() {
@@ -130,21 +141,23 @@ func (p *Prober) Run(ctx context.Context) (int, error) {
 		}(c)
 	}
 	wg.Wait()
-	return 0, ctx.Err() // 恒返回 0：kit/loop 把 >0 视为「还有积压，立即再跑一轮」
 }
 
 // RunNew 只探活还没有结果的集群（刚领取或配置刚变更）：让它们在几秒内可用，不必等一个探活周期
 // （循环：每 2 秒）。
 func (p *Prober) RunNew(ctx context.Context) (int, error) {
-	for _, c := range p.registry.OwnedClusters() {
-		p.mu.Lock()
-		st, ok := p.states[c.ID]
-		fresh := !ok || st.gen != c.Generation()
-		p.mu.Unlock()
-		if fresh {
-			p.probeOne(ctx, c)
+	owned := p.registry.OwnedClusters()
+	fresh := make([]*Cluster, 0, len(owned))
+	p.mu.Lock()
+	for _, c := range owned {
+		if st, ok := p.states[c.ID]; !ok || st.gen != c.Generation() {
+			fresh = append(fresh, c)
 		}
 	}
+	p.mu.Unlock()
+	// 与 Run 一样有界并发：一批集群同时被领取（实例启动、别的实例下线）时，串行探活里一个不可达的集群
+	// 会让排在它后面的每一个都多等一个探活超时。
+	p.probeMany(ctx, fresh)
 	return 0, ctx.Err()
 }
 
@@ -167,8 +180,11 @@ func (p *Prober) probeOne(ctx context.Context, c *Cluster) {
 	rec := ProbeRecord{ClusterID: c.ID}
 	info, err := p.probe.Probe(pctx, c.ID)
 	if err == nil && !checked {
+		sctx, scancel := context.WithTimeout(ctx, selfCheckTimeout)
 		var checks []k8scontract.SelfCheck
-		if checks, err = p.probe.SelfCheck(pctx, c.ID); err == nil {
+		checks, err = p.probe.SelfCheck(sctx, c.ID)
+		scancel()
+		if err == nil {
 			if msg := FailedChecks(checks); msg != "" {
 				err = fmt.Errorf("self-check failed: %s", msg)
 			} else {

@@ -43,6 +43,8 @@ func (s *AuthService) Login(ctx context.Context, req *v1.LoginRequest) (*v1.Logi
 		ExpiresIn:    pair.ExpiresIn,
 		RefreshToken: pair.RefreshToken,
 		User:         toProtoUser(user),
+		// 仅提示前端引导改密（口令仍是预置初始口令）；登录本身照常成功。
+		PasswordChangeRequired: user.PasswordChangeRequired,
 	}, nil
 }
 
@@ -103,6 +105,8 @@ func (s *AuthService) GetLoginProfile(ctx context.Context, _ *v1.GetLoginProfile
 		Elements:        elements,
 		BizScope:        bizScope,
 		BizUnrestricted: unrestricted,
+		// 与登录应答同口径：刷新页面后前端仍能据此提示改密。
+		PasswordChangeRequired: user.PasswordChangeRequired,
 	}
 	for _, r := range roles {
 		resp.Roles = append(resp.Roles, toProtoRole(r))
@@ -181,13 +185,14 @@ func parseIP(s string) string {
 }
 
 // userAgent 从传输上下文提取客户端 User-Agent（经 transport 层统一 Header
-// 接口），超长截断至落库上限；取不到返回空串。
+// 接口），剔除非法 UTF-8 字节后超长截断至落库上限；取不到返回空串。
 func userAgent(ctx context.Context) string {
 	tr, ok := transport.FromServerContext(ctx)
 	if !ok || tr == nil {
 		return ""
 	}
-	return truncate(tr.RequestHeader().Get("User-Agent"))
+	// PostgreSQL 的 varchar 拒绝非法 UTF-8（22021）：不剔除的话审计行写入失败被吞掉，登录审计可被规避。
+	return truncate(strings.ToValidUTF8(tr.RequestHeader().Get("User-Agent"), ""))
 }
 
 // truncate 按 UTF-8 边界截断字符串至 maxUserAgentBytes 字节。

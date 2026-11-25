@@ -209,6 +209,7 @@ type FireRepo interface {
 	List(ctx context.Context, filter FireFilter, page, pageSize int64) ([]*TriggerFire, int64, error)
 	// Begin 登记一次触发（去重门闩）：同一触发器同一 ref 已有记录时返回该记录与 fresh = false。
 	// fresh 时同时校验冷却：距上次已提交的触发不足 cooldown 则直接记为已跳过并返回。
+	// 记为「已提交」的记录此时不落「信号待发送」（f.SignalState 本身不改）：执行还没提交，由 Complete 写入。
 	Begin(ctx context.Context, f *TriggerFire, cooldownS int32) (existing *TriggerFire, fresh bool, err error)
 	// Complete 写回触发结果（已提交执行时同时刷新触发器的最近触发时间）。
 	Complete(ctx context.Context, f *TriggerFire) error

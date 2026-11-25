@@ -18,6 +18,7 @@ import (
 
 import (
 	_ "go.uber.org/automaxprocs"
+	_ "time/tzdata"
 )
 
 // Injectors from wire.go:

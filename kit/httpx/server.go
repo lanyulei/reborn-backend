@@ -36,16 +36,24 @@ func ProtoValidate(v any) error {
 	return nil
 }
 
-// sensitiveFieldPattern 匹配 proto text 请求日志中的凭据类字段（kratos logging
-// 中间件把整个请求拼成单个字符串挂在 args 键下，按键名过滤穿透不了字符串内容）。
-// 黑名单模式：宁可误打码不可漏打码。
-// 值按 proto text 的带引号字符串整体匹配（`\"` 等转义序列不终止匹配），否则
-// 含 `"` 的密码会在首个转义引号处截断、尾部明文泄漏进日志。
-var sensitiveFieldPattern = regexp.MustCompile(`(?i)\b(password|refresh_token|access_token|secret|sign_secret|authorization|token|signature):"(?:[^"\\]|\\.)*"`)
+// sensitiveName 敏感字段名的形态：关键字（password / secret / token / 凭据类 key …）作为完整的
+// 下划线或连字符分段出现，前面可带任意前缀分段、后面可带后缀——old_password、new_password、
+// become_secret、client_secret、client_key、refresh_token 都算。此前要求关键字前是单词边界，
+// `old_password` 这类带前缀的名字整段漏打码（修改密码的旧 / 新密码曾明文进入访问日志）。
+const sensitiveName = `(?:[a-z0-9]+[_-])*(?:password|passwd|pwd|secret|token|signature|authorization|credential|client[_-]?key|private[_-]?key|api[_-]?key|access[_-]?key)[\w-]*`
 
-// sensitiveHeaderPattern 匹配 map<string,string> 形态的凭据类请求头条目
-// （如 webhook config.headers 的 `headers:{key:"Authorization" value:"…"}`）。
-var sensitiveHeaderPattern = regexp.MustCompile(`(?i)(key:"(?:authorization|proxy-authorization|cookie|x-api-key|x-auth-token|api-key)"\s*value:)"(?:[^"\\]|\\.)*"`)
+var (
+	// sensitiveFieldPattern 匹配 proto text 请求日志中的凭据类字符串字段（kratos logging
+	// 中间件把整个请求拼成单个字符串挂在 args 键下，按键名过滤穿透不了字符串内容）。
+	// 黑名单模式：宁可误打码不可漏打码。
+	// 值按 proto text 的带引号字符串整体匹配（`\"` 等转义序列不终止匹配），否则
+	// 含 `"` 的密码会在首个转义引号处截断、尾部明文泄漏进日志。
+	sensitiveFieldPattern = regexp.MustCompile(`(?i)(\b` + sensitiveName + `):"(?:[^"\\]|\\.)*"`)
+	// sensitiveEntryPattern 匹配 map<string,string> 条目里键名敏感的 value（webhook 的 headers、CMDB 的
+	// attrs 这类键值对：`{key:"X-Token" value:"…"}`）。键名同样按 sensitiveName 判定（原先是 6 个
+	// 键名的黑名单，X-Token、Private-Token 这类鉴权头会漏），另加 Cookie；非凭据类的请求头保留取值。
+	sensitiveEntryPattern = regexp.MustCompile(`(?i)(\bkey\s*:\s*"(?:` + sensitiveName + `|cookie)"\s+value\s*:\s*)"(?:[^"\\]|\\.)*"`)
+)
 
 // MaskSensitiveAttr slog.HandlerOptions.ReplaceAttr：args 属性内敏感字段统一替换为 ***。
 func MaskSensitiveAttr(groups []string, a slog.Attr) slog.Attr {
@@ -53,7 +61,7 @@ func MaskSensitiveAttr(groups []string, a slog.Attr) slog.Attr {
 		return a
 	}
 	masked := sensitiveFieldPattern.ReplaceAllString(a.Value.String(), `$1:"***"`)
-	masked = sensitiveHeaderPattern.ReplaceAllString(masked, `$1"***"`)
+	masked = sensitiveEntryPattern.ReplaceAllString(masked, `$1"***"`)
 	// 上传类请求（头像 / logo 的 bytes 字段）会把整份文件内容写进 args：
 	// 超长的直接截断，保留头部便于排查，并标注原长度。
 	if len(masked) > maxLoggedArgs {

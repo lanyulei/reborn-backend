@@ -18,6 +18,8 @@ import (
 	dataoncall "github.com/lanyulei/reborn/backend/core/internal/data/oncall"
 	dataworkflow "github.com/lanyulei/reborn/backend/core/internal/data/workflow"
 	mc "github.com/lanyulei/reborn/backend/kit/monitorcontract"
+
+	kerrors "github.com/go-kratos/kratos/v3/errors"
 )
 
 // cmdbRoles cmdb 域 RoleSource 的桩：谁是超管、谁有哪些角色、谁持有「查询资源详情」接口权限。
@@ -294,8 +296,9 @@ func TestMonitorP2Adapters_OnRealTables(t *testing.T) {
 	if !slices.IsSortedFunc(slots, func(a, b biz.ShiftSlot) int { return a.Start.Compare(b.Start) }) || slots[2].UserID != uBob || slots[2].Role != 1 || slots[2].UserName == "" {
 		t.Fatalf("Shifts() order / content = %+v", slots)
 	}
-	if capped, _, _ := shifts.Shifts(ctx, sched, now.Add(-2*time.Hour), now.Add(4*time.Hour), 2); len(capped) != 2 {
-		t.Fatalf("Shifts(limit 2) = %d", len(capped))
+	// 班次多于上限（3 个 > limit 2）：明确报错让调用方缩小时间范围，不再静默截断成前 2 个。
+	if capped, _, err := shifts.Shifts(ctx, sched, now.Add(-2*time.Hour), now.Add(4*time.Hour), 2); len(capped) != 0 || !kerrors.Is(err, biz.ErrTimeRangeInvalid) {
+		t.Fatalf("Shifts(limit 2) = %+v, %v; want an explicit too-many-shifts error", capped, err)
 	}
 	if _, exists, err := shifts.Shifts(ctx, newID(t), now, now.Add(time.Hour), 10); err != nil || exists {
 		t.Fatalf("Shifts(missing schedule) exists = %v, %v", exists, err)

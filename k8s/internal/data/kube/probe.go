@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lanyulei/reborn/backend/k8s/internal/biz"
@@ -137,9 +138,14 @@ var selfChecks = []accessCheck{
 	{"create subjectaccessreviews", "create", "authorization.k8s.io", "subjectaccessreviews"},
 }
 
+// selfCheckParallel 自检请求的并发度：十几项串行时，链路延迟偏高（跨地域直连、经代理、API Server 本身响应慢）
+// 的集群一次自检就把 10 秒的探活预算耗尽，可达的集群被判为不可达且每轮重复。
+const selfCheckParallel = 5
+
 // selfCheck 接入自检：只做询问（SelfSubjectAccessReview）与读取，不在集群里创建任何对象。
+// 各项互不依赖，有界并发发出；任一项出错（含超时取消）照常记为未通过——并发只缩短用时，不改变判定。
 func (c *conn) selfCheck(ctx context.Context, version string) []k8scontract.SelfCheck {
-	var out []k8scontract.SelfCheck
+	out := make([]k8scontract.SelfCheck, 0, len(selfChecks)+4)
 	vc := k8scontract.SelfCheck{Name: fmt.Sprintf("kubernetes version >= 1.%d", k8scontract.MinServerMinor), OK: true}
 	if major, minor, ok := serverMinor(version); !ok {
 		vc.OK, vc.Message = false, "cannot parse server version "+version
@@ -147,30 +153,48 @@ func (c *conn) selfCheck(ctx context.Context, version string) []k8scontract.Self
 		vc.OK, vc.Message = false, "server version is "+version
 	}
 	out = append(out, vc)
+	checks := make([]func() k8scontract.SelfCheck, 0, len(selfChecks)+3)
 	for _, ck := range selfChecks {
-		item := k8scontract.SelfCheck{Name: ck.name}
-		review := &authv1.SelfSubjectAccessReview{Spec: authv1.SelfSubjectAccessReviewSpec{
-			ResourceAttributes: &authv1.ResourceAttributes{Verb: ck.verb, Group: ck.group, Resource: ck.resource},
-		}}
-		res, err := c.platKube.AuthorizationV1().SelfSubjectAccessReviews().Create(ctx, review, metav1.CreateOptions{})
-		switch {
-		case err != nil:
-			item.Message = biz.AuditErrorText(mapError(err))
-		case !res.Status.Allowed:
-			item.Message = "the access credential is not allowed to " + ck.name
-		default:
-			item.OK = true
-		}
-		out = append(out, item)
+		checks = append(checks, func() k8scontract.SelfCheck {
+			item := k8scontract.SelfCheck{Name: ck.name}
+			review := &authv1.SelfSubjectAccessReview{Spec: authv1.SelfSubjectAccessReviewSpec{
+				ResourceAttributes: &authv1.ResourceAttributes{Verb: ck.verb, Group: ck.group, Resource: ck.resource},
+			}}
+			res, err := c.platKube.AuthorizationV1().SelfSubjectAccessReviews().Create(ctx, review, metav1.CreateOptions{})
+			switch {
+			case err != nil:
+				item.Message = biz.AuditErrorText(mapError(err))
+			case !res.Status.Allowed:
+				item.Message = "the access credential is not allowed to " + ck.name
+			default:
+				item.OK = true
+			}
+			return item
+		})
 	}
 	for _, role := range []string{"view", "edit", "admin"} {
-		item := k8scontract.SelfCheck{Name: "built-in clusterrole " + role, OK: true}
-		if _, err := c.platKube.RbacV1().ClusterRoles().Get(ctx, role, metav1.GetOptions{}); err != nil {
-			item.OK, item.Message = false, biz.AuditErrorText(mapError(err))
-		}
-		out = append(out, item)
+		checks = append(checks, func() k8scontract.SelfCheck {
+			item := k8scontract.SelfCheck{Name: "built-in clusterrole " + role, OK: true}
+			if _, err := c.platKube.RbacV1().ClusterRoles().Get(ctx, role, metav1.GetOptions{}); err != nil {
+				item.OK, item.Message = false, biz.AuditErrorText(mapError(err))
+			}
+			return item
+		})
 	}
-	return out
+	results := make([]k8scontract.SelfCheck, len(checks))
+	sem := make(chan struct{}, selfCheckParallel)
+	var wg sync.WaitGroup
+	for i, run := range checks {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() { // 退出路径：请求受 ctx 约束，返回即退出；wg.Wait 在本函数返回前收齐
+			defer wg.Done()
+			defer func() { <-sem }()
+			results[i] = run()
+		}()
+	}
+	wg.Wait()
+	return append(out, results...)
 }
 
 // testTimeout 测试连接的总时长上限。

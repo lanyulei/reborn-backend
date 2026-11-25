@@ -8,6 +8,7 @@ import (
 
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/agent"
 	basedata "github.com/lanyulei/reborn/backend/core/internal/data"
+	"github.com/lanyulei/reborn/backend/kit/dbx"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -226,15 +227,25 @@ func (r *runRepo) Stats(ctx context.Context, sr biz.StatsRange) (*biz.Overview, 
 	return out, byProfile, rows.Err()
 }
 
+// agentRunEvidenceRE 建议证据里指向一次运行的条目：agent_run:<规范写法的 uuid>（前缀 10 个字符）。
+const agentRunEvidenceRE = `^agent_run:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`
+
 // RecentAutoOutcome implements biz.RunRepo：该 Profile 的运行提出的、自动批准的建议里，验证窗口已出结果的总数与失败数。
 func (r *runRepo) RecentAutoOutcome(ctx context.Context, profileID string, window time.Duration) (int, int, error) {
+	// 证据与运行的连接写成 r.id = <从证据里取出的 uuid>，能走 agent_run 主键；原来的
+	// e = 'agent_run:' || r.id::text 要对 agent_run 的每一行算一遍表达式，而这条语句在每个开启自动通过的
+	// Profile 任务结束时都会执行。两者等价：uuid 的文本形式恒为规范写法，所以「e 等于前缀 + r.id 的文本」
+	// 当且仅当「e 符合 agentRunEvidenceRE 且其中的 uuid 等于 r.id」；CASE 保证不符合格式的证据不会被拿去
+	// 转 uuid（得 NULL，连接不上，与原来一样不命中、不报错）。
 	var total, failed int
 	err := r.data.Pool.QueryRow(ctx,
 		`SELECT count(*)::int, count(*) FILTER (WHERE p.status = 6 OR (p.verify_result ->> 'worse')::boolean)::int
 		 FROM incident_proposal p
 		 WHERE p.proposer_type = 3 AND p.auto AND p.status IN (5, 6) AND p.create_time >= now() - make_interval(secs => $2::float8)
 		   AND jsonb_typeof(p.evidence) = 'array'
-		   AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(p.evidence) e JOIN agent_run r ON e = 'agent_run:' || r.id::text WHERE r.profile_id = $1)`,
+		   AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(p.evidence) e
+		               JOIN agent_run r ON r.id = CASE WHEN e ~ '`+agentRunEvidenceRE+`' THEN substring(e FROM 11)::uuid END
+		               WHERE r.profile_id = $1)`,
 		profileID, window.Seconds()).Scan(&total, &failed)
 	if err != nil {
 		return 0, 0, fmt.Errorf("agent auto outcome: %w", err)
@@ -242,12 +253,45 @@ func (r *runRepo) RecentAutoOutcome(ctx context.Context, profileID string, windo
 	return total, failed, nil
 }
 
-// PurgeBefore implements biz.RunRepo.
-func (r *runRepo) PurgeBefore(ctx context.Context, before time.Time, limit int) ([]string, error) {
-	rows, err := r.data.Pool.Query(ctx,
-		"DELETE FROM agent_run WHERE id IN (SELECT id FROM agent_run WHERE end_time IS NOT NULL AND end_time < $1 LIMIT $2) RETURNING conversation_id::text", before, limit)
+// PurgeBefore implements biz.RunRepo：运行与它的助手会话在同一事务里物理删除。先删运行、再另起事务删
+// 会话的话，后一步失败时运行已经没了，再没有记录指向那些会话，它们会永久残留。
+// 会话三张表的删除顺序与 assistant 域 conversationRepo.Purge 一致（工具调用 → 消息 → 会话）。
+func (r *runRepo) PurgeBefore(ctx context.Context, before time.Time, limit int) (int, error) {
+	var n int
+	err := dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+		convs, err := purgeRuns(ctx, tx, before, limit)
+		if err != nil {
+			return fmt.Errorf("purge agent runs: %w", err)
+		}
+		n = len(convs)
+		if n == 0 {
+			return nil
+		}
+		// dup: 与 assistant 域 conversationRepo.Purge 的三条删除语句逐字相同。各域的 data 包不互相 import，
+		// 而会话必须与运行在同一事务里删除，没法复用那边自己开事务的 Purge；改那边的表结构 / 删除顺序时这里要同步。
+		for _, stmt := range []string{
+			"DELETE FROM assistant_tool_call WHERE conversation_id = ANY($1::uuid[])",
+			"DELETE FROM assistant_message WHERE conversation_id = ANY($1::uuid[])",
+			"DELETE FROM assistant_conversation WHERE id = ANY($1::uuid[])",
+		} {
+			if _, err := tx.Exec(ctx, stmt, convs); err != nil {
+				return fmt.Errorf("purge agent run conversations: %w", err)
+			}
+		}
+		return nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("purge agent runs: %w", err)
+		return 0, err
+	}
+	return n, nil
+}
+
+// purgeRuns 删除到期的运行，返回它们的会话 ID。
+func purgeRuns(ctx context.Context, tx pgx.Tx, before time.Time, limit int) ([]string, error) {
+	rows, err := tx.Query(ctx,
+		"DELETE FROM agent_run WHERE id IN (SELECT id FROM agent_run WHERE end_time IS NOT NULL AND end_time < $1::timestamptz LIMIT $2::int) RETURNING conversation_id::text", before, limit)
+	if err != nil {
+		return nil, err
 	}
 	defer rows.Close()
 	var out []string

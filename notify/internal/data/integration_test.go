@@ -23,7 +23,8 @@ import (
 
 // newIntegrationData 构造真实连接池；未配置 TEST_DATABASE_SOURCE 时跳过。护栏与
 // core 一致：库名不含 "test" 直接失败（集成测试 TRUNCATE 通知域全部表及 system_user）。
-func newIntegrationData(t *testing.T) *Data {
+// 接收 testing.TB：集成基准（bench_integration_test.go）复用同一份护栏与清库。
+func newIntegrationData(t testing.TB) *Data {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_SOURCE")
 	if dsn == "" {

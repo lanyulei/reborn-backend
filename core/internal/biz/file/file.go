@@ -65,6 +65,10 @@ var (
 	ErrFileNameInvalid = kerrors.BadRequest(v1.ErrorReason_FILE_NAME_INVALID.String(), "invalid file name")
 	// ErrFileQuotaExceeded 未绑定的临时文件数达到上限。
 	ErrFileQuotaExceeded = kerrors.New(429, v1.ErrorReason_FILE_QUOTA_EXCEEDED.String(), "too many unused uploads; submit or wait for them to expire")
+	// errSingletonQuotaExceeded 换头像 / logo 时操作者的未绑定临时文件配额已满（PutSingleton 也先落一条临时文件）。
+	// 与 ErrFileQuotaExceeded 是同一 reason 与状态码（对外契约不变，errors.Is 仍匹配得到），仅文案区分：
+	// 用户此时并没有在「上传附件」，「先提交或等其过期」的提示对不上他正在做的事。
+	errSingletonQuotaExceeded = kerrors.New(429, v1.ErrorReason_FILE_QUOTA_EXCEEDED.String(), "unused upload limit reached, cannot save this file; submit or discard pending uploads, or wait for them to expire")
 )
 
 // File 是文件元数据领域模型。
@@ -347,12 +351,15 @@ func (uc *Usecase) ReleaseFiles(ctx context.Context, tx txrun.Tx, bizType, bizID
 
 // PutSingleton 保存某业务对象「唯一的那一份」文件（如系统 logo、用户头像）：写入后它原有的
 // 文件作废（由清理任务连同对象删除）。内容类型由调用方给定——调用方已按自己的白名单校验，
-// 这里不再嗅探，也不计入上传配额。ifAbsent 为真时仅在该对象还没有文件时写入（导入旧数据用，
-// 不会盖掉并发的新上传）；返回是否写入。
+// 这里不再嗅探。ifAbsent 为真时仅在该对象还没有文件时写入（导入旧数据用，不会盖掉并发的新
+// 上传）；返回是否写入。
 //
 // 步骤与 Upload 同一思路：先落临时元数据、再写对象、最后在一个事务里换上去。任何一步失败
 // 或进程中途崩溃，留下的只是一条临时文件，到期由清理任务删除；读方在换上去之前看到的始终
 // 是完整的旧文件。
+//
+// 因为同样先落一条临时文件，它也计入操作者的未绑定临时文件配额：操作者名下积压的未绑定
+// 临时文件达到 MaxTempFiles 时，换头像 / logo 会被拒绝（FILE_QUOTA_EXCEEDED）。
 func (uc *Usecase) PutSingleton(ctx context.Context, uploader, bizType, bizID, filename, contentType string, data []byte, ifAbsent bool) (bool, error) {
 	if bizType == "" || bizID == "" || contentType == "" || len(data) == 0 || len(data) > MaxFileSize {
 		return false, ErrFileTypeNotAllowed
@@ -373,6 +380,9 @@ func (uc *Usecase) PutSingleton(ctx context.Context, uploader, bizType, bizID, f
 		Status: StatusTemp, CreateUser: uploader, CreateTime: now,
 	}
 	if err := uc.repo.Create(ctx, f, MaxTempFiles); err != nil {
+		if errors.Is(err, ErrFileQuotaExceeded) {
+			return false, errSingletonQuotaExceeded
+		}
 		return false, err
 	}
 	store := uc.stores.Drivers[f.Driver]

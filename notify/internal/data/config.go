@@ -138,6 +138,10 @@ func (r *configRepo) loadChannels(ctx context.Context, tx pgx.Tx) ([]*biz.Channe
 }
 
 // decodeChannelConfig 按 type 解码 config jsonb（结构与 core 一致；未知字段拒绝）。
+//
+// 严格解码与 core 同一口径，是双向的保护：本服务不回写 config，但 core 那边「读出 → 按旧结构写回」会抹掉
+// 它不认识的字段，两边都拒绝未知字段，新字段才只会在全部实例升级之后被写入。滚动发布期间未升级的副本读到
+// 带新字段的渠道时走下面的 SecretErr 分支：该渠道投递延后、不丢，升级完成后自动恢复。
 func decodeChannelConfig(ch *biz.Channel, raw []byte) error {
 	dec := func(v any) error {
 		d := json.NewDecoder(bytesReader(raw))

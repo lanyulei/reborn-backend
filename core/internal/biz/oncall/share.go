@@ -267,6 +267,9 @@ func (uc *ShareUsecase) Delete(ctx context.Context, actor Actor, id string) erro
 	})
 }
 
+// shareTouchTimeout 公共日历访问时间落账的上限（拿连接 + 一条按主键的 UPDATE，正常是毫秒级）。
+const shareTouchTimeout = 2 * time.Second
+
 // PublicCalendar 匿名可见的日历内容。
 type PublicCalendar struct {
 	Title string
@@ -357,8 +360,11 @@ func (uc *ShareUsecase) resolve(ctx context.Context, token string, from, to time
 			sh.UserPhone = ""
 		}
 	}
-	// 访问时间仅用于管理页展示，写失败不影响读取。
-	_ = uc.shares.Touch(context.WithoutCancel(ctx), link.ID)
+	// 访问时间仅用于管理页展示，写失败不影响读取。落账在响应前同步执行：不随请求取消（WithoutCancel），
+	// 但必须有上限——连接池排队时不能让这条可有可无的写把匿名接口拖住。
+	touchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shareTouchTimeout)
+	defer cancel()
+	_ = uc.shares.Touch(touchCtx, link.ID)
 	return cal, nil
 }
 

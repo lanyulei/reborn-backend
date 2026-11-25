@@ -9,6 +9,7 @@ import (
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/knowledge"
 	basedata "github.com/lanyulei/reborn/backend/core/internal/data"
 	"github.com/lanyulei/reborn/backend/kit/dbx"
+	"github.com/lanyulei/reborn/backend/kit/idgen"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -102,6 +103,38 @@ func (r *spaceRepo) List(ctx context.Context, keyword, typ string) ([]*biz.Space
 		return nil, wrap("scan knowledge space", err)
 	}
 	return items, nil
+}
+
+// Names implements biz.SpaceRepo：按主键取名称。不是合法 UUID 的 ID 不可能对应任何空间，先行
+// 剔除（不带进 uuid[] 转换），结果与「列出全部未删除空间后按 ID 取名」一致。
+func (r *spaceRepo) Names(ctx context.Context, ids []string) (map[string]string, error) {
+	valid := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if idgen.IsUUID(id) {
+			valid = append(valid, id)
+		}
+	}
+	names := make(map[string]string, len(valid))
+	if len(valid) == 0 {
+		return names, nil
+	}
+	rows, err := basedata.QueryerFrom(ctx, r.data.Pool).Query(ctx,
+		`SELECT id::text, name FROM knowledge_space WHERE id = ANY($1::uuid[]) AND delete_time IS NULL`, valid)
+	if err != nil {
+		return nil, wrap("list knowledge space names", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, wrap("scan knowledge space name", err)
+		}
+		names[id] = name
+	}
+	if err := rows.Err(); err != nil {
+		return nil, wrap("list knowledge space names", err)
+	}
+	return names, nil
 }
 
 // SoftDelete implements biz.SpaceRepo：单语句条件更新，仍有未删除文档时不命中。

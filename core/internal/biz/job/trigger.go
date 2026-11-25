@@ -27,6 +27,10 @@ const (
 	alertMaxPages = 10
 	// alertLookback 告警事件的回看窗口：水位线不会落后于现在超过这段时间（服务停机更久的不补）。
 	alertLookback = 10 * time.Minute
+	// alertCommitLag 每轮从水位线之前这么长的位置开始重读：告警的 first_fire_time 是评估轮次的开始时刻，
+	// 提交可能晚于它（monitor 一轮评估的预算上限 3×30s 查询 + 30s 落账），取略大于该上限。
+	// 代价是每轮重读最近这段时间内的事件（由 seen 去重）。
+	alertCommitLag = 150 * time.Second
 	// signalBatch 一轮发送的流程信号数。
 	signalBatch = 20
 	// signalMaxAge 流程信号自触发登记起的存活期：流程实例这么久还没走到等这个信号的节点（或一直发不出去）
@@ -66,8 +70,9 @@ type TriggerUsecase struct {
 	// 的就不必每轮都去数据库撞一次去重键。只是省查询的缓存——正确性由触发记录的唯一键保证。
 	seenMu sync.Mutex
 	seen   map[string]time.Time
-	// alertMark 告警事件读取的水位线：下一轮从它之后读；一轮里有触发器处理失败的事件时停在那条之前（下一轮
-	// 重读、重试），且不落后于现在超过 alertLookback。进程内状态（作业域没有可存它的列；重启后退回回看窗口的
+	// alertMark 告警事件读取的水位线：下一轮从它之前 alertCommitLag 的位置读到它之后；一轮里有触发器处理
+	// 失败的事件时停在那条之前（下一轮重读、重试），且不落后于现在超过 alertLookback。进程内状态（作业域没有
+	// 可存它的列；重启后退回回看窗口的
 	// 起点，重读到的事件由触发记录唯一键 + seen 去重）。只有 job-alert 循环这一个协程读写。
 	alertMark AlertCursor
 	// triggerSince 各触发器开始评估的时刻：首次见到（本进程启动后 / 新建或重新启用）取其最后编辑时间——启用一个
@@ -345,6 +350,25 @@ func (uc *TriggerUsecase) authenticate(ctx context.Context, id string, auth Fire
 	return nil
 }
 
+// signatureRefPrefix 由签名派生的隐式幂等键的前缀：与调用方自带的幂等键（requestId / 流程作业 ID）分开命名空间。
+const signatureRefPrefix = "sig:"
+
+// signatureRef 签名认证的请求在没带幂等键时使用的隐式幂等键：前缀 + hex(SHA-256(时间戳 + "." + 签名值))，
+// 定长 68 字符（ref 列 varchar(128)）。Bearer 认证没有可取的签名，返回空串（照旧每次调用都是新的一次触发）。
+//
+// 为什么需要：签名只校验时间戳偏差（SignatureSkew 秒），窗口内同一份「时间戳 + 签名 + 请求体」可被中间设备
+// 重试或被截获者重放；不带幂等键时每次重放都会新建触发记录并提交一次执行。签名覆盖了时间戳与请求体，
+// 所以同一份签名 = 同一份请求，把它当幂等键后重放走的是既有的去重 / 续做路径（触发记录的唯一键，多实例安全），
+// 拿到的是先前那条记录。只在认证通过之后调用：此时 Bearer 为空即说明是签名认证通过的。
+// 存摘要而不存签名原文：触发记录的 ref 不该成为可用认证材料的存放处。
+func signatureRef(auth FireAuth) string {
+	if auth.Bearer != "" || auth.Signature == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(auth.Timestamp + "." + auth.Signature))
+	return signatureRefPrefix + hex.EncodeToString(sum[:])
+}
+
 // Fire 开放接口触发：认证 → 去重 → 以负责人的身份提交执行。返回触发记录（幂等键命中时是先前那条）。
 func (uc *TriggerUsecase) Fire(ctx context.Context, id string, auth FireAuth, req FireRequest) (*TriggerFire, error) {
 	if !idgen.IsUUID(id) {
@@ -391,6 +415,10 @@ func (uc *TriggerUsecase) Fire(ctx context.Context, id string, auth FireAuth, re
 	req.Summary = strings.ReplaceAll(req.Summary, "\x00", "")
 	ref := req.Ref
 	if ref == "" {
+		// 调用方没带幂等键：签名认证时用签名本身派生一个（同一份签名的重放落到同一条触发记录上，见 signatureRef）。
+		ref = signatureRef(auth)
+	}
+	if ref == "" {
 		if ref, err = idgen.NewID(); err != nil {
 			return nil, err
 		}
@@ -423,6 +451,11 @@ func (uc *TriggerUsecase) fire(ctx context.Context, t *Trigger, fire *TriggerFir
 			return existing, nil
 		}
 		fire = existing
+		// 待发送的信号只在 Complete 时落库（见 FireRepo.Begin），中断的记录上读到的是「无需发送」：
+		// 按登记时的条件（触发器配了信号、调用方带了流程实例）恢复，做完之后照常回发信号。
+		if fire.Signal != "" && fire.WorkflowInstanceID != "" {
+			fire.SignalState = jc.SignalPending
+		}
 	}
 	if fire.Result == jc.FireSkipped {
 		return fire, nil // 冷却中：Begin 已直接记为跳过
@@ -488,22 +521,35 @@ func (uc *TriggerUsecase) RunAlerts(ctx context.Context) (int, error) {
 		return 0, nil
 	}
 	uc.pruneSeen(now)
-	mark := uc.alertMark
-	if floor := now.Add(-alertLookback); mark.FirstFireTime.Before(floor) {
-		mark = AlertCursor{FirstFireTime: floor}
+	// high 是已处理到的最高位置（水位线本身）；每轮从它之前 alertCommitLag 的位置开始重读：告警的
+	// first_fire_time 是评估轮次的**开始**时刻，各任务各自提交，一轮评估最长可达约两分钟（查询超时
+	// 3×30s + 落账）——开始得早、提交得晚的告警会落在已经越过的水位线之前，按 (first_fire_time, id)
+	// 递增的游标永远读不到它，自愈作业就静默不触发。重读到的旧事件由 seen（以及触发记录的唯一键）去重。
+	high := uc.alertMark
+	floor := now.Add(-alertLookback)
+	if high.FirstFireTime.Before(floor) {
+		high = AlertCursor{FirstFireTime: floor}
+	}
+	cursor := high
+	if back := high.FirstFireTime.Add(-alertCommitLag); back.After(floor) {
+		cursor = AlertCursor{FirstFireTime: back}
 	}
 	round := &alertRound{hosts: map[string]HostSet{}}
 	var first error
 	var stuck *AlertCursor // 第一条有触发器处理失败的事件之前的位置：水位线停在这里，下一轮从它重读
 	for page := 1; ; page++ {
-		events, err := uc.alerts.FiringAfter(ctx, mark, alertBatch)
+		events, err := uc.alerts.FiringAfter(ctx, cursor, alertBatch)
 		if err != nil {
-			uc.alertMark = uc.settleMark(mark, stuck)
+			uc.alertMark = uc.settleMark(high, stuck)
 			return 0, err
 		}
 		for _, a := range events {
-			before := mark
-			mark = AlertCursor{FirstFireTime: a.FirstFireTime, ID: a.ID}
+			before := cursor
+			at := AlertCursor{FirstFireTime: a.FirstFireTime, ID: a.ID}
+			cursor = at
+			if at.FirstFireTime.After(high.FirstFireTime) || (at.FirstFireTime.Equal(high.FirstFireTime) && at.ID > high.ID) {
+				high = at
+			}
 			for _, t := range triggers {
 				if !alertMatches(t.Alert, a) || a.FirstFireTime.Before(since[t.ID]) || uc.alreadySeen(t.ID, a.ID) {
 					continue
@@ -526,11 +572,11 @@ func (uc *TriggerUsecase) RunAlerts(ctx context.Context) (int, error) {
 		}
 		if page >= alertMaxPages {
 			uc.log.WarnContext(ctx, "job alert triggers: alert backlog exceeds one round, continuing next round",
-				"pages", page, "batch", alertBatch, "mark_time", mark.FirstFireTime, "mark_id", mark.ID)
+				"pages", page, "batch", alertBatch, "mark_time", high.FirstFireTime, "mark_id", high.ID)
 			break
 		}
 	}
-	uc.alertMark = uc.settleMark(mark, stuck)
+	uc.alertMark = uc.settleMark(high, stuck)
 	return 0, first
 }
 
@@ -601,21 +647,30 @@ func (uc *TriggerUsecase) fireAlert(ctx context.Context, round *alertRound, t *T
 	if t.Alert.HostLabel != "" {
 		addr, ok := alertHost(a.Labels[t.Alert.HostLabel])
 		fire.Summary = truncateRunes(a.RuleName+" · "+a.Labels[t.Alert.HostLabel], 255)
-		ciID := ""
+		ciID, rejected := "", ""
 		if ok {
 			var err error
-			if ciID, err = uc.hostByAddress(ctx, round, t, addr); err != nil && !Rejected(err) {
-				return false, err
+			if ciID, err = uc.hostByAddress(ctx, round, t, addr); err != nil {
+				if !Rejected(err) {
+					return false, err
+				}
+				// 目标主机解析被业务规则拒绝（负责人失去数据范围、地址字段失效等）：记下原因，
+				// 不写成「主机不在目标之内」把排查引向错误的方向。
+				rejected = Message(err)
 			}
 		}
 		if ciID == "" {
-			// 告警里的主机不在模板的目标主机之内：不执行，但留一条记录说明原因（同一事件不再重复判断）。
+			// 告警里的主机不在模板的目标主机之内，或者目标主机解析被拒：不执行，但留一条记录说明原因
+			// （同一事件不再重复判断）。
 			id, err := idgen.NewID()
 			if err != nil {
 				return false, err
 			}
 			fire.ID, fire.Result = id, jc.FireSkipped
 			fire.Reason = "告警标签 " + t.Alert.HostLabel + " 的主机不在作业模板的目标主机之内"
+			if rejected != "" {
+				fire.Reason = truncateRunes(rejected, 512)
+			}
 			_, fresh, err := uc.fires.Begin(ctx, fire, 0)
 			return fresh, err
 		}

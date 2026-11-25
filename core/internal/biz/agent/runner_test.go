@@ -277,6 +277,8 @@ func TestDecide_CreateDocumentOnlyForPostmortem(t *testing.T) {
 	if _, ok := out["ownerId"]; ok {
 		t.Fatal("ownerId must be dropped")
 	}
+	// 写入上限按成功计数：首次调用成功之后，第二次才被拒（裁决时不计数，首次失败后模型可以重试）。
+	s.observe(tc, json.RawMessage(`{"document":{"id":"44444444-4444-7444-8444-444444444444","title":"故障经验"}}`))
 	if d := s.decide(context.Background(), tc, json.RawMessage(`{"title":"again","content":"c"}`)); d.Approve {
 		t.Fatal("second document must be rejected")
 	}

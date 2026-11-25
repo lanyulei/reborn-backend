@@ -542,7 +542,7 @@ message TransitionIncidentRequest {
   string note = 3 [(buf.validate.field).string.max_len = 4000];
   // root_cause_code 恢复时的根因分类初判，可空。
   string root_cause_code = 4 [(buf.validate.field).string.max_len = 32];
-  // force 关闭时跳过复盘要求（需管理权限，原因记入时间线）。
+  // force 关闭时跳过复盘要求（仅故障指挥或超级管理员；须填写原因，原因记入时间线）。
   bool force = 5;
 }
 

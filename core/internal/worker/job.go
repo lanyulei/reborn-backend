@@ -42,7 +42,7 @@ func (l *JobLoops) Servers() []transport.Server {
 func NewJobLoops(schedules *bizjob.ScheduleUsecase, triggers *bizjob.TriggerUsecase, notify *bizjob.NotifyUsecase, housekeep *bizjob.HousekeepUsecase,
 	logger *slog.Logger, rec loop.Recorder,
 ) *JobLoops {
-	// 每轮处理完一批就等下一个周期（返回 0）：这些都不是需要「有活就连着干」的队列。
+	// 告警自愈与流程信号每轮处理完一批就等下一个周期（返回 0）：它们不是需要「有活就连着干」的队列。
 	once := func(fn func(ctx context.Context) (int, error)) func(ctx context.Context) (int, error) {
 		return func(ctx context.Context) (int, error) {
 			_, err := fn(ctx)
@@ -50,7 +50,10 @@ func NewJobLoops(schedules *bizjob.ScheduleUsecase, triggers *bizjob.TriggerUsec
 		}
 	}
 	return &JobLoops{loops: []*loop.Loop{
-		loop.New("job-schedule", jobScheduleInterval, logger, rec, once(schedules.Run)),
+		// 定时作业触发直接用 Run 的返回值（本轮由本实例触发的条数）：>0 时循环立即续跑——同一时刻到期的
+		// 计划多于一批时不再每批等 10 秒；没有到期的照常每 10 秒一轮。被触发的计划都已推进 next_time，
+		// 积压处理完即回到周期轮询，不会空转。
+		loop.New("job-schedule", jobScheduleInterval, logger, rec, schedules.Run),
 		loop.New("job-alert", jobAlertInterval, logger, rec, once(triggers.RunAlerts)),
 		loop.New("job-signal", jobSignalInterval, logger, rec, once(triggers.RunSignals)),
 		// 通知有积压时连续处理直到取空。

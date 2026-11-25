@@ -30,7 +30,7 @@ func (e *env) log() *slog.Logger {
 }
 
 // testWriter 把执行器的日志写进测试输出（失败时能看到作业为什么没成功）。
-type testWriter struct{ t *testing.T }
+type testWriter struct{ t testing.TB }
 
 func (w testWriter) Write(p []byte) (int, error) {
 	w.t.Log(string(p))

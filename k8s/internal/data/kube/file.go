@@ -321,7 +321,7 @@ func keepTarEntry(h *tar.Header, base string) bool {
 	case tar.TypeReg, tar.TypeDir:
 		return true
 	case tar.TypeSymlink:
-		return biz.SafeTarLink(h.Name, h.Linkname)
+		return biz.SafeTarLink(h.Name, h.Linkname, base)
 	case tar.TypeLink:
 		return biz.SafeTarEntry(h.Linkname, base)
 	}

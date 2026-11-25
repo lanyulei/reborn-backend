@@ -25,8 +25,11 @@ plane:
   max_clusters: 0
   memory_limit_mb: 0
   cache_idle: 900s
-  cache_sync_timeout: 30s
+  # 等待缓存首次同步的上限。必须明显小于 core 的 k8s.plane_timeout（缺省 30s，core 的计时先开始）：两者相等时，
+  # 冷缓存的大集群同步接近 30s，用户拿到的是 core 的通用超时，而不是这里「缓存建立中，请稍后重试」的明确提示。
+  cache_sync_timeout: 25s
   audit_retention: 15552000s    # 180d；0s = 永久保留
+  # 客户端限速，按「客户端」各计一份（用户请求与平台流量各有独立限速器），不是每个集群的总限额。
   qps: 50
   burst: 100
   # 调试容器的镜像允许清单（第一个为缺省）；空 = 只允许 docker.io/library/busybox:1.36

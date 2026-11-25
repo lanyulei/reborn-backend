@@ -433,6 +433,8 @@ type SpaceRepo interface {
 	Get(ctx context.Context, id string) (*Space, error)
 	// List 全部未删除空间（关键字匹配名称 / 编码，type 精确），按名称排序。
 	List(ctx context.Context, keyword, typ string) ([]*Space, error)
+	// Names 给定空间中未删除者的名称（空间 ID → 名称）；已删除 / 不存在的不出现在结果里。
+	Names(ctx context.Context, ids []string) (map[string]string, error)
 	// SoftDelete 软删；仍有未删除文档返回 ErrSpaceNotEmpty，不存在返回 ErrSpaceNotFound。
 	SoftDelete(ctx context.Context, id string, at time.Time) error
 	// DocumentCounts 各空间已发布文档数。

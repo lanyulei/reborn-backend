@@ -20,27 +20,27 @@ import (
 )
 
 // newIntegrationCmdbData 连接 TEST_DATABASE_SOURCE（库名须含 test）并清空 cmdb 表。
-func newIntegrationCmdbData(t *testing.T) *basedata.Data {
-	t.Helper()
+func newIntegrationCmdbData(tb testing.TB) *basedata.Data {
+	tb.Helper()
 	dsn := os.Getenv("TEST_DATABASE_SOURCE")
 	if dsn == "" {
-		t.Skip("TEST_DATABASE_SOURCE not set, skipping data integration tests")
+		tb.Skip("TEST_DATABASE_SOURCE not set, skipping data integration tests")
 	}
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
-		t.Fatalf("parse TEST_DATABASE_SOURCE: %v", err)
+		tb.Fatalf("parse TEST_DATABASE_SOURCE: %v", err)
 	}
 	if db := cfg.ConnConfig.Database; !containsTest(db) {
-		t.Fatalf("TEST_DATABASE_SOURCE 指向库 %q：库名须含 \"test\"", db)
+		tb.Fatalf("TEST_DATABASE_SOURCE 指向库 %q：库名须含 \"test\"", db)
 	}
 	d, cleanup, err := basedata.NewData(&conf.Data{Database: &kitconf.Database{Source: dsn}})
 	if err != nil {
-		t.Fatalf("NewData() error = %v", err)
+		tb.Fatalf("NewData() error = %v", err)
 	}
-	t.Cleanup(cleanup)
+	tb.Cleanup(cleanup)
 	ctx := context.Background()
 	if _, err := d.Pool.Exec(ctx, "TRUNCATE TABLE cmdb_ci_view, cmdb_sync_conflict_stat, cmdb_sync_conflict, cmdb_sync_staging, cmdb_sync_run, cmdb_sync_task, cmdb_sync_source, cmdb_relation, cmdb_ci_history, cmdb_ci, cmdb_ci_unique, cmdb_model_unique_rule, cmdb_model_field, cmdb_relation_type, cmdb_model_view, cmdb_role_scope, cmdb_model CASCADE"); err != nil {
-		t.Fatalf("truncate cmdb tables: %v", err)
+		tb.Fatalf("truncate cmdb tables: %v", err)
 	}
 	return d
 }
@@ -54,11 +54,11 @@ func containsTest(s string) bool {
 	return false
 }
 
-func mustID(t *testing.T) string {
-	t.Helper()
+func mustID(tb testing.TB) string {
+	tb.Helper()
 	id, err := idgen.NewID()
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	return id
 }

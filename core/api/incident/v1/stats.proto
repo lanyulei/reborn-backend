@@ -76,7 +76,7 @@ message GetOverviewResponse {
   int32 today_opened = 7;
   // 今日解决。
   int32 today_resolved = 8;
-  // 待定候选数。
+  // 待定候选数。带业务过滤时只含规则固定指向该业务的候选（按告警标签动态匹配业务的规则的候选不计入）。
   int32 candidates = 9;
 }
 

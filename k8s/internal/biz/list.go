@@ -22,6 +22,8 @@ type Entry struct {
 	// 单位：毫核 / 字节。
 	CPU    int64
 	Memory int64
+	// InternalIPs 节点的全部内网地址（主机定位用；其他资源为空）。列表的「内网 IP」列只展示第一个。
+	InternalIPs []string
 }
 
 // ListQuery 列表的筛选、排序与分页条件。

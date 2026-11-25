@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -273,16 +274,16 @@ type overviewRepo struct {
 // NewOverviewRepo new an overviewRepo.
 func NewOverviewRepo(data *basedata.Data) *overviewRepo { return &overviewRepo{data: data} }
 
-// scopeConds 以资源表别名 c 生成数据范围条件（nil = 该维度不限），占位符从 len(args)+1 起。
-func scopeConds(filter biz.OverviewFilter, args []any) (string, []any) {
+// scopeConds 以资源表别名 alias 生成数据范围条件（nil = 该维度不限），占位符从 len(args)+1 起。
+func scopeConds(filter biz.OverviewFilter, alias string, args []any) (string, []any) {
 	conds := ""
 	if filter.ModelCodes != nil {
 		args = append(args, dbx.TextArray(filter.ModelCodes))
-		conds += " AND c.model_code = ANY($" + strconv.Itoa(len(args)) + ")"
+		conds += " AND " + alias + ".model_code = ANY($" + strconv.Itoa(len(args)) + ")"
 	}
 	if filter.Envs != nil {
 		args = append(args, dbx.TextArray(filter.Envs))
-		conds += " AND c.env = ANY($" + strconv.Itoa(len(args)) + ")"
+		conds += " AND " + alias + ".env = ANY($" + strconv.Itoa(len(args)) + ")"
 	}
 	return conds, args
 }
@@ -319,7 +320,7 @@ func qualityCond(issue string) (cond string, needTime bool) {
 
 // Quality implements biz.OverviewRepo：一次扫描在册资源，按模型聚合各问题计数。
 func (r *overviewRepo) Quality(ctx context.Context, filter biz.OverviewFilter, outdatedBefore time.Time) ([]*biz.QualityRow, error) {
-	scope, args := scopeConds(filter, []any{biz.CIStatusRetired, outdatedBefore})
+	scope, args := scopeConds(filter, "c", []any{biz.CIStatusRetired, outdatedBefore})
 	rows, err := r.data.Pool.Query(ctx,
 		`SELECT c.model_code, m.name, count(*),
 		        count(*) FILTER (WHERE `+qualityMissingRequired+`),
@@ -348,7 +349,7 @@ func (r *overviewRepo) Quality(ctx context.Context, filter biz.OverviewFilter, o
 // Stats implements biz.OverviewRepo：全部聚合均为单次 GROUP BY，资源数量级下走既有索引。
 func (r *overviewRepo) Stats(ctx context.Context, filter biz.OverviewFilter) (*biz.Overview, error) {
 	out := &biz.Overview{}
-	scope, args := scopeConds(filter, nil)
+	scope, args := scopeConds(filter, "c", nil)
 	live := " FROM cmdb_ci c WHERE c.delete_time IS NULL" + scope
 
 	// 可见模型数。
@@ -363,9 +364,17 @@ func (r *overviewRepo) Stats(ctx context.Context, filter biz.OverviewFilter) (*b
 	if err := r.data.Pool.QueryRow(ctx, "SELECT count(*)"+live, args...).Scan(&out.CICount); err != nil {
 		return nil, fmt.Errorf("count cmdb cis: %w", err)
 	}
-	if err := r.data.Pool.QueryRow(ctx,
-		"SELECT count(*) FROM cmdb_relation r JOIN cmdb_ci c ON c.id = r.src_id WHERE c.delete_time IS NULL"+scope, args...).
-		Scan(&out.RelationCount); err != nil {
+	// 关联数。受限调用者只计两端都在范围内的关系：范围条件此前只落在 src 端，可见资源指向范围外
+	// 资源的边也被计入，与关联列表、拓扑的可见边不一致（差额即指向范围外的边数）。
+	// 不限时不加 dst 端的连接（关联的两端必然都未删除），保持原查询。
+	relations, relArgs := "SELECT count(*) FROM cmdb_relation r JOIN cmdb_ci c ON c.id = r.src_id WHERE c.delete_time IS NULL"+scope, args
+	if filter.ModelCodes != nil || filter.Envs != nil {
+		var peerScope string
+		peerScope, relArgs = scopeConds(filter, "d", slices.Clone(args))
+		relations = "SELECT count(*) FROM cmdb_relation r JOIN cmdb_ci c ON c.id = r.src_id JOIN cmdb_ci d ON d.id = r.dst_id" +
+			" WHERE c.delete_time IS NULL AND d.delete_time IS NULL" + scope + peerScope
+	}
+	if err := r.data.Pool.QueryRow(ctx, relations, relArgs...).Scan(&out.RelationCount); err != nil {
 		return nil, fmt.Errorf("count cmdb relations: %w", err)
 	}
 

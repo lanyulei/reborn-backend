@@ -1,4 +1,4 @@
-// Package main 组装 monitor-backend 服务：仅做配置加载、日志装配与 wire 注入，
+// Package main 组装 core 服务：仅做配置加载、日志装配与 wire 注入，
 // 不包含任何业务分支（见 AGENTS.md §1 分层契约）。
 package main
 
@@ -22,6 +22,9 @@ import (
 	"github.com/go-kratos/kratos/v3/transport/http"
 
 	_ "go.uber.org/automaxprocs"
+	// 内嵌 IANA 时区数据库：镜像（distroless / scratch）没有 /usr/share/zoneinfo 时
+	// time.LoadLocation("Asia/Shanghai") 会失败——流程工作日历会静默退化成自然时间。
+	_ "time/tzdata"
 )
 
 // go build -ldflags "-X main.Name=... -X main.Version=..."

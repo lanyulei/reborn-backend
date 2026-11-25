@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"maps"
 	"time"
 
 	notifyv1 "github.com/lanyulei/reborn/backend/core/api/notify/v1"
@@ -67,10 +68,12 @@ func webhookFromProto(p *notifyv1.WebhookChannelConfig) *biz.WebhookConfig {
 	if p.TimeoutS != nil {
 		timeout = p.GetTimeoutS()
 	}
+	// Headers 必须拷贝：后续 mergeWebhookHeaders 会把「提交的是掩码」的请求头就地回填为库内真实取值，
+	// 与请求 proto 共用 map 会让真实取值进入访问日志（日志中间件在 handler 返回后才打印请求）。
 	return &biz.WebhookConfig{
 		URL:      p.GetUrl(),
 		Method:   p.GetMethod(),
-		Headers:  p.GetHeaders(),
+		Headers:  maps.Clone(p.GetHeaders()),
 		TimeoutS: timeout,
 	}
 }

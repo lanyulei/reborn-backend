@@ -91,16 +91,21 @@ func (s *CmdbRelationService) MoveCI(ctx context.Context, req *v1.MoveCIRequest)
 	return &v1.MoveCIResponse{}, nil
 }
 
-// Neighbors implements proto CmdbRelationService/Neighbors：范围外节点及其边一并隐藏。
+// Neighbors implements proto CmdbRelationService/Neighbors：范围外节点及其边一并隐藏——范围已下推到
+// 逐层展开的 SQL（范围外邻居不占 maxNodes 预算），下面的事后剔除是第二道防线。
 func (s *CmdbRelationService) Neighbors(ctx context.Context, req *v1.NeighborsRequest) (*v1.NeighborsResponse, error) {
-	if _, err := s.guard.requireCI(ctx, s.cis.GetByID, req.GetCiId()); err != nil {
-		return nil, err
-	}
 	scope, err := s.guard.resolve(ctx)
 	if err != nil {
 		return nil, err
 	}
-	nodes, edges, truncated, err := s.uc.Neighbors(ctx, req.GetCiId(), req.GetFlow(), req.GetDepth(), req.GetMaxNodes())
+	ci, err := s.cis.GetByID(ctx, req.GetCiId())
+	if err != nil {
+		return nil, err
+	}
+	if !scope.Allows(ci.ModelCode, ci.Env) {
+		return nil, biz.ErrScopeForbidden
+	}
+	nodes, edges, truncated, err := s.uc.NeighborsScoped(ctx, scope, req.GetCiId(), req.GetFlow(), req.GetDepth(), req.GetMaxNodes())
 	if err != nil {
 		return nil, err
 	}

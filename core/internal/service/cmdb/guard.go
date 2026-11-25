@@ -43,28 +43,28 @@ func (g scopeGuard) requireOperation(ctx context.Context, operation string) erro
 	return nil
 }
 
-// require 目标类型与环境须在范围内。
-func (g scopeGuard) require(ctx context.Context, modelCode, env string) error {
-	scope, err := g.resolve(ctx)
-	if err != nil {
-		return err
-	}
-	if !scope.Allows(modelCode, env) {
-		return biz.ErrScopeForbidden
-	}
-	return nil
-}
-
 // requireCI 按资源 ID 读取后校验范围；返回资源供调用方复用。
 func (g scopeGuard) requireCI(ctx context.Context, get func(ctx context.Context, id string) (*biz.CI, error), id string) (*biz.CI, error) {
+	ci, _, err := g.requireCIScope(ctx, get, id)
+	return ci, err
+}
+
+// requireCIScope 同 requireCI，并把这次解析出的范围一并返回：之后还要用范围的调用方（级联退役的
+// 依赖资源、历史时刻的环境）直接复用，不必在同一请求里再解析一遍（每次解析是 1–4 次查询）。
+// 先读资源、再解析范围，顺序与 requireCI 原来一致（资源不存在时返回的仍是 404 而不是范围错误）。
+func (g scopeGuard) requireCIScope(ctx context.Context, get func(ctx context.Context, id string) (*biz.CI, error), id string) (*biz.CI, biz.Scope, error) {
 	ci, err := get(ctx, id)
 	if err != nil {
-		return nil, err
+		return nil, biz.Scope{}, err
 	}
-	if err := g.require(ctx, ci.ModelCode, ci.Env); err != nil {
-		return nil, err
+	scope, err := g.resolve(ctx)
+	if err != nil {
+		return nil, biz.Scope{}, err
 	}
-	return ci, nil
+	if !scope.Allows(ci.ModelCode, ci.Env) {
+		return nil, biz.Scope{}, biz.ErrScopeForbidden
+	}
+	return ci, scope, nil
 }
 
 // narrowFilter 列表过滤叠加范围：指定了范围外类型直接判为空结果（返回 false）；
@@ -74,32 +74,39 @@ func (g scopeGuard) narrowFilter(ctx context.Context, filter *biz.CIFilter) (boo
 	if err != nil {
 		return false, err
 	}
+	return narrowByScope(scope, filter), nil
+}
+
+// narrowByScope 把已解析的范围叠加到列表过滤上（规则见 narrowFilter）；返回 false 表示范围内没有
+// 任何可见的类型 / 环境，调用方直接返回空结果。既要叠加过滤、又要 Scope 本身的调用方（如全局审计
+// 还要按它裁剪 diff）解析一次后复用，免得同一请求重复解析。
+func narrowByScope(scope biz.Scope, filter *biz.CIFilter) bool {
 	if scope.Unrestricted {
-		return true, nil
+		return true
 	}
 	if filter.ModelCode != "" {
 		if !scope.AllowsModel(filter.ModelCode) {
-			return false, nil
+			return false
 		}
-	} else {
+	} else if !scope.ModelUnrestricted { // 类型不限：不叠类型过滤
 		filter.ModelCodes = keys(scope.Models)
 		if len(filter.ModelCodes) == 0 {
-			return false, nil
+			return false
 		}
 	}
 	if !scope.EnvUnrestricted {
 		if filter.Env != "" {
 			if !scope.AllowsEnv(filter.Env) {
-				return false, nil
+				return false
 			}
 		} else {
 			filter.Envs = keys(scope.Envs)
 			if len(filter.Envs) == 0 {
-				return false, nil
+				return false
 			}
 		}
 	}
-	return true, nil
+	return true
 }
 
 func keys(set map[string]struct{}) []string {

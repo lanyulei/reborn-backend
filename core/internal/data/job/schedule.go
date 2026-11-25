@@ -495,10 +495,18 @@ func (r *fireRepo) Begin(ctx context.Context, f *biz.TriggerFire, cooldownS int3
 				f.Reason = fmt.Sprintf("冷却中：距上次触发不足 %d 秒", cooldownS)
 			}
 		}
+		// 「已提交」的记录此时还没有执行：信号状态先落「无需发送」，等 Complete 写回执行 ID 时再置为待发送。
+		// 在这里就预置的话，提交执行失败而调用方又不带幂等键重试时，这条记录永远停在「待发送」却没有执行——
+		// 信号查询要 JOIN 执行、选不中它，保留期清理又不删待发送的记录，它就永不清理。
+		// f.SignalState 不改：Complete 用的是它；中断后续做的路径由用例按 signal 与流程实例恢复。
+		state := f.SignalState
+		if f.Result == jc.FireSubmitted {
+			state = jc.SignalNone
+		}
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO job_trigger_fire (id, trigger_id, ref, result, reason, summary, workflow_instance_id, signal, signal_state)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-			f.ID, f.TriggerID, f.Ref, f.Result, f.Reason, f.Summary, dbx.NilIfEmpty(f.WorkflowInstanceID), f.Signal, f.SignalState); err != nil {
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::smallint)`,
+			f.ID, f.TriggerID, f.Ref, f.Result, f.Reason, f.Summary, dbx.NilIfEmpty(f.WorkflowInstanceID), f.Signal, state); err != nil {
 			return fmt.Errorf("insert job trigger fire: %w", err)
 		}
 		// 占住冷却窗口：提交执行在事务之外，后来的并发触发要在这里就看到「刚触发过」。

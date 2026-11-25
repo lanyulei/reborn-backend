@@ -142,6 +142,12 @@ type Shift struct {
 	RemindedMask   int32
 }
 
+// ShiftMask 一次批量更新里的「班次 → 已提醒标记」。
+type ShiftMask struct {
+	ShiftID string
+	Mask    int32
+}
+
 // ShareLink 公共地址。TokenHash / TokenSealed 仅写路径填充（读路径不出库）。
 type ShareLink struct {
 	ID             string
@@ -280,6 +286,8 @@ type Tx interface {
 	InsertMembers(ctx context.Context, groupID string, userIDs []string, role int32, actor string) (int, error)
 	UpdateMemberRole(ctx context.Context, groupID, userID string, role int32) error
 	DeleteMember(ctx context.Context, groupID, userID string) error
+	// HasPendingOverrides 用户在这个分组的值班表上是否还有未结束的替班班次。
+	HasPendingOverrides(ctx context.Context, groupID, userID string) (bool, error)
 
 	// LockSchedule 行锁读取值班表（含轮转名单）；不存在返回 ErrScheduleNotFound。
 	LockSchedule(ctx context.Context, id string) (*Schedule, error)
@@ -291,8 +299,13 @@ type Tx interface {
 	// DeleteSchedule 软删值班表并清除轮转名单。
 	DeleteSchedule(ctx context.Context, id, actor string) error
 
+	// ListShiftsRange 同 ShiftRepo.ListRange（同一条语句、同样的排序），但走事务连接：持有行锁的
+	// 事务内读班次用它，不再向连接池要第二条连接。
+	ListShiftsRange(ctx context.Context, from, to time.Time) ([]*Shift, error)
 	// ListShiftsFrom 值班表中结束时间晚于 from 的班次，按开始时间排序。
 	ListShiftsFrom(ctx context.Context, scheduleID string, from time.Time) ([]*Shift, error)
+	// LockShiftsFrom 同 ListShiftsFrom，但行锁读取班次：与提醒任务对班次行的 SKIP LOCKED 互斥。
+	LockShiftsFrom(ctx context.Context, scheduleID string, from time.Time) ([]*Shift, error)
 	// GetShift 不存在返回 ErrShiftNotFound。
 	GetShift(ctx context.Context, id string) (*Shift, error)
 	// DeleteFutureAutoShifts 删除开始时间晚于 now 的自动班次（恰在 now 开始的班次视为进行中，保留）。
@@ -318,6 +331,8 @@ type Tx interface {
 	// ListDueReminders 行锁（SKIP LOCKED）取出进入提醒窗口且尚有提醒未发的班次。
 	ListDueReminders(ctx context.Context, now time.Time, limit int) ([]*DueReminder, error)
 	SetRemindedMask(ctx context.Context, shiftID string, mask int32) error
+	// UpdateRemindedMasks 批量覆盖班次的已提醒标记（修改提醒提前量时按值重映射，见 remapRemindedMasks）。
+	UpdateRemindedMasks(ctx context.Context, masks []ShiftMask) error
 	// ListDueDigests 行锁（SKIP LOCKED）取出到达播报时刻且当日未播报的启用值班表。
 	ListDueDigests(ctx context.Context, now time.Time, limit int) ([]*Schedule, error)
 	// HasRecentManualNotify since 之后是否已手动发送过该值班表的该类通知。

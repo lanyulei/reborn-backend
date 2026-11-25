@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 
 	v1 "github.com/lanyulei/reborn/backend/core/api/oncall/v1"
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/oncall"
@@ -42,7 +43,7 @@ func (s *OncallShareService) ListShareLinks(ctx context.Context, req *v1.ListSha
 	if err != nil {
 		return nil, err
 	}
-	links, err := s.uc.List(ctx, actor, req.GetScopeType(), req.GetScopeId())
+	links, err := s.uc.List(ctx, actor, req.GetScopeType(), strings.ToLower(req.GetScopeId()))
 	if err != nil {
 		return nil, err
 	}
@@ -59,7 +60,7 @@ func (s *OncallShareService) CreateShareLink(ctx context.Context, req *v1.Create
 	if err != nil {
 		return nil, err
 	}
-	in := biz.ShareInput{ScopeType: req.GetScopeType(), ScopeID: req.GetScopeId(), Name: req.GetName(), ShowPhone: req.GetShowPhone()}
+	in := biz.ShareInput{ScopeType: req.GetScopeType(), ScopeID: strings.ToLower(req.GetScopeId()), Name: req.GetName(), ShowPhone: req.GetShowPhone()}
 	if req.ExpireTime != nil {
 		t := req.GetExpireTime().AsTime()
 		in.ExpireTime = &t
@@ -77,7 +78,7 @@ func (s *OncallShareService) GetShareLinkToken(ctx context.Context, req *v1.GetS
 	if err != nil {
 		return nil, err
 	}
-	token, err := s.uc.Token(ctx, actor, req.GetId())
+	token, err := s.uc.Token(ctx, actor, strings.ToLower(req.GetId()))
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +91,7 @@ func (s *OncallShareService) ResetShareLink(ctx context.Context, req *v1.ResetSh
 	if err != nil {
 		return nil, err
 	}
-	token, err := s.uc.Reset(ctx, actor, req.GetId())
+	token, err := s.uc.Reset(ctx, actor, strings.ToLower(req.GetId()))
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +104,7 @@ func (s *OncallShareService) DeleteShareLink(ctx context.Context, req *v1.Delete
 	if err != nil {
 		return nil, err
 	}
-	if err := s.uc.Delete(ctx, actor, req.GetId()); err != nil {
+	if err := s.uc.Delete(ctx, actor, strings.ToLower(req.GetId())); err != nil {
 		return nil, err
 	}
 	return &v1.DeleteShareLinkResponse{}, nil

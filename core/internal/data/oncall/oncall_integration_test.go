@@ -44,12 +44,14 @@ type env struct {
 	worker    *biz.WorkerUsecase
 	shiftRepo biz.ShiftRepo
 	schedRepo biz.ScheduleRepo
+	store     biz.Store
 	admin     biz.Actor
 }
 
 // newEnv 构造真实连接池上的全套用例；未配置 TEST_DATABASE_SOURCE 时跳过。
 // 护栏同 system 域：库名不含 "test" 直接失败（本测试会 TRUNCATE 业务表）。
-func newEnv(t *testing.T) *env {
+// 接收 testing.TB：集成基准（bench_integration_test.go）复用同一份夹具。
+func newEnv(t testing.TB) *env {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_SOURCE")
 	if dsn == "" {
@@ -96,6 +98,7 @@ func newEnv(t *testing.T) *env {
 		worker:    biz.NewWorkerUsecase(store, groups, schedules, shifts, notifier),
 		shiftRepo: shifts,
 		schedRepo: schedules,
+		store:     store,
 		admin:     biz.Actor{UserID: uAdmin},
 	}
 }
@@ -1035,5 +1038,78 @@ func TestIntegration_NotificationStatus(t *testing.T) {
 	t.Cleanup(func() { _, _ = e.pool.Exec(ctx, "UPDATE notify_route SET enabled = true WHERE id = $1", routeDigest) })
 	if d := status()[biz.NotifyClassDigest]; d.RouteName != "值班通知" || d.ChannelCount != 1 {
 		t.Fatalf("digest after disabling its route: %+v", d)
+	}
+}
+
+// 修改提醒提前量：未结束班次的已提醒标记按值改写到新下标（LockShiftsFrom + UpdateRemindedMasks）；
+// 名下还有未结束替班班次的成员不能移出（HasPendingOverrides），撤销替班后可以。
+func TestIntegration_RemindMaskRemapAndPendingOverride(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	g := e.group(t, uA, uB, uC)
+	now := time.Now().UTC().Truncate(time.Second)
+	cfg := dailyConfig(now.Add(-12*time.Hour), uA, uB)
+	cfg.BackupEnabled = false
+	cfg.RemindMinutes = []int32{30, 1440} // 入库前规范化为 [1440, 30]
+	s, err := e.schedules.Create(ctx, e.admin, g.ID, cfg)
+	if err != nil {
+		t.Fatalf("create schedule: %v", err)
+	}
+	if !slices.Equal(s.RemindMinutes, []int32{1440, 30}) {
+		t.Fatalf("stored remind minutes = %v, want [1440 30]", s.RemindMinutes)
+	}
+	// 未开始的班次：「提前一天」已发（第 0 位）。
+	if _, err := e.pool.Exec(ctx, "UPDATE oncall_shift SET reminded_mask = 1 WHERE schedule_id = $1::uuid AND start_time > now()", s.ID); err != nil {
+		t.Fatal(err)
+	}
+	masks := func() (distinct []int32) {
+		t.Helper()
+		if err := e.pool.QueryRow(ctx,
+			"SELECT array_agg(DISTINCT reminded_mask::int ORDER BY reminded_mask::int) FROM oncall_shift WHERE schedule_id = $1::uuid AND start_time > now()",
+			s.ID).Scan(&distinct); err != nil {
+			t.Fatalf("read masks: %v", err)
+		}
+		return distinct
+	}
+	// 只留 30 分钟提醒：它从未发过，标记必须清零（否则漏提醒）。
+	cfg.RemindMinutes = []int32{30}
+	if _, err := e.schedules.Update(ctx, e.admin, s.ID, cfg); err != nil {
+		t.Fatalf("update remind minutes: %v", err)
+	}
+	if got := masks(); !slices.Equal(got, []int32{0}) {
+		t.Fatalf("masks after dropping the sent reminder = %v, want [0]", got)
+	}
+	// 30 分钟提醒标成已发，再加回「提前一天」：30 的位从第 0 位挪到第 1 位。
+	if _, err := e.pool.Exec(ctx, "UPDATE oncall_shift SET reminded_mask = 1 WHERE schedule_id = $1::uuid AND start_time > now()", s.ID); err != nil {
+		t.Fatal(err)
+	}
+	cfg.RemindMinutes = []int32{30, 1440}
+	if _, err := e.schedules.Update(ctx, e.admin, s.ID, cfg); err != nil {
+		t.Fatalf("update remind minutes back: %v", err)
+	}
+	if got := masks(); !slices.Equal(got, []int32{2}) {
+		t.Fatalf("masks after re-adding the day-ahead reminder = %v, want [2]", got)
+	}
+
+	// carol 不在轮转名单里，替一个未开始的班次后不能被移出分组。
+	future := e.roleShifts(t, s.ID, biz.RolePrimary, now.Add(24*time.Hour), now.Add(72*time.Hour))
+	if len(future) == 0 {
+		t.Fatal("no future shifts")
+	}
+	target := future[len(future)-1]
+	created, err := e.schedules.CreateOverride(ctx, e.admin, biz.OverrideInput{
+		ScheduleID: s.ID, Role: biz.RolePrimary, UserID: uC, Start: target.Start, End: target.End,
+	})
+	if err != nil || len(created) != 1 {
+		t.Fatalf("create override: %v, %+v", err, created)
+	}
+	if err := e.groups.RemoveMember(ctx, e.admin, g.ID, uC); !errors.Is(err, biz.ErrMemberInUse) {
+		t.Fatalf("RemoveMember(pending override) error = %v, want ErrMemberInUse", err)
+	}
+	if err := e.schedules.RevokeOverride(ctx, e.admin, created[0].ID); err != nil {
+		t.Fatalf("revoke override: %v", err)
+	}
+	if err := e.groups.RemoveMember(ctx, e.admin, g.ID, uC); err != nil {
+		t.Fatalf("RemoveMember(after revoke) error = %v", err)
 	}
 }

@@ -83,12 +83,38 @@ func DecodeRequest(r *http.Request, v any) error {
 		if len(data) == 0 {
 			return nil
 		}
+		// 文本里的 NUL 字符（JSON 转义 \u0000）解码后落到 PostgreSQL 会被 22021 拒绝、对外成 500：在入口
+		// 统一按 400 拒绝。数据库的 text / varchar / jsonb 都存不下它，不存在能正常保存它的字段。
+		if hasNULEscape(data) {
+			return ErrBadRequest(errors.New(`text must not contain NUL characters (\u0000)`))
+		}
 		if err := encoding.GetCodec("protojson").Unmarshal(data, msg); err != nil {
 			return ErrBadRequest(err)
 		}
 		return nil
 	}
 	return translateBodyLimit(kchttp.DefaultRequestDecoder(r, v))
+}
+
+// hasNULEscape 报告 JSON 文本里是否有 NUL 转义（\u0000）。只有「奇偶性上真正起转义作用」的反斜杠才算：
+// 偶数个连续反斜杠后的 \u0000 是转义；`"\\u0000"`（两个反斜杠）表示字面文本，不是。
+func hasNULEscape(b []byte) bool {
+	const esc = `\u0000`
+	for from := 0; ; {
+		j := bytes.Index(b[from:], []byte(esc))
+		if j < 0 {
+			return false
+		}
+		start := from + j // 本次匹配到的第一个反斜杠
+		prev := 0
+		for start-prev-1 >= 0 && b[start-prev-1] == '\\' {
+			prev++
+		}
+		if prev%2 == 0 {
+			return true
+		}
+		from = start + len(esc)
+	}
 }
 
 // translateBodyLimit 默认解码器把 io.ReadAll 错误包成 400 且无法 errors.As 到

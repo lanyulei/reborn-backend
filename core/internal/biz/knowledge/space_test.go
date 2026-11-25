@@ -58,6 +58,16 @@ func (f *fakeSpaceRepo) List(context.Context, string, string) ([]*Space, error) 
 	return out, nil
 }
 
+func (f *fakeSpaceRepo) Names(_ context.Context, ids []string) (map[string]string, error) {
+	out := map[string]string{}
+	for _, id := range ids {
+		if s, ok := f.spaces[id]; ok {
+			out[id] = s.Name
+		}
+	}
+	return out, nil
+}
+
 // Levels 复刻 SQL 口径：公开 ≥1、负责人 3、ACL 取最大。
 func (f *fakeSpaceRepo) Levels(_ context.Context, userID string, roleIDs []string) (map[string]int32, error) {
 	out := map[string]int32{}

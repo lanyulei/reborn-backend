@@ -688,3 +688,122 @@ func TestWebhookUsecase_Trigger(t *testing.T) {
 		t.Fatalf("disabled: %v", err)
 	}
 }
+
+// settleStore 记录落账各步收到的 ctx 状态（是否已取消、是否带时限）。
+type settleStore struct {
+	*fakeStore
+	finishCtx, clearCtx ctxState
+}
+
+type ctxState struct {
+	called      bool
+	err         error
+	hasDeadline bool
+	remaining   time.Duration
+}
+
+func captureCtx(ctx context.Context) ctxState {
+	st := ctxState{called: true, err: ctx.Err()}
+	if deadline, ok := ctx.Deadline(); ok {
+		st.hasDeadline, st.remaining = true, time.Until(deadline)
+	}
+	return st
+}
+
+func (s *settleStore) Finish(ctx context.Context, task *Task, status string, counts Counts, runErr string, samples []cmdbcontract.RunError) error {
+	s.finishCtx = captureCtx(ctx)
+	return s.fakeStore.Finish(ctx, task, status, counts, runErr, samples)
+}
+
+func (s *settleStore) Clear(ctx context.Context, runID string) error {
+	s.clearCtx = captureCtx(ctx)
+	return s.fakeStore.Clear(ctx, runID)
+}
+
+type settleNotifier struct{ ctx ctxState }
+
+func (n *settleNotifier) Notify(ctx context.Context, _ SyncEvent) error {
+	n.ctx = captureCtx(ctx)
+	return nil
+}
+
+func assertSettleCtx(t *testing.T, step string, st ctxState) {
+	t.Helper()
+	if !st.called {
+		t.Fatalf("%s must be called", step)
+	}
+	if st.err != nil {
+		t.Fatalf("%s must not see the caller's cancellation, got %v", step, st.err)
+	}
+	if !st.hasDeadline || st.remaining <= 0 || st.remaining > settleTimeout {
+		t.Fatalf("%s must run under a bounded timeout (<= %s), got deadline=%v remaining=%s", step, settleTimeout, st.hasDeadline, st.remaining)
+	}
+}
+
+// 落账（终态 / 清理暂存 / 结果通知）不随调用方取消，但必须有界：此前是无时限的 WithoutCancel，
+// 停机时数据库不可达会一直挂到进程被强杀。
+func TestWorker_SettleContextsAreBounded(t *testing.T) {
+	t.Parallel()
+	// 任务失败收尾：三步都走到，且都带时限。
+	store := &settleStore{fakeStore: newFakeStore()}
+	store.source = aliyunSource()
+	store.task = &Task{ID: "t1", SourceID: "src-1", Trigger: cmdbcontract.TriggerManual}
+	notifier := &settleNotifier{}
+	col := &fakeCollector{provider: cmdbcontract.ProviderAliyun, err: errors.New("boom")}
+	uc := NewWorkerUsecase(store, store, store, store, store, fakeOpener{}, notifier, []Collector{col}, testLogger()).
+		WithOptions(WorkerOptions{Lease: 30 * time.Millisecond, CollectTimeout: time.Second, StagingBatch: 2})
+	if n, err := uc.RunOnce(context.Background(), "w"); n != 1 || err != nil {
+		t.Fatalf("RunOnce = %d err=%v", n, err)
+	}
+	assertSettleCtx(t, "Finish", store.finishCtx)
+	assertSettleCtx(t, "Clear", store.clearCtx)
+	assertSettleCtx(t, "Notify", notifier.ctx)
+
+	// 停机打断：调用方 ctx 已取消，清理暂存仍在未取消且有界的 ctx 上执行；不写终态。
+	store = &settleStore{fakeStore: newFakeStore()}
+	store.source = aliyunSource()
+	store.task = &Task{ID: "t2", SourceID: "src-1", Trigger: cmdbcontract.TriggerManual}
+	blocked := &fakeCollector{provider: cmdbcontract.ProviderAliyun, block: true}
+	uc = NewWorkerUsecase(store, store, store, store, store, fakeOpener{}, &settleNotifier{}, []Collector{blocked}, testLogger()).
+		WithOptions(WorkerOptions{Lease: 30 * time.Millisecond, CollectTimeout: 5 * time.Second, StagingBatch: 2})
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(50*time.Millisecond, cancel)
+	if n, err := uc.RunOnce(ctx, "w"); n != 1 || err != nil {
+		t.Fatalf("interrupted RunOnce = %d err=%v", n, err)
+	}
+	assertSettleCtx(t, "Clear after shutdown", store.clearCtx)
+	if store.finishCtx.called {
+		t.Fatal("an interrupted task must not be finished")
+	}
+}
+
+// 字段归属分流：manual → ManualKeys（同步不写），sync → SyncKeys（来源侧消失的键由对账删除），
+// both 两边都不进（同步只写不删）。
+func TestWorker_ReconcileParamsCarryOwnerKeys(t *testing.T) {
+	t.Parallel()
+	store := newFakeStore()
+	store.fields[cmdbcontract.ModelCloudHost] = []ModelField{
+		{Code: "instance_id", Owner: cmdbcontract.FieldOwnerBoth},
+		{Code: "spec", Owner: cmdbcontract.FieldOwnerSync},
+		{Code: "state", Owner: cmdbcontract.FieldOwnerSync},
+		{Code: "owner_note", Owner: cmdbcontract.FieldOwnerManual},
+	}
+	store.source = aliyunSource()
+	store.task = &Task{ID: "t1", SourceID: "src-1", Trigger: cmdbcontract.TriggerManual}
+	col := &fakeCollector{provider: cmdbcontract.ProviderAliyun, items: []*Resource{
+		{ModelCode: cmdbcontract.ModelCloudHost, ExternalID: "i-1", Attrs: map[string]any{"instance_id": "i-1", "spec": "4c8g"}},
+	}}
+	if n, err := newWorker(store, col).RunOnce(context.Background(), "w"); n != 1 || err != nil {
+		t.Fatalf("RunOnce = %d err=%v", n, err)
+	}
+	if len(store.reconcile) != 1 {
+		t.Fatalf("reconcile calls = %d", len(store.reconcile))
+	}
+	p := store.reconcile[0]
+	if len(p.ManualKeys) != 1 || p.ManualKeys[0] != "owner_note" {
+		t.Fatalf("ManualKeys = %v", p.ManualKeys)
+	}
+	if len(p.SyncKeys) != 2 || p.SyncKeys[0] != "spec" || p.SyncKeys[1] != "state" {
+		t.Fatalf("SyncKeys = %v, want [spec state]", p.SyncKeys)
+	}
+}

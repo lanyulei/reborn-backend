@@ -1,6 +1,7 @@
 package biz
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -73,6 +74,69 @@ func AggKey(bizID, groupKey string) string { return bizID + "|" + groupKey }
 
 // maxAggSamples 聚合样本上限（jsonb 体积受控）。
 const maxAggSamples = 20
+
+// maxAggKeyLen notify_agg_group.group_key 的列宽（varchar(191)，按字符计；这里按字节判更保守）。
+const maxAggKeyLen = 191
+
+// lazyPayload 一个事件 payload 的按需解码：至多解码一次，选路的 tag_match 与测试事件识别共用
+// 结果。此前两处各自无条件 json.Unmarshal（≤32KB），绝大多数事件两者都用不上。
+type lazyPayload struct {
+	ev      *Event
+	obj     map[string]any
+	decoded bool
+}
+
+func (p *lazyPayload) object() map[string]any {
+	if !p.decoded {
+		p.obj, p.decoded = p.ev.PayloadObject(), true
+	}
+	return p.obj
+}
+
+// 测试事件标记键在原始 JSON 里的两种可能写法的特征：字面量 "test"，或带 \u 转义的键
+// （如 "\u0074est"；其余转义序列解不出字母）。
+var (
+	testKeyLiteral = []byte(`"test"`)
+	unicodeEscape  = []byte(`\u`)
+)
+
+// mayCarryTestKey 报告原始 payload 是否可能含顶层键 test：是「解码后有 test 键」的必要条件
+// （键要么字面写作 "test"，要么含 \u 转义），不满足即可断定不是测试事件、无需解码。
+func mayCarryTestKey(raw []byte) bool {
+	return bytes.Contains(raw, testKeyLiteral) || bytes.Contains(raw, unicodeEscape)
+}
+
+// testedChannel 连通性测试事件（core 的「渠道连通性测试」直插，payload 恒带 test=true 与被测渠道
+// channel_id）要测的渠道；非测试事件返回空串。原始字节不可能含 test 键时不解码。
+func testedChannel(p *lazyPayload) string {
+	if !mayCarryTestKey(p.ev.Payload) {
+		return ""
+	}
+	obj := p.object()
+	if obj == nil {
+		return ""
+	}
+	if t, ok := obj["test"].(bool); !ok || !t {
+		return ""
+	}
+	id, _ := obj["channel_id"].(string)
+	return id
+}
+
+// onlyTestedChannel 测试事件只保留被测渠道的目标（被测渠道不在命中路由里时结果为空，事件按
+// 「无目标」记 failed，可在控制台看到）；非测试事件原样返回。
+func onlyTestedChannel(testing string, targets []Target) []Target {
+	if testing == "" {
+		return targets
+	}
+	out := make([]Target, 0, len(targets))
+	for _, t := range targets {
+		if t.ChannelID == testing {
+			out = append(out, t)
+		}
+	}
+	return out
+}
 
 // RouterOptions router 用例参数。
 type RouterOptions struct {
@@ -165,14 +229,31 @@ func (uc *RouterUsecase) processBatch(ctx context.Context, tx RouterTx, snap *Sn
 			mark(ev, EventStatusSuppressed)
 			continue
 		}
-		route := snap.MatchRoute(ev.BizID, ev.EventType, ev.Severity, ev.PayloadObject())
+		payload := lazyPayload{ev: ev}
+		route := snap.matchRoute(ev.BizID, ev.EventType, ev.Severity, payload.object)
 		if route == nil {
 			uc.log.WarnContext(ctx, "event has no matching route", "event_id", ev.ID, "biz", ev.BizID, "event_type", ev.EventType)
 			mark(ev, EventStatusFailed)
 			continue
 		}
-		if route.AggregateWindowS > 0 && ev.GroupKey != "" {
-			key := AggKey(ev.BizID, ev.GroupKey)
+		// 连通性测试事件（payload.test=true，带被测渠道 channel_id）只投递被测渠道且不进聚合：否则
+		// 命中路由的全部启用渠道都会真实投递——路由绑了通配模式时，测 A 渠道会把测试消息发到别的
+		// 群机器人与外部 webhook。
+		testing := testedChannel(&payload)
+		aggKey := ""
+		if route.AggregateWindowS > 0 && ev.GroupKey != "" && testing == "" {
+			aggKey = AggKey(ev.BizID, ev.GroupKey)
+		}
+		if len(aggKey) > maxAggKeyLen {
+			// 组键 biz|group_key 最长 64+1+128=193，超出 notify_agg_group.group_key 的列宽（191）。
+			// 聚合 upsert 会以 22001 让整批路由事务回滚、该事件永远卡在待路由队列最前。这类事件
+			// 退化为逐条分发（不聚合），只影响超长键自身。
+			uc.log.WarnContext(ctx, "aggregate key exceeds column width, routing without aggregation",
+				"event_id", ev.ID, "biz", ev.BizID, "group_key_len", len(ev.GroupKey))
+			aggKey = ""
+		}
+		if aggKey != "" {
+			key := aggKey
 			inc, ok := aggs[key]
 			if !ok {
 				inc = &AggIncrement{
@@ -203,7 +284,7 @@ func (uc *RouterUsecase) processBatch(ctx context.Context, tx RouterTx, snap *Sn
 		if explicit != nil && len(explicit.Unresolved) > 0 {
 			uc.log.WarnContext(ctx, "explicit recipients unresolved", "event_id", ev.ID, "recipients", explicit.Unresolved)
 		}
-		targets := ResolveTargets(snap, route, explicit, subs)
+		targets := onlyTestedChannel(testing, ResolveTargets(snap, route, explicit, subs))
 		if len(targets) == 0 {
 			uc.log.WarnContext(ctx, "route resolved no targets", "event_id", ev.ID, "route_id", route.ID)
 			mark(ev, EventStatusFailed)

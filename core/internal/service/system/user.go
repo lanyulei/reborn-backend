@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"slices"
+	"strings"
 
 	v1 "github.com/lanyulei/reborn/backend/core/api/system/v1"
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
@@ -81,11 +82,14 @@ func (s *UserService) CreateMachineUser(ctx context.Context, req *v1.CreateMachi
 // 资料须由超管操作（否则持「编辑用户」权限者可改超管邮箱/手机号）；其余
 // 不受限（用户可改自己的昵称等）。
 func (s *UserService) UpdateUser(ctx context.Context, req *v1.UpdateUserRequest) (*v1.UpdateUserResponse, error) {
-	if err := s.guardMutation(ctx, req.GetId(), false); err != nil {
+	// 路径里的 ID 统一成小写：UUID 大小写不敏感（库里是小写），守卫按字符串比较，否则同一账号的
+	// 大写写法会被当成另一个人（超管借此可绕过「不能改自己的 is_admin」）。
+	id := strings.ToLower(req.GetId())
+	if err := s.guardMutation(ctx, id, false); err != nil {
 		return nil, err
 	}
 	if req.IsAdmin != nil {
-		if err := s.guardAdminFlagChange(ctx, req.GetId(), req.GetIsAdmin()); err != nil {
+		if err := s.guardAdminFlagChange(ctx, id, req.GetIsAdmin()); err != nil {
 			return nil, err
 		}
 	}
@@ -97,7 +101,7 @@ func (s *UserService) UpdateUser(ctx context.Context, req *v1.UpdateUserRequest)
 		IsAdmin:  req.IsAdmin,
 		Depts:    toDeptAssignment(req.GetDepts()),
 	}
-	if err := s.uc.Update(ctx, req.GetId(), upd); err != nil {
+	if err := s.uc.Update(ctx, id, upd); err != nil {
 		return nil, err
 	}
 	return &v1.UpdateUserResponse{}, nil
@@ -118,14 +122,50 @@ func (s *UserService) UpdateUserStatus(ctx context.Context, req *v1.UpdateUserSt
 // ResetUserPassword implements proto UserService/ResetUserPassword：重置
 // 超管密码须由超管操作（否则持「重置密码」权限者可接管超管账号）；不接受对
 // 本人操作——改自己的密码走 AuthService/ChangeMyPassword，必须核对现密码。
+// 非超管还只能重置「权限不高于自己」的账号（见 guardResetCeiling）。
 func (s *UserService) ResetUserPassword(ctx context.Context, req *v1.ResetUserPasswordRequest) (*v1.ResetUserPasswordResponse, error) {
 	if err := s.guardMutation(ctx, req.GetId(), true); err != nil {
+		return nil, err
+	}
+	operator, err := UserIDFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.guardResetCeiling(ctx, operator, req.GetId()); err != nil {
 		return nil, err
 	}
 	if err := s.uc.ResetPassword(ctx, req.GetId(), req.GetPassword()); err != nil {
 		return nil, err
 	}
 	return &v1.ResetUserPasswordResponse{}, nil
+}
+
+// guardResetCeiling 非超管只能重置「权限不高于自己」的账号的密码：目标用户持有的角色必须全部
+// 是操作者自己也持有的。否则持「重置密码」权限的角色可以重置权限更高的用户（如容器平台管理员）
+// 的密码，再用对方的身份登录——绕开 guardRoleBinding 的全部上限守卫。超管不受限。
+func (s *UserService) guardResetCeiling(ctx context.Context, operator, targetID string) error {
+	admin, err := s.uc.IsAdminUser(ctx, operator)
+	if err != nil || admin {
+		return err
+	}
+	held, err := s.uc.ListRoles(ctx, operator)
+	if err != nil {
+		return err
+	}
+	current, err := s.uc.ListRoles(ctx, targetID)
+	if err != nil {
+		return err
+	}
+	owned := make(map[string]struct{}, len(held))
+	for _, r := range held {
+		owned[strings.ToLower(r.ID)] = struct{}{}
+	}
+	for _, r := range current {
+		if _, ok := owned[strings.ToLower(r.ID)]; !ok {
+			return v1.ErrorPermissionDenied("cannot reset the password of a user who holds roles you do not hold")
+		}
+	}
+	return nil
 }
 
 // DeleteUser implements proto UserService/DeleteUser：不能删除自己；删除
@@ -274,9 +314,10 @@ func (s *UserService) guardRoleBinding(ctx context.Context, targetID string, rol
 			return err
 		}
 	}
+	// 角色 ID 的 UUID 大小写不敏感（库里是小写）：按原样比较会把大写写法误判成「未持有」。
 	allowed := func(id string) bool {
-		return slices.ContainsFunc(held, func(r *biz.Role) bool { return r.ID == id }) ||
-			slices.ContainsFunc(current, func(r *biz.Role) bool { return r.ID == id })
+		return slices.ContainsFunc(held, func(r *biz.Role) bool { return strings.EqualFold(r.ID, id) }) ||
+			slices.ContainsFunc(current, func(r *biz.Role) bool { return strings.EqualFold(r.ID, id) })
 	}
 	for _, id := range roleIDs {
 		if !allowed(id) {
@@ -298,7 +339,7 @@ func (s *UserService) guardAdminFlagChange(ctx context.Context, targetID string,
 	if err := s.requireAdmin(ctx, operator); err != nil {
 		return err
 	}
-	if targetID == operator {
+	if strings.EqualFold(targetID, operator) {
 		target, err := s.uc.Get(ctx, targetID)
 		if err != nil {
 			return err

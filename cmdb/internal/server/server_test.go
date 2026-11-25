@@ -1,11 +1,13 @@
 package server
 
 import (
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/lanyulei/reborn/backend/cmdb/internal/conf"
@@ -84,5 +86,29 @@ func TestHTTPServer_Healthz(t *testing.T) {
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("unhealthy = %d", resp.StatusCode)
+	}
+}
+
+// /healthz 不鉴权：数据库连接错误（带主机 / 用户 / 库名）只进日志，响应是固定文案。
+func TestHTTPServer_HealthzDoesNotEchoDatabaseError(t *testing.T) {
+	t.Parallel()
+	dbErr := errors.New(`failed to connect to "host=10.1.2.3 user=cmdb_sync database=reborn": dial tcp 10.1.2.3:5432: connect: connection refused`)
+	srv := NewHTTPServer(&conf.Server{Http: &kitconf.HTTP{}}, Roles{}, testLogger(), pinger{err: dbErr}, nil)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+	resp, err := http.Get(ts.URL + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("unhealthy = %d", resp.StatusCode)
+	}
+	if got := strings.TrimSpace(string(body)); got != "database unreachable" {
+		t.Fatalf("healthz body must be a fixed message, got %q", got)
 	}
 }

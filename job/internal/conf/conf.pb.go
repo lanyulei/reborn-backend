@@ -7,14 +7,13 @@
 package conf
 
 import (
-	reflect "reflect"
-	sync "sync"
-	unsafe "unsafe"
-
 	kitconf "github.com/lanyulei/reborn/backend/kit/kitconf"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	durationpb "google.golang.org/protobuf/types/known/durationpb"
+	reflect "reflect"
+	sync "sync"
+	unsafe "unsafe"
 )
 
 const (
@@ -662,23 +661,20 @@ func file_conf_conf_proto_rawDescGZIP() []byte {
 	return file_conf_conf_proto_rawDescData
 }
 
-var (
-	file_conf_conf_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
-	file_conf_conf_proto_goTypes  = []any{
-		(*Bootstrap)(nil),           // 0: conf.Bootstrap
-		(*Server)(nil),              // 1: conf.Server
-		(*Data)(nil),                // 2: conf.Data
-		(*Engine)(nil),              // 3: conf.Engine
-		(*Runner)(nil),              // 4: conf.Runner
-		(*Notify)(nil),              // 5: conf.Notify
-		(*Server_RunnerAPI)(nil),    // 6: conf.Server.RunnerAPI
-		(*kitconf.HTTP)(nil),        // 7: kitconf.HTTP
-		(*kitconf.Database)(nil),    // 8: kitconf.Database
-		(*durationpb.Duration)(nil), // 9: google.protobuf.Duration
-		(*kitconf.Master)(nil),      // 10: kitconf.Master
-	}
-)
-
+var file_conf_conf_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_conf_conf_proto_goTypes = []any{
+	(*Bootstrap)(nil),           // 0: conf.Bootstrap
+	(*Server)(nil),              // 1: conf.Server
+	(*Data)(nil),                // 2: conf.Data
+	(*Engine)(nil),              // 3: conf.Engine
+	(*Runner)(nil),              // 4: conf.Runner
+	(*Notify)(nil),              // 5: conf.Notify
+	(*Server_RunnerAPI)(nil),    // 6: conf.Server.RunnerAPI
+	(*kitconf.HTTP)(nil),        // 7: kitconf.HTTP
+	(*kitconf.Database)(nil),    // 8: kitconf.Database
+	(*durationpb.Duration)(nil), // 9: google.protobuf.Duration
+	(*kitconf.Master)(nil),      // 10: kitconf.Master
+}
 var file_conf_conf_proto_depIdxs = []int32{
 	1,  // 0: conf.Bootstrap.server:type_name -> conf.Server
 	2,  // 1: conf.Bootstrap.data:type_name -> conf.Data

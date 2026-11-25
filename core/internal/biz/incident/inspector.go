@@ -62,7 +62,14 @@ func (uc *InspectorUsecase) escalate(ctx context.Context, settings *Settings) (i
 			continue
 		}
 		before := uc.now().Add(-time.Duration(respond) * time.Minute)
-		items, err := uc.d.Incidents.Inspect(ctx, InspectQuery{Statuses: []int32{StatusOpen}, Severities: []int32{sev}, OpenBefore: &before, ExcludeDrill: true}, inspectBatch)
+		// 「已升满级」「上一次升级未满一个响应时限」的故障下推到 SQL 里排除：它们永远不会再被升级，
+		// 留在结果集里会一直占着批次名额（按开启时间取最早的 200 条）——同等级累计 200 条后，
+		// 新开的故障永远排不进批次、不再升级通知。
+		escalatable := int32(maxEscalation)
+		items, err := uc.d.Incidents.Inspect(ctx, InspectQuery{
+			Statuses: []int32{StatusOpen}, Severities: []int32{sev}, OpenBefore: &before, ExcludeDrill: true,
+			EscalationLevelLT: &escalatable, EscalateTimeBefore: &before,
+		}, inspectBatch)
 		if err != nil {
 			return done, err
 		}
@@ -190,12 +197,14 @@ func (uc *InspectorUsecase) expireProposals(ctx context.Context, _ *Settings) (i
 	return done, nil
 }
 
-// reviewDue 复盘到期提醒：到期前 1 天与到期当天各一次。
+// reviewDue 复盘到期提醒：到期前 1 天与到期当天各一次。只提醒「已恢复」的故障：处理中的（重开后旧的到期日
+// 还在）与已合并的并不需要复盘，提醒了也无法处理，列表的「复盘已超期」也不算它们。
 func (uc *InspectorUsecase) reviewDue(ctx context.Context, settings *Settings) (int, error) {
 	done := 0
 	now := uc.now()
 	for stage, before := range map[int32]time.Time{reviewRemindDue: now.Add(24 * time.Hour), reviewRemindOverdue: now} {
 		items, err := uc.d.Incidents.Inspect(ctx, InspectQuery{
+			Statuses:       []int32{StatusResolved},
 			ReviewStatuses: []int32{ReviewPending, ReviewDrafting}, ReviewDueBefore: &before, ReviewRemindLT: stage, ExcludeDrill: true,
 		}, inspectBatch)
 		if err != nil {

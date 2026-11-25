@@ -23,7 +23,7 @@ const (
 	InternalFileUploadPath   = "/internal/v1/file/upload"
 
 	// KubeTokenHeader 发起请求的限时 kubeconfig 令牌 ID（写入审计）。
-	KubeTokenHeader = "X-Reborn-Kube-Token"
+	KubeTokenHeader = "X-Reborn-Kube-Token" //nolint:gosec // 请求头的名称，不是凭据
 )
 
 // 文件传输的查询参数。
@@ -82,7 +82,11 @@ func ParseKubePath(p string) KubeRequest {
 		return out
 	}
 	// /namespaces/<ns> 本身是对 namespaces 资源的访问；其后还有段才是命名空间限定。
-	if len(seg) >= 3 && seg[0] == "namespaces" {
+	// 例外：核心组的 /namespaces/<name>/status 与 /finalize 是 Namespace 自身的子资源（Resource=namespaces、
+	// Name=<name>、Subresource=status / finalize）。只在核心组这样判：其他组里可能有复数名恰好叫
+	// status / finalize 的命名空间级资源，那种仍按命名空间限定解析。
+	namespaceSubresource := out.Group == "" && len(seg) == 3 && (seg[2] == "status" || seg[2] == "finalize")
+	if len(seg) >= 3 && seg[0] == "namespaces" && !namespaceSubresource {
 		out.Namespace, seg = seg[1], seg[2:]
 	}
 	if len(seg) == 0 || seg[0] == "" {

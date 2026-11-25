@@ -77,6 +77,9 @@ type DispatchRepo interface {
 	Finish(ctx context.Context, d *ClaimedDispatch, res FinishResult, maxAttempts int32) error
 	// Release 不计尝试放回：status→1、attempts-1、next_retry_time=now()+delay（围栏）。
 	Release(ctx context.Context, d *ClaimedDispatch, delay time.Duration) error
+	// ReleaseBatch Release 的多行形态（单语句）：每行各自过围栏，围栏未过的行跳过且不报错
+	// （整批放回的调用方本就忽略 ErrStaleClaim）。
+	ReleaseBatch(ctx context.Context, ds []*ClaimedDispatch, delay time.Duration) error
 	// ReapExpired 回收租约过期的 sending 行：记失败尝试并按退避转 failed / dead。
 	ReapExpired(ctx context.Context, limit int, maxAttempts int32, backoff func(int32) time.Duration) (int, error)
 	// GetEvents 批量取源事件（渲染上下文）：一批 dispatch 的 distinct event_id 一次
@@ -264,10 +267,9 @@ func (uc *SenderUsecase) loadEvents(ctx context.Context, claimed []*ClaimedDispa
 func (uc *SenderUsecase) releaseAll(ctx context.Context, claimed []*ClaimedDispatch, delay time.Duration) {
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), writebackTimeout)
 	defer cancel()
-	for _, d := range claimed {
-		if err := uc.repo.Release(wctx, d, delay); err != nil && !errors.Is(err, ErrStaleClaim) {
-			uc.log.WarnContext(ctx, "release claimed dispatch failed", "dispatch_id", d.ID, "error", err)
-		}
+	// 一条语句整批放回（AGENTS §13.7）：此前逐行往返，100 行 = 100 次，且共用同一个 10s 时限。
+	if err := uc.repo.ReleaseBatch(wctx, claimed, delay); err != nil {
+		uc.log.WarnContext(ctx, "release claimed dispatches failed", "count", len(claimed), "error", err)
 	}
 }
 
@@ -322,9 +324,13 @@ func (uc *SenderUsecase) handle(ctx context.Context, snap *Snapshot, d *ClaimedD
 	}
 	switch {
 	case !ch.Enabled:
+		// 与限流/熔断同样进入本实例的跳过名单：否则该渠道的积压任务每分钟被整批声明再放回
+		//（各写一次库），期间 sender 循环空转。跳过只是优化，正确性由放回的 next_retry_time 保证。
+		uc.pause(ch.ID, releaseDisabledDelay)
 		return release(releaseDisabledDelay)
 	case ch.SecretErr != nil:
 		uc.log.ErrorContext(ctx, "channel secret unavailable, dispatch deferred", "channel_id", ch.ID, "dispatch_id", d.ID)
+		uc.pause(ch.ID, releaseSecretDelay)
 		return release(releaseSecretDelay)
 	case !uc.sender.Supports(ch.Type):
 		return finish(FinishResult{Retryable: false, Error: ErrChannelTypeUnsupported.Error()})
@@ -399,7 +405,9 @@ func (uc *SenderUsecase) handle(ctx context.Context, snap *Snapshot, d *ClaimedD
 		}
 		return nil
 	})
-	fr := FinishResult{OK: sendErr == nil, ProviderMsgID: res.ProviderMsgID, LatencyMs: latency, Content: snapshot, TemplateID: content.TemplateID}
+	// 渠道侧消息标识来自对端（webhook 的 X-Request-Id 响应头长度不受控）：不截断则落账语句以 22001
+	// 失败，已送达的这条会停在 sending、租约到期后被当作失败重发。统一在落账前按列宽截断。
+	fr := FinishResult{OK: sendErr == nil, ProviderMsgID: Truncate(res.ProviderMsgID, maxProviderMsgIDLen), LatencyMs: latency, Content: snapshot, TemplateID: content.TemplateID}
 	if sendErr != nil {
 		fr.Retryable = res.Retryable
 		fr.Error = Truncate(sendErr.Error(), 512)

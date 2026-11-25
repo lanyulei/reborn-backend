@@ -77,6 +77,11 @@ func encodeChannelConfig(cfg *biz.ChannelConfig) ([]byte, error) {
 
 // decodeChannelConfig 按渠道类型将 config jsonb 严格解码为类型化配置
 // （DisallowUnknownFields：落库结构漂移即刻暴露而非静默吞字段）。
+//
+// 为什么不放宽：更新是「读出渠道 → 整份 config 按本版本的结构体重新编码写回」。容忍未知字段的话，
+// 滚动发布期间还没升级的副本能读出一个带新字段的渠道，用户一保存，新字段就被旧结构静默抹掉；报错反而
+// 挡住了这次覆盖。因此新增 config 字段受发布顺序约束：先把 core 与 notify 管道全部升级到位，再启用新字段
+// （管道侧同样是严格解码，未升级的副本会把这类渠道当作不健康、投递延后）。
 func decodeChannelConfig(channelType string, raw []byte) (*biz.ChannelConfig, error) {
 	cfg := &biz.ChannelConfig{}
 	dec := json.NewDecoder(bytes.NewReader(raw))
@@ -242,6 +247,16 @@ func (r *channelRepo) DeleteChannel(ctx context.Context, id string) error {
 		if tag.RowsAffected() == 0 {
 			return biz.ErrChannelNotFound
 		}
+		// 锁内复查路由引用：biz 层的检查在事务之外，与此并发的「建路由」可能在检查之后才提交。建路由
+		// 在事务内对渠道行加共享锁（见 lockRouteChannels），与上面的行锁互斥——走到这里时要么对方已
+		// 提交（这里数得到并拒绝），要么它随后会看到渠道已删除而失败，不会留下指向已删渠道的悬挂绑定。
+		var n int64
+		if err := tx.QueryRow(ctx, routesUsingChannelSQL, id).Scan(&n); err != nil {
+			return fmt.Errorf("count routes using channel: %w", err)
+		}
+		if n > 0 {
+			return fmt.Errorf("%w: %d route(s)", biz.ErrChannelInUse, n)
+		}
 		return bumpChannelCfgVersion(ctx, tx)
 	})
 }
@@ -258,6 +273,19 @@ func (r *channelRepo) GetChannel(ctx context.Context, id string) (*biz.Channel, 
 		return nil, fmt.Errorf("get channel: %w", err)
 	}
 	return ch, nil
+}
+
+// ChannelBiz implements biz.ChannelRepo：不带软删过滤——渠道删掉之后，它的任务 / 死信仍按这个 biz 判数据范围。
+func (r *channelRepo) ChannelBiz(ctx context.Context, id string) (string, error) {
+	var bizID string
+	err := r.data.Pool.QueryRow(ctx, "SELECT biz_id FROM notify_channel WHERE id = $1", id).Scan(&bizID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", biz.ErrChannelNotFound
+		}
+		return "", fmt.Errorf("get channel biz: %w", err)
+	}
+	return bizID, nil
 }
 
 // ListChannelsByIDs implements biz.ChannelRepo：单条查询 ID 集合内的未删除

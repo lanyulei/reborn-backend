@@ -20,9 +20,15 @@ var (
 	_ biz.RelationTypeRepo = cmdbRelationTypeView{}
 	_ biz.CIRepo           = cmdbCIView{}
 	_ biz.RelationRepo     = cmdbRelationView{}
-	_ biz.HistoryRepo      = cmdbHistoryView{}
-	_ biz.ViewRepo         = cmdbViewView{}
-	_ biz.ScopeRepo        = cmdbScopeView{}
+	// 批量读取 / 更新能力（生产仓储实现，桩对齐其语义，端到端测试才走得到同一分支）。
+	_ biz.CIBatchLookup = cmdbCIView{}
+	// 按数据范围过滤的可选能力（生产仓储实现，桩对齐其语义，受限用户的端到端测试才走得到同一分支）。
+	_ biz.ScopedRelationRepo   = cmdbRelationView{}
+	_ biz.RelationPrecheckRepo = cmdbRelationView{}
+	_ biz.RetireGraphRepo      = cmdbRelationView{}
+	_ biz.HistoryRepo          = cmdbHistoryView{}
+	_ biz.ViewRepo             = cmdbViewView{}
+	_ biz.ScopeRepo            = cmdbScopeView{}
 )
 
 // CmdbStore 是 cmdb 域六个仓储接口的内存实现，语义对齐 data 层：唯一约束、
@@ -658,6 +664,19 @@ func (v cmdbCIView) GetByName(_ context.Context, modelCode, name string) (*biz.C
 	return nil, biz.ErrCINotFound
 }
 
+// GetByNames implements biz.CIBatchLookup：GetByName 的批量版本（口径一致；不存在的名称不在结果里，顺序不保证）。
+func (v cmdbCIView) GetByNames(_ context.Context, modelCode string, names []string) ([]*biz.CI, error) {
+	v.s.mu.RLock()
+	defer v.s.mu.RUnlock()
+	out := make([]*biz.CI, 0, len(names))
+	for _, e := range v.s.cis {
+		if !e.deleted && e.ci.ModelCode == modelCode && slices.Contains(names, e.ci.Name) {
+			out = append(out, cloneCI(&e.ci))
+		}
+	}
+	return out, nil
+}
+
 func (v cmdbCIView) List(_ context.Context, filter biz.CIFilter, page, pageSize int64) ([]*biz.CI, int64, error) {
 	v.s.mu.RLock()
 	items := make([]*biz.CI, 0, len(v.s.cis))
@@ -1007,6 +1026,80 @@ func (v cmdbRelationView) listRelated(ciID, typeCode, direction, keyword string,
 	return pageSlice(items, page, pageSize)
 }
 
+// RetireEdges implements biz.RetireGraphRepo（语义对齐 data 层的 stmtRetireEdges）：可展开的资源 = 根 +
+// 沿「未删除、cascade_retire、以资源类型为源端适用」的出边可达且未删除未退役的对端；返回这些资源的
+// 全部出边（类型未删除且以资源类型为源端适用、对端未删除）。行序：资源 ID、关系类型、对端名称、对端 ID；
+// 关系类型的顺序与 cmdbRelationTypeView.List 一致（按编码）。
+func (v cmdbRelationView) RetireEdges(_ context.Context, rootID string) ([]*biz.RetireEdge, error) {
+	v.s.mu.RLock()
+	defer v.s.mu.RUnlock()
+	// live 未删除的资源；srcType 关系类型未删除且以 modelCode 为源端适用。
+	live := func(id string) (*cmdbCIEntry, bool) {
+		e, ok := v.s.cis[id]
+		return e, ok && !e.deleted
+	}
+	srcType := func(typeCode, modelCode string) (*cmdbRelationTypeEntry, bool) {
+		e, ok := v.s.relTypes[typeCode]
+		if !ok || e.deleted || (e.t.SrcModel != biz.ModelAny && e.t.SrcModel != modelCode) {
+			return nil, false
+		}
+		return e, true
+	}
+	expanded := map[string]bool{rootID: true}
+	for queue := []string{rootID}; len(queue) > 0; queue = queue[1:] {
+		src, ok := live(queue[0])
+		if !ok {
+			continue
+		}
+		for _, r := range v.s.relations {
+			if r.SrcID != queue[0] {
+				continue
+			}
+			if t, ok := srcType(r.TypeCode, src.ci.ModelCode); !ok || t.t.OnDelete != biz.OnDeleteCascadeRetire {
+				continue
+			}
+			if dst, ok := live(r.DstID); ok && dst.ci.Status != biz.CIStatusRetired && !expanded[r.DstID] {
+				expanded[r.DstID] = true
+				queue = append(queue, r.DstID)
+			}
+		}
+	}
+	var out []*biz.RetireEdge
+	for id := range expanded {
+		src, ok := live(id)
+		if !ok {
+			continue
+		}
+		for _, r := range v.s.relations {
+			if r.SrcID != id {
+				continue
+			}
+			t, ok := srcType(r.TypeCode, src.ci.ModelCode)
+			if !ok {
+				continue
+			}
+			dst, ok := live(r.DstID)
+			if !ok {
+				continue
+			}
+			out = append(out, &biz.RetireEdge{SrcID: id, TypeCode: r.TypeCode, OnDelete: t.t.OnDelete, CI: cloneCI(&dst.ci)})
+		}
+	}
+	slices.SortFunc(out, func(a, b *biz.RetireEdge) int {
+		if c := strings.Compare(a.SrcID, b.SrcID); c != 0 {
+			return c
+		}
+		if c := strings.Compare(a.TypeCode, b.TypeCode); c != 0 {
+			return c
+		}
+		if c := strings.Compare(a.CI.Name, b.CI.Name); c != 0 {
+			return c
+		}
+		return strings.Compare(a.CI.ID, b.CI.ID)
+	})
+	return out, nil
+}
+
 func (v cmdbRelationView) CountByCI(_ context.Context, ciID string) (map[biz.RelationKey]int64, error) {
 	v.s.mu.RLock()
 	defer v.s.mu.RUnlock()
@@ -1017,6 +1110,63 @@ func (v cmdbRelationView) CountByCI(_ context.Context, ciID string) (map[biz.Rel
 		}
 		if r.DstID == ciID {
 			out[biz.RelationKey{TypeCode: r.TypeCode, Direction: biz.DirectionIncoming}]++
+		}
+	}
+	return out, nil
+}
+
+// CountByCIIn implements biz.ScopedRelationRepo：只计对端未删除且在范围内的关系（nil = 该维度不限）。
+func (v cmdbRelationView) CountByCIIn(_ context.Context, ciID string, modelCodes, envs []string) (map[biz.RelationKey]int64, error) {
+	v.s.mu.RLock()
+	defer v.s.mu.RUnlock()
+	out := map[biz.RelationKey]int64{}
+	for _, r := range v.s.relations {
+		if r.SrcID == ciID && v.peerInScope(r.DstID, modelCodes, envs) {
+			out[biz.RelationKey{TypeCode: r.TypeCode, Direction: biz.DirectionOutgoing}]++
+		}
+		if r.DstID == ciID && v.peerInScope(r.SrcID, modelCodes, envs) {
+			out[biz.RelationKey{TypeCode: r.TypeCode, Direction: biz.DirectionIncoming}]++
+		}
+	}
+	return out, nil
+}
+
+// peerInScope 对端未删除且类型 / 环境在范围内（nil = 该维度不限）。调用方须持有读锁。
+func (v cmdbRelationView) peerInScope(id string, modelCodes, envs []string) bool {
+	e, ok := v.s.cis[id]
+	if !ok || e.deleted {
+		return false
+	}
+	return (modelCodes == nil || slices.Contains(modelCodes, e.ci.ModelCode)) && (envs == nil || slices.Contains(envs, e.ci.Env))
+}
+
+// ExistingPeers implements biz.RelationPrecheckRepo（口径同 Exists）。
+func (v cmdbRelationView) ExistingPeers(_ context.Context, typeCode, direction, ciID string, peerIDs []string) (map[string]struct{}, error) {
+	v.s.mu.RLock()
+	defer v.s.mu.RUnlock()
+	out := make(map[string]struct{}, len(peerIDs))
+	for _, peer := range peerIDs {
+		src, dst := ciID, peer
+		if direction == biz.DirectionIncoming {
+			src, dst = peer, ciID
+		}
+		if _, ok := v.s.findRelation(typeCode, src, dst); ok {
+			out[peer] = struct{}{}
+		}
+	}
+	return out, nil
+}
+
+// CountSides implements biz.RelationPrecheckRepo（口径同 CountSide；没有关系的 id 不出现）。
+func (v cmdbRelationView) CountSides(ctx context.Context, typeCode, direction string, ids []string) (map[string]int64, error) {
+	out := make(map[string]int64, len(ids))
+	for _, id := range ids {
+		n, err := v.CountSide(ctx, typeCode, direction, id)
+		if err != nil {
+			return nil, err
+		}
+		if n > 0 {
+			out[id] = n
 		}
 	}
 	return out, nil
@@ -1437,6 +1587,15 @@ func (v cmdbCIView) Search(_ context.Context, filter biz.SearchFilter) ([]*biz.S
 
 // Neighbors implements biz.RelationRepo（BFS，语义对齐 data 层）。
 func (v cmdbRelationView) Neighbors(_ context.Context, ciID, flow string, depth, maxNodes int32) ([]*biz.TopologyNode, []*biz.TopologyEdge, bool, error) {
+	return v.neighbors(ciID, flow, depth, maxNodes, nil, nil)
+}
+
+// NeighborsIn implements biz.ScopedRelationRepo：范围外的对端不展开、不占节点预算（根节点不受限）。
+func (v cmdbRelationView) NeighborsIn(_ context.Context, ciID, flow string, depth, maxNodes int32, modelCodes, envs []string) ([]*biz.TopologyNode, []*biz.TopologyEdge, bool, error) {
+	return v.neighbors(ciID, flow, depth, maxNodes, modelCodes, envs)
+}
+
+func (v cmdbRelationView) neighbors(ciID, flow string, depth, maxNodes int32, modelCodes, envs []string) ([]*biz.TopologyNode, []*biz.TopologyEdge, bool, error) {
 	v.s.mu.RLock()
 	defer v.s.mu.RUnlock()
 	node := func(id string, d int32) *biz.TopologyNode {
@@ -1476,6 +1635,10 @@ func (v cmdbRelationView) Neighbors(_ context.Context, ciID, flow string, depth,
 			case flow != biz.FlowDownstream && slices.Contains(frontier, r.DstID):
 				other = r.SrcID
 			default:
+				continue
+			}
+			// 范围外（或已删除）的对端：这一行在生产 SQL 里就被过滤掉，不产生边、不占预算。
+			if (modelCodes != nil || envs != nil) && !v.peerInScope(other, modelCodes, envs) {
 				continue
 			}
 			if _, ok := seenEdge[id]; !ok {

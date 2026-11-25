@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/monitor"
 	basedata "github.com/lanyulei/reborn/backend/core/internal/data"
@@ -84,11 +85,12 @@ func (r *alertOpsRepo) AppendTx(ctx context.Context, tx txrun.Tx, ev *biz.AlertE
 	return nil
 }
 
-// ListByAlert implements biz.AlertEventRepo（走 idx_monitor_alert_event_alert）。
+// ListByAlert implements biz.AlertEventRepo（走 idx_monitor_alert_event_alert）。条数超过 limit 时保留的是最新的
+// limit 条（事件详情的时间线只展示最近的一段），仍按时间升序返回。
 func (r *alertOpsRepo) ListByAlert(ctx context.Context, alertID string, limit int) ([]*biz.AlertEvent, error) {
 	rows, err := r.data.Pool.Query(ctx,
 		`SELECT id::text, alert_id::text, type, COALESCE(operator::text, ''), detail, create_time
-		 FROM monitor_alert_event WHERE alert_id = $1 ORDER BY create_time, id LIMIT $2`, alertID, limit)
+		 FROM monitor_alert_event WHERE alert_id = $1 ORDER BY create_time DESC, id DESC LIMIT $2`, alertID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list monitor alert events: %w", err)
 	}
@@ -105,6 +107,7 @@ func (r *alertOpsRepo) ListByAlert(ctx context.Context, alertID string, limit in
 		}
 		items = append(items, &ev)
 	}
+	slices.Reverse(items) // 倒序取的最新一段还原为升序
 	return items, rows.Err()
 }
 

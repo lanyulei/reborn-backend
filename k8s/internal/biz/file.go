@@ -88,12 +88,21 @@ func SafeTarEntry(name, base string) bool {
 	return clean == base || strings.HasPrefix(clean, base+"/")
 }
 
-// SafeTarLink 报告链接条目的目标是否安全：相对路径且不逃出条目所在的目录树（按 base 为根计算）。
-func SafeTarLink(entry, target string) bool {
+// SafeTarLink 报告链接条目的目标是否安全：相对路径，且按 base 为根计算不逃出 base——
+// 用户解包后链接指向的仍是解包目录里 base 之内的位置。
+func SafeTarLink(entry, target, base string) bool {
 	if target == "" || strings.HasPrefix(target, "/") || strings.ContainsRune(target, 0) {
 		return false
 	}
-	resolved := path.Clean(path.Join(path.Dir(entry), target))
+	// 条目所在目录换成相对 base 的路径：base 自身记作 "."，其下的去掉 "base/" 前缀。
+	dir := path.Dir(entry)
+	switch {
+	case dir == base:
+		dir = "."
+	case strings.HasPrefix(dir, base+"/"):
+		dir = strings.TrimPrefix(dir, base+"/")
+	}
+	resolved := path.Clean(path.Join(dir, target))
 	return resolved != ".." && !strings.HasPrefix(resolved, "../") && !strings.HasPrefix(resolved, "/")
 }
 

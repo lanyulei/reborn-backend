@@ -131,13 +131,16 @@ func (uc *EventUsecase) Get(ctx context.Context, id string) (*Event, error) {
 // Replay 事件级重发：以源事件的类型/级别/标题/载荷/收件/分组直插一条新事件
 // （新 id、source=internal、不带 dedup_key——刻意再投，走完整路由链路）。
 func (uc *EventUsecase) Replay(ctx context.Context, source *Event) (*Event, error) {
-	if err := uc.replays.reserve(source.ID, ErrEventReplayTooFrequent); err != nil {
+	// 冷却按重发链的源头计：重发出的事件再被重发时沿用同一条冷却，链式重发不能绕过节流。
+	root := uc.replays.keyOf(source.ID)
+	if err := uc.replays.reserve(root, ErrEventReplayTooFrequent); err != nil {
 		return nil, err
 	}
 	id, err := idgen.NewID()
 	if err != nil {
 		return nil, fmt.Errorf("generate replay event id: %w", err)
 	}
+	uc.replays.alias(id, root)
 	now := time.Now().UTC()
 	event := &Event{
 		ID:              id,

@@ -32,7 +32,8 @@ func (uc *DutyUsecase) OnDuty(ctx context.Context, scheduleID string, at time.Ti
 		return nil, nil
 	}
 	// 班次区间左闭右开：取覆盖 at 的那一班（交班时刻归新的一班）。
-	shifts, err := uc.shifts.ListRange(ctx, at, at.Add(time.Second))
+	// 只取这张值班表的班次（谓词下推）；scheduleID 已经过上面的 Get，下方的逐行判定原样保留。
+	shifts, err := uc.shifts.ListRangeScoped(ctx, at, at.Add(time.Second), ShiftScope{ScheduleID: scheduleID})
 	if err != nil {
 		return nil, err
 	}

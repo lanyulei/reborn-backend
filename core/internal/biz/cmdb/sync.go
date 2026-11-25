@@ -97,6 +97,9 @@ type SyncSourceRepo interface {
 	Get(ctx context.Context, id string) (*SyncSource, error)
 	List(ctx context.Context, filter SyncSourceFilter, page, pageSize int64) ([]*SyncSource, int64, error)
 	// Update 乐观锁更新（version 不匹配返回 ErrSourceVersionConflict）；credential nil = 保留。
+	// next_run_time 不整行回写：调度器推进它时不升 version，写回调用方读到的值会把刚推进的计划时间
+	// 拉回去。仓储按行内旧值与库内时钟调整——更新后启用且为空时置为 now()，周期变化时不晚于
+	// now() + 新周期，其余保持调度器维护的值；src.NextRunTime 只是给不带调度器的内存桩的提示。
 	Update(ctx context.Context, src *SyncSource, expectedVersion int64, credential []byte) error
 	SoftDelete(ctx context.Context, id string, now time.Time) error
 	// SetWebhookHash 写回调令牌哈希；nil = 停用。
@@ -121,6 +124,16 @@ type SyncRunRepo interface {
 	ListConflicts(ctx context.Context, sourceID string, page, pageSize int64) ([]*SyncConflict, int64, error)
 	// ConflictsCapped 该采集源是否有类型的冲突数达到留存上限（清单不完整）。
 	ConflictsCapped(ctx context.Context, sourceID string) (bool, error)
+}
+
+// ScopedConflictRepo 冲突清单仓储的可选能力：按调用者可见类型过滤清单与封顶判定。
+// 清单带着采集到的资源名称与外部标识，数据范围外的类型不该看得到。生产仓储必须实现
+// （编译期断言）；未实现时（内存桩）受限调用者得到空清单，不退回全量。
+type ScopedConflictRepo interface {
+	// ListConflictsIn 同 ListConflicts，但只取 modelCodes 内类型的冲突行（空集合 = 无结果）。
+	ListConflictsIn(ctx context.Context, sourceID string, modelCodes []string, page, pageSize int64) ([]*SyncConflict, int64, error)
+	// ConflictsCappedIn 同 ConflictsCapped，但只看 modelCodes 内的类型。
+	ConflictsCappedIn(ctx context.Context, sourceID string, modelCodes []string) (bool, error)
 }
 
 // ConflictClaim 认领参数。
@@ -223,6 +236,9 @@ func (uc *SyncUsecase) List(ctx context.Context, filter SyncSourceFilter, page, 
 }
 
 // Update 乐观锁整体更新；provider 不可改；凭据传新值即轮换。启用且无计划时间时置为现在。
+// next_run_time 的落库值由仓储在 UPDATE 内按行内旧值决定（见 SyncSourceRepo.Update）：调度器并发
+// 推进它时不升 version，乐观锁发现不了，写回请求开始时读到的值会把它拉回去（当前任务一结束立刻
+// 再跑一次）；缩短周期也要等到旧计划时间才生效。
 func (uc *SyncUsecase) Update(ctx context.Context, actor Actor, id string, expectedVersion int64, upd SyncSourceUpdate, credential *string) (*SyncSource, error) {
 	cur, err := uc.sources.Get(ctx, id)
 	if err != nil {
@@ -317,13 +333,41 @@ func (uc *SyncUsecase) ListRuns(ctx context.Context, sourceID string, page, page
 	return uc.runs.ListBySource(ctx, sourceID, page, pageSize)
 }
 
-// ListConflicts 分页查询采集源当前未解决的同步冲突。
-func (uc *SyncUsecase) ListConflicts(ctx context.Context, sourceID string, page, pageSize int64) ([]*SyncConflict, int64, error) {
-	if _, err := uc.sources.Get(ctx, sourceID); err != nil {
+// ListConflicts 分页查询采集源当前未解决的同步冲突。受限调用者（scope）只看得到自己可见类型的
+// 冲突；采集源发现的资源会写进它的 env，调用者看不到该环境时整份清单不可见（见 conflictScope）。
+func (uc *SyncUsecase) ListConflicts(ctx context.Context, scope Scope, sourceID string, page, pageSize int64) ([]*SyncConflict, int64, error) {
+	src, err := uc.sources.Get(ctx, sourceID)
+	if err != nil {
 		return nil, 0, err
 	}
 	page, pageSize = paging.Normalize(page, pageSize)
-	return uc.runs.ListConflicts(ctx, sourceID, page, pageSize)
+	modelCodes, visible := conflictScope(scope, src.Env)
+	if !visible {
+		return nil, 0, nil
+	}
+	if modelCodes == nil {
+		return uc.runs.ListConflicts(ctx, sourceID, page, pageSize)
+	}
+	r, ok := uc.runs.(ScopedConflictRepo)
+	if !ok {
+		return nil, 0, nil
+	}
+	return r.ListConflictsIn(ctx, sourceID, modelCodes, page, pageSize)
+}
+
+// conflictScope 调用者在某采集源冲突清单上的可见类型集合：nil = 类型不限；ok = false 表示清单
+// 对其不可见——冲突行是采集到却没能写入的资源，采集源发现 的资源都落在它的 env 里。
+func conflictScope(scope Scope, sourceEnv string) (modelCodes []string, ok bool) {
+	if scope.Unrestricted {
+		return nil, true
+	}
+	if !scope.AllowsEnv(sourceEnv) {
+		return nil, false
+	}
+	if scope.ModelUnrestricted {
+		return nil, true
+	}
+	return scopeKeyList(scope.Models), true
 }
 
 // ClaimConflict 认领同步冲突：把冲突行绑定到已有的人工资源。
@@ -341,7 +385,22 @@ func (uc *SyncUsecase) ClaimConflict(ctx context.Context, actor Actor, sourceID,
 	})
 }
 
-// ConflictsCapped 冲突清单是否不完整（某类型达到留存上限）。
-func (uc *SyncUsecase) ConflictsCapped(ctx context.Context, sourceID string) (bool, error) {
-	return uc.runs.ConflictsCapped(ctx, sourceID)
+// ConflictsCapped 冲突清单是否不完整（调用者可见类型里是否有达到留存上限的；口径同 ListConflicts）。
+func (uc *SyncUsecase) ConflictsCapped(ctx context.Context, scope Scope, sourceID string) (bool, error) {
+	src, err := uc.sources.Get(ctx, sourceID)
+	if err != nil {
+		return false, err
+	}
+	modelCodes, visible := conflictScope(scope, src.Env)
+	if !visible {
+		return false, nil
+	}
+	if modelCodes == nil {
+		return uc.runs.ConflictsCapped(ctx, sourceID)
+	}
+	r, ok := uc.runs.(ScopedConflictRepo)
+	if !ok {
+		return false, nil
+	}
+	return r.ConflictsCappedIn(ctx, sourceID, modelCodes)
 }

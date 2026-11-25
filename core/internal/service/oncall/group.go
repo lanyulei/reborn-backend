@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 
 	v1 "github.com/lanyulei/reborn/backend/core/api/oncall/v1"
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/oncall"
@@ -65,7 +66,7 @@ func (s *OncallGroupService) GetGroup(ctx context.Context, req *v1.GetGroupReque
 	if err != nil {
 		return nil, err
 	}
-	g, err := s.uc.Get(ctx, actor, req.GetId())
+	g, err := s.uc.Get(ctx, actor, strings.ToLower(req.GetId()))
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +79,7 @@ func (s *OncallGroupService) UpdateGroup(ctx context.Context, req *v1.UpdateGrou
 	if err != nil {
 		return nil, err
 	}
-	if err := s.uc.Update(ctx, actor, req.GetId(), req.GetName(), req.GetDescription()); err != nil {
+	if err := s.uc.Update(ctx, actor, strings.ToLower(req.GetId()), req.GetName(), req.GetDescription()); err != nil {
 		return nil, err
 	}
 	return &v1.UpdateGroupResponse{}, nil
@@ -90,7 +91,7 @@ func (s *OncallGroupService) DeleteGroup(ctx context.Context, req *v1.DeleteGrou
 	if err != nil {
 		return nil, err
 	}
-	if err := s.uc.Delete(ctx, actor, req.GetId()); err != nil {
+	if err := s.uc.Delete(ctx, actor, strings.ToLower(req.GetId())); err != nil {
 		return nil, err
 	}
 	return &v1.DeleteGroupResponse{}, nil
@@ -102,7 +103,7 @@ func (s *OncallGroupService) ListGroupMembers(ctx context.Context, req *v1.ListG
 	if err != nil {
 		return nil, err
 	}
-	members, err := s.uc.ListMembers(ctx, actor, req.GetGroupId())
+	members, err := s.uc.ListMembers(ctx, actor, strings.ToLower(req.GetGroupId()))
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +123,7 @@ func (s *OncallGroupService) AddGroupMembers(ctx context.Context, req *v1.AddGro
 	if err != nil {
 		return nil, err
 	}
-	added, err := s.uc.AddMembers(ctx, actor, req.GetGroupId(), req.GetUserIds(), req.GetRole())
+	added, err := s.uc.AddMembers(ctx, actor, strings.ToLower(req.GetGroupId()), lowerAll(req.GetUserIds()), req.GetRole())
 	if err != nil {
 		return nil, err
 	}
@@ -135,7 +136,7 @@ func (s *OncallGroupService) UpdateGroupMember(ctx context.Context, req *v1.Upda
 	if err != nil {
 		return nil, err
 	}
-	if err := s.uc.UpdateMemberRole(ctx, actor, req.GetGroupId(), req.GetUserId(), req.GetRole()); err != nil {
+	if err := s.uc.UpdateMemberRole(ctx, actor, strings.ToLower(req.GetGroupId()), strings.ToLower(req.GetUserId()), req.GetRole()); err != nil {
 		return nil, err
 	}
 	return &v1.UpdateGroupMemberResponse{}, nil
@@ -147,7 +148,7 @@ func (s *OncallGroupService) RemoveGroupMember(ctx context.Context, req *v1.Remo
 	if err != nil {
 		return nil, err
 	}
-	if err := s.uc.RemoveMember(ctx, actor, req.GetGroupId(), req.GetUserId()); err != nil {
+	if err := s.uc.RemoveMember(ctx, actor, strings.ToLower(req.GetGroupId()), strings.ToLower(req.GetUserId())); err != nil {
 		return nil, err
 	}
 	return &v1.RemoveGroupMemberResponse{}, nil
@@ -168,7 +169,7 @@ func (s *OncallGroupService) ListUserCandidates(ctx context.Context, req *v1.Lis
 
 // ListChangeLogs implements proto OncallGroupService/ListChangeLogs.
 func (s *OncallGroupService) ListChangeLogs(ctx context.Context, req *v1.ListChangeLogsRequest) (*v1.ListChangeLogsResponse, error) {
-	logs, total, err := s.uc.ListChangeLogs(ctx, req.GetGroupId(), req.GetScheduleId(), req.GetPage(), int64(req.GetPageSize()))
+	logs, total, err := s.uc.ListChangeLogs(ctx, strings.ToLower(req.GetGroupId()), strings.ToLower(req.GetScheduleId()), req.GetPage(), int64(req.GetPageSize()))
 	if err != nil {
 		return nil, err
 	}

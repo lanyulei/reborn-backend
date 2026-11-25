@@ -174,6 +174,12 @@ func (r *incidentRepo) Inspect(ctx context.Context, q biz.InspectQuery, limit in
 	if q.EscalateTimeNull {
 		where += " AND i.escalate_time IS NULL"
 	}
+	if q.EscalationLevelLT != nil {
+		where += " AND i.escalation_level < " + a.add(*q.EscalationLevelLT)
+	}
+	if q.EscalateTimeBefore != nil {
+		where += " AND (i.escalate_time IS NULL OR i.escalate_time < " + a.add(*q.EscalateTimeBefore) + ")"
+	}
 	if q.LastActivityBefore != nil {
 		where += " AND i.last_activity_time < " + a.add(*q.LastActivityBefore)
 	}

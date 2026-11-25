@@ -122,6 +122,9 @@ func (r *routeRepo) CreateRoute(ctx context.Context, route *biz.Route) error {
 		return err
 	}
 	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+		if err := lockRouteChannels(ctx, tx, route.ChannelIDs); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO notify_route
 			     (id, biz_id, event_pattern, severity_min, tag_match, priority,
@@ -180,6 +183,11 @@ func (r *routeRepo) UpdateRoute(ctx context.Context, id string, upd biz.RouteUpd
 	query := "UPDATE notify_route SET " + strings.Join(sets, ", ") +
 		", update_time = now() WHERE id = $" + strconv.Itoa(len(args)) + " AND delete_time IS NULL"
 	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+		if upd.Rule != nil {
+			if err := lockRouteChannels(ctx, tx, upd.Rule.ChannelIDs); err != nil {
+				return err
+			}
+		}
 		tag, err := tx.Exec(ctx, query, args...)
 		if err != nil {
 			return fmt.Errorf("update route: %w", err)
@@ -269,15 +277,51 @@ func (r *routeRepo) ListRoutes(ctx context.Context, filter biz.RouteFilter, page
 	return routes, total, rows.Err()
 }
 
+// routesUsingChannelSQL 未删除路由中 channel_ids 包含该渠道的条数。
+const routesUsingChannelSQL = "SELECT count(*) FROM notify_route WHERE delete_time IS NULL AND $1::uuid = ANY(channel_ids)"
+
 // CountRoutesUsingChannel implements biz.ChannelReferenceChecker：未删除路由中
 // channel_ids 包含该渠道的条数（删除渠道前校验）。
 func (r *routeRepo) CountRoutesUsingChannel(ctx context.Context, channelID string) (int64, error) {
 	var n int64
-	if err := r.data.Pool.QueryRow(ctx,
-		"SELECT count(*) FROM notify_route WHERE delete_time IS NULL AND $1::uuid = ANY(channel_ids)", channelID).Scan(&n); err != nil {
+	if err := r.data.Pool.QueryRow(ctx, routesUsingChannelSQL, channelID).Scan(&n); err != nil {
 		return 0, fmt.Errorf("count routes using channel: %w", err)
 	}
 	return n, nil
+}
+
+// lockRouteChannels 在路由写入事务内锁住它引用的渠道行（FOR SHARE，含已软删的行），其中已软删的
+// 视为无效：软删渠道的事务先锁渠道行再复查路由引用，与此处的共享锁互斥——两个事务并发时，后到的
+// 一方要么看到渠道已删除（拒绝写入路由），要么看到对方已提交的路由（拒绝删除渠道），不会留下指向
+// 已删渠道的悬挂绑定。库里根本没有的 ID 仍由 biz 层校验、这里不拦（数据层不要求渠道行存在，
+// 集成测试直接引用任意 UUID 建路由）。
+func lockRouteChannels(ctx context.Context, tx pgx.Tx, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	rows, err := tx.Query(ctx, "SELECT id::text, delete_time IS NULL FROM notify_channel WHERE id = ANY($1::uuid[]) FOR SHARE", ids)
+	if err != nil {
+		return fmt.Errorf("lock route channels: %w", err)
+	}
+	defer rows.Close()
+	var deleted string
+	for rows.Next() {
+		var id string
+		var live bool
+		if err := rows.Scan(&id, &live); err != nil {
+			return fmt.Errorf("lock route channels: %w", err)
+		}
+		if !live {
+			deleted = id
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("lock route channels: %w", err)
+	}
+	if deleted != "" {
+		return fmt.Errorf("%w: channel %s was deleted", biz.ErrRouteInvalid, deleted)
+	}
+	return nil
 }
 
 // FixedRecipientsOfChannel implements biz.ChannelReferenceChecker：未删除路由中绑定该渠道的

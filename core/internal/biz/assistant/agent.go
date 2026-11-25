@@ -923,6 +923,13 @@ func (r *run) append(ctx context.Context, m *Message) error {
 // 错误（SQL/网络等）只进日志，客户端收到统一文案。
 func (r *run) fail(ctx context.Context, err error) error {
 	if ctx.Err() != nil || errors.Is(err, context.Canceled) {
+		// 超时（DeadlineExceeded）时连接通常还在：补发终止事件，客户端才能区分「回答完了」与「被截断」
+		// （此前流在最后一个 delta 后直接结束）。不发 error 事件；写出失败忽略，返回的仍是原始错误。
+		// 被上游取消（Canceled）时不写：SSE 传输层只在某次写出已经失败之后才取消运行，客户端已断开，
+		// 再写没人收得到，只会让收尾白等一个写超时。
+		if !errors.Is(context.Cause(ctx), context.Canceled) {
+			_ = r.emit(Event{Type: EventDone, Payload: DonePayload{Status: DoneCancelled}})
+		}
 		return err
 	}
 	reason, msg := "ASSISTANT_UNSPECIFIED", genericRunError
@@ -975,18 +982,39 @@ func buildSystemPrompt(username, nickname string, isAdmin, routed, knowledge boo
 	return b.String()
 }
 
+// maxCallTextRunes assistant_tool_call 的 call_id / tool_name 列宽（varchar(128)，按字符计）。
+const maxCallTextRunes = 128
+
 // normalizeCallIDs 为模型未提供 ID 的工具调用补齐唯一 ID（协议要求 tool 消息
-// 经 tool_call_id 关联），避免落库后无法回灌。
+// 经 tool_call_id 关联），避免落库后无法回灌。同时规整两类模型侧的异常输出：
+//   - 同一条消息里重复的 ID 重新生成：两个调用共用一个 ID 时，结果按 ID 回灌会错配
+//     （后一个覆盖前一个），部分模型接口还会直接拒绝带重复 id 的消息；
+//   - ID 与工具名截到列宽：输出被截断或模型幻觉出的超长值会让落库报错，整轮以
+//     「助手运行出错」结束。
+//
+// 合法工具名不超过 64 字符，截断只会作用于模型给出的未知工具名。
 func normalizeCallIDs(refs []ToolCallRef) error {
+	seen := make(map[string]struct{}, len(refs))
 	for i := range refs {
-		if refs[i].ID != "" {
-			continue
+		refs[i].ID = clipRunes(refs[i].ID, maxCallTextRunes)
+		refs[i].Name = clipRunes(refs[i].Name, maxCallTextRunes)
+		_, dup := seen[refs[i].ID]
+		if refs[i].ID == "" || dup {
+			id, err := idgen.NewID()
+			if err != nil {
+				return err
+			}
+			refs[i].ID = "call_" + id
 		}
-		id, err := idgen.NewID()
-		if err != nil {
-			return err
-		}
-		refs[i].ID = "call_" + id
+		seen[refs[i].ID] = struct{}{}
 	}
 	return nil
+}
+
+// clipRunes 把超过 n 个字符的字符串截到前 n 个字符（按字符不按字节，与库表列宽的计法一致）。
+func clipRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n])
 }

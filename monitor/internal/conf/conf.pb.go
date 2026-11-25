@@ -7,14 +7,13 @@
 package conf
 
 import (
-	reflect "reflect"
-	sync "sync"
-	unsafe "unsafe"
-
 	kitconf "github.com/lanyulei/reborn/backend/kit/kitconf"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	durationpb "google.golang.org/protobuf/types/known/durationpb"
+	reflect "reflect"
+	sync "sync"
+	unsafe "unsafe"
 )
 
 const (
@@ -776,25 +775,22 @@ func file_conf_conf_proto_rawDescGZIP() []byte {
 	return file_conf_conf_proto_rawDescData
 }
 
-var (
-	file_conf_conf_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
-	file_conf_conf_proto_goTypes  = []any{
-		(*Bootstrap)(nil),           // 0: conf.Bootstrap
-		(*Server)(nil),              // 1: conf.Server
-		(*Data)(nil),                // 2: conf.Data
-		(*Engine)(nil),              // 3: conf.Engine
-		(*Notify)(nil),              // 4: conf.Notify
-		(*Engine_Planner)(nil),      // 5: conf.Engine.Planner
-		(*Engine_Evaluator)(nil),    // 6: conf.Engine.Evaluator
-		(*Engine_Recorder)(nil),     // 7: conf.Engine.Recorder
-		(*Engine_Maintenance)(nil),  // 8: conf.Engine.Maintenance
-		(*kitconf.HTTP)(nil),        // 9: kitconf.HTTP
-		(*kitconf.Database)(nil),    // 10: kitconf.Database
-		(*durationpb.Duration)(nil), // 11: google.protobuf.Duration
-		(*kitconf.Master)(nil),      // 12: kitconf.Master
-	}
-)
-
+var file_conf_conf_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_conf_conf_proto_goTypes = []any{
+	(*Bootstrap)(nil),           // 0: conf.Bootstrap
+	(*Server)(nil),              // 1: conf.Server
+	(*Data)(nil),                // 2: conf.Data
+	(*Engine)(nil),              // 3: conf.Engine
+	(*Notify)(nil),              // 4: conf.Notify
+	(*Engine_Planner)(nil),      // 5: conf.Engine.Planner
+	(*Engine_Evaluator)(nil),    // 6: conf.Engine.Evaluator
+	(*Engine_Recorder)(nil),     // 7: conf.Engine.Recorder
+	(*Engine_Maintenance)(nil),  // 8: conf.Engine.Maintenance
+	(*kitconf.HTTP)(nil),        // 9: kitconf.HTTP
+	(*kitconf.Database)(nil),    // 10: kitconf.Database
+	(*durationpb.Duration)(nil), // 11: google.protobuf.Duration
+	(*kitconf.Master)(nil),      // 12: kitconf.Master
+}
 var file_conf_conf_proto_depIdxs = []int32{
 	1,  // 0: conf.Bootstrap.server:type_name -> conf.Server
 	2,  // 1: conf.Bootstrap.data:type_name -> conf.Data

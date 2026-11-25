@@ -22,7 +22,7 @@ var (
 )
 
 // executionRepo 执行记录、执行主机、执行日志的读写，以及派发要用的凭据 / 项目只读访问。
-// 状态字面量与 kit/jobcontract 一致：1 排队中 2 执行中 4 失败 8 结果未知 9 待审批（引擎不领取、不清扫）。
+// 状态字面量与 kit/jobcontract 一致：1 排队中 2 执行中 4 失败 6 已取消 8 结果未知 9 待审批（引擎不领取、不清扫）。
 type executionRepo struct {
 	data *Data
 }
@@ -82,10 +82,17 @@ func (r *executionRepo) Fail(ctx context.Context, executionID, leaseToken, reaso
 }
 
 // Release implements biz.QueueRepo：恢复为领取前的样子（排队中、无节点、无租约、无开始时间）。
+//
+// 领取之后已被请求取消的执行不回队列：ClaimNext 不会再领取带 cancel_requested 的执行，租约清扫又只看
+// 执行中的行——放回去它就永远停在「排队中」（模板禁止并发时还一直占着互斥位）。直接落为已取消
+// （节点从未拿到任务，不可能已经启动它）；notify_time 保持为空，结束通知交给 core 按既有逻辑处理。
+// 已取消是终态，finish_time 必须有值（ck_job_execution_finish）。
 func (r *executionRepo) Release(ctx context.Context, executionID, leaseToken string) error {
 	_, err := r.data.Pool.Exec(ctx, `
 		UPDATE job_execution
-		SET status = 1, runner_id = NULL, lease_token = '', lease_until = NULL, start_time = NULL
+		SET status      = CASE WHEN cancel_requested THEN 6 ELSE 1 END,
+		    finish_time = CASE WHEN cancel_requested THEN now() ELSE NULL END,
+		    runner_id = NULL, lease_token = '', lease_until = NULL, start_time = NULL
 		WHERE id = $1 AND status = 2 AND lease_token = $2`,
 		executionID, leaseToken)
 	if err != nil {

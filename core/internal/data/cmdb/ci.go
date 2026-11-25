@@ -20,6 +20,7 @@ import (
 var (
 	_ biz.CIRepo         = (*ciRepo)(nil)
 	_ biz.CIBatchUpdater = (*ciRepo)(nil)
+	_ biz.CIBatchLookup  = (*ciRepo)(nil)
 	_ biz.OwnerDirectory = (*ciRepo)(nil)
 )
 
@@ -187,6 +188,30 @@ func (r *ciRepo) GetByName(ctx context.Context, modelCode, name string) (*biz.CI
 	return ci, nil
 }
 
+// GetByNames implements biz.CIBatchLookup：GetByName 的批量版本。同一组列（scanCI），条件只多了一个
+// 名称集合；走 uq_cmdb_ci_model_name (model_code, name)。同一类型内未删除资源的名称唯一，名称至多对应一行。
+func (r *ciRepo) GetByNames(ctx context.Context, modelCode string, names []string) ([]*biz.CI, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	rows, err := r.data.Pool.Query(ctx,
+		"SELECT "+ciSelectColumns+ciFrom+"WHERE c.model_code = $1 AND c.name = ANY($2::text[]) AND c.delete_time IS NULL",
+		modelCode, dbx.TextArray(names))
+	if err != nil {
+		return nil, fmt.Errorf("get cmdb cis by names: %w", err)
+	}
+	defer rows.Close()
+	items := make([]*biz.CI, 0, len(names))
+	for rows.Next() {
+		ci, err := scanCI(rows.Scan)
+		if err != nil {
+			return nil, fmt.Errorf("scan cmdb ci: %w", err)
+		}
+		items = append(items, ci)
+	}
+	return items, rows.Err()
+}
+
 // List implements biz.CIRepo：固定列过滤 + tags 包含 + attrs 等值（jsonb @>，走 GIN）。
 func (r *ciRepo) List(ctx context.Context, filter biz.CIFilter, page, pageSize int64) ([]*biz.CI, int64, error) {
 	where := []string{"c.delete_time IS NULL"}
@@ -244,7 +269,8 @@ func (r *ciRepo) List(ctx context.Context, filter biz.CIFilter, page, pageSize i
 			switch v.(type) {
 			case string, float64, float32, int, int32, int64, bool:
 				if !identPattern.MatchString(key) {
-					return nil, 0, fmt.Errorf("invalid attr filter key %q", key)
+					// 请求里的键不合法（大写、点号等）：客户端错误 400，不是仓储故障。
+					return nil, 0, biz.InvalidAttrFilter("invalid attr filter key %q", key)
 				}
 				add("(c.attrs ->> '"+key+"') = ?", scalarText(v))
 			default:
@@ -334,12 +360,14 @@ func scalarText(v any) string {
 	}
 }
 
-// Update implements biz.CIRepo：乐观锁条件更新 + 历史同事务。
+// Update implements biz.CIRepo：乐观锁条件更新 + 历史同事务。attrs 变化时触发器取类型级共享键锁，
+// 可能与「先取排他键锁、再取行锁」的认领 / 解除托管形成死锁环（见 mapDeadlock），由 PG 中止的一侧
+// 同样映射为可重试错误。
 func (r *ciRepo) Update(ctx context.Context, ci *biz.CI, expectedVersion int64, h *biz.History) error {
 	err := dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		return updateCI(ctx, tx, ci, expectedVersion, h)
 	})
-	return r.explainDuplicate(ctx, err, ci)
+	return r.explainDuplicate(ctx, mapDeadlock(err), ci)
 }
 
 // UpdateBatch implements biz.CIBatchUpdater：多条乐观锁更新 + 历史同一事务
@@ -358,7 +386,7 @@ func (r *ciRepo) UpdateBatch(ctx context.Context, items []*biz.CI, histories []*
 		}
 		return nil
 	})
-	return r.explainDuplicate(ctx, err, items...)
+	return r.explainDuplicate(ctx, mapDeadlock(err), items...)
 }
 
 // updateCI 事务内的单条乐观锁更新 + 历史。
@@ -393,9 +421,10 @@ func updateCI(ctx context.Context, tx pgx.Tx, ci *biz.CI, expectedVersion int64,
 }
 
 // SoftDelete implements biz.CIRepo：先锁住资源行再数关系（并发的关联写入对两端资源行取共享锁，见
-// lockLiveCIs，二者互斥），仍有关系返回 ErrCIInUse。
+// lockLiveCIs，二者互斥），仍有关系返回 ErrCIInUse。行锁在前、触发器的共享键锁在后，与认领 / 解除
+// 托管的取锁顺序相反，死锁时同样映射为可重试错误（见 mapDeadlock）。
 func (r *ciRepo) SoftDelete(ctx context.Context, id string, at time.Time, h *biz.History) error {
-	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+	return mapDeadlock(dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		var one int
 		if err := tx.QueryRow(ctx, "SELECT 1 FROM cmdb_ci WHERE id = $1 AND delete_time IS NULL FOR UPDATE", id).Scan(&one); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -415,7 +444,7 @@ func (r *ciRepo) SoftDelete(ctx context.Context, id string, at time.Time, h *biz
 			return fmt.Errorf("soft delete cmdb ci: %w", err)
 		}
 		return insertHistories(ctx, tx, []*biz.History{h})
-	})
+	}))
 }
 
 // Unclaim implements biz.CIRepo。

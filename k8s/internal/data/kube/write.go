@@ -14,6 +14,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/jsonmergepatch"
@@ -114,6 +115,7 @@ func (u *userClients) prepare(ref k8scontract.Ref, obj *unstructured.Unstructure
 	}
 	ch.current = cur
 	restoreMaskedSecret(obj.Object, cur.Object)
+	keepStatus(obj, cur)
 	// 乐观锁：以预览时读到的版本为准；未提供时用 YAML 自带的，再没有则用刚读到的。
 	switch {
 	case resourceVersion != "":
@@ -149,6 +151,16 @@ func restoreMaskedSecret(obj, current map[string]any) {
 				delete(sd, k)
 			}
 		}
+	}
+}
+
+// keepStatus 更新时带上对象现有的 status。内置资源与启用了 status 子资源的 CRD，PUT 不带 status 时服务端
+// 自己保留旧值；没启用 status 子资源的 CRD 是整体替换，不带就等于把 status 清空（控制器下一轮 reconcile
+// 才补回，其间依赖它的逻辑全部落空）。带上现有的 status 对前者没有影响（主资源的 PUT 忽略它），对后者
+// 即原样保留。YAML 里写的 status 仍然不采纳（上面已去掉）。
+func keepStatus(obj, cur *unstructured.Unstructured) {
+	if st, ok := cur.Object["status"]; ok {
+		obj.Object["status"] = runtime.DeepCopyJSONValue(st)
 	}
 }
 
@@ -414,6 +426,7 @@ func (u *userClients) manifest(req k8scontract.ManifestRequest, commit bool) (k8
 		}
 		audit.After = after.Object
 		audit.Patch = mergePatch(audit.Before, audit.After)
+		audit.Ref.Name = after.GetName() // generateName：名称由集群生成，审计要记实际创建的对象
 	}
 	return out, audits, nil
 }

@@ -1,6 +1,7 @@
 package biz
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"slices"
@@ -142,10 +143,51 @@ func (c ScheduleConfig) apply(s *Schedule, members map[string]*Member) error {
 	// 在班次边界留下几十秒的碎片。
 	s.AnchorTime, s.AnchorOffset = c.AnchorTime.UTC().Truncate(time.Minute), int32(offset)
 	s.BackupEnabled, s.HorizonDays = c.BackupEnabled, c.HorizonDays
-	s.RemindMinutes = slices.Clone(c.RemindMinutes)
+	s.RemindMinutes = normalizeRemindMinutes(c.RemindMinutes)
 	s.DigestTime = c.DigestTime
 	s.MemberIDs = slices.Clone(c.MemberIDs)
 	return nil
+}
+
+// normalizeRemindMinutes 提醒提前量固定为从大到小（先到点的在前），与前端提交的顺序一致。
+// reminded_mask 按下标记「哪条提醒已发」：同一组提前量只有顺序固定，下标才有确定的含义，
+// 修改配置时才能按值把已提醒标记对到新的下标上（见 remapRemindedMask）。
+func normalizeRemindMinutes(m []int32) []int32 {
+	out := slices.Clone(m)
+	slices.SortFunc(out, func(a, b int32) int { return cmp.Compare(b, a) })
+	return out
+}
+
+// remapRemindedMask 把按 old 的下标记录的已提醒标记改写为按 next 的下标记录：提醒按提前量
+// （分钟）对应——同一个提前量在新配置里的下标可能不同；新配置里不再有的提醒直接丢弃，
+// 新出现的提醒保持未发送。
+func remapRemindedMask(old, next []int32, mask int32) int32 {
+	var out int32
+	for i, m := range next {
+		if j := slices.Index(old, m); j >= 0 && mask&(int32(1)<<j) != 0 {
+			out |= int32(1) << i
+		}
+	}
+	return out
+}
+
+// remapRemindedMasks 提醒提前量变化后，把值班表里尚未结束的班次（含进行中的）的已提醒标记按值
+// 改写到新下标。不改的话第 i 位会被按新的提醒解释：去掉一条提醒后其余提醒被判为「已发」
+// （漏提醒），调换顺序后已发的提醒被判为「未发」（重复提醒）。调用方须已持有值班表行锁。
+func remapRemindedMasks(ctx context.Context, tx Tx, old, next *Schedule, now time.Time) error {
+	// 行锁读取：提醒任务对班次行用 SKIP LOCKED，这里与它互斥——要么先拿到行锁（它这一轮跳过这些
+	// 班次），要么等它提交后读到它刚置位的标记；不会拿过期的标记覆盖掉它刚写入的提醒。
+	shifts, err := tx.LockShiftsFrom(ctx, next.ID, now)
+	if err != nil {
+		return err
+	}
+	var updates []ShiftMask
+	for _, sh := range shifts {
+		if mask := remapRemindedMask(old.RemindMinutes, next.RemindMinutes, sh.RemindedMask); mask != sh.RemindedMask {
+			updates = append(updates, ShiftMask{ShiftID: sh.ID, Mask: mask})
+		}
+	}
+	return tx.UpdateRemindedMasks(ctx, updates)
 }
 
 // rotationChanged 报告两份配置的轮转规则是否不同（不同才需要重排未开始的班次）。
@@ -172,7 +214,8 @@ func memberSet(members []*Member) map[string]*Member {
 //  4. 写入剩余片段并推进 generated_until。
 //
 // 首次发布、后台补排（reset=false）、改配置后重排、撤销替班后恢复共用本过程。
-// 重排前后同一人同一角色同一开始时间的班次沿用已发送的提醒标记，避免重复提醒。
+// 重排前后同一人同一角色同一开始时间的班次沿用已发送的提醒标记，避免重复提醒；提醒提前量
+// 同时变了的话，沿用之前标记已按值改写到新下标（见 remapRemindedMasks）。
 func generate(ctx context.Context, tx Tx, s *Schedule, now time.Time, reset bool, actor string) error {
 	if s.Status != StatusEnabled {
 		return nil
@@ -276,7 +319,8 @@ func (uc *ScheduleUsecase) Create(ctx context.Context, actor Actor, groupID stri
 }
 
 // Update 修改值班表配置。轮转规则有变化时重排全部尚未开始的自动班次并通知名单成员；
-// 进行中的班次保持到结束，已过去的班次与替班班次不受影响。
+// 进行中的班次保持到结束，已过去的班次与替班班次不受影响。提醒提前量有变化时，未结束班次的
+// 已提醒标记在同一事务内按值改写到新下标（否则会漏提醒或重复提醒）。
 func (uc *ScheduleUsecase) Update(ctx context.Context, actor Actor, id string, cfg ScheduleConfig) (*Schedule, error) {
 	cur, err := uc.schedules.Get(ctx, id)
 	if err != nil {
@@ -301,8 +345,15 @@ func (uc *ScheduleUsecase) Update(ctx context.Context, actor Actor, id string, c
 		if err := tx.UpdateSchedule(ctx, &next, actor.UserID); err != nil {
 			return err
 		}
+		now := uc.now()
+		if !slices.Equal(old.RemindMinutes, next.RemindMinutes) {
+			// 先改写已有班次的标记再重排：重排沿用标记时拿到的已经是新下标。
+			if err := remapRemindedMasks(ctx, tx, old, &next, now); err != nil {
+				return err
+			}
+		}
 		changed := rotationChanged(old, &next)
-		if err := generate(ctx, tx, &next, uc.now(), changed, actor.UserID); err != nil {
+		if err := generate(ctx, tx, &next, now, changed, actor.UserID); err != nil {
 			return err
 		}
 		return writeLog(ctx, tx, actor, old.GroupID, id, ActionScheduleUpdate, "修改值班表「"+next.Name+"」", map[string]any{
@@ -489,7 +540,8 @@ func (uc *ScheduleUsecase) ListShifts(ctx context.Context, q ShiftQuery) ([]*Shi
 			items = append(items, sh)
 		}
 	}
-	issues := detectIssues(detectInput{Schedules: schedules, Shifts: all, From: maxTime(q.From, uc.now()), To: q.To})
+	now := uc.now()
+	issues := detectIssues(detectInput{Schedules: schedules, Shifts: all, From: maxTime(q.From, now), To: q.To, Now: now})
 	issues = slices.DeleteFunc(issues, func(is *Issue) bool {
 		return !match(is.GroupID, is.ScheduleID) || (q.UserID != "" && is.UserID != q.UserID)
 	})
@@ -506,11 +558,12 @@ type OverrideInput struct {
 	Remark     string
 }
 
-// onHandover 报告 t 是否落在值班表每天的交接时刻上（值班表时区下与轮转起点同一钟面时刻）。
+// onHandover 报告 t 是否落在值班表每天的交接时刻上：与「从轮转起点逐日推算」出的实际边界
+// 比较，而不是比对钟面时刻。班次的边界正是这样推算出来的（Rotation.boundary）；按钟面比对在
+// 夏令时拨快当天会出错——被跳过的本地时刻（如 02:30）并不存在，实际边界落在归一化后的时刻
+// （01:30），按钟面却判它「不在交接时刻上」，这一天的替班就创建不了。
 func onHandover(s *Schedule, loc *time.Location, t time.Time) bool {
-	ah, am, as := s.AnchorTime.In(loc).Clock()
-	th, tm, ts := t.In(loc).Clock()
-	return ah == th && am == tm && as == ts
+	return Rotation{Loc: loc, StepDays: 1, Anchor: s.AnchorTime}.atBoundary(t)
 }
 
 // CreateOverride 替班：把 [Start, End) 内 Role 的值班人换成 UserID。值班以天为最小单位：
@@ -592,13 +645,14 @@ func (uc *ScheduleUsecase) CreateOverride(ctx context.Context, actor Actor, in O
 		}
 		created = plan.Created
 		if err := writeLog(ctx, tx, actor, s.GroupID, s.ID, ActionShiftOverride, "替班："+s.Name+" "+RoleLabel(in.Role), map[string]any{
-			"role": in.Role, "user_id": in.UserID, "origin_user_ids": plan.Origins,
+			"role": in.Role, "user_id": in.UserID, "origin_user_ids": plan.Origins, "displaced_user_ids": plan.Displaced,
 			"start_time": start.Format(time.RFC3339), "end_time": end.Format(time.RFC3339), "remark": in.Remark,
 		}); err != nil {
 			return err
 		}
 		return uc.notify.shiftChanged(ctx, tx, s, shiftChange{
-			Role: in.Role, UserID: in.UserID, Origins: plan.Origins, Start: start, End: end, Remark: in.Remark,
+			Role: in.Role, UserID: in.UserID, Origins: plan.Origins, Displaced: plan.Displaced,
+			Start: start, End: end, Remark: in.Remark,
 		})
 	})
 	if err != nil {

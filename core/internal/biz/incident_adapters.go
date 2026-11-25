@@ -290,6 +290,30 @@ func (m incidentAlerts) CountFiring(ctx context.Context, ids []string) (int, err
 	return m.lookup.CountFiring(ctx, ids)
 }
 
+// unresolvedChunk AnyUnresolved 逐批读取告警的批大小。
+const unresolvedChunk = 500
+
+// AnyUnresolved implements bizincident.Alerts：ids 里是否还有 status = 告警中 的，被屏蔽 / 抑制的也算。
+// 监控域的 CountFiring 把被屏蔽 / 抑制的排除在外（那是「是否参与归并」的口径），而本域只有它和 ListByIDs
+// 两个批量读：先用 CountFiring 走一条轻量计数——有未屏蔽的告警中事件就已经能下结论（绝大多数调用止步于此）；
+// 为 0 时再分批读出告警看状态，遇到第一条告警中的即返回。
+func (m incidentAlerts) AnyUnresolved(ctx context.Context, ids []string) (bool, error) {
+	n, err := m.lookup.CountFiring(ctx, ids)
+	if err != nil || n > 0 {
+		return n > 0, err
+	}
+	for chunk := range slices.Chunk(ids, unresolvedChunk) {
+		items, err := m.lookup.ListByIDs(ctx, chunk)
+		if err != nil {
+			return false, err
+		}
+		if slices.ContainsFunc(items, func(a *bizmonitor.Alert) bool { return a.Status == mc.AlertFiring }) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (m incidentAlerts) Get(ctx context.Context, id string) (*bizincident.AlertRef, error) {
 	a, err := m.alerts.Get(ctx, id)
 	if kerrors.Is(err, bizmonitor.ErrAlertNotFound) {
@@ -325,13 +349,13 @@ func (m incidentAlerts) RecentFiring(ctx context.Context, since time.Time, limit
 	return out, nil
 }
 
-// CanRead implements bizincident.Alerts：按监控域的分组数据范围。
-func (m incidentAlerts) CanRead(ctx context.Context, userID string, alert *bizincident.AlertRef) (bool, error) {
+// Reader implements bizincident.Alerts：按监控域的分组数据范围（超级管理员全部可见）；范围只解析一次。
+func (m incidentAlerts) Reader(ctx context.Context, userID string) (func(alert *bizincident.AlertRef) bool, error) {
 	scope, err := m.scopes.Resolve(ctx, userID)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	return scope.IsAdmin() || scope.CanRead(alert.GroupID), nil
+	return func(alert *bizincident.AlertRef) bool { return scope.IsAdmin() || scope.CanRead(alert.GroupID) }, nil
 }
 
 func (m incidentAlerts) Note(ctx context.Context, alertID, operator, text string) error {
@@ -386,18 +410,32 @@ func cardOf(ci *bizcmdb.CI) *bizincident.CICard {
 	return card
 }
 
-// Cards implements bizincident.CMDB：逐个读取（资源列表没有按 ID 集合的过滤），至多 200 个。
+// Cards implements bizincident.CMDB：一条语句批量读取（CIUsecase.GetByIDs），一次至多
+// bizincident.MaxCardsPerLookup 个。结果按入参顺序排列、不存在（含已删除）的不在结果中——与此前逐个
+// GetByID 的结果相同，只是把至多 200 次往返并成了 1 次。
 func (m incidentCMDB) Cards(ctx context.Context, ids []string) ([]*bizincident.CICard, error) {
+	ids = ids[:min(len(ids), bizincident.MaxCardsPerLookup)]
 	out := make([]*bizincident.CICard, 0, len(ids))
-	for _, id := range ids[:min(len(ids), 200)] {
-		ci, err := m.cis.GetByID(ctx, id)
-		if kerrors.Is(err, bizcmdb.ErrCINotFound) {
-			continue
+	if len(ids) == 0 {
+		return out, nil
+	}
+	items, err := m.cis.GetByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[string]*bizcmdb.CI, len(items))
+	for _, ci := range items {
+		byID[ci.ID] = ci
+	}
+	for _, id := range ids {
+		ci := byID[id]
+		if ci == nil {
+			// 库里返回的是小写规范形式；入参带大写时逐个读取照样能读到，这里保持一致。
+			ci = byID[strings.ToLower(id)]
 		}
-		if err != nil {
-			return nil, err
+		if ci != nil {
+			out = append(out, cardOf(ci))
 		}
-		out = append(out, cardOf(ci))
 	}
 	return out, nil
 }

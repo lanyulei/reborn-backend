@@ -16,9 +16,13 @@ import (
 // （订阅中心）：目标用户缺省=操作者本人（claims），指定他人须 admin（代管），
 // 属主校验在本层强制；proto 与领域模型显式转换。
 //
-// biz 隔离只约束**代管路径**：订阅是用户个人偏好而非 biz 管理动作，本人自助不受
-// 角色 biz_scope 限制；管理员代管他人时与其它资源一致——目标 biz 须在范围内、
-// 列表须携带 biz 过滤。
+// biz 隔离：
+//   - 新建 / 修改（Upsert）无论本人自助还是代管，目标 biz 都须在操作者范围内——订阅命中后该 biz 的
+//     通知标题与载荷会发到订阅人的渠道，放开本人路径等于让受限用户经订阅中心读到范围外 biz 的数据；
+//   - 本人删除自己的订阅始终允许（清掉收紧之前留下的范围外订阅）；本人列表不受限（biz_id 仅作过滤）；
+//   - 管理员代管他人的删除 / 列表与其它资源一致：目标 biz 须在范围内、列表须携带 biz 过滤。
+//
+// 不限用户（超管 / 任一启用角色 biz_scope 为空）全部放行，行为不变。
 type NotifySubscriptionService struct {
 	uc    *biz.SubscriptionUsecase
 	admin biz.SubscriptionAdminResolver
@@ -103,17 +107,16 @@ func toProtoSubscription(sub *biz.Subscription) *notifyv1.NotifySubscription {
 }
 
 // UpsertSubscription implements proto NotifySubscriptionService/UpsertSubscription：
-// 目标用户缺省=本人、指定他人须 admin（且目标 biz 在操作者范围内）；同自然键
-// 整组替换偏好与启停。
+// 目标用户缺省=本人、指定他人须 admin；两条路径的目标 biz 都须在操作者范围内
+// （越界 ErrBizForbidden）；同自然键整组替换偏好与启停。
 func (s *NotifySubscriptionService) UpsertSubscription(ctx context.Context, req *notifyv1.UpsertSubscriptionRequest) (*notifyv1.UpsertSubscriptionResponse, error) {
-	target, onBehalf, err := s.resolveTargetUser(ctx, req.GetUserId())
+	target, _, err := s.resolveTargetUser(ctx, req.GetUserId())
 	if err != nil {
 		return nil, err
 	}
-	if onBehalf {
-		if err := s.guard.requireBiz(ctx, req.GetBizId()); err != nil {
-			return nil, err
-		}
+	// 本人自助同样校验：见类型注释（已存在的范围外订阅不清理，本人仍可删除）。
+	if err := s.guard.requireBiz(ctx, req.GetBizId()); err != nil {
+		return nil, err
 	}
 	enabled := true // 与其它资源一致：未指定默认启用
 	if req.Enabled != nil {
@@ -137,7 +140,8 @@ func (s *NotifySubscriptionService) UpsertSubscription(ctx context.Context, req 
 }
 
 // DeleteSubscription implements proto NotifySubscriptionService/DeleteSubscription：
-// 先取订阅做属主校验（本人或 admin），再软删。
+// 先取订阅做属主校验（本人或 admin），再软删。本人删除不看 biz 范围：范围外的
+// 历史订阅必须删得掉；代管删除须目标订阅的 biz 在范围内。
 func (s *NotifySubscriptionService) DeleteSubscription(ctx context.Context, req *notifyv1.DeleteSubscriptionRequest) (*notifyv1.DeleteSubscriptionResponse, error) {
 	operator, err := systemservice.UserIDFromContext(ctx)
 	if err != nil {

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/agent"
 	basedata "github.com/lanyulei/reborn/backend/core/internal/data"
 	"github.com/lanyulei/reborn/backend/kit/dbx"
+	"github.com/lanyulei/reborn/backend/kit/idgen"
 
 	"github.com/google/wire"
 	"github.com/jackc/pgerrcode"
@@ -170,12 +172,22 @@ func (r *profileRepo) Get(ctx context.Context, id string) (*biz.Profile, error) 
 	return p, nil
 }
 
+// profileIDsCond 按一组 ID 取 Profile 的条件（$1 为 ID 数组）。p.id::text = ANY($1) 用不上主键；ID 全部是规范
+// 写法时改为 p.id = ANY($1::uuid[])，命中的行相同。只要有一个不是规范写法就保持原来的文本比较（原行为是
+// 该 ID 查不到，::uuid[] 会让大写 ID 命中、非法值报错）。
+func profileIDsCond(ids []string) string {
+	if slices.ContainsFunc(ids, func(id string) bool { return !idgen.IsUUID(id) }) {
+		return "p.id::text = ANY($1)"
+	}
+	return "p.id = ANY($1::uuid[])"
+}
+
 // ListByIDs implements biz.ProfileRepo（含已删除的：任务 / 运行列表要显示名字）。
 func (r *profileRepo) ListByIDs(ctx context.Context, ids []string) ([]*biz.Profile, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	rows, err := r.data.Pool.Query(ctx, "SELECT "+profileColumns+" FROM agent_profile p WHERE p.id::text = ANY($1)", ids)
+	rows, err := r.data.Pool.Query(ctx, "SELECT "+profileColumns+" FROM agent_profile p WHERE "+profileIDsCond(ids), ids)
 	if err != nil {
 		return nil, fmt.Errorf("list agent profiles by ids: %w", err)
 	}

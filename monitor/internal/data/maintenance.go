@@ -201,11 +201,13 @@ func (r *maintenanceRepo) PurgeDefaultPartition(ctx context.Context, retention t
 
 // PurgeAlerts implements biz.RetentionRepo：一条语句删除一批过期的非活跃告警，连同其通知记录、发件箱行、
 // 时间线、事件动作、事件指令与升级进度（告警没了，这些行只是孤儿）。SKIP LOCKED 避开正被 core 回写的行，
-// 下一批再处理。
+// 下一批再处理。仍有待派发通知行的事件不清理：core 的派发事务是「发件箱行 → 告警行」，这里是「告警行 →
+// 发件箱行」，两边同时命中同一事件会互相等锁；这类事件等它的发件箱行终结、过了保留期再清。
 func (r *maintenanceRepo) PurgeAlerts(ctx context.Context, retention time.Duration, limit int) (int, error) {
 	tag, err := r.data.Pool.Exec(ctx,
 		`WITH old AS MATERIALIZED (
 		   SELECT id FROM monitor_alert WHERE status <> $1 AND resolve_time < now() - $2::interval
+		     AND NOT EXISTS (SELECT 1 FROM monitor_notify_outbox o WHERE o.alert_id = monitor_alert.id AND o.status = $4)
 		   ORDER BY resolve_time LIMIT $3 FOR UPDATE SKIP LOCKED),
 		 logs AS (DELETE FROM monitor_notify_log WHERE alert_id IN (SELECT id FROM old)),
 		 outbox AS (DELETE FROM monitor_notify_outbox WHERE alert_id IN (SELECT id FROM old)),
@@ -214,7 +216,7 @@ func (r *maintenanceRepo) PurgeAlerts(ctx context.Context, retention time.Durati
 		 cmds AS (DELETE FROM monitor_alert_cmd WHERE alert_id IN (SELECT id FROM old)),
 		 levels AS (DELETE FROM monitor_alert_escalation WHERE alert_id IN (SELECT id FROM old))
 		 DELETE FROM monitor_alert WHERE id IN (SELECT id FROM old)`,
-		monitorcontract.AlertFiring, retention, limit)
+		monitorcontract.AlertFiring, retention, limit, monitorcontract.OutboxPending)
 	if err != nil {
 		return 0, fmt.Errorf("purge expired alerts: %w", err)
 	}

@@ -1,6 +1,7 @@
 package biz
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -49,20 +50,46 @@ func permanent(format string, args ...any) error {
 // errRescheduled 动作已自行重排（Retry 已写回下次执行时间），本轮不落账。
 var errRescheduled = errors.New("incident action: rescheduled")
 
-// Run 领取并执行一批动作，返回处理条数。
+// Run 领取并执行一批动作，返回已落账的条数。一条落不了账（数据库错误）不再牵连同批其余动作：逐条继续，整批
+// 结束后把没落账的行的租约收回（下次可领取时间拉回现在，不必等 5 分钟租约到期），再把首个错误返回给循环。
+// 正在停机（ctx 取消）时不再执行后面的动作，同样收回租约；进程被强杀时没有这一步，这些行仍要等租约到期。
 func (uc *ActionUsecase) Run(ctx context.Context) (int, error) {
 	items, err := uc.d.Actions.Claim(ctx, actionBatch, actionLease)
 	if err != nil || len(items) == 0 {
 		return 0, err
 	}
 	done := 0
-	for _, a := range items {
+	var held []*Action
+	var firstErr error
+	for i, a := range items {
 		if err := uc.handle(ctx, a); err != nil {
-			return done, err
+			held = append(held, a)
+			firstErr = cmp.Or(firstErr, err)
+		} else {
+			done++
 		}
-		done++
+		if ctx.Err() != nil {
+			held = append(held, items[i+1:]...)
+			break
+		}
 	}
-	return done, nil
+	if len(held) > 0 {
+		uc.release(ctx, held)
+	}
+	return done, firstErr
+}
+
+// release 收回一批动作的租约：下次可领取时间拉回现在，别的实例或下一轮可以立刻重领（尝试次数不动，也不记失败
+// 原因）。以「仍是待执行且尝试次数未变」围栏，已落账或已被别的实例领走的行不受影响。收回不受停机取消影响，整批
+// 共用一个超时；收回失败的行保持原租约，到期后自然可以被重领。
+func (uc *ActionUsecase) release(ctx context.Context, items []*Action) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), actionFinishWait)
+	defer cancel()
+	for _, a := range items {
+		if err := uc.d.Actions.Retry(ctx, a, 0, ""); err != nil {
+			uc.d.Logger.WarnContext(ctx, "incident action lease not released, it will expire", "action", a.ID, "kind", a.Kind, "incident", a.IncidentID, "error", err)
+		}
+	}
 }
 
 func maxAttempts(kind int32) int32 {
@@ -77,6 +104,11 @@ func (uc *ActionUsecase) handle(ctx context.Context, a *Action) error {
 	err := uc.execute(ctx, a)
 	if errors.Is(err, errRescheduled) {
 		return nil
+	}
+	if err != nil && ctx.Err() != nil {
+		// 正在停机：执行被取消，不记失败（否则每次停机都消耗一次尝试，恰逢最后一次还会被直接丢弃）；
+		// Run 收回租约，重启后立刻可以重做。
+		return ctx.Err()
 	}
 	fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), actionFinishWait)
 	defer cancel()

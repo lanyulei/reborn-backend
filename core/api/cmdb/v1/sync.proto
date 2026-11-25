@@ -214,9 +214,10 @@ message CreateSourceRequest {
     min_len: 1
     max_len: 64
   }];
-  // provider 提供方：aliyun / vmware。
+  // provider 提供方：aliyun / tencent / aws / vmware（与 kit/cmdbcontract.Providers 一致；
+  // 此前只放行 aliyun / vmware，腾讯云与 AWS 的采集器永远跑不到）。
   string provider = 2 [(buf.validate.field).string = {
-    in: ["aliyun", "vmware"]
+    in: ["aliyun", "tencent", "aws", "vmware"]
   }];
   // config 提供方配置（结构随 provider，见 kit/cmdbcontract；不含凭据）。
   google.protobuf.Struct config = 3 [(buf.validate.field).required = true];

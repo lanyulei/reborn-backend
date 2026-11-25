@@ -376,7 +376,7 @@ func (uc *SubscriptionUsecase) reload(ctx context.Context, userID string, scope 
 }
 
 // Preview 保存前预览：当前活跃告警与最近 24 小时历史告警中会被命中的事件（不落库）。只在调用方
-// 可读的所选分组（含下级）内查找；被屏蔽的事件不会发给订阅者，不计入。
+// 可读的所选分组（含下级）内查找；被屏蔽或被抑制的事件不会发给订阅者（引擎不入箱，派发也会丢弃），不计入。
 func (uc *SubscriptionUsecase) Preview(ctx context.Context, userID string, spec SubscriptionSpec) ([]*AlertView, int, error) {
 	scope, err := uc.scopes.Resolve(ctx, userID)
 	if err != nil {
@@ -395,10 +395,10 @@ func (uc *SubscriptionUsecase) Preview(ctx context.Context, userID string, spec 
 	}
 	now := uc.now()
 	since := now.Add(-subscriptionPreviewWindow)
-	notMuted := false
+	notMuted, notInhibited := false, false
 	filter := AlertFilter{
 		Groups: GroupFilter{IDs: uniq(groupIDs)}, RuleIDs: spec.RuleIDs, DatasourceIDs: spec.DatasourceIDs,
-		Severities: spec.Severities, HistorySince: &since, Muted: &notMuted,
+		Severities: spec.Severities, HistorySince: &since, Muted: &notMuted, Inhibited: &notInhibited,
 	}
 	// 订了触发：窗口内触发过的事件都算（不论之后是恢复还是被关闭）；只订恢复：只算已恢复的
 	// （被关闭的事件不发恢复通知）。

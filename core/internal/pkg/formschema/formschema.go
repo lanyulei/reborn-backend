@@ -63,6 +63,12 @@ const (
 // MaxMultiple 多选字段一次最多选的个数。
 const MaxMultiple = 50
 
+// MaxSafeInteger 整数字段可接受的最大绝对值（2^53-1，IEEE-754 双精度能精确表示的整数上限）。
+// 取值经 JSON 解码是 float64：超出后相邻整数已无法区分，转 int64 的结果因平台而异
+// （1e300 在 arm64 得到 MaxInt64、在 amd64 得到 MinInt64，9007199254740993 被写成 …992），
+// 与其静默改写不如直接拒绝。
+const MaxSafeInteger = float64(1<<53 - 1)
+
 // MaxFiles 一个附件字段最多带的文件数。
 const MaxFiles = 10
 
@@ -194,6 +200,8 @@ func Validate(fields []Field, values map[string]any, partial bool) (map[string]a
 
 // CheckRequired 合并后的取值须包含全部启用的必填字段。只看键是否存在且非 nil：
 // 存量值不重校验（字段规则 / 枚举值收紧后不阻塞无关更新），已废弃字段的遗留键忽略。
+// 空串 / 空列表在这里不算缺失——本次写入的空值由 Validate 拦截；存量的空串不阻塞保存
+// （否则改无关属性也得先补齐），由调用方的数据质量检查提示（如 CMDB 质量看板的缺必填）。
 // 缺失返回 *Error。
 func CheckRequired(fields []Field, values map[string]any) error {
 	for i := range fields {
@@ -302,6 +310,10 @@ func normalizeValue(f *Field, raw any) (any, error) {
 		n, ok := toFloat(raw)
 		if !ok || n != math.Trunc(n) {
 			return nil, bad("must be an integer")
+		}
+		// 先于范围规则判定：NaN / Inf 与超出精确表示范围的值不能落库（比较对它们同样不可靠）。
+		if math.IsNaN(n) || math.IsInf(n, 0) || math.Abs(n) > MaxSafeInteger {
+			return nil, bad(fmt.Sprintf("must be within ±%.0f", MaxSafeInteger))
 		}
 		if err := checkRange(f, n); err != nil {
 			return nil, err

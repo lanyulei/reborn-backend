@@ -60,18 +60,32 @@ func NewJobRepo(data *basedata.Data) *jobRepo {
 	return &jobRepo{data: data}
 }
 
+// claimDueSQL 领取到期作业；%s 处是作业类别谓词（见 claimServiceSQL / claimInternalSQL）。
+const claimDueSQL = `UPDATE workflow_job SET lock_until = now() + make_interval(secs => $2), attempts = attempts + 1, update_time = now()
+		 WHERE id IN (
+			SELECT id FROM workflow_job
+			WHERE status = 1 AND due_time <= now() AND (lock_until IS NULL OR lock_until < now())
+					AND %s
+			ORDER BY due_time LIMIT $1 FOR UPDATE SKIP LOCKED)
+		 RETURNING ` + jobColumns
+
+// 类别谓词写成常量比较而不是 `(kind = 'service') = $3`：后者是对布尔表达式的参数比较，规划器无法
+// 拿它去匹配带 kind 条件的部分索引，一类作业积压时另一类的每次轮询都得扫过全部到期行。两种写法
+// 选中的行相同（kind 为 NULL 的行两种写法都不选）。
+var (
+	claimServiceSQL  = fmt.Sprintf(claimDueSQL, "kind = 'service'")
+	claimInternalSQL = fmt.Sprintf(claimDueSQL, "kind <> 'service'")
+)
+
 // ClaimDue implements biz.JobQueue：单语句领取——SKIP LOCKED 让并发的执行器各取各的，
 // 续上租约后其他执行器在租约期内不会再取到同一条；执行器崩溃则租约过期后可被再次领取。
 // 领取即计一次尝试。service 决定领哪一类：自动任务（kind = 'service'）或其余的引擎内部作业。
 func (r *jobRepo) ClaimDue(ctx context.Context, service bool, limit int, lease time.Duration) ([]*biz.Job, error) {
-	rows, err := r.data.Pool.Query(ctx,
-		`UPDATE workflow_job SET lock_until = now() + make_interval(secs => $2), attempts = attempts + 1, update_time = now()
-		 WHERE id IN (
-			SELECT id FROM workflow_job
-			WHERE status = 1 AND due_time <= now() AND (lock_until IS NULL OR lock_until < now())
-					AND (kind = 'service') = $3
-			ORDER BY due_time LIMIT $1 FOR UPDATE SKIP LOCKED)
-		 RETURNING `+jobColumns, limit, lease.Seconds(), service)
+	query := claimInternalSQL
+	if service {
+		query = claimServiceSQL
+	}
+	rows, err := r.data.Pool.Query(ctx, query, limit, lease.Seconds())
 	if err != nil {
 		return nil, fmt.Errorf("claim workflow jobs: %w", err)
 	}

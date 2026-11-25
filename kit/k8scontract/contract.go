@@ -40,7 +40,7 @@ const (
 const (
 	CfgCluster    = "k8s_cluster"
 	CfgRoleScope  = "k8s_role_scope"
-	CfgAgentToken = "k8s_agent_token"
+	CfgAgentToken = "k8s_agent_token" //nolint:gosec // 配置版本表里的键名，不是凭据
 )
 
 // EnvProd 生产环境的取值：危险操作需输入资源名确认。

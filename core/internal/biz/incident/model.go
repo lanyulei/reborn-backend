@@ -808,10 +808,14 @@ type IncidentFilter struct {
 
 // InspectQuery 巡检用的筛选（巡检器按等级与时间阈值取待处理的故障）。
 type InspectQuery struct {
-	Statuses           []int32
-	Severities         []int32
-	OpenBefore         *time.Time
-	EscalateTimeNull   bool
+	Statuses         []int32
+	Severities       []int32
+	OpenBefore       *time.Time
+	EscalateTimeNull bool
+	// EscalationLevelLT 只取 escalation_level 小于该值的故障（升级巡检：已升满级的不占批次名额）。
+	EscalationLevelLT *int32
+	// EscalateTimeBefore 只取 escalate_time 为空或早于该时刻的故障（上一次升级已过一个响应时限）。
+	EscalateTimeBefore *time.Time
 	LastActivityBefore *time.Time
 	StaleNotifyBefore  *time.Time
 	ReviewStatuses     []int32

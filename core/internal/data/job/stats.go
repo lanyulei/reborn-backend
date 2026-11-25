@@ -30,6 +30,13 @@ func NewStatsRepo(data *basedata.Data) *statsRepo { return &statsRepo{data: data
 // 失败口径：失败 / 部分失败 / 超时 / 结果未知。
 const failedStatuses = "(4, 5, 7, 8)"
 
+// grouping(status, kind, trigger) 的取值：三位依次对应三列，没参与分组的列记 1。
+const (
+	statsByStatus  = 0b011
+	statsByKind    = 0b101
+	statsByTrigger = 0b110
+)
+
 // Stats implements biz.StatsReader。时间范围按提交时间；各项聚合都落在 idx_job_execution_create_time 上。
 func (r *statsRepo) Stats(ctx context.Context, since time.Time, timezone string) (*biz.Stats, error) {
 	out := &biz.Stats{Timezone: timezone}
@@ -49,31 +56,36 @@ func (r *statsRepo) Stats(ctx context.Context, since time.Time, timezone string)
 		Scan(&out.Active, &out.RunnersOnline, &out.RunnersTotal); err != nil {
 		return nil, fmt.Errorf("job stats live counters: %w", err)
 	}
-	var err error
-	// column 为代码内常量。
-	group := func(column string) ([]biz.StatCount, error) {
-		rows, err := pool.Query(ctx, "SELECT "+column+", count(*) FROM job_execution WHERE create_time >= $1 GROUP BY 1 ORDER BY 1", since)
-		if err != nil {
-			return nil, fmt.Errorf("job stats by %s: %w", column, err)
-		}
-		return pgx.CollectRows(rows, func(row pgx.CollectableRow) (biz.StatCount, error) {
-			var key int32
-			var c biz.StatCount
-			err := row.Scan(&key, &c.Count)
-			c.Key = strconv.Itoa(int(key))
-			return c, err
-		})
-	}
-	if out.ByStatus, err = group("status"); err != nil {
-		return nil, err
-	}
-	if out.ByKind, err = group("kind"); err != nil {
-		return nil, err
-	}
-	if out.ByTrigger, err = group("trigger"); err != nil {
-		return nil, err
-	}
+	// 状态 / 类型 / 触发来源三组分布用一条 GROUPING SETS 语句取回（原来是三条各扫一遍时间范围的 GROUP BY）。
+	// grouping() 标出一行属于哪一组（没参与分组的列记 1，见 statsBy*），组内按键升序。三列都是 NOT NULL，
+	// 所以每行恰好属于一组、COALESCE 取到的就是该组的键。没有数据时三组都是空切片（非 nil），与原来一致。
+	out.ByStatus, out.ByKind, out.ByTrigger = []biz.StatCount{}, []biz.StatCount{}, []biz.StatCount{}
 	rows, err := pool.Query(ctx,
+		`SELECT grouping(status, kind, trigger)::int, COALESCE(status, kind, trigger)::int, count(*)
+		 FROM job_execution WHERE create_time >= $1
+		 GROUP BY GROUPING SETS ((status), (kind), (trigger)) ORDER BY 1, 2`, since)
+	if err != nil {
+		return nil, fmt.Errorf("job stats distributions: %w", err)
+	}
+	var set, key int32
+	var count int64
+	if _, err = pgx.ForEachRow(rows, []any{&set, &key, &count}, func() error {
+		c := biz.StatCount{Key: strconv.Itoa(int(key)), Count: count}
+		switch set {
+		case statsByStatus:
+			out.ByStatus = append(out.ByStatus, c)
+		case statsByKind:
+			out.ByKind = append(out.ByKind, c)
+		case statsByTrigger:
+			out.ByTrigger = append(out.ByTrigger, c)
+		default:
+			return fmt.Errorf("unexpected grouping set %d", set)
+		}
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("job stats distributions: %w", err)
+	}
+	rows, err = pool.Query(ctx,
 		`SELECT template_id::text, max(template_name), count(*), count(*) FILTER (WHERE status IN `+failedStatuses+`)
 		 FROM job_execution WHERE create_time >= $1 AND template_id IS NOT NULL
 		 GROUP BY template_id ORDER BY 3 DESC, 1 LIMIT 10`, since)
@@ -150,6 +162,17 @@ func (r *statsRepo) Purge(ctx context.Context, payloadAge, fireAge time.Duration
 		fireAge.Seconds(), limit)
 	if err != nil {
 		return 0, fmt.Errorf("purge job trigger fires: %w", err)
+	}
+	n = max(n, tag.RowsAffected())
+	// 「已提交」却始终没有执行的记录：登记之后提交执行失败（或进程中断），之后再没有人续做——调用方不带
+	// 幂等键重试时用的是新的去重键。它们不对应任何执行，留着只会误导（列表里显示「已提交执行」）；历史上
+	// 这类记录还带着「信号待发送」，被上一条语句排除、永不清理。一天之内的不动：可能正等着续做。
+	tag, err = r.data.Pool.Exec(ctx,
+		`DELETE FROM job_trigger_fire WHERE id IN (
+		   SELECT id FROM job_trigger_fire WHERE result = 1 AND execution_id IS NULL AND create_time < now() - interval '1 day' LIMIT $1::int)`,
+		limit)
+	if err != nil {
+		return 0, fmt.Errorf("purge stranded job trigger fires: %w", err)
 	}
 	return int(max(n, tag.RowsAffected())), nil
 }

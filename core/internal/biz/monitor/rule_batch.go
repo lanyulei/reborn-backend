@@ -135,7 +135,10 @@ func (uc *RuleUsecase) Batch(ctx context.Context, userID string, in BatchInput) 
 		rule, ok := byID[id]
 		err := error(ErrRuleNotFound)
 		if ok {
-			res.Name = rule.Spec.Name
+			// 名称只在对规则所在分组可读时回显（与导出同一口径）：对调用方完全不可读的规则只回报无权限。
+			if scope.CanRead(rule.Spec.GroupID) {
+				res.Name = rule.Spec.Name
+			}
 			if err = scope.requireManage(rule.Spec.GroupID); err == nil {
 				err = uc.batchOne(ctx, userID, scope, rule, &in)
 			}

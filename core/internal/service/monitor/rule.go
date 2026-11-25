@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	v1 "github.com/lanyulei/reborn/backend/core/api/monitor/v1"
@@ -25,8 +26,34 @@ func NewRuleService(uc *biz.RuleUsecase, targets *biz.TargetUsecase) *RuleServic
 	return &RuleService{uc: uc, targets: targets, ruleP2: ruleP2{packs: uc}}
 }
 
+// 规则里引用的对象都以 UUID 识别。UUID 不区分大小写（接口校验同样不区分），而库里、目录与数据范围的
+// 比对一律是小写：入口统一转小写，大写写法才不会在展示、导入往返与范围判定里被当成另一个 ID。
+
+// lowerIDs 把一组 ID 统一成小写；空切片原样返回。
+func lowerIDs(ids []string) []string {
+	if len(ids) == 0 {
+		return ids
+	}
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, strings.ToLower(id))
+	}
+	return out
+}
+
+// lowerOpt 同 lowerIDs，作用于可选的单个 ID；nil 原样返回。
+func lowerOpt(id *string) *string {
+	if id == nil {
+		return nil
+	}
+	lowered := strings.ToLower(*id)
+	return &lowered
+}
+
 func toNotifyTargets(n *v1.RuleNotify) mc.NotifyTargets {
-	return mc.NotifyTargets{UserIDs: n.GetUserIds(), ScheduleIDs: n.GetScheduleIds(), DeptIDs: n.GetDeptIds(), CIOwner: n.GetCiOwner()}
+	return mc.NotifyTargets{
+		UserIDs: lowerIDs(n.GetUserIds()), ScheduleIDs: lowerIDs(n.GetScheduleIds()), DeptIDs: lowerIDs(n.GetDeptIds()), CIOwner: n.GetCiOwner(),
+	}
 }
 
 // toRelabel / toProtoRelabel 标签改写步骤的 proto ↔ 契约结构转换。
@@ -60,10 +87,10 @@ func toRuleP2(in *v1.RuleSpec, spec *biz.RuleSpec) {
 	}
 	spec.ResourceScope = mc.ResourceScope{Enabled: sc.GetEnabled(), ModelCodes: sc.GetModelCodes(), Envs: sc.GetEnvs(), Tags: sc.GetTags()}
 	spec.Relabel, spec.DropExpr = toRelabel(in.GetRelabel()), in.GetDropExpr()
-	spec.TopologyInhibit, spec.EscalationID = in.GetTopologyInhibit(), in.GetEscalationId()
+	spec.TopologyInhibit, spec.EscalationID = in.GetTopologyInhibit(), strings.ToLower(in.GetEscalationId())
 	spec.Actions = mc.RuleActions{
-		Ticket:    mc.TicketAction{Enabled: a.GetTicket().GetEnabled(), TemplateID: a.GetTicket().GetTemplateId(), AgentUserID: a.GetTicket().GetAgentUserId()},
-		Workflow:  mc.WorkflowAction{Enabled: a.GetWorkflow().GetEnabled(), DefinitionKey: a.GetWorkflow().GetDefinitionKey(), AgentUserID: a.GetWorkflow().GetAgentUserId()},
+		Ticket:    mc.TicketAction{Enabled: a.GetTicket().GetEnabled(), TemplateID: strings.ToLower(a.GetTicket().GetTemplateId()), AgentUserID: strings.ToLower(a.GetTicket().GetAgentUserId())},
+		Workflow:  mc.WorkflowAction{Enabled: a.GetWorkflow().GetEnabled(), DefinitionKey: a.GetWorkflow().GetDefinitionKey(), AgentUserID: strings.ToLower(a.GetWorkflow().GetAgentUserId())},
 		AISummary: a.GetAiSummary(),
 	}
 }
@@ -92,8 +119,8 @@ func toRuleSpec(in *v1.RuleSpec) biz.RuleSpec {
 		queries = append(queries, mc.Query{Expr: q.GetExpr(), Severity: q.GetSeverity()})
 	}
 	spec := biz.RuleSpec{
-		GroupID: in.GetGroupId(), Name: in.GetName(), Description: in.GetDescription(), Enabled: in.GetEnabled(), Labels: in.GetLabels(),
-		DatasourceScope: in.GetDatasourceScope(), DatasourceIDs: in.GetDatasourceIds(), Queries: queries, LevelInhibit: in.GetLevelInhibit(),
+		GroupID: strings.ToLower(in.GetGroupId()), Name: in.GetName(), Description: in.GetDescription(), Enabled: in.GetEnabled(), Labels: in.GetLabels(),
+		DatasourceScope: in.GetDatasourceScope(), DatasourceIDs: lowerIDs(in.GetDatasourceIds()), Queries: queries, LevelInhibit: in.GetLevelInhibit(),
 		EvalIntervalS: in.GetEvalIntervalS(), ForS: in.GetForS(), RecoverS: in.GetRecoverS(), NodataKeepS: in.GetNodataKeepS(),
 		Effective: toEffective(in.GetEffective()), Annotations: in.GetAnnotations(), RecoveryExpr: in.GetRecoveryExpr(),
 		Notify: toNotifyTargets(in.GetNotify()), NotifyRecovery: in.GetNotifyRecovery(), RepeatIntervalM: in.GetRepeatIntervalM(),
@@ -279,7 +306,7 @@ func (s *RuleService) CloneRule(ctx context.Context, req *v1.CloneRuleRequest) (
 	if err != nil {
 		return nil, err
 	}
-	r, err := s.uc.Clone(ctx, userID, req.GetId(), req.GetName(), req.GetGroupId())
+	r, err := s.uc.Clone(ctx, userID, req.GetId(), req.GetName(), strings.ToLower(req.GetGroupId()))
 	if err != nil {
 		return nil, err
 	}
@@ -297,10 +324,10 @@ func (s *RuleService) BatchRules(ctx context.Context, req *v1.BatchRulesRequest)
 		return nil, err
 	}
 	in := biz.BatchInput{
-		IDs: req.GetIds(), Action: req.GetAction(), GroupID: req.GroupId, Severity: req.Severity,
+		IDs: lowerIDs(req.GetIds()), Action: req.GetAction(), GroupID: lowerOpt(req.GroupId), Severity: req.Severity,
 		EvalIntervalS: req.EvalIntervalS, ForS: req.ForS, RecoverS: req.RecoverS, Labels: req.GetLabels(), LabelNames: req.GetLabelNames(),
 		NotifyRecovery: req.NotifyRecovery, RepeatIntervalM: req.RepeatIntervalM, MaxNotify: req.MaxNotify,
-		EscalationID: req.EscalationId,
+		EscalationID: lowerOpt(req.EscalationId),
 	}
 	if req.Notify != nil {
 		targets := toNotifyTargets(req.GetNotify())
@@ -393,7 +420,7 @@ func (s *RuleService) ValidateRuleExprs(_ context.Context, req *v1.ValidateRuleE
 
 func toImportOptions(o *v1.ImportRulesOptions) biz.ImportOptions {
 	return biz.ImportOptions{
-		Content: o.GetContent(), GroupID: o.GetGroupId(), DatasourceScope: o.GetDatasourceScope(), DatasourceIDs: o.GetDatasourceIds(),
+		Content: o.GetContent(), GroupID: strings.ToLower(o.GetGroupId()), DatasourceScope: o.GetDatasourceScope(), DatasourceIDs: lowerIDs(o.GetDatasourceIds()),
 		DefaultSeverity: o.GetDefaultSeverity(), Notify: toNotifyTargets(o.GetNotify()), SeverityMap: o.GetSeverityMap(),
 	}
 }
@@ -465,7 +492,7 @@ func (s *RuleService) ExportRules(ctx context.Context, req *v1.ExportRulesReques
 	if err != nil {
 		return nil, err
 	}
-	content, count, err := s.uc.Export(ctx, userID, req.GetIds(), req.GetGroupId(), req.GetFormat())
+	content, count, err := s.uc.Export(ctx, userID, lowerIDs(req.GetIds()), strings.ToLower(req.GetGroupId()), req.GetFormat())
 	if err != nil {
 		return nil, err
 	}

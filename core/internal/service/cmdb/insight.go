@@ -117,7 +117,9 @@ func (s *CmdbInsightService) GetOverview(ctx context.Context, req *v1.GetOvervie
 	}
 	filter := biz.OverviewFilter{}
 	if !scope.Unrestricted {
-		filter.ModelCodes = keys(scope.Models) // 非 nil：空集合即"什么都看不到"
+		if !scope.ModelUnrestricted {
+			filter.ModelCodes = keys(scope.Models) // 非 nil：空集合即"什么都看不到"
+		}
 		if !scope.EnvUnrestricted {
 			filter.Envs = keys(scope.Envs)
 		}
@@ -146,7 +148,9 @@ func (s *CmdbInsightService) GetQuality(ctx context.Context, _ *v1.GetQualityReq
 	}
 	filter := biz.OverviewFilter{}
 	if !scope.Unrestricted {
-		filter.ModelCodes = keys(scope.Models)
+		if !scope.ModelUnrestricted {
+			filter.ModelCodes = keys(scope.Models)
+		}
 		if !scope.EnvUnrestricted {
 			filter.Envs = keys(scope.Envs)
 		}

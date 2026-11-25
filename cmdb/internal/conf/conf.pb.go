@@ -7,14 +7,13 @@
 package conf
 
 import (
-	reflect "reflect"
-	sync "sync"
-	unsafe "unsafe"
-
 	kitconf "github.com/lanyulei/reborn/backend/kit/kitconf"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	durationpb "google.golang.org/protobuf/types/known/durationpb"
+	reflect "reflect"
+	sync "sync"
+	unsafe "unsafe"
 )
 
 const (
@@ -579,24 +578,21 @@ func file_conf_conf_proto_rawDescGZIP() []byte {
 	return file_conf_conf_proto_rawDescData
 }
 
-var (
-	file_conf_conf_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
-	file_conf_conf_proto_goTypes  = []any{
-		(*Bootstrap)(nil),           // 0: conf.Bootstrap
-		(*Server)(nil),              // 1: conf.Server
-		(*Data)(nil),                // 2: conf.Data
-		(*Sync)(nil),                // 3: conf.Sync
-		(*Notify)(nil),              // 4: conf.Notify
-		(*Sync_Scheduler)(nil),      // 5: conf.Sync.Scheduler
-		(*Sync_Worker)(nil),         // 6: conf.Sync.Worker
-		(*Sync_Maintenance)(nil),    // 7: conf.Sync.Maintenance
-		(*kitconf.HTTP)(nil),        // 8: kitconf.HTTP
-		(*kitconf.Database)(nil),    // 9: kitconf.Database
-		(*kitconf.Master)(nil),      // 10: kitconf.Master
-		(*durationpb.Duration)(nil), // 11: google.protobuf.Duration
-	}
-)
-
+var file_conf_conf_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_conf_conf_proto_goTypes = []any{
+	(*Bootstrap)(nil),           // 0: conf.Bootstrap
+	(*Server)(nil),              // 1: conf.Server
+	(*Data)(nil),                // 2: conf.Data
+	(*Sync)(nil),                // 3: conf.Sync
+	(*Notify)(nil),              // 4: conf.Notify
+	(*Sync_Scheduler)(nil),      // 5: conf.Sync.Scheduler
+	(*Sync_Worker)(nil),         // 6: conf.Sync.Worker
+	(*Sync_Maintenance)(nil),    // 7: conf.Sync.Maintenance
+	(*kitconf.HTTP)(nil),        // 8: kitconf.HTTP
+	(*kitconf.Database)(nil),    // 9: kitconf.Database
+	(*kitconf.Master)(nil),      // 10: kitconf.Master
+	(*durationpb.Duration)(nil), // 11: google.protobuf.Duration
+}
 var file_conf_conf_proto_depIdxs = []int32{
 	1,  // 0: conf.Bootstrap.server:type_name -> conf.Server
 	2,  // 1: conf.Bootstrap.data:type_name -> conf.Data

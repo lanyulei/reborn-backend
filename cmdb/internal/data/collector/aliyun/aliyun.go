@@ -149,6 +149,22 @@ func toResource(in *instance, region string) *biz.Resource {
 	return &biz.Resource{ModelCode: cmdbcontract.ModelCloudHost, ExternalID: in.InstanceID, Name: firstNonEmpty(in.InstanceName, in.InstanceID), Attrs: attrs}
 }
 
+// redactQuery 去掉 *url.Error 里请求 URL 的 query。V1 签名的 AccessKeyId / Signature / SignatureNonce
+// 都在 query 里，而 net/http 的错误只遮蔽 userinfo 里的口令：原样包装的话，DNS / 超时失败时它们会
+// 随错误信息写进任务与运行记录，并经 cmdb.sync.failed 事件随邮件 / Webhook 外发（签名在 15 分钟
+// 窗口内可重放）。错误链（Unwrap / Timeout）保持不变。
+func redactQuery(err error) error {
+	var ue *url.Error
+	if !errors.As(err, &ue) {
+		return err
+	}
+	i := strings.IndexByte(ue.URL, '?')
+	if i < 0 {
+		return err
+	}
+	return &url.Error{Op: ue.Op, URL: ue.URL[:i], Err: ue.Err}
+}
+
 func firstNonEmpty(values ...string) string {
 	for _, v := range values {
 		if v != "" {
@@ -211,7 +227,7 @@ func (c *Collector) describeOnce(ctx context.Context, endpoint string, cfg *cmdb
 	req.Header.Set("Accept", "application/json")
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return nil, true, fmt.Errorf("aliyun: request failed: %w", err)
+		return nil, true, fmt.Errorf("aliyun: request failed: %w", redactQuery(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))

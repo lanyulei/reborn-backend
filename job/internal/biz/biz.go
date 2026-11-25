@@ -167,7 +167,8 @@ type QueueRepo interface {
 	ClaimNext(ctx context.Context, runnerID, zone, leaseToken string, lease time.Duration) (*Claimed, error)
 	// Fail 把刚领取、尚未下发的执行置为失败（令牌围栏）。
 	Fail(ctx context.Context, executionID, leaseToken, reason string) error
-	// Release 把刚领取、尚未下发的执行放回队列（令牌围栏）：组装任务时遇到瞬时故障用。
+	// Release 把刚领取、尚未下发的执行放回队列（令牌围栏）：组装任务时遇到瞬时故障、应答没能送达节点时用。
+	// 领取之后已被请求取消的执行不回队列（回去了也不会再被领取），直接落为已取消。
 	Release(ctx context.Context, executionID, leaseToken string) error
 }
 

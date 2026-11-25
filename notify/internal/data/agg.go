@@ -51,17 +51,33 @@ func upsertAggGroups(ctx context.Context, tx pgx.Tx, incs []biz.AggIncrement) (m
 		  update_time = now()
 		RETURNING (status = 2 AND suppressed_until IS NOT NULL AND suppressed_until > now())`
 	out := make(map[string]biz.AggVerdict, len(incs))
-	for _, inc := range incs {
+	if len(incs) == 0 {
+		return out, nil
+	}
+	// 同一条语句按调用方顺序入队、一个 pgx.Batch 一次往返（AGENTS §13.7）：服务端仍按入队
+	// 顺序逐条执行，锁序与逐键往返时完全相同；此前每键一次往返，风暴批（上百个组）会把持有
+	// 事件行锁的路由事务拉长。
+	batch := &pgx.Batch{}
+	for i := range incs {
+		inc := &incs[i]
 		samples, err := json.Marshal(inc.Samples)
 		if err != nil {
 			return nil, fmt.Errorf("encode agg samples: %w", err)
 		}
+		batch.Queue(q, inc.Key, inc.BizID, inc.EventType, inc.RouteID, inc.FirstEventID, inc.FirstEventTime,
+			inc.Count, samples, float64(inc.WindowS), inc.MaxWindow.Seconds())
+	}
+	br := tx.SendBatch(ctx, batch)
+	for i := range incs {
 		var suppressed bool
-		if err := tx.QueryRow(ctx, q, inc.Key, inc.BizID, inc.EventType, inc.RouteID, inc.FirstEventID, inc.FirstEventTime,
-			inc.Count, samples, float64(inc.WindowS), inc.MaxWindow.Seconds()).Scan(&suppressed); err != nil {
-			return nil, fmt.Errorf("upsert agg group %s: %w", inc.Key, err)
+		if err := br.QueryRow().Scan(&suppressed); err != nil {
+			_ = br.Close()
+			return nil, fmt.Errorf("upsert agg group %s: %w", incs[i].Key, err)
 		}
-		out[inc.Key] = biz.AggVerdict{Suppressed: suppressed}
+		out[incs[i].Key] = biz.AggVerdict{Suppressed: suppressed}
+	}
+	if err := br.Close(); err != nil {
+		return nil, fmt.Errorf("upsert agg groups: %w", err)
 	}
 	return out, nil
 }

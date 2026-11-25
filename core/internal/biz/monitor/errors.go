@@ -88,6 +88,16 @@ func DatasourceAddressBlocked(reason string) error {
 	return detail(ErrDatasourceAddressBlocked, "%s", reason)
 }
 
+// GroupReferencedBy 分组仍被记录规则（以它为所属分组）、升级策略 / 抑制规则（以它为作用分组）引用（data 层
+// 在删除事务内取到数量）：409，与 GroupReferenced 同一个错误码，数量同时放进 metadata。
+func GroupReferencedBy(recordRules, escalations, inhibits int) error {
+	return errors.New(int(ErrGroupInUse.Code), ErrGroupInUse.Reason,
+		fmt.Sprintf("rule group is still referenced by %d record rule(s), %d escalation policies and %d inhibit rules", recordRules, escalations, inhibits)).
+		WithMetadata(map[string]string{
+			"record_rule_count": strconv.Itoa(recordRules), "escalation_count": strconv.Itoa(escalations), "inhibit_count": strconv.Itoa(inhibits),
+		})
+}
+
 // ErrRuleDatasourceMissing 规则指定的数据源在保存时已不存在（data 层在写事务内判定）。
 var ErrRuleDatasourceMissing = detail(ErrRuleInvalid, "a selected datasource no longer exists")
 

@@ -124,40 +124,78 @@ func (uc *PlaybookUsecase) targetName(ctx context.Context, agentUser, kind, ref 
 	return "", detail(ErrPlaybookInvalid, "step kind must be job or workflow")
 }
 
+// views 预案的展示信息。一页预案共用的读取各做一次：业务名称、近 30 天执行次数各一条批量语句，步骤指向的
+// 作业模板 / 流程定义同一个只解析一次（此前每个预案、每个步骤各查一次，100 条 × 20 步可达数千次查询）。
+// 每个预案得到的内容与逐个查询相同。
 func (uc *PlaybookUsecase) views(ctx context.Context, items []*Playbook) ([]*PlaybookView, error) {
 	var users, businesses []string
+	ids := make([]string, 0, len(items))
 	for _, p := range items {
 		users = append(users, p.Spec.AgentUserID, p.UpdateUser)
 		businesses = append(businesses, p.Spec.Match.BusinessIDs...)
+		ids = append(ids, p.ID)
 	}
 	userNames, err := uc.d.Dir.UserNames(ctx, uniq(users))
 	if err != nil {
 		return nil, err
 	}
-	businessNames := map[string]string{}
-	for _, id := range uniq(businesses) {
-		if b, err := uc.d.Businesses.Get(ctx, id); err == nil {
-			businessNames[id] = b.Name
-		}
-	}
+	businessNames := uc.businessNames(ctx, uniq(businesses))
 	since := time.Now().Add(-30 * 24 * time.Hour)
+	execs, err := uc.d.Proposals.CountPlaybookExecsMany(ctx, uniq(ids), since)
+	if err != nil {
+		return nil, err
+	}
+	// 同一个代理执行人看同一个作业模板 / 同一个流程标识，结果在一次请求内相同：记下来不重复查。
+	type target struct{ agentUser, kind, ref string }
+	names := map[target]string{}
 	out := make([]*PlaybookView, 0, len(items))
 	for _, p := range items {
-		n, err := uc.d.Proposals.CountPlaybookExecs(ctx, p.ID, since)
-		if err != nil {
-			return nil, err
-		}
-		v := &PlaybookView{Playbook: p, AgentUserName: userNames[p.Spec.AgentUserID], UpdateUserName: userNames[p.UpdateUser], BusinessNames: businessNames, ExecCount: i32(n)}
+		v := &PlaybookView{Playbook: p, AgentUserName: userNames[p.Spec.AgentUserID], UpdateUserName: userNames[p.UpdateUser], BusinessNames: businessNames, ExecCount: i32(execs[p.ID])}
 		for _, st := range p.Spec.Steps {
-			name, err := uc.targetName(ctx, p.Spec.AgentUserID, st.Kind, st.Ref)
-			if err != nil {
-				return nil, err
+			key := target{kind: st.Kind, ref: st.Ref}
+			if st.Kind == "job" {
+				key.agentUser = p.Spec.AgentUserID // 作业模板按代理执行人的可见性判断，流程定义与人无关
+			}
+			name, ok := names[key]
+			if !ok {
+				if name, err = uc.targetName(ctx, p.Spec.AgentUserID, st.Kind, st.Ref); err != nil {
+					return nil, err
+				}
+				names[key] = name
 			}
 			v.StepNames = append(v.StepNames, name)
 		}
 		out = append(out, v)
 	}
 	return out, nil
+}
+
+// businessNames 业务名称（读不到的不在结果中，不影响预案展示）。一条语句批量取；批量读取失败时退回逐个读取
+// ——逐个读取时一个业务读不到只缺它自己的名称，不能因为改成批量就让一页的名称全部缺失。
+func (uc *PlaybookUsecase) businessNames(ctx context.Context, ids []string) map[string]string {
+	out := map[string]string{}
+	if len(ids) == 0 {
+		return out
+	}
+	if items, err := uc.d.Businesses.ListByIDs(ctx, ids); err == nil {
+		byID := make(map[string]*Business, len(items))
+		for _, b := range items {
+			byID[strings.ToLower(b.ID)] = b
+		}
+		// 结果按入参里的写法作键（调用方拿预案里存的 ID 来取），与逐个读取时一致。
+		for _, id := range ids {
+			if b := byID[strings.ToLower(id)]; b != nil {
+				out[id] = b.Name
+			}
+		}
+		return out
+	}
+	for _, id := range ids {
+		if b, err := uc.d.Businesses.Get(ctx, id); err == nil {
+			out[id] = b.Name
+		}
+	}
+	return out
 }
 
 // List 分页。

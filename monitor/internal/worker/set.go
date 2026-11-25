@@ -176,9 +176,12 @@ func NewSet(c *conf.Engine, info biz.InstanceInfo, uc *Usecases, locker loop.Loc
 		}),
 	}}
 	s.Always = []*loop.Loop{
+		// 失败退避压在一个心跳周期之内（kit/loop.WithMaxBackoff 正是为心跳这类循环准备的）：缺省的指数退避
+		// 在连续失败后会拉长到心跳周期的数倍，数据库恢复了本实例的心跳行却还要再等，状态页上的在线 / 选主
+		// 标记随之短暂失真。成功路径的节奏不变。
 		loop.New("heartbeat", heartbeatInterval, logger, rec, func(ctx context.Context) (int, error) {
 			return 0, uc.Heartbeat.RunOnce(ctx)
-		}),
+		}).WithMaxBackoff(heartbeatInterval),
 	}
 	poll := dur(ec.GetPollInterval(), defaultPollInterval)
 	for i := range num(ec.GetConcurrency(), defaultConcurrency) {

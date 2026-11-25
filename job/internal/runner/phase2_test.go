@@ -571,13 +571,17 @@ func TestJobRollingCancelBetweenBatches(t *testing.T) {
 		t.Fatal("a host from an unstarted batch was reported")
 	}
 
-	// 超时同样对整个作业生效。
+	// 超时同样对整个作业生效：超时之后不再开始新的批次，未执行批次的主机不上报。
+	// 时限须给前置的本地克隆留出余量（此前 2 秒，机器负载高时第一批还没开始就超时，主机数为 0 而失败）；
+	// 这里只断言「没有全部上报」，不断言至少上报一台——后者取决于超时那一刻批次的进度。
 	eng = newFakeEngine()
-	j := newTestJob(testConfig(t), eng, nil, rollTask(g, "rollslow.yml", 1, 100, "ok-1", "ok-2", "ok-3", "ok-4", "ok-5", "ok-6", "ok-7", "ok-8"))
-	j.timeout = 2 * time.Second
+	j := newTestJob(testConfig(t), eng, nil, rollTask(g, "rollslow.yml", 1, 100,
+		"ok-1", "ok-2", "ok-3", "ok-4", "ok-5", "ok-6", "ok-7", "ok-8", "ok-9", "ok-10", "ok-11", "ok-12",
+		"ok-13", "ok-14", "ok-15", "ok-16", "ok-17", "ok-18", "ok-19", "ok-20", "ok-21", "ok-22", "ok-23", "ok-24"))
+	j.timeout = 5 * time.Second
 	j.run(context.Background())
 	fin = eng.finish(t)
-	if fin.Outcome != jobcontract.OutcomeTimeout || len(fin.Hosts) == 0 || len(fin.Hosts) >= 8 {
+	if fin.Outcome != jobcontract.OutcomeTimeout || len(fin.Hosts) >= 24 {
 		t.Fatalf("timeout: %+v", fin)
 	}
 }

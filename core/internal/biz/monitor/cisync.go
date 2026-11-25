@@ -45,6 +45,11 @@ const (
 	ciOverlap = 2 * time.Minute
 	// ciReconcileInterval 对账周期。
 	ciReconcileInterval = time.Hour
+	// ciSyncTimeout 一轮同步的总时限。循环交给用例的 ctx 只在进程停止时取消，而一轮同步是一个开着的事务
+	// （持同步锁与一条连接）：任何一次 CMDB 读卡住（锁等待、网络半开），这个实例就永远停在这一轮，别的实例
+	// 拿不到锁也全部空转，索引不再更新而进程看起来是健康的。超时即整轮回滚、锁随事务释放，下一轮重来。
+	// 取值远大于正常的一轮（对账上限 2000 页列表 + 拓扑读取，通常是秒到分钟级），又小于对账周期。
+	ciSyncTimeout = 30 * time.Minute
 	// maxUpstreamDepth / maxUpstreams 上游资源的层数与每个资源的上游个数上限。
 	maxUpstreamDepth = 3
 	maxUpstreams     = 64
@@ -110,6 +115,8 @@ type CISyncUsecase struct {
 	attrs []string
 	log   *slog.Logger
 	now   func() time.Time
+	// timeout 一轮同步的总时限（ciSyncTimeout；测试可替换）。
+	timeout time.Duration
 
 	// mu 保护 lastReconcile（本实例上次对账完成的时间；零值 = 还没对过账）。
 	mu            sync.Mutex
@@ -147,11 +154,15 @@ func NewCISyncUsecase(src CISource, store CIIndexStore, logger *slog.Logger, c *
 	if err != nil {
 		return nil, err
 	}
-	return &CISyncUsecase{src: src, store: store, attrs: attrs, log: logger, now: time.Now}, nil
+	return &CISyncUsecase{src: src, store: store, attrs: attrs, log: logger, now: time.Now, timeout: ciSyncTimeout}, nil
 }
 
 // Run 执行一轮同步，返回写入的行数。恒返回 0 条「待续」（循环按固定周期运行，不连续空转）。
+//
+// 整轮受 ciSyncTimeout 约束：超时按失败返回（事务回滚、不算对过账），由循环按失败退避后重来。
 func (uc *CISyncUsecase) Run(ctx context.Context) (int, error) {
+	ctx, cancel := context.WithTimeout(ctx, uc.timeout)
+	defer cancel()
 	uc.mu.Lock()
 	reconcile := uc.lastReconcile.IsZero() || uc.now().Sub(uc.lastReconcile) >= ciReconcileInterval
 	uc.mu.Unlock()

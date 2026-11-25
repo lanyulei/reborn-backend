@@ -2,6 +2,7 @@ package biz
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -98,9 +99,13 @@ func (uc *PostmortemUsecase) itemViews(ctx context.Context, items []*ActionItem)
 		return nil, err
 	}
 	now := uc.now()
+	// 逾期口径与列表过滤（ActionItemRepo.List 的 overdue）一致：到期日当天不算，过了到期日才算。
+	// 此前拿 DueDate（date 列，0 点 UTC）与当前时刻比，到期日当天 08:00（UTC+8）起就标记逾期，而「只看超期」查不到它。
+	today := now.Format(time.DateOnly)
 	out := make([]*ActionItemView, 0, len(items))
 	for _, it := range items {
-		out = append(out, &ActionItemView{ActionItem: it, OwnerName: names[it.OwnerID], Overdue: it.Status == ItemOpen && it.DueDate != nil && it.DueDate.Before(now)})
+		overdue := it.Status == ItemOpen && it.DueDate != nil && it.DueDate.Format(time.DateOnly) < today
+		out = append(out, &ActionItemView{ActionItem: it, OwnerName: names[it.OwnerID], Overdue: overdue})
 	}
 	return out, nil
 }
@@ -645,8 +650,8 @@ func (uc *PostmortemUsecase) CreateItemTicket(ctx context.Context, userID, incid
 		return nil, err
 	}
 	_, err = uc.inc.mutate(ctx, incidentID, ActorUser, userID, func(m *mutation) error {
-		it.TicketID, it.TicketNumber, it.UpdateTime = t.ID, t.Number, m.now
-		if err := uc.d.Items.SaveTx(ctx, m.tx, it); err != nil {
+		// 只写工单号：it 是建单之前读出的（建单是跨域调用，可达数秒），整体写回会把这期间的编辑覆盖成旧值。
+		if err := uc.d.Items.SetTicketTx(ctx, m.tx, it.ID, t.ID, t.Number); err != nil {
 			return err
 		}
 		m.event(EventTicket, EventDetail{TicketID: t.ID, TicketNumber: t.Number, Text: "改进项「" + it.Title + "」建单"})
@@ -655,6 +660,7 @@ func (uc *PostmortemUsecase) CreateItemTicket(ctx context.Context, userID, incid
 	if err != nil {
 		return nil, err
 	}
+	it.TicketID, it.TicketNumber = t.ID, t.Number
 	views, err := uc.itemViews(ctx, []*ActionItem{it})
 	if err != nil {
 		return nil, err
@@ -693,13 +699,21 @@ func (uc *PostmortemUsecase) syncItemTickets(ctx context.Context) (int, error) {
 			continue
 		}
 		_, err = uc.inc.mutate(ctx, it.IncidentID, ActorSystem, "", func(m *mutation) error {
-			it.Status, it.UpdateTime = ItemDone, m.now
-			if err := uc.d.Items.SaveTx(ctx, m.tx, it); err != nil {
+			// 只把状态置为已完成：it 是逐条查询工单状态之前读出的（一轮可达数秒），整体写回会把这期间
+			// 用户对这条改进项的编辑（标题 / 负责人 / 期限）覆盖成旧值。
+			marked, err := uc.d.Items.MarkDoneTx(ctx, m.tx, it.ID)
+			if err != nil {
 				return err
+			}
+			if !marked {
+				return errNoOp // 期间已被手动置为完成或删除：不再记时间线
 			}
 			m.event(EventActionItem, EventDetail{Text: fmt.Sprintf("改进项「%s」的工单 %s 已结束，自动置为已完成", it.Title, it.TicketNumber), TicketID: it.TicketID, TicketNumber: it.TicketNumber})
 			return nil
 		})
+		if errors.Is(err, errNoOp) {
+			continue
+		}
 		if err != nil {
 			return done, err
 		}

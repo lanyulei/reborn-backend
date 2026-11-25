@@ -494,9 +494,15 @@ func toProtoSettings(s *biz.Settings) *v1.Settings {
 }
 
 func toSettings(in *v1.Settings) *biz.Settings {
+	// personal_events 是空列表时也要保存：proto 的空 repeated 字段解码后是 nil，不转成非 nil 的空切片会被当成
+	//「没保存过」而落回缺省值——管理员取消全部个人提醒后，界面显示已关闭，实际仍按缺省发送。
+	personalEvents := in.GetPersonalEvents()
+	if personalEvents == nil {
+		personalEvents = []string{}
+	}
 	s := &biz.Settings{
 		Severities: map[int32]biz.SeveritySetting{}, FallbackScheduleID: in.GetFallbackScheduleId(), StormThreshold: in.GetStormThreshold(), CandidateTTLMinutes: in.GetCandidateTtlM(),
-		ReopenWindowHours: in.GetReopenWindowH(), AutoCloseDays: in.GetAutoCloseDays(), PersonalEvents: in.GetPersonalEvents(), ProposalTTLMinutes: in.GetProposalTtlM(),
+		ReopenWindowHours: in.GetReopenWindowH(), AutoCloseDays: in.GetAutoCloseDays(), PersonalEvents: personalEvents, ProposalTTLMinutes: in.GetProposalTtlM(),
 		VerifyWindowMinutes: in.GetVerifyWindowM(), ChangeLookbackHours: in.GetChangeLookbackH(), AgentMaxFindings: in.GetAgentMaxFindings(), Version: in.GetVersion(),
 		AgentAutoCooldownMinutes: in.GetAgentAutoCooldownM(), AgentAutoMaxRunning: in.GetAgentAutoMaxRunning(), AgentAutoMaxRunningPerBusiness: in.GetAgentAutoMaxRunningPerBusiness(),
 	}

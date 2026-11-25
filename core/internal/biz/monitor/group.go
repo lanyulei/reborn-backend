@@ -153,7 +153,7 @@ func (uc *GroupUsecase) Update(ctx context.Context, userID, id, name, descriptio
 }
 
 // Delete 删除分组：要求对该分组可管理（顶级分组仅超级管理员）；仍有下级或规则、或仍被屏蔽规则 /
-// 订阅规则引用时拒绝。
+// 订阅规则 / 记录规则 / 升级策略 / 抑制规则引用时拒绝。
 func (uc *GroupUsecase) Delete(ctx context.Context, userID, id string) error {
 	scope, err := uc.scopes.Resolve(ctx, userID)
 	if err != nil {

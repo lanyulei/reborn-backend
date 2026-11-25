@@ -289,6 +289,10 @@ func (uc *DispatchUsecase) process(ctx context.Context, tx txrun.Tx, item *Outbo
 	if err != nil {
 		return err
 	}
+	// 候选订阅里写明的用户一次问完目录，避免下面逐条订阅各查一次（至多 maxSubscriptionCandidates 条）。
+	if err := d.sess.Prefetch(ctx, candidates); err != nil {
+		return err
+	}
 	for _, sub := range candidates {
 		if notified, err = d.notifySubscription(ctx, sub, notified); err != nil {
 			return err

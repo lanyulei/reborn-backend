@@ -43,6 +43,13 @@ func NewDispatchSource(c *conf.Pipeline, pg *dispatchRepo, nb *NatsBackbone) biz
 	return &natsDispatchRepo{dispatchRepo: pg, nb: nb, poll: poll, inflight: map[string]jetstream.Msg{}}
 }
 
+// claimExecError 声明语句在「执行」阶段就失败了（一条行都没拿到）。与「读到一半出错」区分开：
+// 前者要把消息 Nak 掉尽快重投，后者沿用原来的口径原样返回。
+type claimExecError struct{ err error }
+
+func (e claimExecError) Error() string { return e.err.Error() }
+func (e claimExecError) Unwrap() error { return e.err }
+
 // Claim implements biz.DispatchRepo.
 func (r *natsDispatchRepo) Claim(ctx context.Context, limit int, lease time.Duration, paused []string) ([]*biz.ClaimedDispatch, error) {
 	msgs, err := fetch(ctx, r.nb.sender, limit, r.poll)
@@ -94,30 +101,44 @@ func (r *natsDispatchRepo) Claim(ctx context.Context, limit int, lease time.Dura
 	}
 	// publish_state = 1：能被声明说明游标消息已投递到——relay 发布后不持锁等 ack，
 	// 消费侧可能先于 relay 的落账语句声明该行（relay 落账带代际围栏，届时不再改动）。
-	rows, err := r.data.Pool.Query(ctx,
-		`UPDATE notify_dispatch d SET status = 2, attempts = d.attempts + 1, next_retry_time = now() + $2, publish_state = 1
-		 WHERE d.id = ANY($1::uuid[]) AND d.create_time >= $3 AND d.status IN (1, 4) AND d.next_retry_time <= now()
-		 RETURNING `+claimedColumns, ids, lease, minCreate)
-	if err != nil {
-		for _, m := range byID {
-			nakAfter(m, 2*time.Second)
-		}
-		return nil, fmt.Errorf("claim dispatches: %w", err)
-	}
-	out := make([]*biz.ClaimedDispatch, 0, len(ids))
-	claimed := map[string]struct{}{}
-	for rows.Next() {
-		d, err := scanClaimed(rows.Scan)
+	// 这条多行更新因此会与 relay 的落账语句抢同一批行，行序相反时死锁（见 conflict_retry.go）：撞上就地重做。
+	// 「执行 + 读完结果」一起重做——死锁可能在已经返回一部分行之后才报出来。
+	out, err := retryConflict(ctx, func() ([]*biz.ClaimedDispatch, error) {
+		rows, err := r.data.Pool.Query(ctx,
+			`UPDATE notify_dispatch d SET status = 2, attempts = d.attempts + 1, next_retry_time = now() + $2, publish_state = 1
+			 WHERE d.id = ANY($1::uuid[]) AND d.create_time >= $3 AND d.status IN (1, 4) AND d.next_retry_time <= now()
+			 RETURNING `+claimedColumns, ids, lease, minCreate)
 		if err != nil {
-			rows.Close()
-			return nil, fmt.Errorf("scan claimed dispatch: %w", err)
+			return nil, claimExecError{err}
 		}
-		out = append(out, d)
-		claimed[d.ID] = struct{}{}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
+		out := make([]*biz.ClaimedDispatch, 0, len(ids))
+		for rows.Next() {
+			d, err := scanClaimed(rows.Scan)
+			if err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan claimed dispatch: %w", err)
+			}
+			out = append(out, d)
+		}
+		err = rows.Err()
+		rows.Close()
+		return out, err
+	})
+	if err != nil {
+		// 语句没能执行（含重做之后仍然撞上死锁）：把消息 Nak 掉，很快重投；不留到 AckWait 才重投。
+		// 读结果途中的其它错误沿用原口径，原样返回。
+		var execErr claimExecError
+		if errors.As(err, &execErr) || isConflict(err) {
+			for _, m := range byID {
+				nakAfter(m, 2*time.Second)
+			}
+			return nil, fmt.Errorf("claim dispatches: %w", err)
+		}
 		return nil, err
+	}
+	claimed := map[string]struct{}{}
+	for _, d := range out {
+		claimed[d.ID] = struct{}{}
 	}
 	r.mu.Lock()
 	for _, d := range out {
@@ -253,6 +274,24 @@ func (r *natsDispatchRepo) Release(ctx context.Context, d *biz.ClaimedDispatch, 
 	if m, ok := r.take(d.ID); ok {
 		if err == nil || errors.Is(err, biz.ErrStaleClaim) {
 			_ = m.Ack() // 围栏拒绝：行已被回收/他人重领，其自己的游标会处理
+		} else {
+			nakAfter(m, 5*time.Second) // 放回失败：PG 仍 sending，租约到期由回收器转 failed 后重投
+		}
+	}
+	return err
+}
+
+// ReleaseBatch implements biz.DispatchRepo：PG 一条语句整批放回后逐条处理游标，口径同 Release——
+// 语句成功即 ack（围栏未过的行已被回收 / 他人重领，其自己的游标会处理），语句失败则全部延后重投。
+func (r *natsDispatchRepo) ReleaseBatch(ctx context.Context, ds []*biz.ClaimedDispatch, delay time.Duration) error {
+	err := r.dispatchRepo.ReleaseBatch(ctx, ds, delay)
+	for _, d := range ds {
+		m, ok := r.take(d.ID)
+		if !ok {
+			continue
+		}
+		if err == nil {
+			_ = m.Ack()
 		} else {
 			nakAfter(m, 5*time.Second) // 放回失败：PG 仍 sending，租约到期由回收器转 failed 后重投
 		}

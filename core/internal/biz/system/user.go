@@ -73,6 +73,9 @@ type User struct {
 	Kind int32
 	// Avatar 头像地址；空 = 未设置。
 	Avatar string
+	// PasswordChangeRequired 口令仍是迁移预置的初始口令（见 PresetAdminPasswordHash）。只由认证链路
+	// （AuthUsecase.Login / Profile）回填，其余读路径恒为 false；纯提示，不参与任何放行判定。
+	PasswordChangeRequired bool
 	// Depts 所属部门：仅创建链路携带（与建号同事务写入）；读路径不回填，
 	// 所属部门经 DeptUsecase.UserDepts 批量查询。
 	Depts      *UserDeptAssignment
@@ -227,6 +230,16 @@ func (uc *UserUsecase) Update(ctx context.Context, id string, upd UserUpdate) er
 	if err := uc.rejectMachine(ctx, id); err != nil {
 		return err
 	}
+	// 只有真正的撤销（true→false）才吊销会话：前端整表单提交会原样回填 is_admin=false，
+	// 值没变的普通用户不能因为管理员改了个昵称就被踢下线。
+	revoked := false
+	if upd.IsAdmin != nil && !*upd.IsAdmin {
+		was, err := uc.IsAdminUser(ctx, id)
+		if err != nil {
+			return err
+		}
+		revoked = was
+	}
 	if upd.Depts != nil {
 		depts, err := upd.Depts.normalized()
 		if err != nil {
@@ -237,7 +250,7 @@ func (uc *UserUsecase) Update(ctx context.Context, id string, upd UserUpdate) er
 	if err := uc.writer.UpdateUser(ctx, id, upd); err != nil {
 		return err
 	}
-	if upd.IsAdmin != nil && !*upd.IsAdmin {
+	if revoked {
 		return uc.revokeSessions(ctx, id)
 	}
 	return nil

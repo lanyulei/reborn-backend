@@ -6,6 +6,7 @@ import (
 	"fmt"
 	htmltemplate "html/template"
 	"io"
+	"regexp"
 	"text/template"
 	"time"
 
@@ -173,23 +174,71 @@ func validateTemplateTextFormat(name, text, format string) error {
 		return err
 	}
 	if err := exec(io.Discard, trialRenderContext()); err != nil {
-		return fmt.Errorf("%w: %s render: %v", ErrTemplateInvalid, name, err)
+		if !lenientPayloadError.MatchString(err.Error()) {
+			return fmt.Errorf("%w: %s render: %v", ErrTemplateInvalid, name, err)
+		}
+		// 模板下钻了样例载荷里没有的键（如嵌套载荷 .Payload.labels.env；tag_match 支持这种点分路径）。
+		// 载荷有哪些字段属运行期语义（顶层严格、载荷宽松），不应拒绝——但执行在这里中断，模板后面的
+		// 部分还没校验：换成「任意深度下钻都不中断」的宽松上下文再跑一遍，只放行占位值引起的类型错误。
+		if lerr := exec(io.Discard, newLenientRenderContext()); lerr != nil && !lenientPayloadError.MatchString(lerr.Error()) &&
+			!lenientPlaceholderTypeError.MatchString(lerr.Error()) {
+			return fmt.Errorf("%w: %s render: %v", ErrTemplateInvalid, name, lerr)
+		}
 	}
 	return nil
 }
 
+// lenientPayloadError 载荷下钻类的执行错误：missingkey=zero 下缺失键是 nil 接口，再下钻即报错。
+// 只可能来自 map 形态的载荷 / 样本；顶层字段拼错报的是「in type biz.TrialRenderContext」，不在其列。
+var lenientPayloadError = regexp.MustCompile(`nil pointer evaluating interface \{\}|can't evaluate field \S+ in type interface \{\}`)
+
+// lenientPlaceholderTypeError 宽松上下文里唯一会多出来的错误形态：白名单函数拿到了占位用的空 map
+// 而不是标量（真实载荷里它是标量）。
+var lenientPlaceholderTypeError = regexp.MustCompile(`wrong type for value; expected [^;]+; got (map\[string\])?[\w.]*trialNode`)
+
+// trialNode 任意深度下钻都不中断的占位值：缺失键的零值仍是 trialNode（nil map）。
+type trialNode map[string]trialNode
+
+// lenientRenderContext 宽松试渲染上下文：字段集与 TrialRenderContext 相同，载荷与样本换成占位值。
+type lenientRenderContext struct {
+	Title     string
+	Payload   trialNode
+	Severity  int32
+	Count     int
+	Samples   []trialNode
+	BizID     string
+	EventTime time.Time
+}
+
+func newLenientRenderContext() lenientRenderContext {
+	return lenientRenderContext{
+		Title: "sample", Payload: trialNode{}, Severity: 2, Count: 2,
+		Samples:   []trialNode{{"event_id": {}, "title": {}, "severity": {}, "create_time": {}}},
+		BizID:     DefaultBizID,
+		EventTime: time.Unix(0, 0).UTC(),
+	}
+}
+
 // compileTemplate 解析模板为执行函数（text/html 引擎由 format 决定）。
+// 解析后拒绝嵌套的 range（规则见 kit/notifycontract.CheckRangeNesting）：嵌套 range 是指数级迭代，
+// 试渲染与预览没有超时，也不响应取消，一次请求就能留下一个占满 CPU 的 goroutine。
 func compileTemplate(name, text, format string) (func(w io.Writer, data any) error, error) {
 	if format == notifycontract.TemplateFormatHTML {
 		t, err := htmltemplate.New(name).Funcs(notifycontract.TemplateFuncs()).Option("missingkey=zero").Parse(text)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %s parse: %v", ErrTemplateInvalid, name, err)
 		}
+		if err := notifycontract.CheckRangeNesting(notifycontract.HTMLTrees(t)); err != nil {
+			return nil, fmt.Errorf("%w: %s %v", ErrTemplateInvalid, name, err)
+		}
 		return t.Execute, nil
 	}
 	t, err := template.New(name).Funcs(notifycontract.TemplateFuncs()).Option("missingkey=zero").Parse(text)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s parse: %v", ErrTemplateInvalid, name, err)
+	}
+	if err := notifycontract.CheckRangeNesting(notifycontract.TextTrees(t)); err != nil {
+		return nil, fmt.Errorf("%w: %s %v", ErrTemplateInvalid, name, err)
 	}
 	return t.Execute, nil
 }

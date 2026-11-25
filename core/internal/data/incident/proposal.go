@@ -268,6 +268,30 @@ func (r *proposalRepo) CountPlaybookExecs(ctx context.Context, playbookID string
 	return n, nil
 }
 
+// CountPlaybookExecsMany implements biz.ProposalRepo：口径与 CountPlaybookExecs 相同，按预案分组一次取齐。
+func (r *proposalRepo) CountPlaybookExecsMany(ctx context.Context, playbookIDs []string, since time.Time) (map[string]int, error) {
+	out := make(map[string]int, len(playbookIDs))
+	if len(playbookIDs) == 0 {
+		return out, nil
+	}
+	rows, err := r.data.Pool.Query(ctx,
+		"SELECT playbook_id::text, count(*) FROM incident_proposal WHERE playbook_id = ANY($1::uuid[]) AND status IN (4, 5, 6) AND create_time >= $2 GROUP BY playbook_id",
+		textArray(playbookIDs), since)
+	if err != nil {
+		return nil, fmt.Errorf("count playbook execs: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, fmt.Errorf("count playbook execs: scan: %w", err)
+		}
+		out[id] = n
+	}
+	return out, rows.Err()
+}
+
 // CountPending implements biz.ProposalRepo.
 func (r *proposalRepo) CountPending(ctx context.Context) (int, error) {
 	var n int

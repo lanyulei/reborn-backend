@@ -84,9 +84,11 @@ type userRepo struct {
 	data *basedata.Data
 }
 
-// NewUserRepo new a userRepo.
+// NewUserRepo new a userRepo. 有连接池时顺带启动一次性的预置口令检查（只打日志，见 startPresetPasswordCheck）。
 func NewUserRepo(data *basedata.Data) *userRepo {
-	return &userRepo{data: data}
+	r := &userRepo{data: data}
+	r.startPresetPasswordCheck()
+	return r
 }
 
 // mapUserUniqueViolation 将唯一约束冲突（23505）映射为业务哨兵错误；

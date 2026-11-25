@@ -90,9 +90,12 @@ type LoginResponse struct {
 	// refresh_token 刷新令牌原文，仅本次响应返回一次；服务端只存 SHA-256 哈希。
 	RefreshToken string `protobuf:"bytes,3,opt,name=refresh_token,json=refreshToken,proto3" json:"refresh_token,omitempty"`
 	// user 登录用户实体（不含密码）。
-	User          *User `protobuf:"bytes,4,opt,name=user,proto3" json:"user,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	User *User `protobuf:"bytes,4,opt,name=user,proto3" json:"user,omitempty"`
+	// password_change_required 当前口令是系统预置的初始口令（内置超管从未改过密码）：前端应在登录后
+	// 提示并引导用户立即修改。仅为提示，不限制接口调用。
+	PasswordChangeRequired bool `protobuf:"varint,5,opt,name=password_change_required,json=passwordChangeRequired,proto3" json:"password_change_required,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *LoginResponse) Reset() {
@@ -151,6 +154,13 @@ func (x *LoginResponse) GetUser() *User {
 		return x.User
 	}
 	return nil
+}
+
+func (x *LoginResponse) GetPasswordChangeRequired() bool {
+	if x != nil {
+		return x.PasswordChangeRequired
+	}
+	return false
 }
 
 // RefreshTokenRequest 刷新令牌请求。
@@ -396,8 +406,10 @@ type GetLoginProfileResponse struct {
 	BizScope []string `protobuf:"bytes,6,rep,name=biz_scope,json=bizScope,proto3" json:"biz_scope,omitempty"`
 	// biz_unrestricted 通知 biz 不受限（超管或任一启用角色 scope 为空）。
 	BizUnrestricted bool `protobuf:"varint,7,opt,name=biz_unrestricted,json=bizUnrestricted,proto3" json:"biz_unrestricted,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// password_change_required 同 LoginResponse.password_change_required：当前口令仍是系统预置的初始口令。
+	PasswordChangeRequired bool `protobuf:"varint,8,opt,name=password_change_required,json=passwordChangeRequired,proto3" json:"password_change_required,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *GetLoginProfileResponse) Reset() {
@@ -475,6 +487,13 @@ func (x *GetLoginProfileResponse) GetBizScope() []string {
 func (x *GetLoginProfileResponse) GetBizUnrestricted() bool {
 	if x != nil {
 		return x.BizUnrestricted
+	}
+	return false
+}
+
+func (x *GetLoginProfileResponse) GetPasswordChangeRequired() bool {
+	if x != nil {
+		return x.PasswordChangeRequired
 	}
 	return false
 }
@@ -727,13 +746,14 @@ const file_system_v1_auth_proto_rawDesc = "" +
 	"\fLoginRequest\x128\n" +
 	"\busername\x18\x01 \x01(\tB\x1c\xbaH\x19r\x172\x15^[a-zA-Z0-9_-]{3,64}$R\busername\x12&\n" +
 	"\bpassword\x18\x02 \x01(\tB\n" +
-	"\xbaH\ar\x05\x10\b\x18\x80\x02R\bpassword\"\x9b\x01\n" +
+	"\xbaH\ar\x05\x10\b\x18\x80\x02R\bpassword\"\xd5\x01\n" +
 	"\rLoginResponse\x12!\n" +
 	"\faccess_token\x18\x01 \x01(\tR\vaccessToken\x12\x1d\n" +
 	"\n" +
 	"expires_in\x18\x02 \x01(\x03R\texpiresIn\x12#\n" +
 	"\rrefresh_token\x18\x03 \x01(\tR\frefreshToken\x12#\n" +
-	"\x04user\x18\x04 \x01(\v2\x0f.system.v1.UserR\x04user\"F\n" +
+	"\x04user\x18\x04 \x01(\v2\x0f.system.v1.UserR\x04user\x128\n" +
+	"\x18password_change_required\x18\x05 \x01(\bR\x16passwordChangeRequired\"F\n" +
 	"\x13RefreshTokenRequest\x12/\n" +
 	"\rrefresh_token\x18\x01 \x01(\tB\n" +
 	"\xbaH\ar\x05\x10\x01\x18\x80\x01R\frefreshToken\"}\n" +
@@ -744,7 +764,7 @@ const file_system_v1_auth_proto_rawDesc = "" +
 	"\rrefresh_token\x18\x03 \x01(\tR\frefreshToken\"\x0f\n" +
 	"\rLogoutRequest\"\x10\n" +
 	"\x0eLogoutResponse\"\x18\n" +
-	"\x16GetLoginProfileRequest\"\x81\x02\n" +
+	"\x16GetLoginProfileRequest\"\xbb\x02\n" +
 	"\x17GetLoginProfileResponse\x12#\n" +
 	"\x04user\x18\x01 \x01(\v2\x0f.system.v1.UserR\x04user\x12%\n" +
 	"\x05roles\x18\x02 \x03(\v2\x0f.system.v1.RoleR\x05roles\x12 \n" +
@@ -752,7 +772,8 @@ const file_system_v1_auth_proto_rawDesc = "" +
 	"\x05menus\x18\x04 \x03(\tR\x05menus\x12\x1a\n" +
 	"\belements\x18\x05 \x03(\tR\belements\x12\x1b\n" +
 	"\tbiz_scope\x18\x06 \x03(\tR\bbizScope\x12)\n" +
-	"\x10biz_unrestricted\x18\a \x01(\bR\x0fbizUnrestricted\"v\n" +
+	"\x10biz_unrestricted\x18\a \x01(\bR\x0fbizUnrestricted\x128\n" +
+	"\x18password_change_required\x18\b \x01(\bR\x16passwordChangeRequired\"v\n" +
 	"\x15UploadMyAvatarRequest\x12\x1f\n" +
 	"\x04data\x18\x01 \x01(\fB\v\xbaH\bz\x06\x10\x01\x18\x80\x80@R\x04data\x12<\n" +
 	"\x04mime\x18\x02 \x01(\tB(\xbaH%r#R\timage/pngR\n" +

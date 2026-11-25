@@ -126,7 +126,8 @@ func (uc *AlertDetailUsecase) extras(ctx context.Context, userID string, scope S
 	return out, nil
 }
 
-// timeline 把时间线条目与通知记录按时间合并（升序，至多 maxTimeline 条），名称各查一次。
+// timeline 把时间线条目与通知记录按时间合并（升序，至多 maxTimeline 条），名称各查一次。合并后超过上限时
+// 保留的是最新的一段：详情页要看的恰恰是最近的几次通知与操作。
 func (uc *AlertDetailUsecase) timeline(ctx context.Context, events []*AlertEvent, logs []*NotifyLog, recipient bool) ([]*TimelineItem, error) {
 	items, err := uc.eventItems(ctx, events, recipient)
 	if err != nil {
@@ -136,7 +137,10 @@ func (uc *AlertDetailUsecase) timeline(ctx context.Context, events []*AlertEvent
 		items = append(items, &TimelineItem{ID: l.ID, Type: TimelineNotification, Time: l.CreateTime, Log: l})
 	}
 	slices.SortStableFunc(items, func(x, y *TimelineItem) int { return cmp.Or(x.Time.Compare(y.Time), cmp.Compare(x.ID, y.ID)) })
-	return items[:min(len(items), maxTimeline)], nil
+	if len(items) > maxTimeline {
+		items = items[len(items)-maxTimeline:]
+	}
+	return items, nil
 }
 
 // eventItems 时间线条目 → 展示项。收件人视图不带操作人与文字内容（备注、原因）。

@@ -7,7 +7,6 @@ import (
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/system"
 	basedata "github.com/lanyulei/reborn/backend/core/internal/data"
 	"github.com/lanyulei/reborn/backend/core/internal/pkg/txrun"
-	"github.com/lanyulei/reborn/backend/kit/idgen"
 )
 
 // 编译期断言锁住 biz 契约。
@@ -126,10 +125,15 @@ func (r *permissionRepo) ListGrantsByRoles(ctx context.Context, roleIDs []string
 // ReplaceForRole implements biz.PermissionAdminRepo：在调用方事务内全量替换
 // 直接授权（system_grant）与物化策略（system_permission），两表先物理删除
 // 再插入，原子一致。事务句柄由用例层传入（txrun.Tx，与通知事件直插同一
-// 事务，notify 设计 §11）；插入经窄句柄逐行 Exec——授权为低频管理操作且
-// 行数有限，放弃 pgx.Batch 单往返以保持事务边界归用例层所有。
+// 事务，notify 设计 §11）；插入经窄句柄 Exec（事务边界归用例层所有，不用
+// pgx.Batch），每类授权一条 unnest 批量语句。
 // create_user 当前置 NULL，待认证中间件注入操作者后补。
 func (r *permissionRepo) ReplaceForRole(ctx context.Context, tx txrun.Tx, roleID string, grants biz.GrantSet, operations []string) error {
+	// 同一角色的两次并发保存（角色此前没有授权行时，两个事务的 DELETE 都不影响任何行、随后各自插入）
+	// 会撞唯一索引、后到的一方 500。事务级咨询锁把同一角色的全量替换串行化，不同角色互不阻塞。
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended('system_grant:' || $1, 0))", roleID); err != nil {
+		return fmt.Errorf("lock role grants: %w", err)
+	}
 	if _, err := tx.Exec(ctx, "DELETE FROM system_grant WHERE role_id = $1", roleID); err != nil {
 		return fmt.Errorf("clear role grants: %w", err)
 	}
@@ -137,17 +141,22 @@ func (r *permissionRepo) ReplaceForRole(ctx context.Context, tx txrun.Tx, roleID
 		return fmt.Errorf("clear role permissions: %w", err)
 	}
 
+	// 每类授权一条 unnest 批量插入：一次保存最多几百行，逐行往返会把持锁（上面的咨询锁）时间
+	// 拉长到几百个网络往返。行内容与逐行插入完全一致（主键仍由应用侧逐行生成）。
 	insert := func(kind string, codes []string) error {
-		for _, code := range codes {
-			id, err := idgen.NewID()
-			if err != nil {
-				return fmt.Errorf("generate grant id: %w", err)
-			}
-			if _, err := tx.Exec(ctx,
-				"INSERT INTO system_grant (id, role_id, resource_type, resource_code) VALUES ($1, $2, $3, $4)",
-				id, roleID, kind, code); err != nil {
-				return fmt.Errorf("insert role grant: %w", err)
-			}
+		if len(codes) == 0 {
+			return nil
+		}
+		ids, err := newIDs(len(codes))
+		if err != nil {
+			return fmt.Errorf("generate grant id: %w", err)
+		}
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO system_grant (id, role_id, resource_type, resource_code)
+			 SELECT t.id::uuid, $1::uuid, $2::text, t.code
+			 FROM unnest($3::text[], $4::text[]) AS t(id, code)`,
+			roleID, kind, ids, codes); err != nil {
+			return fmt.Errorf("insert role grant: %w", err)
 		}
 		return nil
 	}
@@ -160,16 +169,19 @@ func (r *permissionRepo) ReplaceForRole(ctx context.Context, tx txrun.Tx, roleID
 	if err := insert(grantTypeAPI, grants.Apis); err != nil {
 		return err
 	}
-	for _, op := range operations {
-		id, err := idgen.NewID()
-		if err != nil {
-			return fmt.Errorf("generate permission id: %w", err)
-		}
-		if _, err := tx.Exec(ctx,
-			"INSERT INTO system_permission (id, role_id, operation) VALUES ($1, $2, $3)",
-			id, roleID, op); err != nil {
-			return fmt.Errorf("insert role permission: %w", err)
-		}
+	if len(operations) == 0 {
+		return nil
+	}
+	ids, err := newIDs(len(operations))
+	if err != nil {
+		return fmt.Errorf("generate permission id: %w", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO system_permission (id, role_id, operation)
+		 SELECT t.id::uuid, $1::uuid, t.op
+		 FROM unnest($2::text[], $3::text[]) AS t(id, op)`,
+		roleID, ids, operations); err != nil {
+		return fmt.Errorf("insert role permission: %w", err)
 	}
 	return nil
 }

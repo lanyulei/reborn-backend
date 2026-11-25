@@ -44,6 +44,10 @@ const (
 // handoverBatch 一次交接请求最多处理的实例数（其余由调用方再次请求）。
 const handoverBatch = 100
 
+// handoverReserve 交接请求在 HTTP 超时前留出的余量：剩余时间不足时不再开始处理新的实例
+// （一个实例一个事务，开了就要么做完要么回滚），把应答的时间留出来。
+const handoverReserve = 500 * time.Millisecond
+
 // maxNoticeTitle 通知标题的字节上限（通知域限 255 字节，留出余量）。
 const maxNoticeTitle = 240
 
@@ -899,6 +903,10 @@ func (uc *RuntimeUsecase) Signal(ctx context.Context, instanceID, name string, v
 // 表示还有剩余，调用方应带着它再次请求。各实例各自一个事务：某个实例失败不影响其余实例。
 // 返回已交接的席位数与失败的实例数——失败的实例留在原处理人名下，游标照常越过它们
 // （否则调用方会对着同一批失败的实例空转）；err 只表示请求本身不成立。
+//
+// 请求有时间上限（HTTP 超时），而每个实例各是一个事务：时间用尽后没轮到的实例不算失败，
+// 也不被游标越过——next 停在最后一个处理过的实例上（一个都没处理则沿用入参游标），调用方
+// 带着它再次请求时从断点继续。
 func (uc *RuntimeUsecase) Handover(ctx context.Context, from, to, operator, reason, cursor string) (moved, failed int, next string, err error) {
 	from, to, reason, cursor = strings.ToLower(from), strings.ToLower(to), clean(reason), strings.ToLower(cursor)
 	if from == to || (cursor != "" && !isUUID(cursor)) {
@@ -915,22 +923,57 @@ func (uc *RuntimeUsecase) Handover(ctx context.Context, from, to, operator, reas
 	if err != nil {
 		return 0, 0, "", err
 	}
-	if len(ids) > handoverBatch {
+	more := len(ids) > handoverBatch
+	if more {
 		ids = ids[:handoverBatch]
-		next = ids[len(ids)-1]
 	}
-	for _, id := range ids {
+	processed := 0
+	for i, id := range ids {
+		if !handoverTimeLeft(ctx) {
+			break
+		}
 		n := 0
 		if _, cerr := uc.command(ctx, id, true, func(ctx context.Context, x *Execution) (herr error) {
 			n, herr = x.Handover(ctx, from, to, operator, reason)
 			return herr
 		}); cerr != nil {
+			if ctx.Err() != nil {
+				// 被超时 / 取消打断的事务已回滚：这个实例没有处理结果，不算失败。
+				break
+			}
 			failed++
-			continue
+		} else {
+			moved += n
 		}
-		moved += n
+		processed = i + 1
+	}
+	switch {
+	case processed == len(ids) && !more:
+		// 全部处理完，没有更多。
+	case processed > 0:
+		next = ids[processed-1]
+	case cursor != "":
+		next = cursor
+	default:
+		// 一个实例都没来得及处理，又没有游标可返回：如实报告本次请求没有完成。调用方从头再试
+		// 即可——交接过的实例不再有 from 的席位，不会被重复交接。
+		cause := ctx.Err()
+		if cause == nil {
+			cause = context.DeadlineExceeded
+		}
+		return 0, 0, "", fmt.Errorf("workflow handover made no progress before the request deadline: %w", cause)
 	}
 	return moved, failed, next, nil
+}
+
+// handoverTimeLeft 报告是否还来得及开始处理下一个实例：请求已取消 / 超时，或已知截止时间
+// 且剩余不足 handoverReserve 时为假。
+func handoverTimeLeft(ctx context.Context) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	deadline, ok := ctx.Deadline()
+	return !ok || time.Until(deadline) > handoverReserve
 }
 
 func lowerAll(ids []string) []string {
@@ -994,8 +1037,43 @@ func involved(s *State, userID string) bool {
 	return false
 }
 
+// seatedOnAncestors 报告查看者是否在子流程的某个祖先实例（父实例及其上级，直到根流程）上
+// 处理过或抄送过任务（席位未被取消，被代理人也算）。发起人不必另查：子流程的发起人继承自
+// 父流程，involved 已判过。只对子流程实例成立；祖先链按 parent_instance_id 逐级上溯，步数
+// 以嵌套深度为界。
+func (uc *RuntimeUsecase) seatedOnAncestors(ctx context.Context, in *Instance, userID string) (bool, error) {
+	if in.ParentInstanceID == "" {
+		return false, nil
+	}
+	refs, err := uc.lookup.SeatsInTree(ctx, in.ID, userID)
+	if err != nil || len(refs) == 0 {
+		return false, err
+	}
+	seated := make(map[string]struct{}, len(refs))
+	for _, ref := range refs {
+		seated[ref.InstanceID] = struct{}{}
+	}
+	for id, left := in.ParentInstanceID, in.Depth; id != "" && left > 0; left-- {
+		if _, ok := seated[id]; ok {
+			return true, nil
+		}
+		if id == in.RootID {
+			return false, nil
+		}
+		parent, err := uc.lookup.GetInstance(ctx, id)
+		if errors.Is(err, ErrInstanceNotFound) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		id = parent.ParentInstanceID
+	}
+	return false, nil
+}
+
 // Get 查询实例详情。viewAll=false 时只有参与者（发起人 / 处理人 / 抄送人）以及业务域
-// 放行的人可看。
+// 放行的人可看；不挂业务对象时，在祖先实例上有席位的查看者可以打开子流程的详情（只读）。
 func (uc *RuntimeUsecase) Get(ctx context.Context, instanceID, userID string, viewAll bool) (*InstanceDetail, error) {
 	s, err := uc.reader.Load(ctx, instanceID)
 	if err != nil {
@@ -1005,9 +1083,17 @@ func (uc *RuntimeUsecase) Get(ctx context.Context, instanceID, userID string, vi
 		// 子流程按根流程所挂的业务对象询问业务域（工单的管理视图、同一张工单上的其他参与者）。
 		viewer := uc.viewers[s.Instance.RootBusinessType]
 		if viewer == nil || s.Instance.RootBusinessType == "" {
-			return nil, ErrInstanceForbidden
-		}
-		if ok, err := viewer.CanViewInstance(ctx, userID, s.Instance.RootBusinessID); err != nil {
+			// 没有业务域的查看规则可问（不挂业务对象的独立流程）：只按本实例的参与关系判，父流程里
+			// 处理过任务的人在子流程上没有席位，会被拒在子流程详情之外。子流程是父流程的一部分，
+			// 他在祖先实例上的席位同样放行；只放行查看，写操作仍只认本实例上的待处理席位。
+			ok, err := uc.seatedOnAncestors(ctx, &s.Instance, userID)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				return nil, ErrInstanceForbidden
+			}
+		} else if ok, err := viewer.CanViewInstance(ctx, userID, s.Instance.RootBusinessID); err != nil {
 			return nil, err
 		} else if !ok {
 			return nil, ErrInstanceForbidden

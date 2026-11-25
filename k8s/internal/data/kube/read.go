@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/lanyulei/reborn/backend/k8s/internal/biz"
 	"github.com/lanyulei/reborn/backend/kit/k8scontract"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/dynamic"
@@ -168,15 +170,23 @@ func (u *userClients) list(req k8scontract.ListRequest) (k8scontract.ListRespons
 	return u.listTable(req, res)
 }
 
-var cachedFilters = []string{k8scontract.FilterState, k8scontract.FilterOwner}
+// cachedFilters 一种缓存资源支持的筛选：有状态列的才能按状态筛选（没有状态列的资源，行的状态恒为空，
+// 选任何状态都只会得到空列表）；Pod 另可按所在节点筛选。
+func cachedFilters(gvr k8scontract.GVR) []string {
+	filters := make([]string, 0, 3)
+	if gvr == k8scontract.GVRPod {
+		filters = append(filters, k8scontract.FilterNode)
+	}
+	if slices.ContainsFunc(views[gvr].columns, func(c k8scontract.Column) bool { return c.Type == k8scontract.ColState }) {
+		filters = append(filters, k8scontract.FilterState)
+	}
+	return append(filters, k8scontract.FilterOwner)
+}
 
 func (u *userClients) listCached(req k8scontract.ListRequest, res k8scontract.APIResource) (k8scontract.ListResponse, error) {
 	gvr := req.GVR()
 	out := k8scontract.ListResponse{Rows: []k8scontract.Row{}, Columns: views[gvr].columns}
-	out.Capabilities = k8scontract.Capabilities{Cached: true, Keyword: true, Sort: true, Total: true, Watch: true, Filters: cachedFilters}
-	if gvr == k8scontract.GVRPod {
-		out.Capabilities.Filters = append([]string{k8scontract.FilterNode}, cachedFilters...)
-	}
+	out.Capabilities = k8scontract.Capabilities{Cached: true, Keyword: true, Sort: true, Total: true, Watch: true, Filters: cachedFilters(gvr)}
 	// 先问集群，再碰缓存：无权限的请求不会触发缓存建立，也读不到缓存里的任何内容。
 	namespaces, all, err := u.c.readableNamespaces(u.ctx, u.id, gvr, res.Namespaced, req.Namespace)
 	if err != nil {
@@ -360,6 +370,14 @@ func (u *userClients) get(ref k8scontract.Ref) (k8scontract.ObjectResponse, erro
 	return out, nil
 }
 
+// eventsPageSize / maxObjectEvents 对象事件的每页条数，以及一次最多读取的条数。
+// 集群按 etcd 键序返回（同一对象的事件，旧的在前），只读一页拿到的是最旧的一批：事件多的对象最新的反而
+// 读不到。按 continue 翻页读满 maxObjectEvents 再按时间排序截断。
+const (
+	eventsPageSize  = 500
+	maxObjectEvents = 2000
+)
+
 // events 对象的关联事件：按 involvedObject 字段筛选，最近的在前，至多 200 条。
 func (u *userClients) events(ref k8scontract.Ref) (k8scontract.EventsResponse, error) {
 	out := k8scontract.EventsResponse{Items: []k8scontract.Event{}}
@@ -380,9 +398,17 @@ func (u *userClients) events(ref k8scontract.Ref) (k8scontract.EventsResponse, e
 	} else {
 		ns = metav1.NamespaceAll
 	}
-	list, err := u.kube.CoreV1().Events(ns).List(u.ctx, metav1.ListOptions{FieldSelector: sel, Limit: 500})
-	if err != nil {
-		return out, err
+	list := &corev1.EventList{}
+	opts := metav1.ListOptions{FieldSelector: sel, Limit: eventsPageSize}
+	for range maxObjectEvents / eventsPageSize { // 页数有上界：至多读满 maxObjectEvents 条
+		page, err := u.kube.CoreV1().Events(ns).List(u.ctx, opts)
+		if err != nil {
+			return out, err
+		}
+		list.Items = append(list.Items, page.Items...)
+		if opts.Continue = page.Continue; opts.Continue == "" {
+			break
+		}
 	}
 	for i := range list.Items {
 		ev := &list.Items[i]

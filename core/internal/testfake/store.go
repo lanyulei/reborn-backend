@@ -459,6 +459,22 @@ func (s *Store) BindUserRoles(_ context.Context, userID string, roleIDs []string
 	return nil
 }
 
+// AddUserRole implements biz.UserRoleRepo：追加一条绑定，已绑定则不动；用户或角色不存在时不写入。
+func (s *Store) AddUserRole(_ context.Context, userID, roleID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.users[userID]; !ok {
+		return nil
+	}
+	if _, ok := s.roles[roleID]; !ok {
+		return nil
+	}
+	if !slices.Contains(s.bindings[userID], roleID) {
+		s.bindings[userID] = append(s.bindings[userID], roleID)
+	}
+	return nil
+}
+
 // ListUserRoles implements biz.UserRoleRepo：按 code 升序返回。
 func (s *Store) ListUserRoles(_ context.Context, userID string) ([]*biz.Role, error) {
 	s.mu.RLock()

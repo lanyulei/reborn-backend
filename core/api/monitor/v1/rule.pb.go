@@ -2238,7 +2238,7 @@ type BatchRuleResult struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// id 规则唯一标识。
 	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	// name 规则名称（规则不存在时为空）。
+	// name 规则名称（规则不存在，或调用方对其所在分组不可读时为空）。
 	Name string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
 	// ok 是否成功。
 	Ok bool `protobuf:"varint,3,opt,name=ok,proto3" json:"ok,omitempty"`

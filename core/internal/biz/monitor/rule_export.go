@@ -219,8 +219,29 @@ func parseRuleExport(content string) ([]exportedRule, error) {
 		if exprBytes > maxImportExprBytes {
 			return nil, errImportExprBytes()
 		}
+		lowerExportRefs(&file.Rules[i])
 	}
 	return file.Rules, nil
+}
+
+// lowerExportRefs 把文件里以 UUID 识别的引用（数据源、通知用户 / 值班表 / 部门、升级策略、工单模板、代理
+// 用户）统一成小写：UUID 不区分大小写，而目录与仓储按库里的小写 ID 比对，大写写法否则会被当成「已不存在
+// 或不可用」而从规则里去掉。流程标识不是 UUID，保持原样。
+func lowerExportRefs(r *exportedRule) {
+	for i := range r.Datasources {
+		r.Datasources[i].ID = strings.ToLower(r.Datasources[i].ID)
+	}
+	for _, refs := range [][]exportedRef{r.Notify.Users, r.Notify.Schedules, r.Notify.Depts} {
+		for i := range refs {
+			refs[i].ID = strings.ToLower(refs[i].ID)
+		}
+	}
+	if r.Escalation != nil {
+		r.Escalation.ID = strings.ToLower(r.Escalation.ID)
+	}
+	r.Actions.Ticket.Template.ID = strings.ToLower(r.Actions.Ticket.Template.ID)
+	r.Actions.Ticket.Agent.ID = strings.ToLower(r.Actions.Ticket.Agent.ID)
+	r.Actions.Workflow.Agent.ID = strings.ToLower(r.Actions.Workflow.Agent.ID)
 }
 
 // validIDs 去掉不是 UUID 的 ID（文件内容不可信：非法 ID 交给数据层会变成 500）并去重。
@@ -271,10 +292,16 @@ func (uc *RuleUsecase) convertExport(ctx context.Context, scope Scope, opts *Imp
 	if err := uc.names.resolve(ctx, set); err != nil {
 		return nil, err
 	}
-	var activeUsers []string
+	// 可用用户放进集合：每条规则至多 50 个通知用户、一次至多导入 MaxImportRules 条，逐个在切片里线性查找是
+	// 「引用数 × 可用用户数」。
+	activeUsers := map[string]struct{}{}
 	if users = validIDs(users); len(users) > 0 {
-		if activeUsers, err = uc.dir.ActiveUserIDs(ctx, users); err != nil {
+		active, err := uc.dir.ActiveUserIDs(ctx, users)
+		if err != nil {
 			return nil, err
+		}
+		for _, id := range active {
+			activeUsers[id] = struct{}{}
 		}
 	}
 	p2, err := uc.newImportRefs(ctx, scope, opts.GroupID, rules)
@@ -317,7 +344,7 @@ func keepRefs(item *ImportItem, kind string, refs []exportedRef, ok func(id stri
 }
 
 // convertExported 把导出文件里的一条规则转换为预览项。
-func convertExported(index int, r *exportedRule, opts *ImportOptions, set *refSet, activeUsers []string, overrideNotify bool) *ImportItem {
+func convertExported(index int, r *exportedRule, opts *ImportOptions, set *refSet, activeUsers map[string]struct{}, overrideNotify bool) *ImportItem {
 	item := &ImportItem{Index: int32(index), SourceGroup: truncate(r.Group.Name, 512), Name: truncate(strings.TrimSpace(r.Name), 128), Status: ImportNew} // #nosec G115 -- 至多 MaxImportRules
 	if r.tooManyRefs() {
 		item.Status, item.Error = ImportInvalid, "too many datasources or notify targets"
@@ -363,7 +390,10 @@ func convertExported(index int, r *exportedRule, opts *ImportOptions, set *refSe
 		}
 	} else {
 		spec.Notify = mc.NotifyTargets{
-			UserIDs: keepRefs(item, "通知用户", r.Notify.Users, func(id string) bool { return slices.Contains(activeUsers, id) }),
+			UserIDs: keepRefs(item, "通知用户", r.Notify.Users, func(id string) bool {
+				_, ok := activeUsers[id]
+				return ok
+			}),
 			ScheduleIDs: keepRefs(item, "值班表", r.Notify.Schedules, func(id string) bool {
 				_, ok := set.scheduleNames[id]
 				return ok

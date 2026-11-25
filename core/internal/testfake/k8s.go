@@ -398,6 +398,25 @@ func (v K8sScopes) Replace(_ context.Context, roleID string, items []*biz.RoleSc
 	return nil
 }
 
+// Grant implements biz.ScopeRepo：与仓储一致——在同一把锁内读出、并入一条授权、整组写回。
+func (v K8sScopes) Grant(_ context.Context, roleID string, item *biz.RoleScope, audit *biz.AuditEntry) error {
+	s := v.s
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.clusters[item.ClusterID]; !ok {
+		return biz.ScopeInvalid("some clusters do not exist or have been removed")
+	}
+	cur := make([]*biz.RoleScope, 0, len(s.scopes[roleID])+1)
+	for _, it := range s.scopes[roleID] {
+		cp := *it
+		cur = append(cur, &cp)
+	}
+	s.scopes[roleID] = biz.MergeScope(cur, item.ClusterID, item.Namespace, item.Level)
+	s.bump(kc.CfgRoleScope)
+	s.audit(audit, "", "", roleID)
+	return nil
+}
+
 // K8sAudits biz.AuditReader 视图。
 type K8sAudits struct{ s *K8sStore }
 

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 
 	v1 "github.com/lanyulei/reborn/backend/core/api/oncall/v1"
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/oncall"
@@ -21,11 +22,23 @@ func NewOncallScheduleService(uc *biz.ScheduleUsecase, groups *biz.GroupUsecase,
 	return &OncallScheduleService{uc: uc, groups: groups, admin: admin}
 }
 
+// lowerAll 批量转小写，不改动入参切片。值班域入参里的 ID（用户、分组、值班表、班次、事件）在
+// service 入口统一转小写：数据库返回的 ID 恒为小写，biz 里按请求原值做 map 查找 / 相等比较，
+// 大写的 UUID 会通过参数校验却被判成「不是成员」「不存在」（与工单域同一处理）。
+// dup: service/ticket 有一份同名同义的私有函数；各域 service 包不互相 import。
+func lowerAll(ids []string) []string {
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		out[i] = strings.ToLower(id)
+	}
+	return out
+}
+
 func fromProtoConfig(c *v1.ScheduleConfig) biz.ScheduleConfig {
 	return biz.ScheduleConfig{
 		Name: c.GetName(), Description: c.GetDescription(), Timezone: c.GetTimezone(),
 		RotationUnit: c.GetRotationUnit(), RotationInterval: c.GetRotationInterval(), AnchorTime: c.GetAnchorTime().AsTime(),
-		MemberIDs: c.GetMemberIds(), StartUserID: c.GetStartUserId(), BackupEnabled: c.GetBackupEnabled(),
+		MemberIDs: lowerAll(c.GetMemberIds()), StartUserID: strings.ToLower(c.GetStartUserId()), BackupEnabled: c.GetBackupEnabled(),
 		HorizonDays: c.GetHorizonDays(), RemindMinutes: c.GetRemindMinutes(), DigestTime: c.GetDigestTime(),
 	}
 }
@@ -94,7 +107,7 @@ func (s *OncallScheduleService) ListSchedules(ctx context.Context, req *v1.ListS
 	if err != nil {
 		return nil, err
 	}
-	schedules, err := s.uc.List(ctx, req.GetGroupId())
+	schedules, err := s.uc.List(ctx, strings.ToLower(req.GetGroupId()))
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +137,7 @@ func (s *OncallScheduleService) CreateSchedule(ctx context.Context, req *v1.Crea
 	if err != nil {
 		return nil, err
 	}
-	sc, err := s.uc.Create(ctx, actor, req.GetGroupId(), fromProtoConfig(req.GetConfig()))
+	sc, err := s.uc.Create(ctx, actor, strings.ToLower(req.GetGroupId()), fromProtoConfig(req.GetConfig()))
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +150,7 @@ func (s *OncallScheduleService) GetSchedule(ctx context.Context, req *v1.GetSche
 	if err != nil {
 		return nil, err
 	}
-	sc, err := s.uc.Get(ctx, req.GetId())
+	sc, err := s.uc.Get(ctx, strings.ToLower(req.GetId()))
 	if err != nil {
 		return nil, err
 	}
@@ -154,7 +167,7 @@ func (s *OncallScheduleService) UpdateSchedule(ctx context.Context, req *v1.Upda
 	if err != nil {
 		return nil, err
 	}
-	sc, err := s.uc.Update(ctx, actor, req.GetId(), fromProtoConfig(req.GetConfig()))
+	sc, err := s.uc.Update(ctx, actor, strings.ToLower(req.GetId()), fromProtoConfig(req.GetConfig()))
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +180,7 @@ func (s *OncallScheduleService) UpdateScheduleStatus(ctx context.Context, req *v
 	if err != nil {
 		return nil, err
 	}
-	if err := s.uc.SetStatus(ctx, actor, req.GetId(), req.GetStatus()); err != nil {
+	if err := s.uc.SetStatus(ctx, actor, strings.ToLower(req.GetId()), req.GetStatus()); err != nil {
 		return nil, err
 	}
 	return &v1.UpdateScheduleStatusResponse{}, nil
@@ -179,7 +192,7 @@ func (s *OncallScheduleService) DeleteSchedule(ctx context.Context, req *v1.Dele
 	if err != nil {
 		return nil, err
 	}
-	if err := s.uc.Delete(ctx, actor, req.GetId()); err != nil {
+	if err := s.uc.Delete(ctx, actor, strings.ToLower(req.GetId())); err != nil {
 		return nil, err
 	}
 	return &v1.DeleteScheduleResponse{}, nil
@@ -187,7 +200,7 @@ func (s *OncallScheduleService) DeleteSchedule(ctx context.Context, req *v1.Dele
 
 // PreviewSchedule implements proto OncallScheduleService/PreviewSchedule.
 func (s *OncallScheduleService) PreviewSchedule(ctx context.Context, req *v1.PreviewScheduleRequest) (*v1.PreviewScheduleResponse, error) {
-	shifts, issues, err := s.uc.Preview(ctx, req.GetGroupId(), req.GetScheduleId(), fromProtoConfig(req.GetConfig()), req.GetDays())
+	shifts, issues, err := s.uc.Preview(ctx, strings.ToLower(req.GetGroupId()), strings.ToLower(req.GetScheduleId()), fromProtoConfig(req.GetConfig()), req.GetDays())
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +211,7 @@ func (s *OncallScheduleService) PreviewSchedule(ctx context.Context, req *v1.Pre
 func (s *OncallScheduleService) ListShifts(ctx context.Context, req *v1.ListShiftsRequest) (*v1.ListShiftsResponse, error) {
 	q := biz.ShiftQuery{
 		From: req.GetStartTime().AsTime(), To: req.GetEndTime().AsTime(),
-		GroupID: req.GetGroupId(), ScheduleID: req.GetScheduleId(), UserID: req.GetUserId(),
+		GroupID: strings.ToLower(req.GetGroupId()), ScheduleID: strings.ToLower(req.GetScheduleId()), UserID: strings.ToLower(req.GetUserId()),
 	}
 	if req.GetMine() {
 		actor, err := actorFromContext(ctx, s.admin)
@@ -221,7 +234,7 @@ func (s *OncallScheduleService) CreateOverride(ctx context.Context, req *v1.Crea
 		return nil, err
 	}
 	shifts, err := s.uc.CreateOverride(ctx, actor, biz.OverrideInput{
-		ScheduleID: req.GetScheduleId(), Role: req.GetRole(), UserID: req.GetUserId(),
+		ScheduleID: strings.ToLower(req.GetScheduleId()), Role: req.GetRole(), UserID: strings.ToLower(req.GetUserId()),
 		Start: req.GetStartTime().AsTime(), End: req.GetEndTime().AsTime(), Remark: req.GetRemark(),
 	})
 	if err != nil {
@@ -236,7 +249,7 @@ func (s *OncallScheduleService) RevokeOverride(ctx context.Context, req *v1.Revo
 	if err != nil {
 		return nil, err
 	}
-	if err := s.uc.RevokeOverride(ctx, actor, req.GetId()); err != nil {
+	if err := s.uc.RevokeOverride(ctx, actor, strings.ToLower(req.GetId())); err != nil {
 		return nil, err
 	}
 	return &v1.RevokeOverrideResponse{}, nil
@@ -244,7 +257,7 @@ func (s *OncallScheduleService) RevokeOverride(ctx context.Context, req *v1.Revo
 
 // GetCurrentDuty implements proto OncallScheduleService/GetCurrentDuty.
 func (s *OncallScheduleService) GetCurrentDuty(ctx context.Context, req *v1.GetCurrentDutyRequest) (*v1.GetCurrentDutyResponse, error) {
-	duties, err := s.uc.Current(ctx, req.GetGroupId(), req.GetScheduleId())
+	duties, err := s.uc.Current(ctx, strings.ToLower(req.GetGroupId()), strings.ToLower(req.GetScheduleId()))
 	if err != nil {
 		return nil, err
 	}
@@ -268,7 +281,7 @@ func (s *OncallScheduleService) SendScheduleNotification(ctx context.Context, re
 	if err != nil {
 		return nil, err
 	}
-	res, err := s.uc.SendNotification(ctx, actor, biz.ManualNotifyInput{ScheduleID: req.GetId(), Kind: req.GetKind(), Target: req.GetTarget()})
+	res, err := s.uc.SendNotification(ctx, actor, biz.ManualNotifyInput{ScheduleID: strings.ToLower(req.GetId()), Kind: req.GetKind(), Target: req.GetTarget()})
 	if err != nil {
 		return nil, err
 	}
@@ -288,7 +301,7 @@ func (s *OncallScheduleService) ListScheduleNotificationResults(ctx context.Cont
 	if err != nil {
 		return nil, err
 	}
-	results, err := s.uc.NotificationResults(ctx, actor, req.GetId(), req.GetEventIds())
+	results, err := s.uc.NotificationResults(ctx, actor, strings.ToLower(req.GetId()), lowerAll(req.GetEventIds()))
 	if err != nil {
 		return nil, err
 	}

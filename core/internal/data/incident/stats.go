@@ -35,6 +35,15 @@ func (r *statsRepo) Overview(ctx context.Context, businessID string, now time.Ti
 	if businessID != "" {
 		biz0 = " AND i.business_id = " + a.add(businessID)
 	}
+	// 候选故障数：候选行本身不存业务（业务到开出故障时才定），带业务过滤时只统计「规则固定指向该业务」的候选
+	// ——此前不过滤，每个业务的概览里都是同一个全局数。按告警标签动态匹配业务的规则（business_label）在
+	// 候选阶段还没有确定的业务，其候选不计入任何一个业务。规则的业务存在 spec 的 JSON 里，是文本：单独用一个
+	// 文本参数比较，不复用上面按 uuid 推断的那个参数。
+	candidates := "SELECT count(*)::int AS n FROM incident_candidate WHERE status = 1"
+	if businessID != "" {
+		candidates = "SELECT count(*)::int AS n FROM incident_candidate c JOIN incident_rule r ON r.id = c.rule_id" +
+			" WHERE c.status = 1 AND lower(r.spec->'incident'->>'business_id') = lower(" + a.add(businessID) + "::text)"
+	}
 	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	ds, de, nowP := a.add(dayStart), a.add(dayStart.Add(24*time.Hour)), a.add(now)
 	o := &biz.OverviewStats{ActiveBySev: map[int32]int32{}}
@@ -53,7 +62,7 @@ func (r *statsRepo) Overview(ctx context.Context, businessID string, now time.Ti
 		     (SELECT count(*) FILTER (WHERE i.open_time >= `+ds+` AND i.open_time < `+de+`)::int AS opened,
 		             count(*) FILTER (WHERE i.resolve_time >= `+ds+` AND i.resolve_time < `+de+`)::int AS resolved
 		      FROM incident_record i WHERE NOT i.is_drill AND i.status <> 6`+biz0+`) td,
-		     (SELECT count(*)::int AS n FROM incident_candidate WHERE status = 1) cd`, a.args...).
+		     (`+candidates+`) cd`, a.args...).
 		Scan(&o.Active, &s1, &s2, &s3, &s4, &o.Unresponded, &o.ReviewPending, &o.ReviewOverdue, &o.ProposalPending, &o.TodayOpened, &o.TodayResolved, &o.Candidates)
 	if err != nil {
 		return nil, fmt.Errorf("incident overview: %w", err)

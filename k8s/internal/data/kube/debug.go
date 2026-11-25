@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"slices"
+	"strconv"
 	"time"
 
 	"github.com/lanyulei/reborn/backend/k8s/internal/biz"
@@ -22,20 +23,54 @@ const (
 	debugStartTimeout = 90 * time.Second
 	// maxEphemeralContainers 一个 Pod 上的临时容器上限：临时容器无法删除，避免无限累积。
 	maxEphemeralContainers = 8
+	// debugAttachWindow 调试容器启动后，等待终端接入的时限：超过而没有任何终端接入就自行退出。
+	debugAttachWindow = 300 * time.Second
+	// debugSessionLimit 调试容器的存活上限（会话最长时长）。
+	debugSessionLimit = 8 * time.Hour
+	// debugStopTimeout 终端没能建立时，结束调试容器主进程的那次 exec 的时限。
+	debugStopTimeout = 5 * time.Second
 )
 
-// debugCommand 调试容器的主进程：保持存活到会话时长上限，由终端 exec 进入；收到 TERM 立即退出。
-// 它把自己的进程号写进 debugPIDFile，终端里的 shell 退出时据此结束它（见 debugShellCommand），
-// 临时容器不会在会话结束后继续空转。
+const (
+	debugPIDFile    = "/tmp/.reborn-debug.pid"
+	debugMarkerFile = "/tmp/.reborn-debug.attached"
+)
+
+// debugMainScript 调试容器的主进程：保持存活到会话时长上限，由终端 exec 进入；收到 TERM 立即退出。
+// 它把自己的进程号写进 pidFile，终端里的 shell 退出时据此结束它（见 debugShellScript）。
+//
+// 看门狗：启动后 window 内没有终端接入（没看到 marker）就结束自己。终端建不起来的时候——没有 pods/exec
+// 权限、握手失败、等启动的 90 秒里客户端断开——平台侧的拆除（stopDebug）是尽力而为、可能做不成，
+// 没有兜底的话临时容器会空转到会话时长上限，一直占着目标容器的 CPU / 内存配额。
+// 只在 pidFile 写入成功时才装看门狗：写不进去说明容器的文件系统不可写，此时 marker 也写不了，
+// 看门狗会误杀正在使用的终端——这种情况退回到「不装看门狗」（与改动前的行为一致）。
+// 结束的是自己（$$ 在子 shell 里仍是主进程的 PID），不能是 1：临时容器共享目标容器的进程命名空间，
+// 那里的 1 号是目标容器的主进程。
 //
 // 注意 K8s 会展开容器 command 里的 $(VAR) 并把 $$ 还原成 $：要让 shell 拿到 $$ 得写成 $$$$。
-var debugCommand = []string{"/bin/sh", "-c", "echo $$$$ > " + debugPIDFile + "; trap 'exit 0' TERM INT; sleep 28800 & wait"}
+func debugMainScript(pidFile, marker string, window time.Duration) string {
+	return "if echo $$$$ > " + pidFile + "; then ( sleep " + strconv.Itoa(int(window/time.Second)) +
+		"; [ -e " + marker + " ] || kill -TERM $$$$ ) & fi;" +
+		" trap 'exit 0' TERM INT; sleep " + strconv.Itoa(int(debugSessionLimit/time.Second)) + " & wait"
+}
 
-const debugPIDFile = "/tmp/.reborn-debug.pid"
+// debugShellScript 调试容器里的终端：记下「已有终端接入」（解除主进程的看门狗）；shell 退出后结束调试容器的主进程。
+func debugShellScript(pidFile, marker string) string {
+	return "TERM=xterm-256color; export TERM; touch " + marker + ";" +
+		" if command -v bash >/dev/null 2>&1; then bash; else sh; fi;" +
+		" kill -TERM \"$(cat " + pidFile + " 2>/dev/null)\" 2>/dev/null; exit 0"
+}
 
-// debugShellCommand 调试容器里的终端：shell 退出后结束调试容器的主进程。
-var debugShellCommand = []string{"/bin/sh", "-c", "TERM=xterm-256color; export TERM; if command -v bash >/dev/null 2>&1; then bash; else sh; fi; " +
-	"kill -TERM \"$(cat " + debugPIDFile + " 2>/dev/null)\" 2>/dev/null; exit 0"}
+// debugKillScript 终端没能建立时，结束调试容器主进程用的命令（以用户身份对调试容器再 exec 一次）。
+func debugKillScript(pidFile string) string {
+	return "kill -TERM \"$(cat " + pidFile + " 2>/dev/null)\" 2>/dev/null; exit 0"
+}
+
+var (
+	debugCommand      = []string{"/bin/sh", "-c", debugMainScript(debugPIDFile, debugMarkerFile, debugAttachWindow)}
+	debugShellCommand = []string{"/bin/sh", "-c", debugShellScript(debugPIDFile, debugMarkerFile)}
+	debugKillCommand  = []string{"/bin/sh", "-c", debugKillScript(debugPIDFile)}
+)
 
 // SetDebugImages 设置调试容器的镜像允许清单（空 = 只允许 DefaultDebugImage）。启动期调用。
 func (m *Manager) SetDebugImages(images []string) {

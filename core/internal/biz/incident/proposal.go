@@ -152,12 +152,16 @@ func (uc *ProposalUsecase) allowedTargets(ctx context.Context, inc *Incident, ci
 			return detail(ErrProposalInvalid, "target %s is not an affected resource or its upstream", ci)
 		}
 	}
-	cards, err := uc.d.CMDB.Cards(ctx, ciIDs)
-	if err != nil {
-		return err
-	}
-	if len(cards) != len(uniq(ciIDs)) {
-		return detail(ErrProposalInvalid, "some targets do not exist in CMDB")
+	// Cards 一次至多读 MaxCardsPerLookup 个：靶标去重后超过它时整批比较长度会恒判「不存在」
+	//（上游并集几百个是常见拓扑），按它分批校验。
+	for batch := range slices.Chunk(uniq(ciIDs), MaxCardsPerLookup) {
+		cards, err := uc.d.CMDB.Cards(ctx, batch)
+		if err != nil {
+			return err
+		}
+		if len(cards) != len(batch) {
+			return detail(ErrProposalInvalid, "some targets do not exist in CMDB")
+		}
 	}
 	return nil
 }
@@ -681,8 +685,17 @@ func (uc *ProposalUsecase) execute(ctx context.Context, proposalID string) error
 	}
 	p.Status = ProposalRunning
 	return uc.d.Txm.WithinTx(ctx, func(tx Tx) error {
-		if _, err := uc.d.Proposals.SaveTx(ctx, tx, p, ProposalApproved); err != nil {
+		ok, err := uc.d.Proposals.SaveTx(ctx, tx, p, ProposalApproved)
+		if err != nil {
 			return err
+		}
+		if !ok {
+			// 围栏未命中：提交作业 / 流程期间故障已被恢复 / 关闭 / 合并，建议被置为已取消。作业已经提交出去
+			//（RequestID 幂等，重放不会重复提交），但建议不再跟踪它的结果——不能再写回「执行中」，
+			// 也不追加「执行中」时间线（否则后续结果永远不回写，时间线上多出一条悬空的执行中）。
+			uc.d.Logger.WarnContext(ctx, "incident: proposal cancelled during submission, result will not be tracked",
+				"proposal", p.ID, "incident", p.IncidentID, "exec_kind", p.ExecKind, "exec_ref", p.ExecRef)
+			return nil
 		}
 		return uc.d.Events.AppendTx(ctx, tx, &Event{
 			ID: mustID(), IncidentID: p.IncidentID, Type: EventProposalResult, ActorType: ActorSystem,

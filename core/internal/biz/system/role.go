@@ -75,6 +75,9 @@ type RoleWriter interface {
 type UserRoleRepo interface {
 	// BindUserRoles 事务内全量覆盖用户绑定（先物理删除旧绑定再写入新绑定）。
 	BindUserRoles(ctx context.Context, userID string, roleIDs []string) error
+	// AddUserRole 给用户追加一条绑定，其余绑定不动；已绑定时什么都不做（单语句，可与任何写路径并发）。
+	// 用户或角色不存在（含已软删）时同样不写入、不报错——存在性由用例层先行校验。
+	AddUserRole(ctx context.Context, userID, roleID string) error
 	// ListUserRoles 查询用户当前绑定的角色，按 code 升序。
 	ListUserRoles(ctx context.Context, userID string) ([]*Role, error)
 }

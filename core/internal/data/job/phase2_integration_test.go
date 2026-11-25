@@ -263,9 +263,11 @@ func TestScheduleQueue(t *testing.T) {
 	}
 	for range 8 {
 		wg.Go(func() {
-			ok, err := e.schedules.Advance(ctx, s.ID, biz.ScheduleRun{Fired: *due[0].NextTime, Next: next, ExecutionID: execID})
+			ok, err := e.schedules.Fire(ctx, s.ID, *due[0].NextTime, func(_ context.Context, _ *biz.Schedule) (biz.ScheduleRun, error) {
+				return biz.ScheduleRun{Next: next, ExecutionID: execID}, nil
+			})
 			if err != nil {
-				t.Errorf("Advance: %v", err)
+				t.Errorf("Fire: %v", err)
 			}
 			if ok {
 				wins.Add(1)
@@ -284,8 +286,10 @@ func TestScheduleQueue(t *testing.T) {
 		t.Fatalf("still due after advance: %d", len(due))
 	}
 	// 触发失败只记原因，保留上一次的执行。
-	if ok, err := e.schedules.Advance(ctx, s.ID, biz.ScheduleRun{Fired: next, Next: next.Add(time.Hour), Error: "template disabled"}); err != nil || !ok {
-		t.Fatalf("advance with error = %v, %v", ok, err)
+	if ok, err := e.schedules.Fire(ctx, s.ID, next, func(_ context.Context, _ *biz.Schedule) (biz.ScheduleRun, error) {
+		return biz.ScheduleRun{Next: next.Add(time.Hour), Error: "template disabled"}, nil
+	}); err != nil || !ok {
+		t.Fatalf("fire with error = %v, %v", ok, err)
 	}
 	if got, _ := e.schedules.Get(ctx, s.ID); got.LastError != "template disabled" || got.LastExecutionID != execID {
 		t.Fatalf("after failed fire = %+v", got)
@@ -632,8 +636,10 @@ func TestPhase2Grants(t *testing.T) {
 			t.Errorf("core role cannot write %s: %v", name, err)
 		}
 	}
-	if _, err := core.schedules.Advance(ctx, sch.ID, biz.ScheduleRun{Fired: next, Next: next.Add(time.Minute)}); err != nil {
-		t.Errorf("core role cannot advance a schedule: %v", err)
+	if _, err := core.schedules.Fire(ctx, sch.ID, next, func(_ context.Context, _ *biz.Schedule) (biz.ScheduleRun, error) {
+		return biz.ScheduleRun{Next: next.Add(time.Minute)}, nil
+	}); err != nil {
+		t.Errorf("core role cannot fire a schedule: %v", err)
 	}
 	if _, _, err := core.fires.Begin(ctx, &biz.TriggerFire{ID: newID(t), TriggerID: trg.ID, Ref: "r"}, 0); err != nil {
 		t.Errorf("core role cannot record a fire: %v", err)

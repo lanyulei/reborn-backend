@@ -10,6 +10,7 @@ import (
 	"io"
 	"sync"
 	"text/template"
+	"text/template/parse"
 	"time"
 
 	"github.com/lanyulei/reborn/backend/kit/notifycontract"
@@ -123,13 +124,26 @@ func (r *Renderer) parse(tpl *Template) (parsedTemplate, error) {
 	if err != nil {
 		return parsedTemplate{}, fmt.Errorf("parse subject template %s: %w", tpl.ID, err)
 	}
+	// 嵌套 range 是指数级迭代，且渲染 goroutine 只在写出时才响应取消：与 core 的写入校验同一条规则，
+	// 在解析期拒绝（确定性错误，调用方按不可重试处理）。
+	if err := notifycontract.CheckRangeNesting(notifycontract.TextTrees(subjT)); err != nil {
+		return parsedTemplate{}, fmt.Errorf("parse subject template %s: %w", tpl.ID, err)
+	}
 	var bodyT executor
+	var trees []*parse.Tree
 	if tpl.Format == notifycontract.TemplateFormatHTML {
-		bodyT, err = htmltemplate.New("body").Funcs(notifycontract.TemplateFuncs()).Option("missingkey=zero").Parse(tpl.Body)
+		var htmlT *htmltemplate.Template
+		htmlT, err = htmltemplate.New("body").Funcs(notifycontract.TemplateFuncs()).Option("missingkey=zero").Parse(tpl.Body)
+		bodyT, trees = htmlT, notifycontract.HTMLTrees(htmlT)
 	} else {
-		bodyT, err = template.New("body").Funcs(notifycontract.TemplateFuncs()).Option("missingkey=zero").Parse(tpl.Body)
+		var textT *template.Template
+		textT, err = template.New("body").Funcs(notifycontract.TemplateFuncs()).Option("missingkey=zero").Parse(tpl.Body)
+		bodyT, trees = textT, notifycontract.TextTrees(textT)
 	}
 	if err != nil {
+		return parsedTemplate{}, fmt.Errorf("parse body template %s: %w", tpl.ID, err)
+	}
+	if err := notifycontract.CheckRangeNesting(trees); err != nil {
 		return parsedTemplate{}, fmt.Errorf("parse body template %s: %w", tpl.ID, err)
 	}
 	pt = parsedTemplate{subject: subjT, body: bodyT, format: tpl.Format}

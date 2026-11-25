@@ -470,7 +470,7 @@ type FireFilter struct {
 
 // FireRequest 开放接口触发的请求内容。
 type FireRequest struct {
-	// Ref 幂等键；空 = 每次调用都是新的一次触发。
+	// Ref 幂等键；空 = 签名认证时由签名派生（同一份签名的重放不重复触发），Bearer 认证时每次调用都是新的一次触发。
 	Ref string
 	// Params 调用方给出的参数取值（触发器允许传参时生效）。
 	Params map[string]any

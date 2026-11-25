@@ -6,8 +6,6 @@ import (
 	"slices"
 	"time"
 
-	"github.com/lanyulei/reborn/backend/kit/cmdbcontract"
-
 	"github.com/lanyulei/reborn/backend/kit/paging"
 )
 
@@ -79,6 +77,7 @@ type ImportResult struct {
 // 关系步骤失败：行按资源动作计数，消息以 ImportRelationFailedPrefix 开头
 // （试运行与正式导入同一口径）。
 // scope 为调用者数据范围：已存在资源、新环境与关系对端都须在范围内。
+// 逐行的名称 / 关系类型 / 关系目标查询在本批内预取或缓存（importBatch），逐行判定不变。
 func (uc *CIUsecase) Import(ctx context.Context, actor Actor, scope Scope, modelCode string, rows []ImportRow, dryRun bool) (*ImportResult, error) {
 	if len(rows) > ImportMaxRows {
 		return nil, detail(ErrCIInvalid, "at most %d rows per import request (got %d); split the file into smaller batches", ImportMaxRows, len(rows))
@@ -99,6 +98,8 @@ func (uc *CIUsecase) Import(ctx context.Context, actor Actor, scope Scope, model
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), importTimeout)
 	defer cancel()
 	out := &ImportResult{DryRun: dryRun, Results: make([]ImportRowResult, 0, len(rows))}
+	// 本批名称一次取齐（此前逐行 GetByName）。
+	batch := newImportBatch(ctx, uc.cis, uc.relTypes, m.Code, rows)
 	// 两遍处理：先写入全部资源，再建立关系——同一批内互相引用的资源（A 关联 B，A 排在 B 之前）
 	// 不受行序影响。pending 为本批将写入的资源名：试运行时资源并未真正创建，引用它们视为可解析。
 	results := make([]ImportRowResult, len(rows))
@@ -106,18 +107,20 @@ func (uc *CIUsecase) Import(ctx context.Context, actor Actor, scope Scope, model
 	pending := make(map[string]struct{}, len(rows))
 	for i, row := range rows {
 		res := ImportRowResult{Row: int32(i + 1), Name: row.Name}
-		res.Action, res.CIID, rowErr[i] = uc.importRow(ctx, actor, scope, m, fields, row, dryRun)
+		res.Action, res.CIID, rowErr[i] = uc.importRow(ctx, actor, scope, m, fields, row, dryRun, batch)
 		if rowErr[i] == nil {
 			pending[row.Name] = struct{}{}
 		}
 		results[i] = res
 	}
+	// 关系目标一次取齐：第一遍的资源此时已全部落库，本批新建的对端查得到。
+	batch.prefetchTargets(ctx, m, rows, rowErr)
 	for i, row := range rows {
 		res, ciID, err := results[i], results[i].CIID, rowErr[i]
 		if err != nil {
 			res.Action, res.Message = ImportActionError, err.Error()
 		} else if len(row.Relations) > 0 {
-			linked, err := uc.importRelations(ctx, actor, scope, m, ciID, row.Relations, dryRun, pending)
+			linked, err := uc.importRelations(ctx, actor, scope, m, ciID, row.Relations, dryRun, pending, batch)
 			if linked > 0 {
 				res.Message = fmt.Sprintf("relations linked: %d", linked)
 				if res.Action == ImportActionSkip {
@@ -148,11 +151,163 @@ func (uc *CIUsecase) Import(ctx context.Context, actor Actor, scope Scope, model
 	return out, nil
 }
 
-// importRow 单行处理：返回动作与资源 ID。
-func (uc *CIUsecase) importRow(ctx context.Context, actor Actor, scope Scope, m *Model, fields []*Field, row ImportRow, dryRun bool) (string, string, error) {
-	existing, err := uc.cis.GetByName(ctx, m.Code, row.Name)
+// importLookupChunk 单条语句的名称数组上限（同 ExportRelations 的 ID 数组约定）。
+const importLookupChunk = 1000
+
+// importBatch 一次导入内复用的读取结果，把逐行的名称 / 关系类型查询换成常数次：
+//
+//   - byName：按类型批量预取的已存在资源（类型 → 名称 → 资源，查过但不存在的名称值为 nil）。
+//     仓储不具备批量能力、或预取查询失败的类型不在里面，逐行回查 GetByName——与改写前
+//     「哪一行查失败哪一行报错」的口径一致，不把整批导入变成一次 500；
+//   - types：关系类型缓存（一次导入内同一类型只查一次）；
+//   - createdIDs：正式导入中本批新建的资源（名称 → 资源）。预取发生在创建之前，它们不在预取
+//     结果里；后续同名行据此找到它；
+//   - created：试运行中本批已判定 create 的名称 → 预演状态（见 importRow）。
+//
+// 预取只回答「名称是否已存在、是哪一条」。正式导入处理到已存在的行时仍读一次当下状态（见 importRow）：
+// 逐行判定（范围、版本、合并）与改写前逐行 GetByName 读到的保持同一口径。
+type importBatch struct {
+	cis        CIRepo
+	relTypes   RelationTypeRepo
+	byName     map[string]map[string]*CI
+	types      map[string]*RelationType
+	createdIDs map[string]*CI
+	created    map[string]*CI
+}
+
+// newImportBatch 预取本批全部名称对应的已存在资源（一条查询）。
+func newImportBatch(ctx context.Context, cis CIRepo, relTypes RelationTypeRepo, modelCode string, rows []ImportRow) *importBatch {
+	b := &importBatch{
+		cis: cis, relTypes: relTypes, byName: map[string]map[string]*CI{},
+		types: map[string]*RelationType{}, createdIDs: map[string]*CI{}, created: map[string]*CI{},
+	}
+	names := make([]string, 0, len(rows))
+	for _, row := range rows {
+		names = append(names, row.Name)
+	}
+	b.prefetch(ctx, modelCode, names)
+	return b
+}
+
+// prefetch 按类型批量取齐名称对应的已存在资源：一条语句查一个类型，结果以当次查询为准
+// （同一名称再次预取时覆盖旧条目——两遍处理之间本批可能已改过它）。查询失败时丢弃该类型的预取
+// 结果（之后逐行回查），不向上报错。
+func (b *importBatch) prefetch(ctx context.Context, modelCode string, names []string) {
+	repo, ok := b.cis.(CIBatchLookup)
+	if !ok || len(names) == 0 {
+		return
+	}
+	index := b.byName[modelCode]
+	if index == nil {
+		index = map[string]*CI{}
+	}
+	unique := make([]string, 0, len(names))
+	seen := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		if _, dup := seen[name]; !dup {
+			seen[name] = struct{}{}
+			unique = append(unique, name)
+		}
+	}
+	for start := 0; start < len(unique); start += importLookupChunk {
+		chunk := unique[start:min(start+importLookupChunk, len(unique))]
+		items, err := repo.GetByNames(ctx, modelCode, chunk)
+		if err != nil {
+			// 已取到的部分也不能用：本批新建的资源不在里面，按逐行回查为准。
+			delete(b.byName, modelCode)
+			return
+		}
+		for _, name := range chunk {
+			index[name] = nil // 这次没查到：不存在（或已被删除）
+		}
+		for _, ci := range items {
+			index[ci.Name] = ci
+		}
+	}
+	b.byName[modelCode] = index
+}
+
+// prefetchTargets 关系目标按名称批量预取。只为资源步骤成功的行预取；关系类型在这里顺带进缓存
+// （查不到的类型不缓存，留给 importRelations 报同样的错）。预取失败不报错，逐条回查。
+func (b *importBatch) prefetchTargets(ctx context.Context, m *Model, rows []ImportRow, rowErr []error) {
+	byModel := map[string][]string{}
+	for i, row := range rows {
+		if rowErr[i] != nil {
+			continue
+		}
+		for _, rel := range row.Relations {
+			t, err := b.relationType(ctx, rel.Type)
+			if err != nil {
+				continue
+			}
+			if _, targetModel := relationSides(t, rel.Direction); targetModel != ModelAny {
+				byModel[targetModel] = append(byModel[targetModel], rel.TargetName)
+			} else if rel.TargetModel != "" {
+				byModel[rel.TargetModel] = append(byModel[rel.TargetModel], rel.TargetName)
+			}
+		}
+	}
+	for targetModel, names := range byModel {
+		b.prefetch(ctx, targetModel, names)
+	}
+}
+
+// lookup 某（类型, 名称）对应的已存在资源，口径同 CIRepo.GetByName（不存在返回 ErrCINotFound）：
+// 已预取的类型查内存，否则逐行回查。
+func (b *importBatch) lookup(ctx context.Context, modelCode, name string) (*CI, error) {
+	if index, ok := b.byName[modelCode]; ok {
+		if ci := index[name]; ci != nil {
+			return ci, nil
+		}
+		return nil, ErrCINotFound
+	}
+	return b.cis.GetByName(ctx, modelCode, name)
+}
+
+// existing 导入行名称对应的资源：本批新建过的优先（预取发生在创建之前），否则查预取结果 / 逐行回查。
+// 口径同 CIRepo.GetByName（不存在返回 ErrCINotFound）。
+func (b *importBatch) existing(ctx context.Context, modelCode, name string) (*CI, error) {
+	if ci, ok := b.createdIDs[name]; ok {
+		return ci, nil
+	}
+	return b.lookup(ctx, modelCode, name)
+}
+
+// relationType 关系类型（一次导入内缓存）。
+func (b *importBatch) relationType(ctx context.Context, code string) (*RelationType, error) {
+	if t, ok := b.types[code]; ok {
+		return t, nil
+	}
+	t, err := b.relTypes.Get(ctx, code)
+	if err != nil {
+		return nil, err
+	}
+	b.types[code] = t
+	return t, nil
+}
+
+// importRow 单行处理：返回动作与资源 ID。batch.created 仅试运行使用：本批前面的同名行已判定
+// create 时，这一行按更新链路对那条「将创建」的资源预演。
+func (uc *CIUsecase) importRow(ctx context.Context, actor Actor, scope Scope, m *Model, fields []*Field, row ImportRow, dryRun bool, batch *importBatch) (string, string, error) {
+	existing, err := batch.existing(ctx, m.Code, row.Name)
 	if err != nil && err != ErrCINotFound {
 		return ImportActionError, "", err
+	}
+	if existing != nil && !dryRun {
+		// 正式导入以处理到这一行时的库内状态为准：预取只说明「名称已存在、是哪一条」，范围判定与
+		// 合并都基于当下读到的行（改写前逐行 GetByName 读到的就是它）。被并发删除的按不存在处理，
+		// 走创建链路——同样与改写前一致。
+		cur, err := uc.cis.Get(ctx, existing.ID)
+		if err != nil && err != ErrCINotFound {
+			return ImportActionError, existing.ID, err
+		}
+		existing = cur
+	}
+	virtual := false
+	if existing == nil && dryRun {
+		if existing = batch.created[row.Name]; existing != nil {
+			virtual = true
+		}
 	}
 	// 数据范围（与单条创建 / 更新口径一致）：已存在资源须在范围内，写入的环境也须在范围内。
 	if existing != nil {
@@ -173,27 +328,19 @@ func (uc *CIUsecase) importRow(ctx context.Context, actor Actor, scope Scope, m 
 		if err != nil {
 			return ImportActionError, "", err
 		}
-		if err := uc.checkRefs(ctx, fields, attrs); err != nil {
+		if err := uc.checkRefs(ctx, scope, fields, attrs); err != nil {
 			return ImportActionError, "", err
 		}
 		if dryRun {
+			batch.created[row.Name] = importCI(m, row, attrs, actor)
 			return ImportActionCreate, "", nil
 		}
-		ci := &CI{ModelCode: m.Code, Name: row.Name, Status: row.Status, Attrs: attrs, Tags: row.Tags}
-		if row.Env != nil {
-			ci.Env = *row.Env
-		}
-		if row.Owner != nil {
-			ci.Owner = *row.Owner
-		}
-		if row.ExternalID != nil {
-			ci.ExternalID = *row.ExternalID
-		}
-		created, err := uc.Create(ctx, actor, ci)
+		ci, err := uc.create(ctx, actor, scope, importCI(m, row, attrs, actor))
 		if err != nil {
 			return ImportActionError, "", err
 		}
-		return ImportActionCreate, created.ID, nil
+		batch.createdIDs[row.Name] = ci
+		return ImportActionCreate, ci.ID, nil
 	}
 	upd := CIUpdate{Env: row.Env, Owner: row.Owner, ExternalID: row.ExternalID, Attrs: row.Attrs}
 	if row.Tags != nil {
@@ -202,29 +349,64 @@ func (uc *CIUsecase) importRow(ctx context.Context, actor Actor, scope Scope, m 
 	}
 	if dryRun {
 		// 试运行：复用更新链路的校验与差异判定，但不落库。
-		changed, err := uc.previewUpdate(ctx, actor, existing, fields, upd)
+		next, changed, err := uc.applyUpdate(ctx, actor, scope, existing, fields, upd)
 		if err != nil {
 			return ImportActionError, existing.ID, err
+		}
+		if virtual && changed {
+			// 本批将创建的资源：记下这一行改完后的状态，再往后的同名行接着在它之上预演。
+			batch.created[row.Name] = next
 		}
 		if !changed {
 			return ImportActionSkip, existing.ID, nil
 		}
 		return ImportActionUpdate, existing.ID, nil
 	}
-	updated, err := uc.Update(ctx, actor, existing.ID, existing.Version, upd)
+	// 正式导入：existing 是刚读到的当下状态，直接在其上合并写入（改写前 Update 内部再读一次做版本
+	// 比对、写完再回读一次，导入只用得上「是否有变化」）。写入后不回读。
+	_, changed, err := uc.updateCurrent(ctx, actor, scope, existing, upd)
 	if err != nil {
 		return ImportActionError, existing.ID, err
 	}
-	if updated.Version == existing.Version {
+	if !changed {
 		return ImportActionSkip, existing.ID, nil
 	}
 	return ImportActionUpdate, existing.ID, nil
 }
 
-// previewUpdate 不落库地计算一次更新是否有变化（校验口径与 Update 一致）。
-func (uc *CIUsecase) previewUpdate(ctx context.Context, actor Actor, cur *CI, fields []*Field, upd CIUpdate) (bool, error) {
+// importCI 导入行 → 待创建的资源（取值已校验归一；状态缺省 active、标签缺省空；来源与版本
+// 由写入时（create）赋值，试运行的预演在这里直接补上）。
+func importCI(m *Model, row ImportRow, attrs map[string]any, actor Actor) *CI {
+	ci := &CI{ModelCode: m.Code, Name: row.Name, Status: row.Status, Attrs: attrs, Tags: row.Tags, Source: actor.source(), Version: 1}
+	if ci.Status == "" {
+		ci.Status = CIStatusActive
+	}
+	if ci.Tags == nil {
+		ci.Tags = []string{}
+	}
+	if row.Env != nil {
+		ci.Env = *row.Env
+	}
+	if row.Owner != nil {
+		ci.Owner = *row.Owner
+	}
+	if row.ExternalID != nil {
+		ci.ExternalID = *row.ExternalID
+	}
+	return ci
+}
+
+// applyUpdate 更新链路的校验与合并（Update 与导入试运行的预演共用同一实现，预览即正式结果）：
+// 返回合并后的资源与是否有真实变化；不落库，不改版本与审计列。
+func (uc *CIUsecase) applyUpdate(ctx context.Context, actor Actor, scope Scope, cur *CI, fields []*Field, upd CIUpdate) (*CI, bool, error) {
 	next := *cur
 	next.Attrs = cloneAttrs(cur.Attrs)
+	if err := rejectExternalIDChange(actor, cur, upd); err != nil {
+		return nil, false, err
+	}
+	if upd.Name != nil {
+		next.Name = *upd.Name
+	}
 	if upd.Env != nil {
 		next.Env = *upd.Env
 	}
@@ -239,14 +421,17 @@ func (uc *CIUsecase) previewUpdate(ctx context.Context, actor Actor, cur *CI, fi
 	}
 	if upd.Attrs != nil {
 		upd.Attrs = dropMaskedValues(fields, cloneAttrs(upd.Attrs))
-		if actor.source() == SourceManual && cmdbcontract.IsSyncSource(cur.Source) {
+		// 同步只读字段不接受人工修改（同步来源可写）。只对仍由采集源维护的资源生效：人工资源、
+		// 已解除同步托管的资源，以及采集源已被删除的资源，都没有同步来写这些字段，须允许人工维护。
+		if actor.source() == SourceManual && syncMaintained(cur) {
 			if err := rejectSyncOwned(fields, cur.Attrs, upd.Attrs); err != nil {
-				return false, err
+				return nil, false, err
 			}
 		}
+		// 增量校验改动的键（partial），再合并；清空的键从结果移除。
 		patch, err := ValidateAttrs(fields, upd.Attrs, true)
 		if err != nil {
-			return false, err
+			return nil, false, err
 		}
 		for key, v := range upd.Attrs {
 			if v == nil {
@@ -256,15 +441,16 @@ func (uc *CIUsecase) previewUpdate(ctx context.Context, actor Actor, cur *CI, fi
 		for key, v := range patch {
 			next.Attrs[key] = v
 		}
+		// 合并后只校验必填（防止清空必填字段）；存量值与已废弃字段的遗留键不重校验。
 		if err := checkRequired(fields, next.Attrs); err != nil {
-			return false, err
+			return nil, false, err
 		}
-		if err := uc.checkRefs(ctx, fields, patch); err != nil {
-			return false, err
+		if err := uc.checkRefs(ctx, scope, fields, patch); err != nil {
+			return nil, false, err
 		}
 	}
 	_, after := diffCI(cur, &next)
-	return len(after) > 0, nil
+	return &next, len(after) > 0, nil
 }
 
 // Export 拉取某类型资源（最多 ExportMaxRows）与其字段定义，供 service 编码为 CSV。
@@ -310,22 +496,25 @@ func (uc *CIUsecase) Export(ctx context.Context, filter CIFilter) ([]*CI, []*Fie
 	return all, fields, nil
 }
 
-// importRelations 解析并建立导入行声明的关系：目标按 (类型, 名称) 查找；已存在跳过；
-// dryRun 只解析目标与校验类型，不写入。返回新建关系数。
-// 范围外的对端按不存在处理（不泄露其存在）。
-func (uc *CIUsecase) importRelations(ctx context.Context, actor Actor, scope Scope, m *Model, ciID string, rels []ImportRelation, dryRun bool, pending map[string]struct{}) (int32, error) {
+// relationSides 以 direction 为当前资源的视角，拆出关系类型的两端：当前资源所在端的类型与对端的类型。
+func relationSides(t *RelationType, direction string) (myModel, targetModel string) {
+	if direction == DirectionOutgoing {
+		return t.SrcModel, t.DstModel
+	}
+	return t.DstModel, t.SrcModel
+}
+
+// importRelations 解析并建立导入行声明的关系：目标按 (类型, 名称) 查找（batch 内已预取 / 缓存）；
+// 已存在跳过（不计数）；dryRun 只解析目标与校验类型，不写入。返回新建关系数（试运行为「正式导入
+// 将新建」的条数）。范围外的对端按不存在处理（不泄露其存在）。
+func (uc *CIUsecase) importRelations(ctx context.Context, actor Actor, scope Scope, m *Model, ciID string, rels []ImportRelation, dryRun bool, pending map[string]struct{}, batch *importBatch) (int32, error) {
 	var linked int32
 	for _, rel := range rels {
-		t, err := uc.relTypes.Get(ctx, rel.Type)
+		t, err := batch.relationType(ctx, rel.Type)
 		if err != nil {
 			return linked, err
 		}
-		var myModel, targetModel string
-		if rel.Direction == DirectionOutgoing {
-			myModel, targetModel = t.SrcModel, t.DstModel
-		} else {
-			myModel, targetModel = t.DstModel, t.SrcModel
-		}
+		myModel, targetModel := relationSides(t, rel.Direction)
 		if !matchModel(myModel, m.Code) {
 			return linked, detail(ErrRelationNotAllowed, "%s does not apply to %s (%s)", t.Code, m.Code, rel.Direction)
 		}
@@ -337,7 +526,7 @@ func (uc *CIUsecase) importRelations(ctx context.Context, actor Actor, scope Sco
 		} else if rel.TargetModel != "" && rel.TargetModel != targetModel {
 			return linked, detail(ErrRelationNotAllowed, "relation %s expects %s on the other side, got %s", t.Code, targetModel, rel.TargetModel)
 		}
-		target, err := uc.cis.GetByName(ctx, targetModel, rel.TargetName)
+		target, err := batch.lookup(ctx, targetModel, rel.TargetName)
 		if err == nil && !scope.Allows(target.ModelCode, target.Env) {
 			err = ErrCINotFound
 		}
@@ -353,6 +542,18 @@ func (uc *CIUsecase) importRelations(ctx context.Context, actor Actor, scope Sco
 			return linked, err
 		}
 		if dryRun || ciID == "" {
+			// 试运行：关系已存在时正式导入不新建（Link 返回 0、行保持 skip），预演同样不计数——
+			// 否则试运行报「relations linked: N」并把 skip 改报 update，与正式结果不一致。
+			if dryRun && ciID != "" {
+				src, dst := orient(ciID, target.ID, rel.Direction)
+				exists, err := uc.relations.Exists(ctx, t.Code, src, dst)
+				if err != nil {
+					return linked, err
+				}
+				if exists {
+					continue
+				}
+			}
 			linked++
 			continue
 		}

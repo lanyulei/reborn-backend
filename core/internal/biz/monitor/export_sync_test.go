@@ -7,6 +7,12 @@ import "time"
 // SetNow 替换资源索引同步用例的时钟。
 func (uc *CISyncUsecase) SetNow(now func() time.Time) { uc.now = now }
 
+// SetTimeout 替换资源索引同步用例的单轮时限。
+func (uc *CISyncUsecase) SetTimeout(d time.Duration) { uc.timeout = d }
+
+// CISyncTimeout 资源索引同步单轮时限的缺省值。
+const CISyncTimeout = ciSyncTimeout
+
 // SetNow 替换事件动作用例的时钟。
 func (uc *ActionUsecase) SetNow(now func() time.Time) { uc.now = now }
 
@@ -25,3 +31,6 @@ const (
 	MaxUpstreams        = maxUpstreams
 	ActionLease         = actionLease
 )
+
+// StatsLocation 暴露统计时区的解析。
+func StatsLocation(name string) (*time.Location, string, error) { return statsLocation(name) }

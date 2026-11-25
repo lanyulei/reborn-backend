@@ -58,7 +58,8 @@ type env struct {
 	org     *testfake.MonitorOrg
 }
 
-func testDSN(t *testing.T) string {
+// testDSN / openData 接收 testing.TB：集成基准（bench_integration_test.go）共用同一份护栏与建池。
+func testDSN(t testing.TB) string {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_SOURCE")
 	if dsn == "" {
@@ -74,7 +75,7 @@ func testDSN(t *testing.T) string {
 	return dsn
 }
 
-func openData(t *testing.T, dsn string) *basedata.Data {
+func openData(t testing.TB, dsn string) *basedata.Data {
 	t.Helper()
 	d, cleanup, err := basedata.NewData(&conf.Data{Database: &kitconf.Database{Source: dsn}})
 	if err != nil {
@@ -882,7 +883,7 @@ func TestAlertRepo(t *testing.T) {
 		{"label containment", biz.AlertFilter{Groups: all, Labels: map[string]string{"env": "prod", "instance": "h1"}}, set(a1, a3)},
 		{"label value is exact", biz.AlertFilter{Groups: all, Labels: map[string]string{"instance": "h"}}, []string{}},
 		{"keyword on rule name", biz.AlertFilter{Groups: all, Keyword: "DISK"}, set(b1)},
-		{"keyword on labels", biz.AlertFilter{Groups: all, Keyword: "h2"}, set(a2)},
+		{"keyword does not search labels", biz.AlertFilter{Groups: all, Keyword: "h2"}, []string{}},
 		{"default history window", biz.AlertFilter{Groups: onlyA, HistorySince: &since}, set(a1, a2, a3)},
 		{"recipient", biz.AlertFilter{Groups: all, RecipientID: uAlice}, set(a1)},
 		{"recipient never notified", biz.AlertFilter{Groups: all, RecipientID: uBob}, []string{}},

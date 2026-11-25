@@ -413,7 +413,11 @@ func TestIntegration_SendTestEvent(t *testing.T) {
 		t.Fatal("payload = NULL, want default test context")
 	}
 
-	// 自定义 spec：显式收件 jsonb 往返。
+	// 自定义 spec：显式收件 jsonb 往返。显式收件只允许操作者本人、渠道的固定路由收件人或 $bot
+	//（checkTestRecipients）：先把 ops@example.com 配成该渠道所在路由的固定收件人。
+	if err := NewRouteRepo(d).CreateRoute(ctx, newRouteDO("018f3e1a-0302-7000-8000-00000000000a", "monitor.alert.test", ch.ID)); err != nil {
+		t.Fatalf("CreateRoute(fixed recipients for the test event) error = %v", err)
+	}
 	_, err = uc.SendTestEvent(ctx, ch.ID, biz.TestEventSpec{
 		EventType:  "monitor.alert.test",
 		Title:      "自定义测试",

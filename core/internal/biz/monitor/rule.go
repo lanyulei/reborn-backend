@@ -334,10 +334,22 @@ func (uc *RuleUsecase) Update(ctx context.Context, userID, id string, spec RuleS
 	return uc.view(ctx, scope, rule)
 }
 
+// specEqualExceptGroup 两条规则内容除分组外是否完全相同：相同才是一次单纯的「移动分组」；只要还改了别的
+// （通知、生效时间、附加信息、升级策略、事件动作……）就是一次编辑。切片与映射不区分 nil 与空。
 func specEqualExceptGroup(a, b *RuleSpec) bool {
 	x, y := *a, *b
 	x.GroupID, y.GroupID = "", ""
-	return !evalRelevantChanged(&x, &y) && x.Name == y.Name && x.Enabled == y.Enabled && x.Description == y.Description
+	return !evalRelevantChanged(&x, &y) && x.Name == y.Name && x.Enabled == y.Enabled && x.Description == y.Description &&
+		sameLabels(x.Annotations, y.Annotations) && x.RecoveryExpr == y.RecoveryExpr &&
+		x.Effective.Timezone == y.Effective.Timezone && x.Effective.Mode == y.Effective.Mode &&
+		slices.EqualFunc(x.Effective.Windows, y.Effective.Windows, func(p, q mc.TimeWindow) bool {
+			return p.Start == q.Start && p.End == q.End && slices.Equal(p.Days, q.Days)
+		}) &&
+		slices.Equal(x.Notify.UserIDs, y.Notify.UserIDs) && slices.Equal(x.Notify.ScheduleIDs, y.Notify.ScheduleIDs) &&
+		slices.Equal(x.Notify.DeptIDs, y.Notify.DeptIDs) && x.Notify.CIOwner == y.Notify.CIOwner &&
+		x.NotifyRecovery == y.NotifyRecovery && x.RepeatIntervalM == y.RepeatIntervalM && x.MaxNotify == y.MaxNotify &&
+		slices.Equal(x.GroupKeyLabels, y.GroupKeyLabels) && x.TopologyInhibit == y.TopologyInhibit && x.EscalationID == y.EscalationID &&
+		x.Actions == y.Actions
 }
 
 // Delete 删除规则；其活跃告警由评估引擎随后关闭。

@@ -58,7 +58,7 @@ func (uc *SweeperUsecase) SweepOnce(ctx context.Context, limit int) (int, error)
 	if err != nil {
 		return 0, err
 	}
-	closed := 0
+	closed, firstErr := 0, error(nil)
 	for _, key := range keys {
 		routeID, err := uc.repo.RouteOf(ctx, key)
 		if err != nil {
@@ -105,13 +105,24 @@ func (uc *SweeperUsecase) SweepOnce(ctx context.Context, limit int) (int, error)
 			return tx.InsertDispatches(ctx, ds)
 		})
 		if err != nil {
-			return closed, err
+			if ctx.Err() != nil {
+				return closed, err
+			}
+			// 单个组的错误不能阻塞其余组：CloseGroup 自身是短事务、失败即回滚，该组保持 open、
+			// 下一轮重试。此前这里直接 return，一个确定性出错的组（如绑定了无法落库的渠道）会
+			// 永远排在最前，其后所有组的汇总都发不出去。错误仍向上返回，让循环按退避节奏重试。
+			uc.log.ErrorContext(ctx, "close aggregate group failed, continuing with the remaining groups",
+				"group", key, "route_id", routeID, "error", err)
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
 		}
 		if ok {
 			closed++
 		}
 	}
-	return closed, nil
+	return closed, firstErr
 }
 
 // routeByID 在快照内按 ID 查路由（聚合组记录的 route_id）。

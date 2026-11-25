@@ -14,7 +14,6 @@ import (
 
 	k8sv1 "github.com/lanyulei/reborn/backend/core/api/k8s/v1"
 	k8sservice "github.com/lanyulei/reborn/backend/core/internal/service/k8s"
-	systemservice "github.com/lanyulei/reborn/backend/core/internal/service/system"
 	"github.com/lanyulei/reborn/backend/kit/httpx"
 	kc "github.com/lanyulei/reborn/backend/kit/k8scontract"
 
@@ -140,6 +139,8 @@ func registerK8sGovernance(srv *khttp.Server, gov *k8sservice.GovernanceService,
 	srv.RegisterOnShutdown(stop)
 	tr := k8sRawTransport()
 	srv.RegisterOnShutdown(tr.CloseIdleConnections)
+	// 可信代理清单（KRATOS_TRUSTED_PROXIES）：未配置时取来源地址的口径与此前完全一致。
+	proxies := trustedProxiesFromEnv(logger)
 
 	srv.HandlePrefix(k8sProxyPrefix, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rest := strings.TrimPrefix(r.URL.Path, k8sProxyPrefix)
@@ -155,7 +156,7 @@ func registerK8sGovernance(srv *khttp.Server, gov *k8sservice.GovernanceService,
 			writeKubeStatus(w, http.StatusForbidden, "this path is not accessible through the cluster proxy")
 			return
 		}
-		ip := systemservice.ResolveClientIP(r.RemoteAddr, r.Header.Values("X-Forwarded-For"))
+		ip := proxies.clientIP(r.RemoteAddr, r.Header.Values("X-Forwarded-For"))
 		route, err := gov.AuthorizeKube(r.Context(), bearer, clusterID, r.Method, kubePath, ip)
 		if err != nil {
 			ke := kerrors.FromError(err)

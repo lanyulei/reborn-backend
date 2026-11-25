@@ -184,6 +184,8 @@ type ProposalRepo interface {
 	LastAutoExec(ctx context.Context, ciIDs []string, playbookID string, stepIndex int32) (*time.Time, error)
 	// CountPlaybookExecs 预案在 since 之后的执行次数。
 	CountPlaybookExecs(ctx context.Context, playbookID string, since time.Time) (int, error)
+	// CountPlaybookExecsMany 同 CountPlaybookExecs 的口径，一条语句取多个预案的执行次数；没有执行过的不在结果中。
+	CountPlaybookExecsMany(ctx context.Context, playbookIDs []string, since time.Time) (map[string]int, error)
 	// CountPending 全局待审批数（统计）。
 	CountPending(ctx context.Context) (int, error)
 }
@@ -223,6 +225,11 @@ type ActionItemRepo interface {
 	ListByIncident(ctx context.Context, incidentID string) ([]*ActionItem, error)
 	Get(ctx context.Context, id string) (*ActionItem, error)
 	SaveTx(ctx context.Context, tx Tx, it *ActionItem) error
+	// SetTicketTx 只写关联工单（其余列不动：入参对象可能是跨域建单之前读出的旧值，整体写回会覆盖期间的编辑）；
+	// 改进项不存在返回 ErrActionItemNotFound。
+	SetTicketTx(ctx context.Context, tx Tx, id, ticketID, ticketNumber string) error
+	// MarkDoneTx 待完成 → 已完成，只写状态与更新时间；已不是待完成（被手动完成 / 已删除）返回 false。
+	MarkDoneTx(ctx context.Context, tx Tx, id string) (bool, error)
 	DeleteTx(ctx context.Context, tx Tx, incidentID, id string) error
 	// ListTicketed 待完成且已建单的（巡检同步工单状态）。
 	ListTicketed(ctx context.Context, limit int) ([]*ActionItem, error)
@@ -278,6 +285,7 @@ type ActionRepo interface {
 	EnqueueTx(ctx context.Context, tx Tx, a *Action) error
 	Claim(ctx context.Context, limit int, lease time.Duration) ([]*Action, error)
 	FinishTx(ctx context.Context, tx Tx, a *Action, status int32, note string) (bool, error)
+	// Retry 记失败并按退避重排；backoff 为 0 且原因为空即收回租约（下次可领取时间拉回现在，尝试次数不动）。
 	Retry(ctx context.Context, a *Action, backoff time.Duration, reason string) error
 	Purge(ctx context.Context, before time.Time, limit int) (int, error)
 }
@@ -317,7 +325,9 @@ type OverviewStats struct {
 	ProposalPending int32
 	TodayOpened     int32
 	TodayResolved   int32
-	Candidates      int32
+	// Candidates 待定候选数。带业务过滤时只含「规则固定指向该业务」的候选：候选在转正前没有业务，
+	// 按告警标签动态匹配业务的规则的候选不计入任何业务。
+	Candidates int32
 }
 
 // TrendPoint 趋势的一个桶。

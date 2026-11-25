@@ -129,6 +129,9 @@ func (s *userStoreStub) UpdateUser(_ context.Context, id string, upd UserUpdate)
 	if upd.Nickname != nil {
 		u.Nickname = *upd.Nickname
 	}
+	if upd.IsAdmin != nil {
+		u.IsAdmin = *upd.IsAdmin // 与真实仓储一致：is_admin 落库，后续读取看得到
+	}
 	if upd.Status != nil {
 		u.Status = *upd.Status
 	}

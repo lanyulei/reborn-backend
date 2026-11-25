@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/cmdb"
@@ -18,10 +19,11 @@ import (
 )
 
 var (
-	_ biz.SyncSourceRepo   = (*syncSourceRepo)(nil)
-	_ biz.SyncTaskRepo     = (*syncTaskRepo)(nil)
-	_ biz.SyncRunRepo      = (*syncRunRepo)(nil)
-	_ biz.CredentialSealer = (*SyncSecretBox)(nil)
+	_ biz.SyncSourceRepo     = (*syncSourceRepo)(nil)
+	_ biz.SyncTaskRepo       = (*syncTaskRepo)(nil)
+	_ biz.SyncRunRepo        = (*syncRunRepo)(nil)
+	_ biz.ScopedConflictRepo = (*syncRunRepo)(nil)
+	_ biz.CredentialSealer   = (*SyncSecretBox)(nil)
 )
 
 // SyncSecretBox 采集源凭据加密器：与通知渠道同一主密钥（notify.master.key）、同一
@@ -149,13 +151,25 @@ func (r *syncSourceRepo) List(ctx context.Context, filter biz.SyncSourceFilter, 
 	return items, total, rows.Err()
 }
 
-// Update implements biz.SyncSourceRepo（乐观锁；credential nil = 保留）。
+// Update implements biz.SyncSourceRepo（乐观锁；credential nil = 保留）。next_run_time 不取调用方回传的
+// 值（src.NextRunTime 被忽略），按行内旧值与库内时钟调整——SET 右侧引用的列都是更新前的值：
+//   - 更新后启用且尚无计划时间：置为 now()（调度器只取 next_run_time <= now 的源，NULL 永远不到期）；
+//   - 周期变化：不晚于 now() + 新周期（缩短周期立即生效，放宽周期不动原有计划）；
+//   - 其余保持调度器维护的值——调度器推进 next_run_time 时不升 version，乐观锁拦不住旧值覆盖。
+//
+// 乐观锁条件（version）与原先一致。
 func (r *syncSourceRepo) Update(ctx context.Context, src *biz.SyncSource, expectedVersion int64, credential []byte) error {
 	tag, err := r.data.Pool.Exec(ctx,
-		`UPDATE cmdb_sync_source SET name = $1, config = $2, credential = COALESCE($3, credential), env = $4, interval_seconds = $5,
-		   grace_period_seconds = $6, enabled = $7, next_run_time = $8, version = version + 1, update_user = $9, update_time = $10
-		 WHERE id = $11 AND version = $12 AND delete_time IS NULL`,
-		src.Name, src.Config, dbx.NilIfEmptyBytes(credential), src.Env, src.IntervalSeconds, src.GracePeriodSeconds, src.Enabled, src.NextRunTime,
+		`UPDATE cmdb_sync_source s SET name = $1, config = $2, credential = COALESCE($3, credential), env = $4,
+		   interval_seconds = $5::integer, grace_period_seconds = $6, enabled = $7::boolean,
+		   next_run_time = CASE
+		       WHEN $7::boolean AND s.next_run_time IS NULL THEN now()
+		       WHEN s.interval_seconds <> $5::integer AND s.next_run_time IS NOT NULL
+		           THEN LEAST(s.next_run_time, now() + make_interval(secs => $5::integer))
+		       ELSE s.next_run_time END,
+		   version = version + 1, update_user = $8, update_time = $9
+		 WHERE s.id = $10 AND s.version = $11 AND s.delete_time IS NULL`,
+		src.Name, src.Config, dbx.NilIfEmptyBytes(credential), src.Env, src.IntervalSeconds, src.GracePeriodSeconds, src.Enabled,
 		dbx.NilIfEmpty(src.UpdateUser), src.UpdateTime, src.ID, expectedVersion)
 	if err != nil {
 		if isUniqueViolation(err, "uq_cmdb_sync_source_name") {
@@ -273,18 +287,35 @@ func (r *syncRunRepo) ListBySource(ctx context.Context, sourceID string, page, p
 
 // ListConflicts implements biz.SyncRunRepo。
 func (r *syncRunRepo) ListConflicts(ctx context.Context, sourceID string, page, pageSize int64) ([]*biz.SyncConflict, int64, error) {
+	return r.listConflicts(ctx, sourceID, nil, page, pageSize)
+}
+
+// ListConflictsIn implements biz.ScopedConflictRepo：只取 modelCodes 内类型的冲突行，total 同口径。
+func (r *syncRunRepo) ListConflictsIn(ctx context.Context, sourceID string, modelCodes []string, page, pageSize int64) ([]*biz.SyncConflict, int64, error) {
+	return r.listConflicts(ctx, sourceID, modelCodes, page, pageSize)
+}
+
+// listConflicts 冲突清单；modelCodes 非 nil 时按类型过滤（空集合即无结果）。
+func (r *syncRunRepo) listConflicts(ctx context.Context, sourceID string, modelCodes []string, page, pageSize int64) ([]*biz.SyncConflict, int64, error) {
 	source := cmdbcontract.SourceOf(sourceID)
+	where := "c.source = $1"
+	args := []any{source}
+	if modelCodes != nil {
+		args = append(args, dbx.TextArray(modelCodes))
+		where += " AND c.model_code = ANY($" + strconv.Itoa(len(args)) + ")"
+	}
 	var total int64
-	if err := r.data.Pool.QueryRow(ctx, "SELECT count(*) FROM cmdb_sync_conflict WHERE source = $1", source).Scan(&total); err != nil {
+	if err := r.data.Pool.QueryRow(ctx, "SELECT count(*) FROM cmdb_sync_conflict c WHERE "+where, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count cmdb sync conflicts: %w", err)
 	}
 	if total == 0 {
 		return nil, 0, nil
 	}
+	args = append(args, pageSize, (page-1)*pageSize)
 	rows, err := r.data.Pool.Query(ctx,
 		`SELECT c.model_code, COALESCE(m.name, ''), c.external_id, c.name, c.reason, c.first_seen, c.last_seen
 		 FROM cmdb_sync_conflict c LEFT JOIN cmdb_model m ON m.code = c.model_code
-		 WHERE c.source = $1 ORDER BY c.first_seen, c.model_code, c.external_id LIMIT $2 OFFSET $3`, source, pageSize, (page-1)*pageSize)
+		 WHERE `+where+` ORDER BY c.first_seen, c.model_code, c.external_id LIMIT $`+strconv.Itoa(len(args)-1)+` OFFSET $`+strconv.Itoa(len(args)), args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list cmdb sync conflicts: %w", err)
 	}
@@ -381,11 +412,25 @@ func (r *syncRunRepo) claimConflict(ctx context.Context, c *biz.ConflictClaim) e
 
 // ConflictsCapped implements biz.SyncRunRepo。
 func (r *syncRunRepo) ConflictsCapped(ctx context.Context, sourceID string) (bool, error) {
+	return r.conflictsCapped(ctx, sourceID, nil)
+}
+
+// ConflictsCappedIn implements biz.ScopedConflictRepo：只看 modelCodes 内类型的封顶情况。
+func (r *syncRunRepo) ConflictsCappedIn(ctx context.Context, sourceID string, modelCodes []string) (bool, error) {
+	return r.conflictsCapped(ctx, sourceID, modelCodes)
+}
+
+// conflictsCapped 封顶判定；modelCodes 非 nil 时只看这些类型。
+func (r *syncRunRepo) conflictsCapped(ctx context.Context, sourceID string, modelCodes []string) (bool, error) {
 	// 以数据面记录的真实总数为准（最近一次对账；认领 / 清理清单不会让它漂移）。
 	var capped bool
-	if err := r.data.Pool.QueryRow(ctx,
-		`SELECT EXISTS (SELECT 1 FROM cmdb_sync_conflict_stat WHERE source = $1 AND total > $2)`,
-		cmdbcontract.SourceOf(sourceID), cmdbcontract.ConflictStoreLimit).Scan(&capped); err != nil {
+	sql := `SELECT EXISTS (SELECT 1 FROM cmdb_sync_conflict_stat WHERE source = $1 AND total > $2`
+	args := []any{cmdbcontract.SourceOf(sourceID), cmdbcontract.ConflictStoreLimit}
+	if modelCodes != nil {
+		args = append(args, dbx.TextArray(modelCodes))
+		sql += " AND model_code = ANY($" + strconv.Itoa(len(args)) + ")"
+	}
+	if err := r.data.Pool.QueryRow(ctx, sql+")", args...).Scan(&capped); err != nil {
 		return false, fmt.Errorf("check cmdb sync conflict cap: %w", err)
 	}
 	return capped, nil

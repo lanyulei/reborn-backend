@@ -78,6 +78,14 @@ func (s *channelRepoStub) GetChannel(_ context.Context, id string) (*Channel, er
 	return &cp, nil
 }
 
+func (s *channelRepoStub) ChannelBiz(_ context.Context, id string) (string, error) {
+	ch, ok := s.channels[id]
+	if !ok {
+		return "", ErrChannelNotFound
+	}
+	return ch.BizID, nil
+}
+
 func (s *channelRepoStub) ListChannels(_ context.Context, filter ChannelFilter, page, pageSize int64) ([]*Channel, int64, error) {
 	var matched []*Channel
 	for _, ch := range s.channels {

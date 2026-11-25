@@ -1,3 +1,5 @@
+//go:build integration
+
 package data
 
 import (
@@ -18,7 +20,8 @@ import (
 )
 
 // newIntegrationAgentData 连接 TEST_DATABASE_SOURCE（库名须含 test）并清空 agent 表。
-func newIntegrationAgentData(t *testing.T) *basedata.Data {
+// 接收 testing.TB：集成基准（bench_integration_test.go）复用同一份护栏与清库。
+func newIntegrationAgentData(t testing.TB) *basedata.Data {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_SOURCE")
 	if dsn == "" {
@@ -207,7 +210,7 @@ func TestTaskRepo_QueueLifecycle(t *testing.T) {
 	if _, err := d.Pool.Exec(ctx, "UPDATE agent_task SET status = 'running', lock_token = gen_random_uuid(), locked_until = now() - interval '1 minute' WHERE id = $1", stale.ID); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := repo.ReleaseStale(ctx, time.Now(), 10); err != nil || n != 1 {
+	if n, err := repo.ReleaseStale(ctx, 10); err != nil || n != 1 {
 		t.Fatalf("ReleaseStale: %d %v", n, err)
 	}
 	if _, err := d.Pool.Exec(ctx, "UPDATE agent_task SET queued_time = now() - interval '1 hour', attempts = 0 WHERE id = $1", stale.ID); err != nil {
@@ -299,8 +302,8 @@ func TestRunAndBudgetRepo(t *testing.T) {
 	if err != nil || total.PromptTokens != 200 {
 		t.Fatalf("Total: %+v %v", total, err)
 	}
-	convs, err := runs.PurgeBefore(ctx, time.Now().Add(time.Minute), 10)
-	if err != nil || len(convs) != 1 || convs[0] != run.ConversationID {
-		t.Fatalf("PurgeBefore: %v %v", convs, err)
+	purged, err := runs.PurgeBefore(ctx, time.Now().Add(time.Minute), 10)
+	if err != nil || purged != 1 {
+		t.Fatalf("PurgeBefore: %v %v", purged, err)
 	}
 }

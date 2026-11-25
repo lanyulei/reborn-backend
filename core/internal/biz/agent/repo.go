@@ -55,8 +55,8 @@ type TaskRepo interface {
 	Cancel(ctx context.Context, id, result string) (bool, error)
 	// ExpireQueued 把排队超时的任务置 expired，返回条数。
 	ExpireQueued(ctx context.Context, before time.Time, limit int) (int, error)
-	// ReleaseStale 把租约过期的 running 任务放回队列（实例崩溃兜底），返回条数。
-	ReleaseStale(ctx context.Context, now time.Time, limit int) (int, error)
+	// ReleaseStale 把租约过期的 running 任务放回队列（实例崩溃兜底），返回条数。到期按数据库时钟判定。
+	ReleaseStale(ctx context.Context, limit int) (int, error)
 	// CountActiveByProfile 该 Profile 排队 / 进行中的任务数。
 	CountActiveByProfile(ctx context.Context, profileID string) (int, error)
 	// CountByStatus 统计范围内各状态任务数。
@@ -81,8 +81,9 @@ type RunRepo interface {
 	Stats(ctx context.Context, r StatsRange) (*Overview, []ProfileStat, error)
 	// RecentAutoOutcome 该 Profile 近 window 内自动执行的建议验证结果：总数与失败数（Profile 级熔断用）。
 	RecentAutoOutcome(ctx context.Context, profileID string, window time.Duration) (total, failed int, err error)
-	// PurgeBefore 删除结束时间早于 before 的运行，返回被删运行对应的会话 ID（调用方据此清理助手会话）。
-	PurgeBefore(ctx context.Context, before time.Time, limit int) ([]string, error)
+	// PurgeBefore 在同一事务里删除结束时间早于 before 的运行（至多 limit 条）及其助手会话（含消息与
+	// 工具调用记录），返回删掉的运行条数。
+	PurgeBefore(ctx context.Context, before time.Time, limit int) (int, error)
 }
 
 // BudgetRepo 预算计数仓储。

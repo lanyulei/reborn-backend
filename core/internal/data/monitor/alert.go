@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/monitor"
@@ -361,13 +362,14 @@ type notifyLogRepo struct {
 // NewNotifyLogRepo new a notifyLogRepo.
 func NewNotifyLogRepo(data *basedata.Data) *notifyLogRepo { return &notifyLogRepo{data: data} }
 
-// ListByAlert implements biz.NotifyLogReader。订阅名取自本域的订阅表（含已删除的订阅）。
+// ListByAlert implements biz.NotifyLogReader。订阅名取自本域的订阅表（含已删除的订阅）。条数超过 limit 时
+// 保留的是最新的 limit 条（持续告警的事件每轮重复提醒都会追加记录，最新的才是用户要看的），仍按时间升序返回。
 func (r *notifyLogRepo) ListByAlert(ctx context.Context, alertID string, limit int) ([]*biz.NotifyLog, error) {
 	rows, err := r.data.Pool.Query(ctx,
 		`SELECT l.id::text, l.alert_id::text, l.kind, l.seq, l.source, COALESCE(l.subscription_id::text, ''), COALESCE(s.name, ''),
 		        l.recipients, l.notify_event_ids, l.note, l.create_time, l.level
 		 FROM monitor_notify_log l LEFT JOIN monitor_subscription s ON s.id = l.subscription_id
-		 WHERE l.alert_id = $1 ORDER BY l.create_time, l.id LIMIT $2`, alertID, limit)
+		 WHERE l.alert_id = $1 ORDER BY l.create_time DESC, l.id DESC LIMIT $2`, alertID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list monitor notify logs: %w", err)
 	}
@@ -388,6 +390,7 @@ func (r *notifyLogRepo) ListByAlert(ctx context.Context, alertID string, limit i
 		}
 		items = append(items, &l)
 	}
+	slices.Reverse(items) // 倒序取的最新一段还原为升序
 	return items, rows.Err()
 }
 

@@ -100,27 +100,31 @@ type shiftChange struct {
 	Role    int32
 	UserID  string
 	Origins []string
-	Start   time.Time
-	End     time.Time
-	Remark  string
-	Revoked bool
+	// Displaced 被改派掉的原替班人（见 overridePlan.Displaced）。
+	Displaced []string
+	Start     time.Time
+	End       time.Time
+	Remark    string
+	Revoked   bool
 }
 
-// shiftChanged 替班或撤销替班：通知原值班人与替班人。
+// shiftChanged 替班或撤销替班：通知原值班人与替班人；替班被改派给他人时，原替班人同样
+// 要知道这段时间不再由他值班。
 func (n *Notifier) shiftChanged(ctx context.Context, tx txrun.Tx, s *Schedule, c shiftChange) error {
 	title := "值班替班：" + s.Name
 	if c.Revoked {
 		title = "替班已撤销：" + s.Name
 	}
 	recipients := []string{c.UserID}
-	for _, id := range c.Origins {
+	for _, id := range slices.Concat(c.Origins, c.Displaced) {
 		if !slices.Contains(recipients, id) {
 			recipients = append(recipients, id)
 		}
 	}
 	return n.emit(ctx, tx, EventShiftChanged, severityInfo, title, "oncall.schedule."+s.ID, "", map[string]any{
 		"schedule_id": s.ID, "schedule_name": s.Name, "group_id": s.GroupID, "role": RoleLabel(c.Role),
-		"user_id": c.UserID, "origin_user_ids": c.Origins, "revoked": c.Revoked, "remark": c.Remark,
+		"user_id": c.UserID, "origin_user_ids": c.Origins, "displaced_user_ids": c.Displaced,
+		"revoked": c.Revoked, "remark": c.Remark,
 		"start_time": localTime(s.Timezone, c.Start), "end_time": localTime(s.Timezone, c.End), "timezone": s.Timezone,
 	}, recipients)
 }

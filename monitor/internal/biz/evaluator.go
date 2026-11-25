@@ -7,9 +7,11 @@ import (
 	"log/slog"
 	"maps"
 	"math/rand/v2"
+	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/lanyulei/reborn/backend/kit/idgen"
@@ -24,8 +26,6 @@ import (
 const (
 	// retryDelay 任务暂时无法评估（引擎自身故障、规则 / 数据源待清理）时归还并推迟的时长。
 	retryDelay = 5 * time.Second
-	// leaseMargin 租约在三个查询超时（等并发槽 + 判定查询 + 恢复取值查询）之外留给数据库往返的余量。
-	leaseMargin = 10 * time.Second
 	// roundQueryBudgets 一轮评估里以「数据源查询超时」为上限的阶段数：等并发槽、判定查询、恢复取值查询。
 	// 租约（TaskRepo.Claim）与单轮评估的总时限都按它计。
 	roundQueryBudgets = 3
@@ -40,8 +40,15 @@ const (
 	labelLimitPrefix = "label limit: "
 	// dropErrorPrefix 条件丢弃表达式对部分序列渲染失败（因而没有丢弃）时那段说明的固定前缀。
 	dropErrorPrefix = "drop expression: "
-	// settleTimeout 查询之外的数据库往返（读规则、落库、归还）的时间预算。
+	// settleTimeout 查询之外的数据库往返（读规则、落库、归还）的时间预算，也是任务租约余量的基数：单轮评估的
+	// 总时限（roundQueryBudgets × 查询超时 + settleTimeout）与租约（roundQueryBudgets × 查询超时 + leaseMargin）
+	// 共用它，两者不会再各算各的而漂移。
 	settleTimeout = 30 * time.Second
+	// leaseMargin 租约在三个查询超时（等并发槽 + 判定查询 + 恢复取值查询）之外留给数据库往返的余量。必须大于
+	// settleTimeout：否则数据源与数据库同时很慢时，单轮评估还在自己的总时限之内、租约却已到期被别的实例
+	// 重领，本轮作废（ErrLeaseLost）、状态不推进。多出的部分留给领取结果的回传与调度——租约从数据库执行
+	// 领取语句时起算，早于本实例开始为单轮评估计时。
+	leaseMargin = settleTimeout + 5*time.Second
 	// minInterval 评估周期下限：表约束保证 ≥ 15s，这里只防脏数据把任务变成空转循环。
 	minInterval = time.Second
 	// maxRecoveryQueries 单轮最多执行的恢复取值查询数；超出的事件不带恢复值（恢复不受影响）。
@@ -149,10 +156,59 @@ func claimAndRun(ctx context.Context, tasks TaskRepo, token string, o EvaluatorO
 	}
 	var g errgroup.Group
 	for _, task := range claimed {
-		g.Go(func() error { run(work, task); return nil })
+		g.Go(func() error {
+			defer recoverTask(work, tasks, task, log)
+			run(work, task)
+			return nil
+		})
 	}
 	_ = g.Wait()
 	return len(claimed), nil
+}
+
+// recoverTask 兜住单个任务执行中的 panic（须直接 defer）。errgroup 与 kit/loop 都不 recover：一条规则的脏配置 /
+// 异常的上游返回体若能确定性地触发 panic，进程重启后同一任务再被领取，整个引擎就因一条规则陷入重启循环。
+// 这里按「引擎自身故障」的既有路径处理：记 ERROR（带堆栈）并归还任务、retryDelay 后重试——不能只吞掉，
+// 否则任务悬在租约里要等到期才会被重领。没有 panic 时什么都不做。
+func recoverTask(ctx context.Context, repo TaskRepo, task *Task, log *slog.Logger) {
+	r := recover()
+	if r == nil {
+		return
+	}
+	log.ErrorContext(ctx, "task panicked: released for a delayed retry",
+		"rule_id", task.RuleID, "datasource_id", task.DatasourceID, "panic", fmt.Sprint(r), "stack", string(debug.Stack()))
+	releaseTasks(ctx, repo, task.Token, []*Task{task}, retryDelay, log)
+}
+
+// queryPanic 查询子 goroutine 里兜住的 panic：带上原始堆栈，回到任务 goroutine 上重新抛出。
+type queryPanic struct {
+	value any
+	stack []byte
+}
+
+// fanOut 并发执行 run(0..n-1) 并等全部返回。子 goroutine 里的 panic 不会被任务 goroutine 的 recover 兜住：
+// 在这里接住，等全部返回后回到调用方 goroutine 上重新抛出（带原始堆栈），交给 claimAndRun 的 recoverTask
+// 按引擎自身故障处理。
+func fanOut(n int, run func(i int)) {
+	var (
+		g        errgroup.Group
+		panicked atomic.Pointer[queryPanic]
+	)
+	for i := range n {
+		g.Go(func() error {
+			defer func() {
+				if r := recover(); r != nil {
+					panicked.CompareAndSwap(nil, &queryPanic{value: r, stack: debug.Stack()})
+				}
+			}()
+			run(i)
+			return nil
+		})
+	}
+	_ = g.Wait()
+	if p := panicked.Load(); p != nil {
+		panic(fmt.Sprintf("%v\n%s", p.value, p.stack))
+	}
 }
 
 // releaseTasks 归还任务；失败只记日志（租约到期后自然可被重领）。
@@ -464,11 +520,7 @@ func (uc *EvaluatorUsecase) runQueries(ctx context.Context, h *DatasourceHandle,
 	if n == 1 {
 		run(0)
 	} else {
-		var g errgroup.Group
-		for i := range n {
-			g.Go(func() error { run(i); return nil })
-		}
-		_ = g.Wait()
+		fanOut(n, run)
 	}
 	for i := range out.details {
 		if out.details[i].Error != "" {

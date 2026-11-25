@@ -61,6 +61,7 @@ import (
 
 import (
 	_ "go.uber.org/automaxprocs"
+	_ "time/tzdata"
 )
 
 // Injectors from wire.go:
@@ -69,6 +70,7 @@ import (
 // data 层因共享 Data 类型不能在顶层聚合各域（避免 import 环），
 // 各域 data ProviderSet 在此显式列出；biz/service 顶层已聚合。
 // service 层消费的 biz 窄接口（AdminResolver ← UserUsecase）在组合根绑定，避免 biz 反向依赖 service。
+// server 消费的 data 层能力（存活探测 Pinger、表增长观测 TableStats）同在此绑定：两层互不 import。
 func wireApp(confServer *conf.Server, confData *conf.Data, security *conf.Security, notify *conf.Notify, assistant *conf.Assistant, monitor *conf.Monitor, k8S *conf.K8S, knowledge *conf.Knowledge, agent *conf.Agent, logger *slog.Logger) (*kratos.App, func(), error) {
 	roles, err := server.NewRoles(confServer, logger)
 	if err != nil {
@@ -662,7 +664,8 @@ func wireApp(confServer *conf.Server, confData *conf.Data, security *conf.Securi
 	incidents := biz3.NewAgentIncidents(incidentUsecase, authzUsecase)
 	engineAudience := biz3.NewMonitorEngineAudience(directoryUsecase, monitor)
 	bizNotifier := biz3.NewAgentNotifier(txManager, notificationUsecase, engineAudience)
-	metrics, cleanup2, err := server.NewMetrics(jobRepo)
+	tableStatsRepo := data.NewTableStatsRepo(dataData)
+	metrics, cleanup2, err := server.NewMetrics(jobRepo, tableStatsRepo)
 	if err != nil {
 		cleanup()
 		return nil, nil, err

@@ -53,14 +53,34 @@ const cteRules = `rules AS (
     SELECT id, field_codes FROM cmdb_model_unique_rule WHERE model_code = $2
 )`
 
+// mergedAttrs 命中资源写入后的属性（两段常量之间拼同步归属字段的参数位，如 "$10"；$4 = 人工归属字段）。
+// 来源侧消失的属性只对 sync 归属字段生效：先从库中属性里去掉全部 sync 归属键，再并入暂存行
+// （去掉人工归属键）——暂存行里还有的 sync 键原样写回，没有的即被删除；both / manual 归属的键
+// 不在被去掉的集合里，一律保留（both 可能是人工维护的值）。
+// 暂存行一个可写属性都没有（采集器这次没取到任何属性，多半是权限 / 接口异常）时不删任何键：
+// 与「空集不做消失判定」同一个考虑，宁可留着旧值也不凭一次空结果清空资源。
+// stmtUpdate 与 stmtFailedSamples 必须用同一个表达式，否则「是否有变化」的口径会漂移。
+const (
+	mergedAttrsHead = `(CASE WHEN s.attrs - $4::text[] = '{}'::jsonb THEN c.attrs ELSE c.attrs - `
+	mergedAttrsTail = `::text[] END || (s.attrs - $4::text[]))`
+)
+
 // stmtTouch 命中的资源刷新同步时间、清陈旧与消失标记（不改 version：无业务变化）。
+// 已退役的资源（$4）保留 missing_since：它是「因消失而退役」的唯一凭据，stmtUpdate 据此决定是否
+// 重新激活，并在激活成功时才清掉——若在这里先清，被名称 / 唯一规则冲突挡住的那一轮之后就再也
+// 分不清它是消失退役还是人工退役，永远激活不了。
 const stmtTouch = `
-UPDATE cmdb_ci c SET last_synced_at = now(), stale = false, missing_since = NULL
+UPDATE cmdb_ci c SET last_synced_at = now(), stale = false,
+    missing_since = CASE WHEN c.status = $4::text THEN c.missing_since ELSE NULL END
 FROM cmdb_sync_staging s
 WHERE s.run_id = $1 AND s.model_code = $2 AND c.model_code = $2 AND c.source = $3 AND c.external_id = s.external_id
   AND c.external_id <> '' AND c.delete_time IS NULL`
 
-// stmtUpdate 变化的资源：名称 / 属性（人工字段不覆盖）/ 退役→重新激活，version+1，历史只记差异键。
+// stmtUpdate 变化的资源：名称 / 属性（人工字段不覆盖；sync 归属字段以暂存行为准，见 mergedAttrs）/
+// 退役→重新激活，version+1，历史只记差异键（被删除的键 before 为旧值、after 为 null）。
+// 重新激活只针对「因消失而退役」的资源（退役且 missing_since 非空，见 stmtTouch）；人工退役的
+// （missing_since 为空）状态保持退役，名称 / 属性照常更新。在消失宽限期内被人工退役的资源
+// missing_since 同样非空，重新出现时也会被激活——库里没有区分这两者的信息。
 // 名称或任一唯一规则与其它资源冲突的行跳过（计入失败样本）。冲突按"写入后的属性"判定，分两步：
 //  1. cand：名称被库中其它资源占用、或写入后的键与库中其它资源的现有键相同的行剔除。
 //     对方若也在本批被改走了该键（链式：A 要 B 的旧值、B 改成新值），本次保守跳过、下次同步
@@ -79,12 +99,12 @@ WITH ` + cteRules + `, s AS (
     SELECT external_id, name, attrs FROM cmdb_sync_staging WHERE run_id = $1 AND model_code = $2
 ), cand AS (
     SELECT c.id, c.name AS old_name, s.name AS new_name, c.status AS old_status,
-           CASE WHEN c.status = $6 THEN $7 ELSE c.status END AS new_status,
+           CASE WHEN c.status = $6 AND c.missing_since IS NOT NULL THEN $7 ELSE c.status END AS new_status,
            c.attrs AS old_attrs, n.new_attrs
     FROM cmdb_ci c JOIN s ON s.external_id = c.external_id
-    CROSS JOIN LATERAL (SELECT c.attrs || (s.attrs - $4::text[]) AS new_attrs) n
+    CROSS JOIN LATERAL (SELECT ` + mergedAttrsHead + `$10` + mergedAttrsTail + ` AS new_attrs) n
     WHERE c.model_code = $2 AND c.source = $3 AND c.external_id <> '' AND c.delete_time IS NULL
-      AND (c.name <> s.name OR c.status = $6 OR c.attrs <> n.new_attrs)
+      AND (c.name <> s.name OR (c.status = $6 AND c.missing_since IS NOT NULL) OR c.attrs <> n.new_attrs)
       AND NOT EXISTS (
           SELECT 1 FROM cmdb_ci o WHERE o.model_code = $2 AND o.id <> c.id AND o.delete_time IS NULL AND o.name = s.name)
       AND NOT EXISTS (
@@ -176,7 +196,8 @@ SELECT count(*) FROM ins`
 // stmtFailedSamples 对账后未生效的暂存行，带原因；matched 标记该行是否命中了既有资源
 // （被跳过的更新），用于把 Unchanged 从命中数中扣除。在更新 / 新建之后执行：
 //   - 未命中既有资源 = 新建被跳过；
-//   - 命中但库中的名称或属性仍与暂存不一致 = 更新被跳过（$4 = 人工归属字段，同步不写）。
+//   - 命中但库中的名称或属性仍与暂存不一致 = 更新被跳过（$4 = 人工归属字段，同步不写；
+//     $5 = 同步归属字段，属性口径同 stmtUpdate，见 mergedAttrs）。
 //
 // pending 物化：want_attrs 成为普通列，下面按键探测 cmdb_ci_unique 才能走 (rule_id, key) 索引
 // （内联时它是外连接可空侧的表达式，无法作为索引条件）。
@@ -185,12 +206,12 @@ SELECT count(*) FROM ins`
 const stmtFailedSamples = `
 WITH ` + cteRules + `, pending AS MATERIALIZED (
     SELECT s.external_id, s.name, c.id AS ci_id,
-           CASE WHEN c.id IS NULL THEN s.attrs - $4::text[] ELSE c.attrs || (s.attrs - $4::text[]) END AS want_attrs
+           CASE WHEN c.id IS NULL THEN s.attrs - $4::text[] ELSE ` + mergedAttrsHead + `$5` + mergedAttrsTail + ` END AS want_attrs
     FROM cmdb_sync_staging s
     LEFT JOIN cmdb_ci c ON c.model_code = $2 AND c.source = $3 AND c.external_id = s.external_id
         AND c.external_id <> '' AND c.delete_time IS NULL
     WHERE s.run_id = $1 AND s.model_code = $2
-      AND (c.id IS NULL OR c.name <> s.name OR c.attrs <> (c.attrs || (s.attrs - $4::text[])))
+      AND (c.id IS NULL OR c.name <> s.name OR c.attrs <> ` + mergedAttrsHead + `$5` + mergedAttrsTail + `)
 )
 SELECT p.external_id, p.name, p.ci_id IS NOT NULL AS matched,
     CASE WHEN hit.rule_name IS NOT NULL
@@ -259,6 +280,9 @@ SELECT id FROM upd`
 
 // stmtCascadeRetire 级联退役：刚退役资源作为 src 的 cascade_retire 关系，其 dst 未退役者一并退役
 // （与 core 人工退役的级联语义一致；多级由调用方循环，上限 cascadeMaxDepth）。
+// 同时记下 missing_since（已有的保留）：它是「由同步退役、而非人工退役」的凭据（见 stmtUpdate）。被级联
+// 退役的资源若本身也由采集源托管、且仍在来源里，下一轮同步照旧把它重新激活——与只激活「因消失而退役」
+// 的规则放在一起，不记这个标记的话它会被当成人工退役而永远停在退役。
 const stmtCascadeRetire = `
 WITH dep AS (
     SELECT DISTINCT d.id, d.status
@@ -267,7 +291,8 @@ WITH dep AS (
     JOIN cmdb_ci d ON d.id = r.dst_id AND d.delete_time IS NULL AND d.status <> $2
     WHERE r.src_id = ANY($1::uuid[])
 ), upd AS (
-    UPDATE cmdb_ci c SET status = $2, version = c.version + 1, update_time = now(), update_user = NULL FROM dep WHERE c.id = dep.id RETURNING c.id
+    UPDATE cmdb_ci c SET status = $2, version = c.version + 1, update_time = now(), update_user = NULL,
+        missing_since = COALESCE(c.missing_since, now()) FROM dep WHERE c.id = dep.id RETURNING c.id
 ), hist AS (
     INSERT INTO cmdb_ci_history (id, ci_id, action, diff, operator, source, request_id, create_time)
     SELECT gen_random_uuid(), dep.id, $5, jsonb_build_object('before', jsonb_build_object('status', dep.status), 'after', jsonb_build_object('status', $2::text)), '', $3, $6, clock_timestamp()
@@ -308,18 +333,18 @@ func (r *reconcileRepo) ReconcileModel(ctx context.Context, p biz.ReconcileParam
 	var counts biz.Counts
 	var samples []cmdbcontract.RunError
 	err := dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
-		manual := dbx.TextArray(p.ManualKeys)
+		manual, syncOwned := dbx.TextArray(p.ManualKeys), dbx.TextArray(p.SyncKeys)
 		// 与唯一规则变更互斥：事务内规则集不变（冲突预判与触发器实际写入同口径）。
 		if _, err := tx.Exec(ctx, uniqueRuleLockShared, p.ModelCode); err != nil {
 			return fmt.Errorf("lock unique rules: %w", err)
 		}
-		touched, err := tx.Exec(ctx, stmtTouch, p.RunID, p.ModelCode, p.Source)
+		touched, err := tx.Exec(ctx, stmtTouch, p.RunID, p.ModelCode, p.Source, cmdbcontract.CIStatusRetired)
 		if err != nil {
 			return fmt.Errorf("touch matched: %w", err)
 		}
 		var updated int64
 		if err := tx.QueryRow(ctx, stmtUpdate, p.RunID, p.ModelCode, p.Source, manual, p.RunID,
-			cmdbcontract.CIStatusRetired, cmdbcontract.CIStatusActive, cmdbcontract.ActionTransition, cmdbcontract.ActionUpdate).Scan(&updated); err != nil {
+			cmdbcontract.CIStatusRetired, cmdbcontract.CIStatusActive, cmdbcontract.ActionTransition, cmdbcontract.ActionUpdate, syncOwned).Scan(&updated); err != nil {
 			return fmt.Errorf("update changed: %w", err)
 		}
 		var created int64
@@ -327,7 +352,7 @@ func (r *reconcileRepo) ReconcileModel(ctx context.Context, p biz.ReconcileParam
 			cmdbcontract.CIStatusActive, cmdbcontract.ActionCreate).Scan(&created); err != nil {
 			return fmt.Errorf("insert new: %w", err)
 		}
-		rows, err := tx.Query(ctx, stmtFailedSamples, p.RunID, p.ModelCode, p.Source, manual)
+		rows, err := tx.Query(ctx, stmtFailedSamples, p.RunID, p.ModelCode, p.Source, manual, syncOwned)
 		if err != nil {
 			return fmt.Errorf("failed samples: %w", err)
 		}

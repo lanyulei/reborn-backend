@@ -664,10 +664,11 @@ func (u *userClients) verifyItem(it *k8scontract.ChangeExecItem) (*unstructured.
 }
 
 // patched 现状合并补丁后的对象（带现状的 resourceVersion：提交时有人并发修改即 409）。
+// status 原样带着现状的：补丁只涉及用户改的字段（ChangeBase 比对时已去掉 status），而没启用 status 子资源的
+// CRD 是整体替换——PUT 不带 status 就等于把 status 清空（见 write.go 的 keepStatus）。
 func patched(live *unstructured.Unstructured, patch map[string]any) *unstructured.Unstructured {
 	next := &unstructured.Unstructured{Object: biz.ApplyPatch(runtime.DeepCopyJSON(live.Object), patch)}
 	unstructured.RemoveNestedField(next.Object, "metadata", "managedFields")
-	unstructured.RemoveNestedField(next.Object, "status")
 	next.SetResourceVersion(live.GetResourceVersion())
 	next.SetUID(live.GetUID())
 	return next

@@ -2,6 +2,7 @@ package vmware
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -10,6 +11,8 @@ import (
 	"github.com/lanyulei/reborn/backend/kit/cmdbcontract"
 
 	"github.com/vmware/govmomi/simulator"
+	"github.com/vmware/govmomi/vim25/soap"
+	"github.com/vmware/govmomi/vim25/types"
 )
 
 type memSink struct{ items []*biz.Resource }
@@ -82,5 +85,56 @@ func TestCollector_Discover(t *testing.T) {
 	bad := `{"url":"https://127.0.0.1:1/sdk","username":"u","insecure":true}`
 	if err := c.Discover(context.Background(), &biz.Source{Provider: cmdbcontract.ProviderVMware, Config: []byte(bad)}, "p", &memSink{}); err == nil {
 		t.Fatal("unreachable vcenter must fail")
+	}
+}
+
+// 只读请求的重试：网络类错误重试至多 maxRetries 次；vCenter 明确给出的故障不重试；ctx 取消即停。
+func TestCollector_Retry(t *testing.T) {
+	t.Parallel()
+	c := &Collector{backoff: time.Millisecond}
+	ctx := context.Background()
+	transient := errors.New("Post \"https://vc/sdk\": context deadline exceeded")
+
+	calls := 0
+	if err := c.retry(ctx, func() error { calls++; return transient }); !errors.Is(err, transient) || calls != maxRetries {
+		t.Fatalf("transient error: calls=%d err=%v, want %d attempts", calls, err, maxRetries)
+	}
+	calls = 0
+	if err := c.retry(ctx, func() error {
+		if calls++; calls < 2 {
+			return transient
+		}
+		return nil
+	}); err != nil || calls != 2 {
+		t.Fatalf("recover on retry: calls=%d err=%v", calls, err)
+	}
+	for name, fault := range map[string]error{
+		"soap fault": soap.WrapSoapFault(&soap.Fault{String: "NoPermission"}),
+		"vim fault":  soap.WrapVimFault(&types.NoPermission{}),
+	} {
+		calls = 0
+		if err := c.retry(ctx, func() error { calls++; return fault }); err == nil || calls != 1 {
+			t.Fatalf("%s must not be retried: calls=%d err=%v", name, calls, err)
+		}
+	}
+	// ctx 已取消：首次失败后不再重试。
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	calls = 0
+	if err := c.retry(cancelled, func() error { calls++; return transient }); err == nil || calls != 1 {
+		t.Fatalf("cancelled ctx: calls=%d err=%v", calls, err)
+	}
+	// 退避期间取消：返回 ctx 的错误。
+	slow := &Collector{backoff: time.Minute}
+	waiting, cancelWait := context.WithCancel(ctx)
+	calls = 0
+	err := slow.retry(waiting, func() error {
+		if calls++; calls == 1 {
+			time.AfterFunc(10*time.Millisecond, cancelWait)
+		}
+		return transient
+	})
+	if !errors.Is(err, context.Canceled) || calls != 1 {
+		t.Fatalf("cancel during backoff: calls=%d err=%v", calls, err)
 	}
 }

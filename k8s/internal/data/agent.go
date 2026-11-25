@@ -34,8 +34,16 @@ const tokenQuery = `SELECT t.cluster_id::text, c.name, t.token_hash
 	WHERE t.id = $1 AND t.kind = $2 AND (t.expire_time IS NULL OR t.expire_time > now())
 	  AND c.enabled AND c.delete_time IS NULL AND c.access_mode = 1`
 
-// Exchange implements biz.AgentTokenRepo。FOR UPDATE 锁住注册令牌行：并发提交同一个令牌时，
-// 后到者等前者提交后读不到该行。
+// registerLock 串行化同一个注册令牌的换发（事务级咨询锁，键里带上令牌 ID）。
+const registerLock = "SELECT pg_advisory_xact_lock(hashtextextended('k8s:agent-register:' || $1, 0))"
+
+// Exchange implements biz.AgentTokenRepo。同一个注册令牌的换发被串行化：并发提交同一个令牌时，
+// 后到者等前者提交之后再读，读不到该行。
+//
+// 串行化用咨询锁而不是对令牌行 FOR UPDATE：行锁（FOR UPDATE / FOR SHARE 一类）需要表的 UPDATE 权限，
+// 而数据面角色对 k8s_agent_token 只有 SELECT / INSERT / DELETE（迁移 0072）——以受限账号部署时整条查询
+// 被数据库拒绝（42501），Agent 永远注册不上；本地开发沿用 postgres 账号，看不出这个问题。咨询锁不需要任何表权限。
+// 锁顺序恒为「令牌 → 集群」（集群锁见下），并发换发之间不会互等。
 func (r *agentRepo) Exchange(ctx context.Context, tokenID, secret string) (biz.AgentGrant, error) {
 	grant := biz.AgentGrant{}
 	newID, err := idgen.NewID()
@@ -47,8 +55,11 @@ func (r *agentRepo) Exchange(ctx context.Context, tokenID, secret string) (biz.A
 		return grant, err
 	}
 	err = dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+		if _, lerr := tx.Exec(ctx, registerLock, tokenID); lerr != nil {
+			return fmt.Errorf("lock register token: %w", lerr)
+		}
 		var stored []byte
-		qerr := tx.QueryRow(ctx, tokenQuery+" FOR UPDATE OF t", tokenID, k8scontract.TokenRegister).
+		qerr := tx.QueryRow(ctx, tokenQuery, tokenID, k8scontract.TokenRegister).
 			Scan(&grant.ClusterID, &grant.ClusterName, &stored)
 		if errors.Is(qerr, pgx.ErrNoRows) {
 			k8scontract.SecretMatches(secret, dummyHash)
@@ -61,12 +72,20 @@ func (r *agentRepo) Exchange(ctx context.Context, tokenID, secret string) (biz.A
 			return biz.ErrAgentToken
 		}
 		// 串行化同一集群的令牌换发（事务级咨询锁）：否则两个并发的换发各自裁剪时看不到对方刚插入的行，
-		// 长期令牌会超过上限。数据面对集群行没有写权限，所以不用 FOR UPDATE 锁集群行。
+		// 长期令牌会超过上限。数据面对集群行没有读以外的一切权限，所以不用 FOR UPDATE 锁集群行。
 		if _, lerr := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended('k8s:agent-token:' || $1, 0))", grant.ClusterID); lerr != nil {
 			return fmt.Errorf("lock cluster tokens: %w", lerr)
 		}
-		if _, derr := tx.Exec(ctx, "DELETE FROM k8s_agent_token WHERE id = $1", tokenID); derr != nil {
+		// 消费必须真的删到那一行。咨询锁只在换发之间互斥，控制面的吊销 / 重置注册令牌、删除集群与过期的
+		// 清理都不走这把锁：它们在「读出令牌」之后删掉这一行时，这里的 DELETE 会先等对方提交、再删到 0 行。
+		// 不拦的话就等于拿一枚已经不存在的注册令牌换发出了长期令牌（例如给一个正在被删除的集群留下一枚
+		// 永不过期的孤儿令牌）。
+		tag, derr := tx.Exec(ctx, "DELETE FROM k8s_agent_token WHERE id = $1", tokenID)
+		if derr != nil {
 			return fmt.Errorf("consume register token: %w", derr)
+		}
+		if tag.RowsAffected() != 1 {
+			return biz.ErrAgentToken
 		}
 		if _, ierr := tx.Exec(ctx,
 			"INSERT INTO k8s_agent_token (id, cluster_id, kind, token_hash) VALUES ($1, $2, $3, $4)",

@@ -18,8 +18,15 @@ import (
 
 var _ biz.HistoryRepo = (*historyRepo)(nil)
 
+// stmtInsertHistory 单条历史。
+const stmtInsertHistory = `INSERT INTO cmdb_ci_history (id, ci_id, action, diff, operator, source, request_id, create_time)
+	 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+
 // insertHistories 在事务内追加历史（资源/关系写操作同事务调用）。
+// 多条时走 pgx.Batch 一次往返（批量关联 / 级联退役一次上百条）：语句与参数同单条路径逐字一致，
+// 只是不再逐行等应答；任一条失败即返回，由调用方的事务整体回滚。只有一条时保持原来的单次 Exec。
 func insertHistories(ctx context.Context, tx pgx.Tx, items []*biz.History) error {
+	batch := &pgx.Batch{}
 	for _, h := range items {
 		if h == nil {
 			continue
@@ -28,12 +35,27 @@ func insertHistories(ctx context.Context, tx pgx.Tx, items []*biz.History) error
 		if err != nil {
 			return fmt.Errorf("marshal history diff: %w", err)
 		}
-		if _, err := tx.Exec(ctx,
-			`INSERT INTO cmdb_ci_history (id, ci_id, action, diff, operator, source, request_id, create_time)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-			h.ID, h.CIID, h.Action, diff, h.Operator, h.Source, h.RequestID, h.CreateTime); err != nil {
+		batch.Queue(stmtInsertHistory, h.ID, h.CIID, h.Action, diff, h.Operator, h.Source, h.RequestID, h.CreateTime)
+	}
+	switch batch.Len() {
+	case 0:
+		return nil
+	case 1:
+		q := batch.QueuedQueries[0]
+		if _, err := tx.Exec(ctx, q.SQL, q.Arguments...); err != nil {
 			return fmt.Errorf("insert cmdb history: %w", err)
 		}
+		return nil
+	}
+	results := tx.SendBatch(ctx, batch)
+	for range batch.Len() {
+		if _, err := results.Exec(); err != nil {
+			_ = results.Close() // 首个错误已拿到；事务随调用方回滚
+			return fmt.Errorf("insert cmdb history: %w", err)
+		}
+	}
+	if err := results.Close(); err != nil {
+		return fmt.Errorf("insert cmdb history: %w", err)
 	}
 	return nil
 }

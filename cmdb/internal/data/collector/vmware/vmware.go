@@ -21,13 +21,22 @@ import (
 	"github.com/vmware/govmomi/vim25/soap"
 )
 
+// maxRetries 单个只读请求的尝试次数上限（与其它采集器一致：首发 + 2 次重试）。
+const maxRetries = 3
+
 // Collector implements biz.Collector（provider=vmware）。
 type Collector struct {
 	timeout time.Duration
+	// backoff 重试退避的基数（第 n 次重试前等 n × backoff）。
+	backoff time.Duration
 }
 
-// New new a Collector；timeout 为单次 SOAP 请求超时。
-func New(timeout time.Duration) *Collector { return &Collector{timeout: timeout} }
+// New new a Collector；timeout 为单次 SOAP 请求超时。ContainerView 一次请求拉取全部主机 / 虚拟机的
+// 属性，耗时随 vCenter 规模增长，调用方应给出比普通 REST 调用宽得多的值（见 collector.NewRegistry）；
+// 整次采集仍受调用方 ctx（collect_timeout）约束。
+func New(timeout time.Duration) *Collector {
+	return &Collector{timeout: timeout, backoff: 500 * time.Millisecond}
+}
 
 // Provider implements biz.Collector.
 func (c *Collector) Provider() string { return cmdbcontract.ProviderVMware }
@@ -56,8 +65,11 @@ func (c *Collector) Discover(ctx context.Context, src *biz.Source, credential st
 	}
 	soapClient := soap.NewClient(u, vc.Insecure)
 	soapClient.Timeout = c.timeout
-	client, err := vim25.NewClient(ctx, soapClient)
-	if err != nil {
+	var client *vim25.Client
+	if err := c.retry(ctx, func() (err error) {
+		client, err = vim25.NewClient(ctx, soapClient)
+		return err
+	}); err != nil {
 		return fmt.Errorf("vmware: connect: %w", err)
 	}
 	sm := session.NewManager(client)
@@ -74,7 +86,10 @@ func (c *Collector) Discover(ctx context.Context, src *biz.Source, credential st
 	defer func() { _ = cv.Destroy(context.WithoutCancel(ctx)) }()
 
 	var hosts []mo.HostSystem
-	if err := cv.Retrieve(ctx, []string{"HostSystem"}, hostProps, &hosts); err != nil {
+	if err := c.retry(ctx, func() error {
+		hosts = nil // 上一次尝试可能已填了一部分
+		return cv.Retrieve(ctx, []string{"HostSystem"}, hostProps, &hosts)
+	}); err != nil {
 		return fmt.Errorf("vmware: retrieve hosts: %w", err)
 	}
 	for i := range hosts {
@@ -83,7 +98,10 @@ func (c *Collector) Discover(ctx context.Context, src *biz.Source, credential st
 		}
 	}
 	var vms []mo.VirtualMachine
-	if err := cv.Retrieve(ctx, []string{"VirtualMachine"}, vmProps, &vms); err != nil {
+	if err := c.retry(ctx, func() error {
+		vms = nil
+		return cv.Retrieve(ctx, []string{"VirtualMachine"}, vmProps, &vms)
+	}); err != nil {
 		return fmt.Errorf("vmware: retrieve vms: %w", err)
 	}
 	for i := range vms {
@@ -124,6 +142,31 @@ func hostResource(h *mo.HostSystem) *biz.Resource {
 		}
 	}
 	return &biz.Resource{ModelCode: cmdbcontract.ModelPhysicalServer, ExternalID: h.Self.Value, Name: h.Name, Attrs: attrs}
+}
+
+// retry 只读请求（建连取 ServiceContent、Retrieve）的重试：网络错误 / 超时 / 5xx 重试，至多
+// maxRetries 次、线性退避，口径同其它采集器。vCenter 明确给出的 SOAP / Vim 故障（鉴权、权限、
+// 参数）重试也不会变，直接返回。登录不走这里：它会创建会话，不是幂等的只读请求。
+func (c *Collector) retry(ctx context.Context, fn func() error) error {
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Duration(attempt) * c.backoff):
+			}
+		}
+		err := fn()
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if soap.IsSoapFault(err) || soap.IsVimFault(err) || ctx.Err() != nil {
+			break
+		}
+	}
+	return lastErr
 }
 
 func vmResource(v *mo.VirtualMachine) *biz.Resource {

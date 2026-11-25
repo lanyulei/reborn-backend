@@ -18,11 +18,18 @@ func patternSpecificity(pattern string) int { return notifycontract.PatternSpeci
 // MatchRoute 选路：biz 内启用路由中 pattern 命中 ∧ severity ≥ 下限 ∧ tag_match
 // 全等（AND）者取优先级最高（priority 最小）；无命中返回 nil。
 func (s *Snapshot) MatchRoute(bizID, eventType string, severity int32, payload map[string]any) *Route {
+	return s.matchRoute(bizID, eventType, severity, func() map[string]any { return payload })
+}
+
+// matchRoute 是 MatchRoute 的按需取 payload 形态：只有轮到一条带 tag_match 的候选路由（已过
+// 启用 / 严重级 / 模式三关）时才调用 payload()。无 tag_match 的路由恒命中、不看 payload，
+// 所以结果与先解码再匹配完全相同，而没有 tag_match 路由的 biz 整条路径不再解码 payload。
+func (s *Snapshot) matchRoute(bizID, eventType string, severity int32, payload func() map[string]any) *Route {
 	for _, r := range s.routes[bizID] {
 		if !r.Enabled || severity < r.SeverityMin || !MatchPattern(r.EventPattern, eventType) {
 			continue
 		}
-		if !tagsMatch(r.TagMatch, payload) {
+		if len(r.TagMatch) > 0 && !tagsMatch(r.TagMatch, payload()) {
 			continue
 		}
 		return r

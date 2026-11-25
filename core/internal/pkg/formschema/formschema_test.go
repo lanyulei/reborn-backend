@@ -3,6 +3,7 @@ package formschema
 import (
 	"errors"
 	"fmt"
+	"math"
 	"testing"
 )
 
@@ -142,6 +143,40 @@ func TestCheckRequired(t *testing.T) {
 	}
 	if err := CheckRequired(fields, map[string]any{"ip": nil}); err == nil {
 		t.Fatal("nil required field must fail")
+	}
+}
+
+// 整数取值超出双精度能精确表示的范围（|n| > 2^53-1）直接拒绝，不再被 float64 静默改写。
+func TestValidate_IntSafeRange(t *testing.T) {
+	t.Parallel()
+	fields := []Field{{Code: "n", Type: TypeInt}}
+	const wantMsg = `field "n" must be within ±9007199254740991`
+	// 边界内（含上下界）照常通过，取值不被改写。
+	for _, c := range []struct {
+		in   float64
+		want int64
+	}{{1<<53 - 1, 1<<53 - 1}, {-(1<<53 - 1), -(1<<53 - 1)}, {42, 42}} {
+		out, err := Validate(fields, map[string]any{"n": c.in}, true)
+		if err != nil {
+			t.Fatalf("Validate(%v) error = %v, want nil", c.in, err)
+		}
+		if out["n"] != c.want {
+			t.Fatalf("Validate(%v) = %v, want %d", c.in, out["n"], c.want)
+		}
+	}
+	// 超界：JSON 解码后相邻整数已不可区分的 2^53、9007199254740993（解码即 2^53）、1e300，
+	// 以及 Go 侧的大 int64、Inf 一律拒绝。
+	for _, v := range []any{float64(1 << 53), -float64(1 << 53), 9007199254740993, 1e300, int64(1 << 62), math.Inf(1)} {
+		_, err := Validate(fields, map[string]any{"n": v}, true)
+		var fe *Error
+		if !errors.As(err, &fe) || fe.Field != "n" || fe.Error() != wantMsg {
+			t.Errorf("Validate(%v) error = %v, want %q", v, err, wantMsg)
+		}
+	}
+	// 规则放得再宽也不行：先判精确表示范围，再判 min / max。
+	wide := []Field{{Code: "n", Type: TypeInt, Rule: Rule{Max: ptr(1e300)}}}
+	if _, err := Validate(wide, map[string]any{"n": 1e300}, true); err == nil || err.Error() != wantMsg {
+		t.Fatalf("out-of-range int must be rejected before the rule check: %v", err)
 	}
 }
 

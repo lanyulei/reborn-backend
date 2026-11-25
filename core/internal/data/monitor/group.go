@@ -133,9 +133,9 @@ func (r *groupRepo) Update(ctx context.Context, g *biz.RuleGroup, actor string) 
 	})
 }
 
-// Delete implements biz.GroupWriter。先行锁分组行再查下级、规则与引用它的屏蔽规则 / 订阅：新建规则、
-// 下级分组、屏蔽规则、订阅时对所属分组行加共享锁（lockGroup / lockGroups），与这里互斥，不会出现
-// 「刚判定为空就被塞进一条规则」。
+// Delete implements biz.GroupWriter。先行锁分组行再查下级、规则与引用它的屏蔽规则 / 订阅 / 记录规则 /
+// 升级策略 / 抑制规则：新建规则、记录规则、下级分组、屏蔽规则、订阅、升级策略、抑制规则时都对所属分组行
+// 加共享锁（lockGroup / lockGroups），与这里互斥，不会出现「刚判定为空就被塞进一条规则」。
 func (r *groupRepo) Delete(ctx context.Context, id, actor string) error {
 	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
 		if err := lockCfg(ctx, tx, mc.CfgRuleGroup); err != nil {
@@ -169,6 +169,19 @@ func (r *groupRepo) Delete(ctx context.Context, id, actor string) error {
 		}
 		if mutes > 0 || subscriptions > 0 {
 			return biz.GroupReferenced(mutes, subscriptions)
+		}
+		// 记录规则以它为所属分组：删掉分组后规则仍被引擎照常执行，非超级管理员却再也看不到、管不了它。
+		// 升级策略 / 抑制规则以它为作用分组：分组没了它们既不生效也无从修正。同样先让用户处理掉。
+		var recordRules, escalations, inhibits int
+		if err := tx.QueryRow(ctx,
+			`SELECT (SELECT count(*) FROM monitor_record_rule WHERE group_id = $1 AND delete_time IS NULL),
+			        (SELECT count(*) FROM monitor_escalation WHERE group_id = $1 AND delete_time IS NULL),
+			        (SELECT count(*) FROM monitor_inhibit WHERE group_id = $1 AND delete_time IS NULL)`, id).
+			Scan(&recordRules, &escalations, &inhibits); err != nil {
+			return fmt.Errorf("count references to monitor rule group: %w", err)
+		}
+		if recordRules > 0 || escalations > 0 || inhibits > 0 {
+			return biz.GroupReferencedBy(recordRules, escalations, inhibits)
 		}
 		if _, err := tx.Exec(ctx, "DELETE FROM monitor_role_scope WHERE group_id = $1", id); err != nil {
 			return fmt.Errorf("delete monitor role scopes of group: %w", err)

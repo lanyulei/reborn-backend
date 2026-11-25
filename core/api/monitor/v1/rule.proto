@@ -875,7 +875,7 @@ message BatchRulesRequest {
 message BatchRuleResult {
   // id 规则唯一标识。
   string id = 1;
-  // name 规则名称（规则不存在时为空）。
+  // name 规则名称（规则不存在，或调用方对其所在分组不可读时为空）。
   string name = 2;
   // ok 是否成功。
   bool ok = 3;

@@ -90,7 +90,9 @@ func (uc *WorkerUsecase) RunOnce(ctx context.Context, token string) (int, error)
 		// 进程停机打断的同步不是任务失败：不写终态、不发失败告警，任务保持 running，
 		// 租约到期后由存活副本 / 重启后的进程重领重跑（重领时上一条运行记录置失败）。
 		log.WarnContext(ctx, "sync task interrupted by shutdown: left for re-claim after lease expiry")
-		if err := uc.staging.Clear(context.WithoutCancel(ctx), task.RunID); err != nil {
+		clearCtx, cancel := settleContext(ctx)
+		defer cancel()
+		if err := uc.staging.Clear(clearCtx, task.RunID); err != nil {
 			log.ErrorContext(ctx, "clear staging failed (scheduler will purge)", "error", err)
 		}
 		return 1, nil
@@ -104,19 +106,37 @@ func (uc *WorkerUsecase) RunOnce(ctx context.Context, token string) (int, error)
 		log.InfoContext(ctx, "sync task finished", "discovered", counts.Discovered, "created", counts.Created, "updated", counts.Updated,
 			"unchanged", counts.Unchanged, "disappeared", counts.Disappeared, "retired", counts.Retired, "failed", counts.Failed)
 	}
-	// 完成写入用不可取消的 ctx：停机期间也要把终态落库（租约围栏保证不覆盖他人结果）。
-	if err := uc.tasks.Finish(context.WithoutCancel(ctx), task, status, counts, msg, samples); err != nil {
+	// 完成写入不随停机取消：停机期间也要把终态落库（租约围栏保证不覆盖他人结果）。但各步自带
+	// 时限（见 settleContext）——数据库不可达时不能一直挂着拖住进程退出；落不成的终态由租约过期
+	// 后的重领兜底，遗留暂存由调度器清理。
+	finishCtx, cancelFinish := settleContext(ctx)
+	defer cancelFinish()
+	if err := uc.tasks.Finish(finishCtx, task, status, counts, msg, samples); err != nil {
 		if errors.Is(err, ErrLeaseLost) {
 			log.WarnContext(ctx, "sync task finish skipped: lease lost")
 			return 1, nil
 		}
 		return 1, err
 	}
-	if err := uc.staging.Clear(context.WithoutCancel(ctx), task.RunID); err != nil {
+	clearCtx, cancelClear := settleContext(ctx)
+	defer cancelClear()
+	if err := uc.staging.Clear(clearCtx, task.RunID); err != nil {
 		log.ErrorContext(ctx, "clear staging failed (scheduler will purge)", "error", err)
 	}
-	uc.emit(context.WithoutCancel(ctx), src, task, counts, msg, log)
+	emitCtx, cancelEmit := settleContext(ctx)
+	defer cancelEmit()
+	uc.emit(emitCtx, src, task, counts, msg, log)
 	return 1, nil
+}
+
+// settleTimeout 落账各步（任务终态 / 清理暂存 / 结果通知）各自的时限。正常情况下都是毫秒级的
+// 几条语句；只在数据库或通知通道不可达时才会触顶。
+const settleTimeout = 10 * time.Second
+
+// settleContext 落账用的 ctx：不随调用方取消（停机时照样要落库），但有界——此前是无时限的
+// WithoutCancel，优雅停机遇上数据库慢 / 不可达时这几步会一直挂到进程被强杀，终态同样没落成。
+func settleContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), settleTimeout)
 }
 
 // emit 同步结果通知：失败 → critical（按源去重一个周期）；有消失/退役 → warning。
@@ -282,15 +302,18 @@ func (uc *WorkerUsecase) collectAndReconcile(ctx context.Context, task *Task, sr
 					"model", model, "model_enabled", len(fields) > 0)
 			}
 		}
-		var manual []string
+		var manual, syncOwned []string
 		for _, f := range fields {
-			if f.Owner == cmdbcontract.FieldOwnerManual {
+			switch f.Owner {
+			case cmdbcontract.FieldOwnerManual:
 				manual = append(manual, f.Code)
+			case cmdbcontract.FieldOwnerSync:
+				syncOwned = append(syncOwned, f.Code)
 			}
 		}
 		c, errs, err := uc.reconcile.ReconcileModel(ctx, ReconcileParams{
 			RunID: task.RunID, ModelCode: model, Source: source, Env: src.Env, Grace: grace,
-			ManualKeys: manual, SkipDisappear: skip,
+			ManualKeys: manual, SyncKeys: syncOwned, SkipDisappear: skip,
 		})
 		if err != nil {
 			return counts, samples, fmt.Errorf("reconcile %s: %w", model, err)

@@ -63,8 +63,9 @@ const (
 	headerEventID   = "X-Incident-Event-Id"
 	headerTimestamp = "X-Incident-Timestamp"
 	headerSignature = "X-Incident-Signature"
-	webhookTimeout  = 10 * time.Second
-	maxResponse     = 16 << 10
+	// webhookTimeout 单次投递的总超时：与出站箱租约的计算共用 biz.WebhookSendMax（租约 = 批大小 × 它 + 余量）。
+	webhookTimeout = biz.WebhookSendMax
+	maxResponse    = 16 << 10
 )
 
 var _ biz.WebhookSender = (*WebhookSender)(nil)

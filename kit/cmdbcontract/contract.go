@@ -23,6 +23,12 @@ const (
 )
 
 // 字段归属（cmdb_model_field.owner）：manual 人工 / sync 同步只读 / both 同步写入可人工覆盖。
+//
+// 同步对账时三者的区别（数据面 cmdb/internal/data/reconcile.go）：
+//   - manual：同步既不写也不删；
+//   - sync：以采集结果为准——采集到的值覆盖，来源侧不再给出的键从资源属性中删除
+//     （采集器这次一个属性都没取到时除外：不凭一次空结果清空）；
+//   - both：采集到的值覆盖，来源侧不再给出的键保留（可能是人工维护的值）。
 const (
 	FieldOwnerManual = "manual"
 	FieldOwnerSync   = "sync"
@@ -76,7 +82,7 @@ const (
 // 回调触发（数据面入站）：路径 + 令牌头；令牌明文 64 位 hex，库中只存 SHA-256。
 const (
 	WebhookPathPrefix  = "/webhook/v1/cmdb/sync/"
-	WebhookTokenHeader = "X-Cmdb-Webhook-Token"
+	WebhookTokenHeader = "X-Cmdb-Webhook-Token" //nolint:gosec // 只是请求头的名称，不是凭据本身
 	// WebhookMinInterval 同一采集源两次回调触发的最小间隔。
 	WebhookMinInterval = 60 * time.Second
 )

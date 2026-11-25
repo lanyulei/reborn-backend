@@ -11,6 +11,8 @@ ALTER TABLE incident_proposal DROP COLUMN IF EXISTS auto_eligible;
 COMMENT ON COLUMN assistant_tool_call.status IS 'pending / approved / rejected / denied / succeeded / failed / cancelled';
 ALTER TABLE assistant_conversation DROP COLUMN IF EXISTS kind;
 
+-- 0086 为该角色补过直接授权（system_grant.role_id 外键无级联，不先删会让下面的 DELETE ROLE 失败）。
+DELETE FROM system_grant WHERE role_id IN (SELECT id FROM system_role WHERE code = 'ops-agent');
 DELETE FROM system_permission WHERE role_id IN (SELECT id FROM system_role WHERE code = 'ops-agent');
 DELETE FROM system_user_role WHERE role_id IN (SELECT id FROM system_role WHERE code = 'ops-agent');
 DELETE FROM system_role WHERE code = 'ops-agent';

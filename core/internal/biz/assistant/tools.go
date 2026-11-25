@@ -1,9 +1,12 @@
 package biz
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
 )
@@ -11,8 +14,14 @@ import (
 // maxToolOutputBytes 回传给模型/落审计的工具输出上限；超出截断并提示缩小分页。
 const maxToolOutputBytes = 32 << 10
 
+// counterKeyParts 键名（小写子串）含这些片段的数字值是用量计数而不是凭据（prompt_tokens、token_count……）：
+// 字段名沾到了敏感片段，但数字本身不是密钥。除此之外，敏感键名下的数字照常打码——纯数字的口令、PIN、
+// 令牌同样需要遮蔽。
+var counterKeyParts = []string{"tokens", "count"}
+
 // sensitiveKeyParts 入参/出参脱敏的键名片段（大小写不敏感，子串匹配）；与
-// kit/httpx 日志脱敏口径一致，宁可误打码不可漏打码。
+// kit/httpx 日志脱敏口径一致，宁可误打码不可漏打码。字符串值一律打码；布尔与计数类数字不打码，
+// 见 maskValue。
 var sensitiveKeyParts = []string{
 	"password", "passwd", "secret", "token", "authorization", "api_key", "apikey",
 	"private_key", "privatekey", "access_key", "accesskey", "cookie", "signature", "kubeconfig",
@@ -27,8 +36,16 @@ func MaskJSON(raw json.RawMessage) json.RawMessage {
 	if len(raw) == 0 {
 		return raw
 	}
+	// 数字按字面保留（UseNumber）：命中敏感键后整段要重新编码，经 float64 中转会让超过 2^53 的整数
+	//（纳秒时间戳、雪花 ID）失真。Decoder 不校验顶层值之后的内容，补一次 Token 以保持与 json.Unmarshal
+	// 相同的「只接受恰好一个 JSON 值」。
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
 	var v any
-	if err := json.Unmarshal(raw, &v); err != nil {
+	if err := dec.Decode(&v); err != nil {
+		return raw
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return raw
 	}
 	if !maskValue(v) {
@@ -42,12 +59,22 @@ func MaskJSON(raw json.RawMessage) json.RawMessage {
 }
 
 // maskValue 递归脱敏，返回是否发生替换（无替换时调用方可跳过重编码）。
+// 键名含敏感片段时：字符串值打码（空串保持为空），数字值除计数类键名外也打码；布尔值不是密钥的载体，
+// 保持原值——字段名只是沾到敏感片段的 has_secret 一旦被打成 "***"，模型就无法判断「凭据是否已配置」。
 func maskValue(v any) bool {
 	changed := false
 	switch t := v.(type) {
 	case map[string]any:
 		for k, val := range t {
 			if isSensitiveKey(k) {
+				switch val.(type) {
+				case bool:
+					continue
+				case json.Number:
+					if isCounterKey(k) {
+						continue
+					}
+				}
 				if s, ok := val.(string); !ok || s != "" {
 					t[k] = maskedValue
 					changed = true
@@ -71,6 +98,17 @@ func maskValue(v any) bool {
 func isSensitiveKey(k string) bool {
 	lk := strings.ToLower(k)
 	for _, part := range sensitiveKeyParts {
+		if strings.Contains(lk, part) {
+			return true
+		}
+	}
+	return false
+}
+
+// isCounterKey 键名是否为用量计数类（见 counterKeyParts）。
+func isCounterKey(k string) bool {
+	lk := strings.ToLower(k)
+	for _, part := range counterKeyParts {
 		if strings.Contains(lk, part) {
 			return true
 		}

@@ -80,7 +80,9 @@ type JobTx interface {
 }
 
 // ServiceCaller 调用一个 Webhook 端点。retryable 报告失败是否值得重试（网络错误、超时、
-// 5xx / 408 / 429 可重试；其余 4xx、目标被安全策略拦截不可重试）。
+// 5xx / 408 / 429 可重试；其余 4xx、目标被安全策略拦截不可重试）。err 的文本会原样写入作业的
+// last_error，而实例详情对所有参与者可见：只给可展示的概括（状态码、超时 / 网络错误），不得含
+// 地址、响应体、密钥或其它内部细节。
 type ServiceCaller interface {
 	Call(ctx context.Context, hook *Webhook, jobID string, body []byte) (resp []byte, retryable bool, err error)
 }
@@ -108,6 +110,9 @@ func permanent(err error) bool {
 	return stderrors.As(err, &ke) && ke.Code >= 400 && ke.Code < 500
 }
 
+// internalReason 内部故障（数据库、网络等）对外的一句概括：细节在服务日志里，不外泄。
+const internalReason = "internal error, see the service log"
+
 // reasonOf 可以展示给流程参与者的失败原因：业务错误给出其说明，其余（数据库、网络等
 // 内部故障）只给一句概括——细节在服务日志里，不外泄。
 func reasonOf(err error) string {
@@ -115,7 +120,7 @@ func reasonOf(err error) string {
 	if stderrors.As(err, &ke) && ke.Code >= 400 && ke.Code < 500 {
 		return truncate(ke.Message, 500)
 	}
-	return "internal error, see the service log"
+	return internalReason
 }
 
 // JobUsecase 作业执行器：领取到期作业并逐条执行。每条作业只在自己所属的实例上开一个
@@ -143,8 +148,11 @@ func (uc *JobUsecase) RunDue(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	for _, j := range jobs {
+	for i, j := range jobs {
 		if ctx.Err() != nil {
+			// 执行器正在停机（Loop.Stop 取消了 ctx）：本批还没轮到的作业同样放回队列，否则它们要
+			// 等租约过期（2 分钟）才会被再次领取，并且白白多计一次尝试。
+			uc.releaseOnStop(ctx, jobs[i:]...)
 			break
 		}
 		// 同批靠后的作业开始前先续租：前面的作业若耗时很长（数据库抖动、锁等待），租约可能已
@@ -154,9 +162,7 @@ func (uc *JobUsecase) RunDue(ctx context.Context) (int, error) {
 		ok, err := uc.queue.Renew(ctx, j, jobLease)
 		if err != nil {
 			uc.log.WarnContext(ctx, "workflow job lease renewal failed; releasing the job", "job", j.ID, "kind", j.Kind, "instance", j.InstanceID, "error", err)
-			if rerr := uc.queue.Release(context.WithoutCancel(ctx), j); rerr != nil {
-				uc.log.ErrorContext(ctx, "workflow job could not be released after a failed renewal", "job", j.ID, "instance", j.InstanceID, "error", rerr)
-			}
+			uc.releaseOnStop(ctx, j)
 			continue
 		}
 		if !ok {
@@ -193,6 +199,19 @@ func (uc *JobUsecase) RunServices(ctx context.Context) (int, error) {
 	return len(jobs), nil
 }
 
+// releaseOnStop 把被停机打断的作业放回队列：本次领取不计入尝试次数，租约立即释放，别的执行器
+// （或重启后的自己）马上就能接手，不必等租约过期。落账不随停机取消（带独立超时）；Release 只对
+// 仍由本执行器持有租约的作业生效，失败只记日志——作业最坏也就是等租约过期后被再次领取。
+func (uc *JobUsecase) releaseOnStop(ctx context.Context, jobs ...*Job) {
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
+	defer cancel()
+	for _, j := range jobs {
+		if err := uc.queue.Release(wctx, j); err != nil {
+			uc.log.ErrorContext(ctx, "workflow job could not be released", "job", j.ID, "instance", j.InstanceID, "error", err)
+		}
+	}
+}
+
 // process 执行一条已领取的作业；反复领取仍无结果的直接转死信。
 func (uc *JobUsecase) process(ctx context.Context, j *Job) {
 	if j.Attempts > crashLimit {
@@ -210,6 +229,15 @@ func (uc *JobUsecase) process(ctx context.Context, j *Job) {
 func (uc *JobUsecase) handle(ctx context.Context, j *Job) {
 	err := uc.run(ctx, j)
 	if err == nil || stderrors.Is(err, errJobGone) {
+		return
+	}
+	if ctx.Err() != nil {
+		// 执行器正在停机（Loop.Stop 取消了 ctx），作业是被我们自己打断的：不算它的一次失败——
+		// 否则赶上最后一次尝试时，一次发布就能把它送进死信；也不按退避重试，而是放回队列
+		// 立即让别的执行器或重启后的自己接手（自动任务在外部调用之后被打断的回写同样走这里，
+		// 调用阶段被打断的由 run 自行放回）。
+		uc.log.InfoContext(ctx, "workflow job interrupted by shutdown; released", "job", j.ID, "kind", j.Kind, "instance", j.InstanceID, "error", err)
+		uc.releaseOnStop(ctx, j)
 		return
 	}
 	uc.log.WarnContext(ctx, "workflow job failed", "job", j.ID, "kind", j.Kind, "instance", j.InstanceID, "attempts", j.Attempts, "error", err)
@@ -270,6 +298,8 @@ func (uc *JobUsecase) run(ctx context.Context, j *Job) error {
 		// 时，一次发布就能把作业送进死信），放回队列由别的执行器接手。
 		return uc.queue.Release(wctx, j)
 	}
+	// call 已把内部故障换成概括文案，调用器的错误文本按契约可展示（见 ServiceCaller）：这里
+	// 可以直接作为 last_error / 流转历史里的原因。
 	reason := truncate(callErr.Error(), 500)
 	if retryable && j.Attempts < maxServiceAttempts {
 		return uc.queue.Retry(wctx, j, backoff(j.Attempts), reason)
@@ -315,12 +345,15 @@ func (uc *JobUsecase) call(ctx context.Context, j *Job) (map[string]any, bool, e
 	in, err := uc.rt.lookup.GetInstance(ctx, j.InstanceID)
 	if err != nil {
 		uc.log.WarnContext(ctx, "load workflow instance for a service job", "job", j.ID, "error", err)
-		return nil, true, stderrors.New("internal error, see the service log")
+		return nil, true, stderrors.New(internalReason)
 	}
 	if in.Status != InstanceRunning {
 		// 实例已结束：不再对外调用；作业作废。
 		if err := uc.settle(ctx, j, JobCancelled); err != nil {
-			return nil, true, err
+			// 原文是数据库一类的内部错误，而它会经 run 写进作业的 last_error（实例详情对所有参与者
+			// 可见）：只进日志，对外一律是概括文案。
+			uc.log.WarnContext(ctx, "cancel workflow service job of a finished instance", "job", j.ID, "instance", j.InstanceID, "error", err)
+			return nil, true, stderrors.New(internalReason)
 		}
 		return nil, false, errJobGone
 	}
@@ -331,7 +364,7 @@ func (uc *JobUsecase) call(ctx context.Context, j *Job) (map[string]any, bool, e
 			return nil, false, stderrors.New("the webhook endpoint does not exist or is disabled")
 		}
 		uc.log.WarnContext(ctx, "resolve workflow webhook", "job", j.ID, "error", err)
-		return nil, true, stderrors.New("internal error, see the service log")
+		return nil, true, stderrors.New(internalReason)
 	}
 	body, err := json.Marshal(servicePayload{
 		JobID: j.ID, Attempt: j.Attempts, InstanceID: in.ID, DefinitionKey: in.DefinitionKey, DefinitionName: in.DefinitionName,
@@ -339,7 +372,9 @@ func (uc *JobUsecase) call(ctx context.Context, j *Job) (map[string]any, bool, e
 		Variables: nonNilVars(in.Variables),
 	})
 	if err != nil {
-		return nil, false, err
+		// 编码器的报错同样是内部细节（会带出变量的类型 / 取值）：只进日志。变量编不出来重试也无益。
+		uc.log.WarnContext(ctx, "encode workflow service payload", "job", j.ID, "instance", j.InstanceID, "error", err)
+		return nil, false, stderrors.New(internalReason)
 	}
 	resp, retryable, err := uc.caller.Call(ctx, hook, j.ID, body)
 	if err != nil {

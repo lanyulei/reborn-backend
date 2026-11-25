@@ -13,7 +13,15 @@ import (
 	"github.com/lanyulei/reborn/backend/notify/internal/data/channel"
 
 	natsserver "github.com/nats-io/nats-server/v2/server"
+	"github.com/nats-io/nats.go/jetstream"
 )
+
+// awaitPub 等待单条发布 ack（上限 publishAckWait）。
+func awaitPub(ctx context.Context, f jetstream.PubAckFuture) error {
+	errs := make([]error, 1)
+	awaitAll(ctx, []jetstream.PubAckFuture{f}, errs, publishAckWait)
+	return errs[0]
+}
 
 // startNats 内嵌 JetStream 服务器（临时存储目录，随机端口）。
 func startNats(t *testing.T) *NatsBackbone {
@@ -242,7 +250,8 @@ func TestIntegration_NatsLoadReconciliation(t *testing.T) {
 	p1, p2 := newNatsPipeline(t, d, nb, adapter), newNatsPipeline(t, d, nb, adapter)
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
-	run := func(step func(context.Context) (int, error)) {
+	// 某一步出错时带上是哪个循环：偶发失败时要能从日志直接看出是 relay、router 还是 sender 报的错。
+	run := func(name string, step func(context.Context) (int, error)) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -253,17 +262,17 @@ func TestIntegration_NatsLoadReconciliation(t *testing.T) {
 				default:
 				}
 				if _, err := step(ctx); err != nil {
-					t.Error(err)
+					t.Errorf("%s loop: %v", name, err)
 					return
 				}
 			}
 		}()
 	}
-	run(func(ctx context.Context) (int, error) { return p1.relay.RelayOnce(ctx, 500) })
-	run(func(ctx context.Context) (int, error) { return p1.router.RouteOnce(ctx, 500) })
-	run(func(ctx context.Context) (int, error) { return p2.router.RouteOnce(ctx, 500) })
-	run(func(ctx context.Context) (int, error) { return p1.sender.SendOnce(ctx, 100) })
-	run(func(ctx context.Context) (int, error) { return p2.sender.SendOnce(ctx, 100) })
+	run("relay", func(ctx context.Context) (int, error) { return p1.relay.RelayOnce(ctx, 500) })
+	run("router-1", func(ctx context.Context) (int, error) { return p1.router.RouteOnce(ctx, 500) })
+	run("router-2", func(ctx context.Context) (int, error) { return p2.router.RouteOnce(ctx, 500) })
+	run("sender-1", func(ctx context.Context) (int, error) { return p1.sender.SendOnce(ctx, 100) })
+	run("sender-2", func(ctx context.Context) (int, error) { return p2.sender.SendOnce(ctx, 100) })
 	deadline := time.Now().Add(90 * time.Second)
 	for time.Now().Before(deadline) {
 		if count(t, d, "SELECT count(*) FROM notify_dispatch WHERE status = 3") == total {

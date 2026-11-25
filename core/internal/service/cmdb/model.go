@@ -4,6 +4,8 @@ package service
 
 import (
 	"context"
+	"strings"
+	"unicode/utf8"
 
 	v1 "github.com/lanyulei/reborn/backend/core/api/cmdb/v1"
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/cmdb"
@@ -13,6 +15,13 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// maxRequestIDBytes 请求 ID 的落库列宽：cmdb_ci_history / cmdb_schema_audit 的 request_id 均为
+// varchar(64)（migrations 0032、0040）。
+const maxRequestIDBytes = 64
+
+// requestIDHeader 客户端 / 网关透传请求 ID 的头。
+const requestIDHeader = "X-Request-Id"
+
 // actorFromContext 取操作者（JWT 用户 ID）与请求 ID（X-Request-Id 头）。
 func actorFromContext(ctx context.Context) (biz.Actor, error) {
 	userID, err := systemservice.UserIDFromContext(ctx)
@@ -20,10 +29,27 @@ func actorFromContext(ctx context.Context) (biz.Actor, error) {
 		return biz.Actor{}, err
 	}
 	actor := biz.Actor{UserID: userID}
-	if tr, ok := transport.FromServerContext(ctx); ok {
-		actor.RequestID = tr.RequestHeader().Get("X-Request-Id")
+	if tr, ok := transport.FromServerContext(ctx); ok && tr != nil {
+		actor.RequestID = requestID(tr.RequestHeader().Get(requestIDHeader))
 	}
 	return actor, nil
+}
+
+// requestID 请求头的落库取值：剔除非法 UTF-8（PG 的 varchar 拒绝 22021），再按 UTF-8 边界截断到列宽。
+// 请求 ID 由客户端 / 网关任意给出、没有中间件归一化：超长或不合法的值会让每个写接口在写变更历史时
+// 整个事务回滚成 500（模型 / 字段变更的审计则是写失败被吞掉），等于用一个头就能让 CMDB 不可写。
+func requestID(raw string) string {
+	s := strings.ToValidUTF8(raw, "")
+	if len(s) <= maxRequestIDBytes {
+		return s
+	}
+	// 切点落在多字节序列中间（切点处的字节不是 rune 首字节）就回退到 rune 边界。看切点而不是末字节：
+	// 切点恰好落在一个 rune 的首字节之后时，末字节本身就是首字节，但留下的是半截序列，同样非法。
+	cut := maxRequestIDBytes
+	for !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
 }
 
 // CmdbModelService 实现 CmdbModelServiceServer。

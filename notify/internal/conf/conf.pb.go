@@ -7,14 +7,13 @@
 package conf
 
 import (
-	reflect "reflect"
-	sync "sync"
-	unsafe "unsafe"
-
 	kitconf "github.com/lanyulei/reborn/backend/kit/kitconf"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	durationpb "google.golang.org/protobuf/types/known/durationpb"
+	reflect "reflect"
+	sync "sync"
+	unsafe "unsafe"
 )
 
 const (
@@ -1012,28 +1011,25 @@ func file_conf_conf_proto_rawDescGZIP() []byte {
 	return file_conf_conf_proto_rawDescData
 }
 
-var (
-	file_conf_conf_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
-	file_conf_conf_proto_goTypes  = []any{
-		(*Bootstrap)(nil),            // 0: conf.Bootstrap
-		(*Server)(nil),               // 1: conf.Server
-		(*Data)(nil),                 // 2: conf.Data
-		(*Pipeline)(nil),             // 3: conf.Pipeline
-		(*Notify)(nil),               // 4: conf.Notify
-		(*Pipeline_Router)(nil),      // 5: conf.Pipeline.Router
-		(*Pipeline_Sender)(nil),      // 6: conf.Pipeline.Sender
-		(*Pipeline_Dlq)(nil),         // 7: conf.Pipeline.Dlq
-		(*Pipeline_Retention)(nil),   // 8: conf.Pipeline.Retention
-		(*Pipeline_Maintenance)(nil), // 9: conf.Pipeline.Maintenance
-		(*Pipeline_Ingress)(nil),     // 10: conf.Pipeline.Ingress
-		(*Pipeline_Nats)(nil),        // 11: conf.Pipeline.Nats
-		(*kitconf.HTTP)(nil),         // 12: kitconf.HTTP
-		(*kitconf.Database)(nil),     // 13: kitconf.Database
-		(*kitconf.Master)(nil),       // 14: kitconf.Master
-		(*durationpb.Duration)(nil),  // 15: google.protobuf.Duration
-	}
-)
-
+var file_conf_conf_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_conf_conf_proto_goTypes = []any{
+	(*Bootstrap)(nil),            // 0: conf.Bootstrap
+	(*Server)(nil),               // 1: conf.Server
+	(*Data)(nil),                 // 2: conf.Data
+	(*Pipeline)(nil),             // 3: conf.Pipeline
+	(*Notify)(nil),               // 4: conf.Notify
+	(*Pipeline_Router)(nil),      // 5: conf.Pipeline.Router
+	(*Pipeline_Sender)(nil),      // 6: conf.Pipeline.Sender
+	(*Pipeline_Dlq)(nil),         // 7: conf.Pipeline.Dlq
+	(*Pipeline_Retention)(nil),   // 8: conf.Pipeline.Retention
+	(*Pipeline_Maintenance)(nil), // 9: conf.Pipeline.Maintenance
+	(*Pipeline_Ingress)(nil),     // 10: conf.Pipeline.Ingress
+	(*Pipeline_Nats)(nil),        // 11: conf.Pipeline.Nats
+	(*kitconf.HTTP)(nil),         // 12: kitconf.HTTP
+	(*kitconf.Database)(nil),     // 13: kitconf.Database
+	(*kitconf.Master)(nil),       // 14: kitconf.Master
+	(*durationpb.Duration)(nil),  // 15: google.protobuf.Duration
+}
 var file_conf_conf_proto_depIdxs = []int32{
 	1,  // 0: conf.Bootstrap.server:type_name -> conf.Server
 	2,  // 1: conf.Bootstrap.data:type_name -> conf.Data

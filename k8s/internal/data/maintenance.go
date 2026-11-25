@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"time"
 
 	"github.com/lanyulei/reborn/backend/k8s/internal/biz"
@@ -30,11 +31,86 @@ const (
 // partitionPattern 只认本服务命名的月分区；也是拼进 DDL 的标识符白名单。
 var partitionPattern = regexp.MustCompile(`^k8s_audit_(\d{4})_(\d{2})$`)
 
+// 行级过期清理的分批参数。
+const (
+	// purgeBatch 单条 DELETE 至多删除的行数。过期行很多时（刚启用保留期、长期停机后）单条无界 DELETE 是一个
+	// 长事务：行锁与 WAL 积压会拖慢同一张表上的写入；分批后每条语句只锁一小段。
+	purgeBatch = 5000
+	// purgeBudget 一轮 PurgeExpired 用于行级清理的时间预算：删满一批且预算还没用完才发下一条，预算用尽即停
+	// （不算错误），没删完的留给下一轮——清理每小时一轮，积压可以慢慢消化，不必一轮删完。
+	purgeBudget = time.Minute
+	// purgeSessionMargin 删会话比删录制多留的余量（须大于 purgeBudget）。录制和会话是先后两条语句、各自取
+	// 当时的 now()：在两者之间刚好越过保留期的会话，录制没被第一句挑中、会话却被第二句删掉，留下永远清不掉
+	// 的孤儿录制。分批之后两句之间最长隔一个预算，这个窗口跟着变宽。所以删会话的条件比删录制多退一个余量：
+	// 本轮被删掉的会话，它的录制一定在本轮（或更早）已经被删过。落在余量里的会话多留一轮再删。
+	purgeSessionMargin = 5 * time.Minute
+)
+
+// 过期条件只写一处：探测「有没有过期行」与分批删除用的是同一个条件（与分批之前的单条 DELETE 完全相同；
+// 删会话的条件另见 purgeSessionMargin）。deleteExpired 的语句共用前缀参数，DELETE 的最后一个参数是批大小。
+const (
+	expiredByExpireTime     = `expire_time IS NOT NULL AND expire_time < now()`
+	expiredByEndTime        = `end_time IS NOT NULL AND end_time < now() - make_interval(secs => $1)`
+	expiredByEndTimePlusGap = `end_time IS NOT NULL AND end_time < now() - make_interval(secs => $1) - make_interval(secs => $2)`
+
+	hasExpiredTokensSQL     = `SELECT EXISTS (SELECT 1 FROM k8s_agent_token WHERE ` + expiredByExpireTime + `)`
+	hasExpiredSessionsSQL   = `SELECT EXISTS (SELECT 1 FROM k8s_exec_session WHERE ` + expiredByEndTimePlusGap + `)`
+	hasExpiredRecordsSQL    = `SELECT EXISTS (SELECT 1 FROM k8s_exec_record WHERE session_id IN (SELECT id FROM k8s_exec_session WHERE ` + expiredByEndTime + `))`
+	purgeExpiredTokensSQL   = `DELETE FROM k8s_agent_token WHERE id IN (SELECT id FROM k8s_agent_token WHERE ` + expiredByExpireTime + ` LIMIT $1)`
+	purgeExpiredSessionsSQL = `DELETE FROM k8s_exec_session WHERE id IN (SELECT id FROM k8s_exec_session WHERE ` + expiredByEndTimePlusGap + ` LIMIT $3)`
+	purgeExpiredRecordsSQL  = `DELETE FROM k8s_exec_record WHERE (session_id, seq) IN (
+	   SELECT session_id, seq FROM k8s_exec_record
+	   WHERE session_id IN (SELECT id FROM k8s_exec_session WHERE ` + expiredByEndTime + `) LIMIT $2)`
+)
+
 // maintenanceRepo 下线实例清理、审计分区维护与过期数据清理。全部语句幂等，时间取数据库时钟。
-type maintenanceRepo struct{ data *Data }
+type maintenanceRepo struct {
+	data *Data
+	// batch / budget 行级过期清理的批大小与本轮时间预算，缺省见 purgeBatch / purgeBudget；
+	// 集成测试改小它们来覆盖「分多批」「预算用尽」的分支。
+	batch  int
+	budget time.Duration
+}
 
 // NewMaintenanceRepo new a maintenanceRepo.
-func NewMaintenanceRepo(data *Data) *maintenanceRepo { return &maintenanceRepo{data: data} }
+func NewMaintenanceRepo(data *Data) *maintenanceRepo {
+	return &maintenanceRepo{data: data, batch: purgeBatch, budget: purgeBudget}
+}
+
+// deleteExpired 分批删除满足过期条件的行。先探一次：没有过期行就不发 DELETE；之后每条 DELETE 至多删一批，
+// 直到不足一批（已清完）、本轮时间预算（deadline）用尽或上下文结束。预算用尽不是错误，剩下的留给下一轮；
+// 上下文结束原样返回 ctx 的错误。返回已删除的行数，以及过期的行是否已在本轮清完（预算用尽而停下时为 false）。
+func (r *maintenanceRepo) deleteExpired(ctx context.Context, what, existsSQL, deleteSQL string, args []any, deadline time.Time) (int64, bool, error) {
+	var expired bool
+	if err := r.data.Pool.QueryRow(ctx, existsSQL, args...).Scan(&expired); err != nil {
+		return 0, false, fmt.Errorf("%s: %w", what, err)
+	}
+	if !expired {
+		return 0, true, nil
+	}
+	// 批大小不是正数时「不足一批」永远不成立，循环会停不下来：按缺省值处理。
+	batch := purgeBatch
+	if r.batch > 0 {
+		batch = r.batch
+	}
+	var total int64
+	for {
+		tag, err := r.data.Pool.Exec(ctx, deleteSQL, append(slices.Clone(args), batch)...)
+		if err != nil {
+			return total, false, fmt.Errorf("%s: %w", what, err)
+		}
+		total += tag.RowsAffected()
+		if tag.RowsAffected() < int64(batch) { // 不足一批：已清完
+			return total, true, nil
+		}
+		if err := ctx.Err(); err != nil {
+			return total, false, err
+		}
+		if time.Now().After(deadline) {
+			return total, false, nil
+		}
+	}
+}
 
 func partitionName(month time.Time) string {
 	return fmt.Sprintf("%s_%04d_%02d", auditTable, month.Year(), int(month.Month()))
@@ -142,19 +218,23 @@ func (r *maintenanceRepo) ensurePartition(ctx context.Context, month time.Time) 
 
 // PurgeExpired implements biz.MaintenanceRepo：过期的 Agent 注册令牌恒清理；retention > 0 时再清理
 // 上界早于保留期的审计月分区（逐个 DROP，短事务 + lock_timeout）与已结束的终端会话记录及其录制。
+//
+// 行级清理分批进行（deleteExpired）：删除条件、执行顺序与本轮处理的条数口径都不变，只是每条 DELETE 至多删一批，
+// 在本轮的时间预算内循环。
 func (r *maintenanceRepo) PurgeExpired(ctx context.Context, retention time.Duration) (int, error) {
-	total := 0
-	tag, err := r.data.Pool.Exec(ctx, "DELETE FROM k8s_agent_token WHERE expire_time IS NOT NULL AND expire_time < now()")
+	deadline := time.Now().Add(r.budget)
+	purged, _, err := r.deleteExpired(ctx, "purge expired agent tokens", hasExpiredTokensSQL, purgeExpiredTokensSQL, nil, deadline)
 	if err != nil {
-		return 0, fmt.Errorf("purge expired agent tokens: %w", err)
+		return 0, err
 	}
-	total += int(tag.RowsAffected())
+	total := int(purged)
 	// 数据面实例异常退出时，它上面的终端会话来不及写结束时间：超过会话最长时长仍「进行中」的记录
 	// 不可能还活着，补上结束时间（否则它们永远显示为进行中，也永远不会被保留期清理）。
-	if tag, err = r.data.Pool.Exec(ctx,
+	tag, err := r.data.Pool.Exec(ctx,
 		`UPDATE k8s_exec_session SET end_time = now(), end_reason = 'instance_lost'
 		 WHERE end_time IS NULL AND start_time < now() - make_interval(secs => $1)`,
-		(k8scontract.ExecMaxDuration + time.Hour).Seconds()); err != nil {
+		(k8scontract.ExecMaxDuration + time.Hour).Seconds())
+	if err != nil {
 		return total, fmt.Errorf("reap orphaned exec sessions: %w", err)
 	}
 	total += int(tag.RowsAffected())
@@ -162,16 +242,20 @@ func (r *maintenanceRepo) PurgeExpired(ctx context.Context, retention time.Durat
 		return total, nil
 	}
 	secs := retention.Seconds()
-	if _, err = r.data.Pool.Exec(ctx,
-		`DELETE FROM k8s_exec_record WHERE session_id IN (
-		     SELECT id FROM k8s_exec_session WHERE end_time IS NOT NULL AND end_time < now() - make_interval(secs => $1))`, secs); err != nil {
-		return total, fmt.Errorf("purge exec records: %w", err)
+	// 先删录制再删会话：录制按「所属会话已过期」挑选，会话删掉之后它的录制就找不到了。
+	_, recordsDone, err := r.deleteExpired(ctx, "purge exec records", hasExpiredRecordsSQL, purgeExpiredRecordsSQL, []any{secs}, deadline)
+	if err != nil {
+		return total, err
 	}
-	if tag, err = r.data.Pool.Exec(ctx,
-		"DELETE FROM k8s_exec_session WHERE end_time IS NOT NULL AND end_time < now() - make_interval(secs => $1)", secs); err != nil {
-		return total, fmt.Errorf("purge exec sessions: %w", err)
+	// 本轮没来得及把录制清完（时间预算用尽）就不动会话：否则这些会话剩下的录制会成为永远清不掉的孤儿。
+	// 留给下一轮——下一轮先把录制清完，再删会话。
+	if recordsDone {
+		// 会话的过期条件比录制多退 purgeSessionMargin（见该常量的说明）：$1 保留期、$2 余量、$3 批大小。
+		if purged, _, err = r.deleteExpired(ctx, "purge exec sessions", hasExpiredSessionsSQL, purgeExpiredSessionsSQL, []any{secs, purgeSessionMargin.Seconds()}, deadline); err != nil {
+			return total, err
+		}
+		total += int(purged)
 	}
-	total += int(tag.RowsAffected())
 
 	var cutoff time.Time
 	if err := r.data.Pool.QueryRow(ctx, "SELECT now() - make_interval(secs => $1)", secs).Scan(&cutoff); err != nil {

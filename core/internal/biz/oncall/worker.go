@@ -147,7 +147,9 @@ func (uc *WorkerUsecase) Digest(ctx context.Context) (int, error) {
 		if len(due) == 0 {
 			return nil
 		}
-		current, err := uc.shifts.ListRange(ctx, now, now.Add(time.Second))
+		// 经事务连接读：此时事务已持有到期值班表的行锁，再向连接池要第二条连接的话，连接池打满时
+		// 各实例 / 各任务会带着行锁互相等连接。查询与 ShiftRepo.ListRange 是同一条语句。
+		current, err := tx.ListShiftsRange(ctx, now, now.Add(time.Second))
 		if err != nil {
 			return err
 		}
@@ -202,7 +204,7 @@ func (uc *WorkerUsecase) Inspect(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	issues := detectIssues(detectInput{Schedules: schedules, Shifts: shifts, From: now, To: now.Add(inspectWindow)})
+	issues := detectIssues(detectInput{Schedules: schedules, Shifts: shifts, From: now, To: now.Add(inspectWindow), Now: now})
 	timezones := make(map[string]string, len(schedules))
 	for _, s := range schedules {
 		timezones[s.ID] = s.Timezone

@@ -165,8 +165,7 @@ func (uc *IngestUsecase) process(ctx context.Context, job *IngestJob) {
 		uc.logger.WarnContext(ctx, "knowledge: ingest failed", "job", job.ID, "attempt", job.Attempts, "error", err)
 		status := JobFailed
 		// 解析超时不重试：解析库不接受 ctx，超时的 goroutine 仍在后台跑完；重试只会为同一个坏文件再起一个。
-		if job.Attempts < ingestMaxAttempts && !errors.Is(err, ErrIngestUnsupported) && !errors.Is(err, ErrSecretDetected) &&
-			!errors.Is(err, ErrContentTooLarge) && !errors.Is(err, errParseTimeout) {
+		if job.Attempts < ingestMaxAttempts && !ingestFatal(err) {
 			status = JobRunning // 保持处理中并保留租约：租约（ingestLease）到期后才会被重新领取，充当重试退避
 		}
 		if ferr := uc.jobs.Finish(context.WithoutCancel(ctx), job.ID, status, job.DocumentID, 0, truncateRunes(err.Error(), 1000)); ferr != nil {
@@ -177,6 +176,21 @@ func (uc *IngestUsecase) process(ctx context.Context, job *IngestJob) {
 	if ferr := uc.jobs.Finish(context.WithoutCancel(ctx), job.ID, JobSucceeded, &doc.ID, clampInt32(n), ""); ferr != nil {
 		uc.logger.ErrorContext(ctx, "knowledge: finish ingest job", "job", job.ID, "error", ferr)
 	}
+}
+
+// ingestFatal 报告导入失败是否为确定性失败：同一个文件、同一个目标再试结果不变，直接置失败，不必每次空等
+// 一个租约期、重试满 ingestMaxAttempts 才报错。除文件本身的问题（类型 / 编码不支持、命中密钥、超长、解析超时）
+// 外，目标空间或文档在建队之后被删除、目标文档已归档，重试同样不会成功。
+func ingestFatal(err error) bool {
+	for _, sentinel := range []error{
+		ErrIngestUnsupported, ErrSecretDetected, ErrContentTooLarge, errParseTimeout, docparse.ErrEncoding,
+		ErrDocumentNotFound, ErrSpaceNotFound, ErrInvalidState,
+	} {
+		if errors.Is(err, sentinel) {
+			return true
+		}
+	}
+	return false
 }
 
 // run 发布方式按创建者当前在空间的级别判定（与手动建档 / 发布同一口径：要求审核的空间里非管理级别转提交审核）。

@@ -46,7 +46,8 @@ type env struct {
 	stats       *statsRepo
 }
 
-func testDSN(t *testing.T) string {
+// testDSN 取连接串并做护栏（库名须含 test）；接收 testing.TB，集成基准（bench_integration_test.go）共用。
+func testDSN(t testing.TB) string {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_SOURCE")
 	if dsn == "" {

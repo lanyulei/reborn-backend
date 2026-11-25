@@ -86,3 +86,9 @@ func detail(base *errors.Error, format string, args ...any) error {
 func CIInUse(relations int64) error {
 	return detail(ErrCIInUse, "%d relations", relations)
 }
+
+// InvalidAttrFilter 属性过滤条件非法（errors.Is 仍匹配 ErrCIInvalid）：请求里的键不合法，
+// 属客户端错误（400），不是仓储 / 基础设施故障。
+func InvalidAttrFilter(format string, args ...any) error {
+	return detail(ErrCIInvalid, format, args...)
+}

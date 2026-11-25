@@ -263,23 +263,10 @@ func (uc *CorrelatorUsecase) correlate(ctx context.Context, rule *Rule, a *Alert
 	if recent >= int(settings.StormThreshold) {
 		return uc.storm(ctx, rule, a, c, settings)
 	}
-	refs, err := uc.d.Alerts.ListByIDs(ctx, c.AlertIDs)
+	refs, err := uc.inc.promotableRefs(ctx, c.AlertIDs, true)
 	if err != nil {
 		return err
 	}
-	refs = slices.DeleteFunc(refs, func(r *AlertRef) bool { return r.Status != 1 || r.Muted || r.Inhibited })
-	// 已被别的活跃故障关联的告警不能再带进新故障（open 会以 ErrAlertLinked 整体失败，候选桶永远转不了正）。
-	free := refs[:0]
-	for _, r := range refs {
-		other, err := uc.d.Links.ActiveIncident(ctx, r.ID)
-		if err != nil {
-			return err
-		}
-		if other == "" {
-			free = append(free, r)
-		}
-	}
-	refs = free
 	if len(refs) == 0 {
 		// 桶里的告警都已恢复或归了别的故障：关闭候选，下一条告警重新开桶。
 		return uc.d.Txm.WithinTx(ctx, func(tx Tx) error {
@@ -317,7 +304,8 @@ func (uc *CorrelatorUsecase) findActive(ctx context.Context, ruleID, key string,
 		}
 	}
 	if resolved != nil {
-		// 归并窗口内再次触发：自动重开后归并。
+		// 归并窗口内再次触发：系统自动恢复的故障自动重开后归并；手动恢复的不重开（autoReopenIfNeeded 返回
+		// false），落到下面的 nil——调用方按没有活跃故障走候选 / 开单。
 		ok, err := uc.inc.autoReopenIfNeeded(ctx, resolved, settings)
 		if err != nil {
 			return nil, err
@@ -382,6 +370,13 @@ func (uc *CorrelatorUsecase) storm(ctx context.Context, rule *Rule, a *AlertRef,
 		return err
 	}
 	_, err = uc.inc.mutate(ctx, target.ID, ActorSystem, "", func(m *mutation) error {
+		// 通知里的关联告警数要是归并之后的。commit 取关联数走的是连接池，本事务提交前读不到刚写入的关联，
+		// 所以自己记：事务开始后的第一条语句，读到的就是已提交的现有数（别的写入方都要先锁故障行）。
+		existing, err := uc.d.Links.Count(ctx, m.inc.ID)
+		if err != nil {
+			return err
+		}
+		linked := 0
 		for _, id := range c.AlertIDs {
 			ref, err := uc.d.Alerts.Get(ctx, id)
 			if err != nil {
@@ -390,10 +385,15 @@ func (uc *CorrelatorUsecase) storm(ctx context.Context, rule *Rule, a *AlertRef,
 				}
 				return err
 			}
-			if _, err := uc.inc.attachOne(ctx, m, ref, LinkRule, ""); err != nil && !ErrAlertLinked.Is(err) {
+			ok, err := uc.inc.attachOne(ctx, m, ref, LinkRule, "")
+			if err != nil && !ErrAlertLinked.Is(err) {
 				return err
 			}
+			if ok {
+				linked++
+			}
 		}
+		m.alerts = existing + linked
 		m.event(EventStorm, EventDetail{AlertCount: i32(len(c.AlertIDs)), Text: fmt.Sprintf("规则「%s」1 分钟内开出的故障超过 %d 条，后续告警归并到本故障", rule.Spec.Name, settings.StormThreshold)})
 		m.notify(notice{
 			action: NotifyStorm, dedup: fmt.Sprint(uc.now().Truncate(10 * time.Minute).Unix()), noGroups: true,

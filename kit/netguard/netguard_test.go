@@ -63,7 +63,11 @@ func TestDialer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ln.Close()
+	defer func() {
+		if cerr := ln.Close(); cerr != nil {
+			t.Errorf("close listener: %v", cerr)
+		}
+	}()
 	_, port, _ := net.SplitHostPort(ln.Addr().String())
 	ctx := context.Background()
 

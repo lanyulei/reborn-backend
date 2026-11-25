@@ -3,10 +3,13 @@ package aliyun
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -114,5 +117,49 @@ func TestCollector_Discover(t *testing.T) {
 	// 错误凭据：非重试错误直接返回。
 	if err := c.Discover(context.Background(), src, "wrong", &memSink{}); err == nil {
 		t.Fatal("wrong secret must fail")
+	}
+}
+
+// 请求失败（连接被拒 / DNS / 超时）时，错误信息里不得带签名参数：它会落进任务 / 运行记录并随失败
+// 通知外发。主机与路径保留（排障要用），错误链不变。
+func TestCollector_RequestErrorRedactsSignedQuery(t *testing.T) {
+	t.Parallel()
+	// 起一个立刻关掉的服务：端口确定无人监听，请求必然在连接阶段失败。
+	srv := httptest.NewServer(http.NotFoundHandler())
+	endpoint := srv.URL
+	srv.Close()
+
+	c := New(time.Second)
+	src := &biz.Source{Provider: cmdbcontract.ProviderAliyun, Config: []byte(fmt.Sprintf(`{"region_id":"cn-hangzhou","access_key_id":"AKIDEXAMPLE","endpoint":%q}`, endpoint))}
+	err := c.Discover(context.Background(), src, "sk", &memSink{})
+	if err == nil {
+		t.Fatal("request to a closed port must fail")
+	}
+	msg := err.Error()
+	for _, leaked := range []string{"AKIDEXAMPLE", "Signature", "SignatureNonce", "AccessKeyId", "?"} {
+		if strings.Contains(msg, leaked) {
+			t.Errorf("error must not carry %q: %s", leaked, msg)
+		}
+	}
+	if !strings.Contains(msg, strings.TrimPrefix(endpoint, "http://")) {
+		t.Errorf("error should keep the host for troubleshooting: %s", msg)
+	}
+	var ue *url.Error
+	if !errors.As(err, &ue) {
+		t.Fatalf("error chain must keep *url.Error, got %T: %v", err, err)
+	}
+}
+
+func TestRedactQuery(t *testing.T) {
+	t.Parallel()
+	inner := errors.New("dial tcp: i/o timeout")
+	got := redactQuery(&url.Error{Op: "Get", URL: "https://ecs.aliyuncs.com/?AccessKeyId=ak&Signature=sig", Err: inner})
+	if got.Error() != `Get "https://ecs.aliyuncs.com/": dial tcp: i/o timeout` || !errors.Is(got, inner) {
+		t.Fatalf("redactQuery() = %v", got)
+	}
+	// 没有 query 的 URL 错误与其它错误原样返回。
+	plain := &url.Error{Op: "Get", URL: "https://ecs.aliyuncs.com/", Err: inner}
+	if redactQuery(plain) != error(plain) || redactQuery(inner) != inner { //nolint:errorlint // 断言原样返回（同一指针）
+		t.Fatal("errors without a query must pass through unchanged")
 	}
 }

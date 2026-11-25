@@ -18,6 +18,9 @@ import (
 	"github.com/go-kratos/kratos/v3/transport"
 
 	_ "go.uber.org/automaxprocs"
+	// 内嵌 IANA 时区数据库：镜像（distroless / scratch）没有 /usr/share/zoneinfo 时
+	// 静默规则里的 Asia/Shanghai 之类的时区加载会失败并回落成 UTC。
+	_ "time/tzdata"
 )
 
 // go build -ldflags "-X main.Name=... -X main.Version=..."

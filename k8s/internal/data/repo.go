@@ -208,12 +208,14 @@ func NewRuntimeRepo(data *Data) *runtimeRepo { return &runtimeRepo{data: data} }
 // errNotOwner 运行行不归本实例（归属已转移）：结果丢弃。
 var errNotOwner = errors.New("cluster is not owned by this instance")
 
+// k8sVersionColumn k8s_cluster_runtime.k8s_version 的列宽（varchar(32)）。
+const k8sVersionColumn = 32
+
 // SaveProbe implements biz.RuntimeRepo。以 owner_instance 围栏：归属已转移的实例写不进去。
 // 失败时保留上一次成功读到的版本与节点数。
 func (r *runtimeRepo) SaveProbe(ctx context.Context, instance string, rec biz.ProbeRecord) (int32, time.Time, error) {
 	var prev int32
 	var since time.Time
-	ok := rec.Error == ""
 	err := r.data.Pool.QueryRow(ctx,
 		`UPDATE k8s_cluster_runtime r SET
 		     status = $3,
@@ -227,12 +229,21 @@ func (r *runtimeRepo) SaveProbe(ctx context.Context, instance string, rec biz.Pr
 		       WHERE cluster_id = $1 AND owner_instance = $2 FOR UPDATE) o
 		 WHERE r.cluster_id = o.cluster_id
 		 RETURNING o.prev, r.status_since`,
-		rec.ClusterID, instance, rec.Status, ok, rec.Info.Version, rec.Info.NodeTotal, rec.Info.NodeReady, rec.Error).
+		probeArgs(instance, rec)...).
 		Scan(&prev, &since)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, time.Time{}, errNotOwner
 	}
 	return prev, since, err
+}
+
+// probeArgs SaveProbe 的绑定参数。集群版本按列宽截断：GitVersion 超过 32 字符时整条 UPDATE 会被
+// PostgreSQL 拒绝（22001），探活结果写不进去，集群在平台上恒为「未知 / 不在线」。
+func probeArgs(instance string, rec biz.ProbeRecord) []any {
+	return []any{
+		rec.ClusterID, instance, rec.Status, rec.Error == "", clip(rec.Info.Version, k8sVersionColumn),
+		rec.Info.NodeTotal, rec.Info.NodeReady, rec.Error,
+	}
 }
 
 // SaveScope implements biz.RuntimeRepo。version = 0 表示本次未成功：只更新错误，不前移已同步版本。

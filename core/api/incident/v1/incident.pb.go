@@ -1253,7 +1253,7 @@ type TransitionIncidentRequest struct {
 	Note string `protobuf:"bytes,3,opt,name=note,proto3" json:"note,omitempty"`
 	// root_cause_code 恢复时的根因分类初判，可空。
 	RootCauseCode string `protobuf:"bytes,4,opt,name=root_cause_code,json=rootCauseCode,proto3" json:"root_cause_code,omitempty"`
-	// force 关闭时跳过复盘要求（需管理权限，原因记入时间线）。
+	// force 关闭时跳过复盘要求（仅故障指挥或超级管理员；须填写原因，原因记入时间线）。
 	Force         bool `protobuf:"varint,5,opt,name=force,proto3" json:"force,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

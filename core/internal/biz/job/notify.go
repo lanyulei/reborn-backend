@@ -5,12 +5,18 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	jc "github.com/lanyulei/reborn/backend/kit/jobcontract"
 )
 
 // executionPath 通知里执行详情链接的路径（前端路由）。
 const executionPath = "/job/execution/"
+
+// noticeTitleMaxBytes 通知标题的字节上限：通知域按字节限长（标题列 varchar(255)，超限的事件被拒绝后
+// 这条通知就丢了）。标题先按字符截到 80 个——名称里有 4 字节字符（emoji、扩展区汉字）时仍可达 320 字节，
+// 所以再按字节截一次。
+const noticeTitleMaxBytes = 255
 
 // 状态与来源的中文名（通知正文用）。
 var (
@@ -91,7 +97,7 @@ func (uc *NotifyUsecase) notice(e *FinishedExecution) Notice {
 	}
 	return Notice{
 		Severity: noticeSeverity(e.Status),
-		Title:    truncateRunes("作业"+text+"："+e.Name, 80),
+		Title:    truncateBytes(truncateRunes("作业"+text+"："+e.Name, 80), noticeTitleMaxBytes),
 		Payload: map[string]any{
 			"execution_id": e.ID, "name": e.Name, "kind": e.Kind, "status": e.Status, "status_text": text,
 			"error": e.Error, "trigger": e.Trigger, "trigger_text": triggerText[e.Trigger],
@@ -103,4 +109,17 @@ func (uc *NotifyUsecase) notice(e *FinishedExecution) Notice {
 		DedupKey:   fmt.Sprintf("job:exec:%s:%d:%d", strings.ReplaceAll(e.ID, "-", ""), e.Status, e.FinishTime.Unix()),
 		Recipients: []string{e.Creator},
 	}
+}
+
+// truncateBytes 按字节截断到至多 max 字节，且不切开字符（对方按字节限长时用）。
+// dup: biz/monitor、biz/incident、biz/oncall 各有一份同名同义的私有函数；各域的 biz 包不能互相 import，
+// 合并需要新建共享包，不在本域的改动范围内。
+func truncateBytes(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	for max > 0 && !utf8.RuneStart(s[max]) {
+		max--
+	}
+	return s[:max]
 }

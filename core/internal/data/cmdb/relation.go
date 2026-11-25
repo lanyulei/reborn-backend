@@ -15,7 +15,12 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-var _ biz.RelationRepo = (*relationRepo)(nil)
+var (
+	_ biz.RelationRepo         = (*relationRepo)(nil)
+	_ biz.ScopedRelationRepo   = (*relationRepo)(nil)
+	_ biz.RelationPrecheckRepo = (*relationRepo)(nil)
+	_ biz.RetireGraphRepo      = (*relationRepo)(nil)
+)
 
 type relationRepo struct {
 	data *basedata.Data
@@ -267,6 +272,37 @@ func (r *relationRepo) CountByCI(ctx context.Context, ciID string) (map[biz.Rela
 		return nil, fmt.Errorf("count cmdb relations: %w", err)
 	}
 	defer rows.Close()
+	return scanRelationCounts(rows)
+}
+
+// CountByCIIn implements biz.ScopedRelationRepo：连接对端资源并按类型 / 环境过滤（口径同 listRelated：
+// 对端未删除；modelCodes / envs 为 nil 的维度不限，空集合即无结果）。两个分支共用同一组参数。
+func (r *relationRepo) CountByCIIn(ctx context.Context, ciID string, modelCodes, envs []string) (map[biz.RelationKey]int64, error) {
+	args := []any{ciID}
+	peer := " AND c.delete_time IS NULL"
+	if modelCodes != nil {
+		args = append(args, dbx.TextArray(modelCodes))
+		peer += " AND c.model_code = ANY($" + strconv.Itoa(len(args)) + ")"
+	}
+	if envs != nil {
+		args = append(args, dbx.TextArray(envs))
+		peer += " AND c.env = ANY($" + strconv.Itoa(len(args)) + ")"
+	}
+	rows, err := r.data.Pool.Query(ctx,
+		`SELECT r.type_code, 'outgoing', count(*) FROM cmdb_relation r JOIN cmdb_ci c ON c.id = r.dst_id
+		 WHERE r.src_id = $1`+peer+` GROUP BY r.type_code
+		 UNION ALL
+		 SELECT r.type_code, 'incoming', count(*) FROM cmdb_relation r JOIN cmdb_ci c ON c.id = r.src_id
+		 WHERE r.dst_id = $1`+peer+` GROUP BY r.type_code`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("count cmdb relations: %w", err)
+	}
+	defer rows.Close()
+	return scanRelationCounts(rows)
+}
+
+// scanRelationCounts 读取 (type_code, direction, count) 行。
+func scanRelationCounts(rows pgx.Rows) (map[biz.RelationKey]int64, error) {
 	out := map[biz.RelationKey]int64{}
 	for rows.Next() {
 		var key biz.RelationKey
@@ -293,6 +329,107 @@ func (r *relationRepo) CountSide(ctx context.Context, typeCode, direction, id st
 	return n, nil
 }
 
+// ExistingPeers implements biz.RelationPrecheckRepo：Exists 的批量版本（同一类型、同一当前资源、多个对端）。
+// 列名取自固定的两个字面量，不来自输入。
+func (r *relationRepo) ExistingPeers(ctx context.Context, typeCode, direction, ciID string, peerIDs []string) (map[string]struct{}, error) {
+	self, peer := "src_id", "dst_id"
+	if direction == biz.DirectionIncoming {
+		self, peer = "dst_id", "src_id"
+	}
+	rows, err := r.data.Pool.Query(ctx,
+		"SELECT "+peer+"::text FROM cmdb_relation WHERE type_code = $1::text AND "+self+" = $2::uuid AND "+peer+" = ANY($3::uuid[])",
+		typeCode, ciID, dbx.TextArray(peerIDs))
+	if err != nil {
+		return nil, fmt.Errorf("check cmdb relations: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string]struct{}, len(peerIDs))
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan cmdb relation peer: %w", err)
+		}
+		out[id] = struct{}{}
+	}
+	return out, rows.Err()
+}
+
+// CountSides implements biz.RelationPrecheckRepo：CountSide 的批量版本（没有关系的 id 不出现在结果里）。
+func (r *relationRepo) CountSides(ctx context.Context, typeCode, direction string, ids []string) (map[string]int64, error) {
+	col := "src_id"
+	if direction == biz.DirectionIncoming {
+		col = "dst_id"
+	}
+	rows, err := r.data.Pool.Query(ctx,
+		"SELECT "+col+"::text, count(*) FROM cmdb_relation WHERE type_code = $1::text AND "+col+" = ANY($2::uuid[]) GROUP BY "+col,
+		typeCode, dbx.TextArray(ids))
+	if err != nil {
+		return nil, fmt.Errorf("count cmdb relation sides: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string]int64, len(ids))
+	for rows.Next() {
+		var id string
+		var n int64
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, fmt.Errorf("scan cmdb relation side: %w", err)
+		}
+		out[id] = n
+	}
+	return out, rows.Err()
+}
+
+// stmtRetireEdges 退役闭包展开要读的全部出边，一条语句取齐（biz.RetireGraphRepo）。
+// walk = 根 + 沿「未删除、cascade_retire、以资源类型为源端适用」的出边可达且未删除未退役的对端
+// （UNION 按 id 去重，环与菱形天然终止；根已被并发删除时 walk 为空）；末段取 walk 内每个资源的出边：
+// 关系类型未删除且以该资源的类型为源端适用、对端未删除（任何删除策略），对端列与 Get / ListRelated
+// 同一组（别名 c / m / ss / ou）。
+// 行序即用例层重放逐类型遍历的顺序：资源、关系类型（create_time, code，同 RelationTypeRepo.List）、
+// 对端（name, id，同 ListRelated）——文本列的排序交给数据库，与应用侧字节序的排序不一致时也不串序。
+// $1 根资源，$2 已退役状态字面量，$3 级联退役策略字面量。
+const stmtRetireEdges = `WITH RECURSIVE walk(id) AS (
+    SELECT $1::uuid
+    UNION
+    SELECT r.dst_id
+    FROM walk w
+    JOIN cmdb_ci s ON s.id = w.id AND s.delete_time IS NULL
+    JOIN cmdb_relation r ON r.src_id = w.id
+    JOIN cmdb_relation_type t ON t.code = r.type_code AND t.delete_time IS NULL
+         AND t.on_delete = $3::text AND (t.src_model = '*' OR t.src_model = s.model_code)
+    JOIN cmdb_ci d ON d.id = r.dst_id AND d.delete_time IS NULL AND d.status <> $2::text
+)
+SELECT w.id::text, t.code, t.on_delete, ` + ciSelectColumns + `
+FROM walk w
+JOIN cmdb_ci s ON s.id = w.id AND s.delete_time IS NULL
+JOIN cmdb_relation r ON r.src_id = w.id
+JOIN cmdb_relation_type t ON t.code = r.type_code AND t.delete_time IS NULL AND (t.src_model = '*' OR t.src_model = s.model_code)
+JOIN cmdb_ci c ON c.id = r.dst_id AND c.delete_time IS NULL
+JOIN cmdb_model m ON m.code = c.model_code` + ciJoinSource + `
+ORDER BY w.id, t.create_time, t.code, c.name, c.id`
+
+// RetireEdges implements biz.RetireGraphRepo：一次往返取齐退役闭包展开要读的全部出边。
+// 整个闭包读的是同一快照；此前的逐类型计数 + 分页列举跨多条语句，遍历中途的关系变更会让前后读到不同的图。
+func (r *relationRepo) RetireEdges(ctx context.Context, rootID string) ([]*biz.RetireEdge, error) {
+	rows, err := r.data.Pool.Query(ctx, stmtRetireEdges, rootID, biz.CIStatusRetired, biz.OnDeleteCascadeRetire)
+	if err != nil {
+		return nil, fmt.Errorf("retire closure edges: %w", err)
+	}
+	defer rows.Close()
+	items := make([]*biz.RetireEdge, 0, 64)
+	for rows.Next() {
+		var e biz.RetireEdge
+		ci, err := scanCI(func(dest ...any) error {
+			return rows.Scan(append([]any{&e.SrcID, &e.TypeCode, &e.OnDelete}, dest...)...)
+		})
+		if err != nil {
+			return nil, fmt.Errorf("scan retire closure edge: %w", err)
+		}
+		e.CI = ci
+		items = append(items, &e)
+	}
+	return items, rows.Err()
+}
+
 // neighborsRowsPerNode 拓扑每层 SQL 行数上限 = maxNodes × 此系数（行 = 与当前层相连的边）；
 // 超出即报告截断，避免超级节点把整层边全部拉回。
 const neighborsRowsPerNode = 4
@@ -300,6 +437,16 @@ const neighborsRowsPerNode = 4
 // Neighbors implements biz.RelationRepo：逐层 BFS（每层一条 SQL，层数 ≤3），两个方向同时展开；
 // 边按关系 ID 去重，节点达上限或单层行数达上限即停止并报告截断。
 func (r *relationRepo) Neighbors(ctx context.Context, ciID, flow string, depth, maxNodes int32) ([]*biz.TopologyNode, []*biz.TopologyEdge, bool, error) {
+	return r.neighbors(ctx, ciID, flow, depth, maxNodes, nil, nil)
+}
+
+// NeighborsIn implements biz.ScopedRelationRepo：范围外的对端在每层 SQL 里就排除，不占 maxNodes 预算
+// （根节点不受限：调用方已按范围校验过根资源）。
+func (r *relationRepo) NeighborsIn(ctx context.Context, ciID, flow string, depth, maxNodes int32, modelCodes, envs []string) ([]*biz.TopologyNode, []*biz.TopologyEdge, bool, error) {
+	return r.neighbors(ctx, ciID, flow, depth, maxNodes, modelCodes, envs)
+}
+
+func (r *relationRepo) neighbors(ctx context.Context, ciID, flow string, depth, maxNodes int32, modelCodes, envs []string) ([]*biz.TopologyNode, []*biz.TopologyEdge, bool, error) {
 	var root biz.TopologyNode
 	if err := r.data.Pool.QueryRow(ctx,
 		`SELECT c.id, c.name, c.model_code, m.name, c.status, c.env FROM cmdb_ci c JOIN cmdb_model m ON m.code = c.model_code
@@ -325,15 +472,28 @@ func (r *relationRepo) Neighbors(ctx context.Context, ciID, flow string, depth, 
 	case biz.FlowUpstream:
 		peer, match = "r.src_id", "r.dst_id = ANY($1::uuid[])"
 	}
+	// 对端的范围过滤（nil 的维度不限）：拼在每层 SQL 里，范围外的邻居不占 maxNodes 预算。
+	// $1 = 当前层节点、$2 = 行数上限，其后依次是范围参数；args[0] 每层随 frontier 更新。
+	args := []any{nil, rowLimit + 1}
+	peerScope := ""
+	if modelCodes != nil {
+		args = append(args, dbx.TextArray(modelCodes))
+		peerScope += " AND c.model_code = ANY($" + strconv.Itoa(len(args)) + ")"
+	}
+	if envs != nil {
+		args = append(args, dbx.TextArray(envs))
+		peerScope += " AND c.env = ANY($" + strconv.Itoa(len(args)) + ")"
+	}
 	for level := int32(1); level <= depth && len(frontier) > 0 && !truncated; level++ {
+		args[0] = dbx.TextArray(frontier)
 		rows, err := r.data.Pool.Query(ctx,
 			`SELECT r.id, r.type_code, t.forward_name, r.src_id, r.dst_id, c.id, c.name, c.model_code, m.name, c.status, c.env
 			 FROM cmdb_relation r
 			 JOIN cmdb_relation_type t ON t.code = r.type_code
 			 JOIN cmdb_ci c ON c.id = `+peer+`
 			 JOIN cmdb_model m ON m.code = c.model_code
-			 WHERE `+match+` AND c.delete_time IS NULL
-			 ORDER BY c.name, r.id LIMIT $2`, dbx.TextArray(frontier), rowLimit+1)
+			 WHERE `+match+` AND c.delete_time IS NULL`+peerScope+`
+			 ORDER BY c.name, r.id LIMIT $2`, args...)
 		if err != nil {
 			return nil, nil, false, fmt.Errorf("topology level %d: %w", level, err)
 		}

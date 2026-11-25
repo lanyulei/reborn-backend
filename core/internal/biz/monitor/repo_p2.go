@@ -162,7 +162,7 @@ type AlertEventRepo interface {
 	Append(ctx context.Context, ev *AlertEvent) error
 	// AppendTx 在调用方事务内追加一条。
 	AppendTx(ctx context.Context, tx txrun.Tx, ev *AlertEvent) error
-	// ListByAlert 事件的时间线，按时间升序，至多 limit 条。
+	// ListByAlert 事件的时间线，按时间升序，至多 limit 条；超过 limit 条时保留最新的 limit 条。
 	ListByAlert(ctx context.Context, alertID string, limit int) ([]*AlertEvent, error)
 }
 

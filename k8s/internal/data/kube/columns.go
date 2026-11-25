@@ -546,6 +546,14 @@ func fillNode(obj map[string]any, e *biz.Entry) {
 			break
 		}
 	}
+	// 主机定位要能匹配任意一个内网地址（双栈节点；CMDB 侧登记的不一定是列表里展示的那个）：全部记下。
+	for _, a := range nestedList(obj, "status", "addresses") {
+		if m := asMap(a); str(m, "type") == "InternalIP" {
+			if ip := str(m, "address"); ip != "" {
+				e.InternalIPs = append(e.InternalIPs, ip)
+			}
+		}
+	}
 	c["cpu"] = str(obj, "status", "allocatable", "cpu")
 	e.CPU = milliCPU(str(obj, "status", "allocatable", "cpu"))
 	e.Memory = quantityBytes(str(obj, "status", "allocatable", "memory"))

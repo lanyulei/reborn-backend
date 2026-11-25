@@ -248,10 +248,12 @@ func (r *natsRelay) publishDispatches(ctx context.Context, batch int) (int, erro
 	}
 	const fenced = ` FROM unnest($1::uuid[], $2::timestamptz[], $3::int[], $4::timestamptz[]) AS m(id, create_time, attempts, due)
 		 WHERE d.id = m.id AND d.create_time = m.create_time AND d.publish_state = 0 AND d.attempts = m.attempts AND d.next_retry_time = m.due`
+	// 落账的两条语句都是多行更新，可能与消费侧对同一批行的「声明任务」互相等待（见 conflict_retry.go）：
+	// 撞上死锁就地重做，不让整个 relay 循环为此退避一轮。两条语句都带代际围栏，重做是幂等的。
 	settle := func(ctx context.Context, ok, failed []relayItem, firstErr error) error {
 		if len(ok) > 0 {
 			ids, cts, attempts, dues := fenceArgs(ok)
-			if _, err := r.data.Pool.Exec(ctx,
+			if _, err := execConflictRetry(ctx, r.data.Pool,
 				"UPDATE notify_dispatch d SET publish_state = 1, next_retry_time = now(), relay_claim_until = NULL"+fenced,
 				ids, cts, attempts, dues); err != nil {
 				return fmt.Errorf("mark dispatches published: %w", err)
@@ -262,7 +264,7 @@ func (r *natsRelay) publishDispatches(ctx context.Context, batch int) (int, erro
 			// 任务的去重键含到期时刻（ack 超时但消息其实已入流时，重发须同键才能被去重），
 			// 所以不动 next_retry_time：把认领租约延长为退避时长，到期后原样重发。
 			ids, cts, attempts, dues := fenceArgs(failed)
-			if _, err := r.data.Pool.Exec(ctx,
+			if _, err := execConflictRetry(ctx, r.data.Pool,
 				"UPDATE notify_dispatch d SET relay_claim_until = now() + $5"+fenced,
 				ids, cts, attempts, dues, failBackoff(&r.dispatchFailStreak, len(ok) > 0)); err != nil {
 				return fmt.Errorf("defer dispatch publish: %w", err)
@@ -370,13 +372,6 @@ func awaitAll(ctx context.Context, futures []jetstream.PubAckFuture, errs []erro
 			errs[i] = ctx.Err()
 		}
 	}
-}
-
-// awaitPub 等待单条发布 ack（上限 publishAckWait）。
-func awaitPub(ctx context.Context, f jetstream.PubAckFuture) error {
-	errs := make([]error, 1)
-	awaitAll(ctx, []jetstream.PubAckFuture{f}, errs, publishAckWait)
-	return errs[0]
 }
 
 // publishBackoff 发布失败退避：5s · 2^n（n = relay 连续失败轮数），上限 5 分钟。

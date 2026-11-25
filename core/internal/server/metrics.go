@@ -15,7 +15,8 @@ import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 )
 
-// backlogTimeout 采集作业积压指标时单次查询的时限（抓取不应被数据库拖住）。
+// backlogTimeout 抓取时现查的指标（作业积压、表增长观测）单次查询的时限（抓取不应被数据库拖住）；
+// 存活探针同用。
 const backlogTimeout = 2 * time.Second
 
 // Pinger 存活探测依赖（由 data 层的连接池实现）。
@@ -23,11 +24,19 @@ type Pinger interface {
 	Ping(ctx context.Context) error
 }
 
+// TableStats 增长观测数据源（只读）：返回增长观测清单内各表的估算行数（表名 → 估算行数）。
+// 清单与查询都在 data 层（core/internal/data/table_stats.go），由 data 层实现、在组合根 wire.Bind
+// （同 Pinger）。返回值只用内建类型：server 与 data 互不 import（depguard），实现侧不必引用本包。
+type TableStats interface {
+	TableRowEstimates(ctx context.Context) (map[string]int64, error)
+}
+
 // Metrics 可观测指标（OTel → Prometheus /metrics）：
 //   - core_loop_runs_total{loop,result} / core_loop_items_total{loop}：各后台循环的迭代次数与处理条数；
 //   - core_workflow_jobs_overdue：到期超过一分钟仍没人处理的流程作业数（worker 角色没起来或处理不过来时上涨）；
 //   - core_workflow_jobs_overdue_seconds：其中最早一条已经拖了多久；
-//   - core_workflow_jobs_dead：处于死信、等待人工处理的流程作业数。
+//   - core_workflow_jobs_dead：处于死信、等待人工处理的流程作业数；
+//   - core_table_rows_estimate{table}：只增不删 / 没有保留期清理的表的估算行数（观察增长趋势用，不是精确计数）。
 type Metrics struct {
 	provider *sdkmetric.MeterProvider
 	loopRuns metric.Int64Counter
@@ -39,9 +48,9 @@ type Metrics struct {
 	agentTokens metric.Int64Counter
 }
 
-// NewMetrics 构造指标与导出器。积压指标在每次抓取时现查（一条走部分索引的聚合），
-// 查询失败则本次不上报该指标（不让抓取整体失败）。
-func NewMetrics(stats bizworkflow.JobStats) (*Metrics, func(), error) {
+// NewMetrics 构造指标与导出器。积压指标与表增长观测指标在每次抓取时现查（前者一条走部分索引的聚合，
+// 后者一条只读系统目录的估算查询），查询失败则本次不上报该指标（不让抓取整体失败）。
+func NewMetrics(stats bizworkflow.JobStats, tables TableStats) (*Metrics, func(), error) {
 	exporter, err := prometheus.New()
 	if err != nil {
 		return nil, nil, fmt.Errorf("init prometheus exporter: %w", err)
@@ -96,7 +105,39 @@ func NewMetrics(stats bizworkflow.JobStats) (*Metrics, func(), error) {
 	}, overdue, oldest, dead); err != nil {
 		return nil, nil, err
 	}
+	if err := registerTableRows(meter, tables); err != nil {
+		return nil, nil, err
+	}
 	return m, func() { _ = provider.Shutdown(context.Background()) }, nil
+}
+
+// tableRowsMetric 表增长观测指标名（标签 table = 表名）。
+const tableRowsMetric = "core_table_rows_estimate"
+
+// registerTableRows 注册表增长观测指标与它的抓取回调。这是保留期清理落地的第 (1) 步——只观测，不删任何
+// 数据；为什么是估算值而不是精确的「可清理行数」见 core/internal/data/table_stats.go。
+// 估值取 pg_class.reltuples（autovacuum / analyze 更新）：是估算值，用于观察增长趋势，不是精确计数。
+// 与积压指标一样在抓取回调里现查、沿用 2 秒超时；查询失败则本次不上报、不让抓取失败（下次抓取再试）。
+// 多副本各自现查同一份系统目录，读到的估值一致，没有共享状态。
+func registerTableRows(meter metric.Meter, tables TableStats) error {
+	gauge, err := meter.Int64ObservableGauge(tableRowsMetric,
+		metric.WithDescription("estimated rows (pg_class.reltuples) of tables that only grow or whose cleanup is capped; an estimate for watching growth trends, not an exact count"))
+	if err != nil {
+		return err
+	}
+	_, err = meter.RegisterCallback(func(ctx context.Context, o metric.Observer) error {
+		ctx, cancel := context.WithTimeout(ctx, backlogTimeout)
+		defer cancel()
+		estimates, err := tables.TableRowEstimates(ctx)
+		if err != nil {
+			return nil
+		}
+		for table, rows := range estimates {
+			o.ObserveInt64(gauge, rows, metric.WithAttributes(attribute.String("table", table)))
+		}
+		return nil
+	}, gauge)
+	return err
 }
 
 // Record implements loop.Recorder；nil 接收者安全（测试装配可不带指标）。

@@ -25,7 +25,8 @@ const missingID = "018f3e1a-ffff-7000-8000-000000000000"
 // 护栏：库名不含 "test" 时直接失败——集成测试会 TRUNCATE 全部业务表，
 // 历史上曾因 DSN 指向开发库（configs/config.yaml 同值）清空过开发数据，
 // 宁可测试红也不允许静默指向非测试库。
-func newIntegrationData(t *testing.T) *basedata.Data {
+// 接收 testing.TB：集成基准（bench_integration_test.go）复用同一份护栏与清库。
+func newIntegrationData(t testing.TB) *basedata.Data {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_SOURCE")
 	if dsn == "" {

@@ -75,47 +75,95 @@ func (m *Manager) Open(ctx context.Context, cl *biz.Cluster, id biz.Identity, p 
 		container = pod.Spec.Containers[0].Name
 	}
 	command := shellCommand
+	debug := ""
 	if p.Kind == k8scontract.ExecKindDebug {
 		// 调试容器：先在 Pod 里启动一个临时容器，再进入它（目标容器没有 shell 也能排查）。
 		if container, err = u.startDebug(pod, p); err != nil {
 			return nil, err
 		}
-		command = debugShellCommand
+		debug, command = container, debugShellCommand
 	}
-	q := url.Values{}
-	q.Set("container", container)
-	for _, arg := range command {
-		q.Add("command", arg)
-	}
-	q.Set("stdin", "true")
-	q.Set("stdout", "true")
-	q.Set("stderr", "false") // TTY 模式下 stderr 并入 stdout
-	q.Set("tty", "true")
-	target := fmt.Sprintf("%s/api/v1/namespaces/%s/pods/%s/exec?%s", c.host, url.PathEscape(p.Namespace), url.PathEscape(p.Pod), q.Encode())
+	target := execTarget(c.host, p.Namespace, p.Pod, container, command, url.Values{
+		"stdin": {"true"}, "stdout": {"true"}, "stderr": {"false"}, "tty": {"true"}, // TTY 模式下 stderr 并入 stdout
+	})
 
 	// 连接的生命周期跟随集群连接（c.ctx），不跟随建立它的请求；握手超时由定时器另行约束。
 	dctx, cancel := context.WithCancel(context.WithValue(c.ctx, identityKey{}, id))
+	// 调试容器已经启动：之后终端建不起来（集群拒绝 exec、握手失败或超时、协议不符）就得把它拆掉，
+	// 否则它会空转到会话时长上限，一直占着目标容器的资源。
+	fail := func(err error) error {
+		cancel()
+		if debug != "" {
+			u.stopDebug(p.Namespace, p.Pod, debug)
+		}
+		return err
+	}
 	timer := time.AfterFunc(execDialTimeout, cancel)
 	ws, resp, err := websocket.Dial(dctx, target, &websocket.DialOptions{
 		HTTPClient: &http.Client{Transport: c.userH1}, Subprotocols: []string{execProtocol},
 	})
 	if !timer.Stop() && err == nil {
-		err = context.DeadlineExceeded
+		err = lateHandshakeError(ws)
 	}
 	if err != nil {
-		cancel()
-		return nil, dialError(resp, err)
+		return nil, fail(dialError(resp, err))
 	}
 	if ws.Subprotocol() != execProtocol {
 		_ = ws.Close(websocket.StatusProtocolError, "")
-		cancel()
-		return nil, biz.ErrUnsupported("cluster does not support the %s terminal protocol (kubernetes >= 1.32 required)", execProtocol)
+		return nil, fail(biz.ErrUnsupported("cluster does not support the %s terminal protocol (kubernetes >= 1.32 required)", execProtocol))
 	}
 	ws.SetReadLimit(execReadLimit)
 	// 握手之后 WebSocket 不再跟随 dctx：集群连接被替换（配置变更：换了凭据、禁用了终端）或断开时，
 	// 必须主动关闭，否则会话会在旧凭据上一直跑到自己的时长上限。
 	stop := context.AfterFunc(c.ctx, func() { _ = ws.CloseNow() })
 	return &shellConn{ws: ws, cancel: cancel, stop: stop}, nil
+}
+
+// execTarget exec 子资源的地址：在 Pod 的 container 里执行 command；extra 为其余查询参数。
+func execTarget(host, namespace, pod, container string, command []string, extra url.Values) string {
+	q := url.Values{}
+	for k, vs := range extra {
+		q[k] = vs
+	}
+	q.Set("container", container)
+	for _, arg := range command {
+		q.Add("command", arg)
+	}
+	return fmt.Sprintf("%s/api/v1/namespaces/%s/pods/%s/exec?%s", host, url.PathEscape(namespace), url.PathEscape(pod), q.Encode())
+}
+
+// stopDebug 终端没能建立：结束调试容器的主进程，不让它空转到会话时长上限。尽力而为——以用户身份对调试容器
+// 再 exec 一次 kill（同样需要 pods/exec 权限；没有权限、集群不应答时放弃），失败只记日志：容器里的看门狗
+// （见 debugMainScript）几分钟后兜底。不跟随请求的取消：客户端断开正是要清理的情形之一。
+func (u *userClients) stopDebug(namespace, pod, container string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(u.ctx), debugStopTimeout)
+	defer cancel()
+	ws, _, err := websocket.Dial(ctx, execTarget(u.c.host, namespace, pod, container, debugKillCommand, url.Values{"stdout": {"true"}}),
+		&websocket.DialOptions{HTTPClient: &http.Client{Transport: u.c.userH1}, Subprotocols: []string{execProtocol}})
+	if err != nil {
+		u.c.m.log.Warn("cannot stop the debug container of a failed terminal", "pod", namespace+"/"+pod, "container", container, "error", mapError(err))
+		return
+	}
+	defer func() { _ = ws.CloseNow() }()
+	ws.SetReadLimit(execReadLimit)
+	// 命令结束时状态通道（chError）带回结果，或对端关闭连接；迟迟不结束由 ctx 的时限兜底。
+	for {
+		typ, data, err := ws.Read(ctx)
+		if err != nil {
+			return
+		}
+		if typ == websocket.MessageBinary && len(data) > 0 && data[0] == chError {
+			return
+		}
+	}
+}
+
+// lateHandshakeError 握手恰在超时定时器触发的那一刻完成：按超时处理，并且必须关掉刚刚建立的连接。
+// 握手完成后 ctx 就不再约束它（协议升级后 net/http 与 coder/websocket 都不会因请求 ctx 取消而关闭连接），
+// 不关的话到集群的 exec 连接与容器里的 shell 进程会一直挂着。
+func lateHandshakeError(ws *websocket.Conn) error {
+	_ = ws.CloseNow()
+	return context.DeadlineExceeded
 }
 
 // dialError 握手失败：集群以普通 HTTP 响应拒绝时，响应体是 Status 对象。

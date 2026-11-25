@@ -128,7 +128,7 @@ func NormalizeHelmRepoURL(typ int32, raw string, hasCredential bool) (string, er
 		return "", errors.New("unknown repository type")
 	}
 	if strings.Contains(u.Path, "..") {
-		return "", errors.New("url path must not contain ..")
+		return "", errors.New("url path must not contain ..") //nolint:staticcheck // 结尾的 .. 是被拒绝的路径片段本身，不是标点
 	}
 	return strings.TrimRight(u.String(), "/"), nil
 }

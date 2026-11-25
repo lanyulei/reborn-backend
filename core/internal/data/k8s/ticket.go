@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	biz "github.com/lanyulei/reborn/backend/core/internal/biz/k8s"
@@ -20,21 +21,47 @@ var (
 	_ biz.OutboxRepo = (*outboxRepo)(nil)
 )
 
+// ticketPurgeEvery 每个实例清理过期票据的最小间隔。清理只是回收空间：过期票据能不能用由 Redeem 的
+// expire_time > now() 判定，与清不清无关；清理语句本身留了一分钟余量，所以放到每分钟一次并不让
+// 过期的行多留多久，却省掉了每次签发多出来的一次往返。
+const ticketPurgeEvery = time.Minute
+
 type ticketRepo struct {
 	data *basedata.Data
+	// nextPurge 本实例下次该清理的时刻（单调时钟相对 purgeEpoch 的纳秒数）；只用于节流，不参与任何正确性判定。
+	// 零值 = 立即清理，所以每个实例启动后的第一次签发仍会清一遍。
+	nextPurge atomic.Int64
+}
+
+// purgeEpoch 节流计时的起点（进程内单调时钟）。
+var purgeEpoch = time.Now()
+
+// purgeDue 报告现在是否轮到本次调用做清理：到期且抢到（CAS）才返回 true，并发的签发里只有一个去清。
+func (r *ticketRepo) purgeDue() (due bool, prev int64) {
+	now := int64(time.Since(purgeEpoch))
+	prev = r.nextPurge.Load()
+	if now < prev {
+		return false, prev
+	}
+	return r.nextPurge.CompareAndSwap(prev, now+int64(ticketPurgeEvery)), prev
 }
 
 // NewTicketRepo new a ticketRepo.
 func NewTicketRepo(data *basedata.Data) *ticketRepo { return &ticketRepo{data: data} }
 
-// Create implements biz.TicketRepo。过期时间用数据库时钟；顺带清掉已过期的票据（表很小，走索引）。
+// Create implements biz.TicketRepo。过期时间用数据库时钟；顺带清掉已过期的票据（表很小，走索引；
+// 每个实例至多每 ticketPurgeEvery 清一次）。
 func (r *ticketRepo) Create(ctx context.Context, hash []byte, t biz.ExecTicket, ttl time.Duration) error {
 	params, err := json.Marshal(t.Params)
 	if err != nil {
 		return fmt.Errorf("encode k8s exec params: %w", err)
 	}
-	if _, err := r.data.Pool.Exec(ctx, "DELETE FROM k8s_exec_ticket WHERE expire_time < now() - interval '1 minute'"); err != nil {
-		return fmt.Errorf("purge k8s exec tickets: %w", err)
+	if due, prev := r.purgeDue(); due {
+		if _, err := r.data.Pool.Exec(ctx, "DELETE FROM k8s_exec_ticket WHERE expire_time < now() - interval '1 minute'"); err != nil {
+			// 没清成：把节流点退回去，下一次签发照旧先清（失败时本次签发报错，与此前一致）。
+			r.nextPurge.Store(prev)
+			return fmt.Errorf("purge k8s exec tickets: %w", err)
+		}
 	}
 	if _, err := r.data.Pool.Exec(ctx,
 		`INSERT INTO k8s_exec_ticket (token_hash, user_id, cluster_id, params, expire_time)

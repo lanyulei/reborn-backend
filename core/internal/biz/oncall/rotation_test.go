@@ -253,3 +253,69 @@ func TestAvoidSameUser(t *testing.T) {
 		t.Errorf("single-member rotation should be left as is: %+v", got)
 	}
 }
+
+// 替班被改派给他人：被替下的原替班人记入 Displaced（他此刻本该值班，需要被通知到），原值班人
+// 仍是最初的那个；只截短、没被换掉的部分不算。
+func TestPlanOverrideDisplacesSubstitute(t *testing.T) {
+	t.Parallel()
+	sched := &Schedule{ID: "s", GroupID: "g"}
+	d := func(day, hour int) time.Time { return time.Date(2026, 11, day, hour, 0, 0, 0, time.UTC) }
+	existing := []*Shift{{ID: "o", Role: RolePrimary, UserID: "y", OriginUserID: "x", Start: d(20, 0), End: d(21, 0), Source: SourceOverride}}
+
+	p := planOverride(sched, existing, RolePrimary, "z", d(20, 0), d(21, 0), "")
+	if len(p.Deletes) != 1 || len(p.Created) != 1 || p.Created[0].OriginUserID != "x" {
+		t.Fatalf("plan = %+v", p)
+	}
+	if !slices.Equal(p.Displaced, []string{"y"}) || !slices.Equal(p.Origins, []string{"x"}) {
+		t.Errorf("displaced = %v, origins = %v; want [y], [x]", p.Displaced, p.Origins)
+	}
+	// 只替半天：y 的替班被截短，他仍要知道另外半天不归他了。
+	existing = []*Shift{{ID: "o", Role: RolePrimary, UserID: "y", OriginUserID: "x", Start: d(20, 0), End: d(21, 0), Source: SourceOverride}}
+	p = planOverride(sched, existing, RolePrimary, "z", d(20, 0), d(20, 12), "")
+	if !slices.Equal(p.Displaced, []string{"y"}) || len(p.Updates) != 1 || len(p.Deletes) != 0 {
+		t.Errorf("half day: %+v", p)
+	}
+	// 被覆盖的是自动班次、或替班人本来就在值班：没有改派谁。
+	existing = []*Shift{{ID: "1", Role: RolePrimary, UserID: "a", Start: d(20, 0), End: d(21, 0), Source: SourceAuto}}
+	if p = planOverride(sched, existing, RolePrimary, "c", d(20, 8), d(20, 12), ""); len(p.Displaced) != 0 {
+		t.Errorf("auto shift: displaced = %v", p.Displaced)
+	}
+	if p = planOverride(sched, existing, RolePrimary, "a", d(20, 8), d(20, 12), ""); len(p.Displaced) != 0 || len(p.Created) != 0 {
+		t.Errorf("same substitute: %+v", p)
+	}
+}
+
+// 夏令时拨快当天被跳过的本地时刻（纽约 2026-03-08 没有 02:30）：班次边界落在归一化后的 01:30 EST。
+// 按钟面比对会把这个真实边界判成「不在交接时刻上」，这一天的替班就创建不了。
+func TestOnHandoverDSTNonexistentLocalTime(t *testing.T) {
+	t.Parallel()
+	ny := mustLoc(t, "America/New_York")
+	anchor := time.Date(2026, 1, 1, 2, 30, 0, 0, ny)
+	s := &Schedule{AnchorTime: anchor}
+	rot := Rotation{Loc: ny, StepDays: 1, Anchor: anchor}
+	gapDay := rot.boundary(66) // 2026-03-08
+	if want := time.Date(2026, 3, 8, 6, 30, 0, 0, time.UTC); !gapDay.Equal(want) {
+		t.Fatalf("boundary on the spring-forward day = %s, want %s", gapDay.UTC(), want)
+	}
+	for _, tc := range []struct {
+		name string
+		at   time.Time
+		want bool
+	}{
+		{"拨快当天的真实边界", gapDay, true},
+		{"前一天", rot.boundary(65), true},
+		{"后一天", rot.boundary(67), true},
+		{"拨快后的 03:30（钟面上不是交接时刻）", gapDay.Add(time.Hour), false},
+		{"当天 00:30", gapDay.Add(-90 * time.Minute), false},
+		{"差一秒", gapDay.Add(time.Second), false},
+	} {
+		if got := onHandover(s, ny, tc.at); got != tc.want {
+			t.Errorf("%s: onHandover(%s) = %v, want %v", tc.name, tc.at.UTC(), got, tc.want)
+		}
+	}
+	// 周轮转也按天判定：交接时刻落在星期的中间那天同样可以替班（替整数天，不是替整周）。
+	weekly := &Schedule{AnchorTime: anchor, RotationUnit: UnitWeek, RotationInterval: 1}
+	if !onHandover(weekly, ny, rot.boundary(70)) {
+		t.Error("a mid-week handover time must still be accepted for a weekly rotation")
+	}
+}

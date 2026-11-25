@@ -11,11 +11,19 @@ import (
 	"github.com/lanyulei/reborn/backend/notify/internal/biz"
 )
 
+// seedDispatch 种一条任务。due 为到期时刻：调用方传 time.Now() 表示「现在就到期」。
+// 领取 / 回收按数据库时钟判断到期（next_retry_time <= now()），而调用方手上是应用时钟——本机的数据库跑在
+// 虚拟机里，两个时钟有几毫秒偏差且方向不固定。原样写入的话，数据库时钟恰好落后时这条行在它看来「还没到期」，
+// 紧接着的领取就少领一行，测试偶发失败。所以「现在就到期」的行按数据库时钟再往前拨 1 秒；
+// 明确在未来（未到期）或已经过去的行原样写入。
 func seedDispatch(t *testing.T, d *Data, id, eventID, channelID string, status int32, due time.Time) {
 	t.Helper()
 	if _, err := d.Pool.Exec(context.Background(),
 		`INSERT INTO notify_dispatch (id, event_id, channel_id, recipient, status, attempts, next_retry_time, send_key, create_time)
-		 VALUES ($1, $2, $3, 'ops@example.com', $4, 0, $5, 'k', now())`, id, eventID, channelID, status, due); err != nil {
+		 VALUES ($1, $2, $3, 'ops@example.com', $4, 0,
+		         CASE WHEN $5::timestamptz >= now() - interval '1 second' AND $5::timestamptz < now() + interval '500 milliseconds'
+		              THEN now() - interval '1 second' ELSE $5 END, 'k', now())`,
+		id, eventID, channelID, status, due); err != nil {
 		t.Fatalf("seed dispatch: %v", err)
 	}
 }

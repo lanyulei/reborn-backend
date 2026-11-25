@@ -830,15 +830,17 @@ type SetRolePermissionsRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// id 角色唯一标识，取自路径参数。
 	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	// menus 授权的菜单（页面）码全量集合，上限 64 条；须登记在权限目录内
-	// （service 层校验）。仅控制前端菜单可见性，不产生接口授权。
+	// menus 授权的菜单（页面）码全量集合，上限 256 条；须登记在权限目录内
+	// （service 层校验）。仅控制前端菜单可见性，不产生接口授权。上限须大于权限目录
+	// 的菜单总数（否则勾选全部菜单的角色保存即 400），由 operations_test 守护。
 	Menus []string `protobuf:"bytes,2,rep,name=menus,proto3" json:"menus,omitempty"`
-	// elements 授权的页面元素码全量集合，上限 128 条；须登记在权限目录内。
-	// 仅控制前端页面元素（按钮等）可见性，不产生接口授权。
+	// elements 授权的页面元素码全量集合，上限 1024 条；须登记在权限目录内。
+	// 仅控制前端页面元素（按钮等）可见性，不产生接口授权。上限须大于目录的元素总数。
 	Elements []string `protobuf:"bytes,3,rep,name=elements,proto3" json:"elements,omitempty"`
 	// apis 接口操作 code（32 位小写 md5 hex，取自 ListOperations）直接授权
-	// 全量集合，上限 256 条；元素须在 ListOperations 枚举范围内（service 层
-	// 校验）。统一用 code 而非 name 定位接口，规避字符集兼容问题。
+	// 全量集合，上限 2048 条；元素须在 ListOperations 枚举范围内（service 层
+	// 校验）。统一用 code 而非 name 定位接口，规避字符集兼容问题。上限须大于
+	// 可授权接口总数。
 	Apis          []string `protobuf:"bytes,4,rep,name=apis,proto3" json:"apis,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1393,12 +1395,12 @@ const file_system_v1_role_proto_rawDesc = "" +
 	"\x1aGetRolePermissionsResponse\x12\x14\n" +
 	"\x05menus\x18\x01 \x03(\tR\x05menus\x12\x1a\n" +
 	"\belements\x18\x02 \x03(\tR\belements\x12\x12\n" +
-	"\x04apis\x18\x03 \x03(\tR\x04apis\"\xeb\x01\n" +
+	"\x04apis\x18\x03 \x03(\tR\x04apis\"\xec\x01\n" +
 	"\x19SetRolePermissionsRequest\x12\x18\n" +
-	"\x02id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\x12:\n" +
-	"\x05menus\x18\x02 \x03(\tB$\xbaH!\x92\x01\x1e\x10@\"\x1ar\x18\x10\x02\x18@2\x12^[a-z0-9_.]{2,64}$R\x05menus\x12A\n" +
-	"\belements\x18\x03 \x03(\tB%\xbaH\"\x92\x01\x1f\x10\x80\x01\"\x1ar\x18\x10\x02\x18@2\x12^[a-z0-9_.]{2,64}$R\belements\x125\n" +
-	"\x04apis\x18\x04 \x03(\tB!\xbaH\x1e\x92\x01\x1b\x10\x80\x02\"\x16r\x14\x10 \x18 2\x0e^[a-f0-9]{32}$R\x04apis\"\x1c\n" +
+	"\x02id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\x12;\n" +
+	"\x05menus\x18\x02 \x03(\tB%\xbaH\"\x92\x01\x1f\x10\x80\x02\"\x1ar\x18\x10\x02\x18@2\x12^[a-z0-9_.]{2,64}$R\x05menus\x12A\n" +
+	"\belements\x18\x03 \x03(\tB%\xbaH\"\x92\x01\x1f\x10\x80\b\"\x1ar\x18\x10\x02\x18@2\x12^[a-z0-9_.]{2,64}$R\belements\x125\n" +
+	"\x04apis\x18\x04 \x03(\tB!\xbaH\x1e\x92\x01\x1b\x10\x80\x10\"\x16r\x14\x10 \x18 2\x0e^[a-f0-9]{32}$R\x04apis\"\x1c\n" +
 	"\x1aSetRolePermissionsResponse\"\x17\n" +
 	"\x15ListOperationsRequest\"u\n" +
 	"\tOperation\x12\x12\n" +

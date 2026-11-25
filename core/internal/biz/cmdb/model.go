@@ -3,6 +3,7 @@ package biz
 import (
 	"context"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/lanyulei/reborn/backend/core/internal/pkg/formschema"
@@ -180,6 +181,18 @@ type ModelRepo interface {
 	SoftDelete(ctx context.Context, code string, at time.Time) error
 }
 
+// ModelDeleteGuard 类型仓储的可选能力：删除类型前的两项引用检查。只读、不改变删除本身——
+// 检查通过后仍走 ModelRepo.SoftDelete。生产仓储必须实现（编译期断言）；未实现时（内存桩）
+// 跳过这两项检查，行为与补检查之前一致。
+type ModelDeleteGuard interface {
+	// DeletedCICount 回收站里（已软删）该类型的资源数。类型删除后这些资源无法恢复（恢复要先过
+	// 类型检查），也没有彻底删除接口。
+	DeletedCICount(ctx context.Context, modelCode string) (int64, error)
+	// RefFields 其它未删除类型下指向该类型、未废弃的 ref 字段，形如 "model.field"。类型编码是主键、
+	// 软删后不可重建，被引用时删掉会让那些字段的任何更新都因 ref_model 不存在而失败。
+	RefFields(ctx context.Context, modelCode string) ([]string, error)
+}
+
 // FieldRepo 类型字段仓储接口。
 type FieldRepo interface {
 	Create(ctx context.Context, f *Field) error
@@ -286,7 +299,8 @@ func (uc *ModelUsecase) UpdateModel(ctx context.Context, code string, upd ModelU
 	return after, nil
 }
 
-// DeleteModel 软删类型：内置不可删；仍有资源或被关系类型显式引用时拒绝。
+// DeleteModel 软删类型：内置不可删；仍有资源（含回收站里的）、被关系类型显式引用、或被其它类型的
+// ref 字段引用时拒绝（ErrModelInUse）。无引用时的删除行为不变。
 func (uc *ModelUsecase) DeleteModel(ctx context.Context, code string) error {
 	m, err := uc.models.Get(ctx, code)
 	if err != nil {
@@ -305,6 +319,22 @@ func (uc *ModelUsecase) DeleteModel(ctx context.Context, code string) error {
 	for _, t := range types {
 		if t.SrcModel == code || t.DstModel == code {
 			return detail(ErrModelInUse, "referenced by relation type %s", t.Code)
+		}
+	}
+	if guard, ok := uc.models.(ModelDeleteGuard); ok {
+		deleted, err := guard.DeletedCICount(ctx, code)
+		if err != nil {
+			return err
+		}
+		if deleted > 0 {
+			return detail(ErrModelInUse, "%d deleted resources are still in the recycle bin", deleted)
+		}
+		refs, err := guard.RefFields(ctx, code)
+		if err != nil {
+			return err
+		}
+		if len(refs) > 0 {
+			return detail(ErrModelInUse, "referenced by ref field(s) %s", strings.Join(refs, ", "))
 		}
 	}
 	if err := uc.models.SoftDelete(ctx, code, time.Now()); err != nil {

@@ -21,6 +21,19 @@ import (
 //nolint:gosec // G101 误报：不是任何环境的凭据或密钥，仅是喂给 Argon2id 的
 const dummyPasswordSeed = "timing-align-dummy-seed#2026"
 
+// PresetAdminPasswordHash 是迁移 core/migrations/0001_system_init.up.sql 为内置超级管理员（admin）预置的
+// 初始口令的 Argon2id PHC 串，与迁移里的字面量逐字节一致（改迁移里的预置口令时必须同步改这里）。
+//
+// 用途只有一个：判断「这个账号的口令是否还是人人可从仓库里查到的预置初始口令」——库内 password 列与本常量
+// 逐字节相等即为真。预置行的哈希是固定串（盐固定）；经应用改过密码后盐随机重取，哈希必然不同，哪怕新口令
+// 与初始口令相同（那种情况判不出来，可接受：提示而非强制）。
+//
+//nolint:gosec // G101：这是公开迁移里已有的口令哈希，不是新引入的凭据；只用于相等比较，不参与任何校验放行。
+const PresetAdminPasswordHash = "$argon2id$v=19$m=65536,t=3,p=4$iHvYng7lmFB3Nqp8RCmLbA$T2E3QDXxXpbGjszgeqQ1VQnuSt9hM6OjrurLxssf4NU"
+
+// isPresetPassword 报告库内口令哈希是否仍是迁移预置的初始口令。
+func isPresetPassword(hash string) bool { return hash == PresetAdminPasswordHash }
+
 // 认证域哨兵错误：跨层业务错误统一携带 Kratos code/reason，
 // reason 与 api/system/v1 的 ErrorReason 枚举对齐（单一事实来源）。
 var (
@@ -51,6 +64,9 @@ type RefreshToken struct {
 	ExpireTime time.Time
 	CreateTime time.Time
 	RotatedAt  *time.Time
+	// IssuedForHash 登录签发时核验用的口令哈希（仅登录签发设置）：非空时仓储只在用户仍启用、
+	// 未删除且口令未被改写时插入令牌行，落不下时返回 ErrTokenInvalid。
+	IssuedForHash string
 }
 
 // RefreshTokenReader 是刷新令牌只读仓储接口，由 data 层实现（依赖倒置）。
@@ -126,6 +142,7 @@ func NewAuthUsecase(userReader UserReader, roles UserRoleRepo,
 // 密码错误统一 ErrInvalidCredentials（用户不存在时仍执行一次等代价的 Argon2id
 // 校验对齐时序）；凭据正确但账号非可用状态返回 ErrAccountDisabled。
 // 出参任何路径不落密码与令牌。
+// 口令仍是迁移预置的初始口令时回填 User.PasswordChangeRequired（仅提示前端引导改密，不影响登录成败）。
 // ip/userAgent 由 service 层从传输上下文提取后传入（本层不触 transport）。
 // 登录审计：成功与各认证失败路径均落登录日志（细分结果仅存审计表，对外口径
 // 不变防枚举）；密码格式拒绝与用户查询的基础设施错误不记录（无凭据尝试语义
@@ -172,6 +189,7 @@ func (uc *AuthUsecase) Login(ctx context.Context, username, password, ip, userAg
 		return nil, nil, err
 	}
 	uc.recordLogin(ctx, &LoginLog{UserID: u.ID, Username: username, Result: LoginResultSuccess, IP: ip, UserAgent: userAgent})
+	u.PasswordChangeRequired = isPresetPassword(u.Password)
 	u.Password = ""
 	return u, pair, nil
 }
@@ -290,16 +308,33 @@ func (uc *AuthUsecase) Logout(ctx context.Context, userID string) error {
 // Profile 查询当前登录用户信息及绑定角色；用户不存在返回 ErrUserNotFound。
 // 有效授权并集由 AuthzUsecase（接口操作）与 PermissionUsecase（菜单/元素
 // 直接授权）口径提供，认证域不再自行计算。
+// 口令仍是迁移预置的初始口令时回填 User.PasswordChangeRequired（与 Login 同口径）。
 func (uc *AuthUsecase) Profile(ctx context.Context, userID string) (*User, []*Role, error) {
 	u, err := uc.userReader.GetUser(ctx, userID)
 	if err != nil {
 		return nil, nil, err
 	}
+	u.PasswordChangeRequired = uc.presetPassword(ctx, u)
 	roles, err := uc.roles.ListUserRoles(ctx, userID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("list user roles: %w", err)
 	}
 	return u, roles, nil
+}
+
+// presetPassword 报告用户当前口令是否仍是迁移预置的初始口令。口令哈希只在按用户名的认证读路径上带出
+// （见 UserReader.GetUserByUsername），这里只做相等比较、不外传。纯提示：查询失败或账号刚被删除时按「否」
+// 处理并记日志，不让一个提示位拖垮「当前登录者」接口。
+func (uc *AuthUsecase) presetPassword(ctx context.Context, u *User) bool {
+	cred, err := uc.userReader.GetUserByUsername(ctx, u.Username)
+	if err != nil {
+		if !errors.Is(err, ErrUserNotFound) {
+			uc.log.WarnContext(ctx, "check preset password failed", "error", err, "user_id", u.ID)
+		}
+		return false
+	}
+	// 用户名在删除后可被新账号复用：两次读之间换了人就不下结论。
+	return cred.ID == u.ID && isPresetPassword(cred.Password)
 }
 
 // issueTokens 签发 access + refresh 双令牌并落库刷新令牌哈希。
@@ -347,6 +382,8 @@ func (uc *AuthUsecase) issueTokens(ctx context.Context, u *User, now time.Time) 
 	if err != nil {
 		return nil, err
 	}
+	// 落令牌时复核口令与账号状态：登录的「校验口令」与「落刷新令牌」之间（Argon2id 约百毫秒），
+	// 管理员可能已重置口令（先改哈希、再吊销全部会话）——无条件插入的新会话会落在吊销之后而存活。
 	rt := &RefreshToken{
 		ID:         id,
 		UserID:     u.ID,
@@ -354,8 +391,14 @@ func (uc *AuthUsecase) issueTokens(ctx context.Context, u *User, now time.Time) 
 		TokenHash:  hashRefreshToken(raw),
 		ExpireTime: now.Add(uc.signer.RefreshTTL()),
 		CreateTime: now,
+		// Rotate（刷新）路径复用本函数的调用方只有 Login；刷新时口令已另行校验，不设置此项。
+		IssuedForHash: u.Password,
 	}
 	if err := uc.refreshWriter.Save(ctx, rt); err != nil {
+		if errors.Is(err, ErrTokenInvalid) {
+			// 口令已被改写或账号已不可用：按凭据失败处理（客户端提示重新登录）。
+			return nil, ErrInvalidCredentials
+		}
 		return nil, fmt.Errorf("save refresh token: %w", err)
 	}
 	return &TokenPair{AccessToken: access, ExpiresIn: expiresIn, RefreshToken: raw}, nil

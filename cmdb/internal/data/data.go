@@ -33,6 +33,7 @@ var ProviderSet = wire.NewSet(
 	NewNotifier, wire.Bind(new(biz.Notifier), new(*notifier)),
 	NewMaintenanceRepo, wire.Bind(new(biz.MaintenanceRepo), new(*maintenanceRepo)),
 	NewWebhookRepo, wire.Bind(new(biz.WebhookRepo), new(*webhookRepo)),
+	NewTableStatsRepo, wire.Bind(new(biz.TableStats), new(*tableStatsRepo)),
 	collector.NewRegistry,
 )
 

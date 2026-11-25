@@ -2,9 +2,11 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -29,7 +31,19 @@ func (nopObserver) ObserveRecord(context.Context, string, time.Duration, int)   
 func (nopObserver) AddCommand(context.Context, string)                                {}
 func (nopObserver) AddEngineEvents(context.Context, string, int)                      {}
 
-func build(t *testing.T, c *conf.Engine) *Set {
+func build(t *testing.T, c *conf.Engine) *Set { return buildWith(t, c, nil) }
+
+// failingBeats 恒失败的心跳仓储，记调用次数。
+type failingBeats struct{ calls atomic.Int32 }
+
+func (f *failingBeats) Beat(context.Context, *biz.InstanceBeat) error {
+	f.calls.Add(1)
+	return errors.New("db down")
+}
+
+func (*failingBeats) Remove(context.Context, string) error { return nil }
+
+func buildWith(t *testing.T, c *conf.Engine, beats biz.InstanceRepo) *Set {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	cache, cleanup := biz.NewConfigCache(nil, nil, nopObserver{}, logger)
@@ -37,7 +51,7 @@ func build(t *testing.T, c *conf.Engine) *Set {
 	obs := nopObserver{}
 	inhibits, stats := biz.NewInhibitCache(nil, cache, obs, logger), biz.NewInstanceStats()
 	info := biz.InstanceInfo{ID: "host-abc", Roles: "planner,evaluator"}
-	heartbeat, _ := biz.NewHeartbeatUsecase(nil, info, stats, logger)
+	heartbeat, _ := biz.NewHeartbeatUsecase(beats, info, stats, logger)
 	return NewSet(c, info, NewUsecases(cache, inhibits, stats, biz.NewPlannerUsecase(nil, cache, obs, logger),
 		biz.NewEvaluatorUsecase(nil, nil, nil, cache, inhibits, stats, obs, logger),
 		biz.NewMaintenanceUsecase(nil, nil, logger), biz.NewCommandUsecase(nil, obs, logger),
@@ -74,6 +88,29 @@ func TestNewSetAppliesDefaults(t *testing.T) {
 	})
 	if got := names(set); got != "materialize,probe,maintenance,watch,evaluator-0,evaluator-1,recorder-0,recorder-1,command,heartbeat" {
 		t.Fatalf("loops = %s", got)
+	}
+}
+
+// 心跳循环的失败退避不超过一个心跳周期（monitor-module-biz 优化项 5）。周期 20ms、连续失败时：封顶后每
+// 20ms 重试一次；kit/loop 缺省的指数退避是 40 / 80 / 160 / 320 / 640ms，700ms 内至多 5 次。
+func TestHeartbeatBackoffIsCappedAtItsInterval(t *testing.T) {
+	beats := &failingBeats{}
+	set := buildWith(t, &conf.Engine{HeartbeatInterval: durationpb.New(20 * time.Millisecond)}, beats)
+	if len(set.Always) != 1 || set.Always[0].Name() != "heartbeat" {
+		t.Fatalf("always loops = %v", set.Always)
+	}
+	hb := set.Always[0]
+	done := make(chan error, 1)
+	go func() { done <- hb.Start(context.Background()) }()
+	time.Sleep(700 * time.Millisecond)
+	if err := hb.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if got := beats.calls.Load(); got < 10 {
+		t.Fatalf("heartbeat attempts in 700ms = %d: the failure backoff is not capped at the 20ms interval", got)
 	}
 }
 

@@ -22,8 +22,11 @@ func builtinGroups() map[string]*biz.ModelGroup {
 	now := time.Now()
 	out := make(map[string]*biz.ModelGroup, 6)
 	for i, g := range []struct{ code, name string }{
-		{"compute", "计算"}, {"network", "网络"}, {"storage", "存储"},
-		{"cloud", "云资源"}, {"component", "配件"},
+		{"compute", "计算"},
+		{"network", "网络"},
+		{"storage", "存储"},
+		{"cloud", "云资源"},
+		{"component", "配件"},
 	} {
 		out[g.code] = &biz.ModelGroup{Code: g.code, Name: g.name, Sort: int32((i + 1) * 10), Builtin: true, CreateTime: now, UpdateTime: now}
 	}

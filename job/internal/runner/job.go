@@ -144,6 +144,21 @@ func (j *job) cleanup() {
 	}
 }
 
+// purgeDirs 立即删除作业目录与控制目录（口令文件、脚本、待分发的文件在其中）。与 cleanup 的区别：只删文件——
+// 不动进程，也不改 madeDir / madeCtl，run() 末尾的 cleanup 仍会据此清理脱离了进程组的后代，并重试没删成的目录。
+func (j *job) purgeDirs() {
+	if j.madeDir {
+		if err := os.RemoveAll(j.dir); err != nil {
+			j.log.Warn("remove job dir failed, will retry at cleanup", "error", err)
+		}
+	}
+	if j.madeCtl {
+		if err := os.RemoveAll(j.ctlDir); err != nil {
+			j.log.Warn("remove job control dir failed, will retry at cleanup", "error", err)
+		}
+	}
+}
+
 // track 把子进程的进程组记进作业目录的 pgids 文件（每行「进程组号 启动时刻」）：节点崩溃或被强杀后，
 // 下次启动据此清掉残留的进程组（Runner.prepareWorkDir）。写失败只记日志，不影响作业。
 func (j *job) track(pgid int) {
@@ -625,6 +640,13 @@ func (j *job) runAnsible(ctx context.Context, args []string, workDir, sock strin
 		p.stop(0)
 	}
 	p.signal(syscall.SIGKILL) // 清掉进程组里残留的后代
+	if interrupted {
+		// 作业已被中断：不会再有后续批次用到作业目录，子进程一结束就先删掉目录（含口令文件）。缓冲写满且
+		// 引擎不可达时，下面的 wait() 要等引擎恢复、确认了日志才返回，口令文件不应陪绑到那时。
+		// 只删文件：作业的 ssh-agent 此刻还在运行，由 execute 正常停止；脱离了进程组的后代照旧留给 run() 末尾的
+		// cleanup——提前按 HOME 找杀会连 agent 一起杀掉，它之后的 stop() 就是对着一个可能已被复用的进程组发信号。
+		j.purgeDirs()
+	}
 	wait()
 	j.rp.Close()
 	_ = j.buf.Append(ctx, j.mask.Flush())

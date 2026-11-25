@@ -30,6 +30,10 @@ type k8sTickets struct {
 	runtime *bizworkflow.RuntimeUsecase
 }
 
+// 编译期断言：工单适配器必须同时提供审批证据（bizk8s.NewChangeUsecase 按类型断言取用；缺了这项能力，
+// 所有通过的审批都会被当成未经审批）。
+var _ bizk8s.ApprovalProof = k8sTickets{}
+
 // NewK8sChangeTickets 构造变更审批的工单适配器。
 func NewK8sChangeTickets(catalog bizticket.CatalogReader, tickets *bizticket.Usecase, runtime *bizworkflow.RuntimeUsecase) bizk8s.ChangeTickets {
 	return k8sTickets{catalog: catalog, tickets: tickets, runtime: runtime}
@@ -173,6 +177,19 @@ func (n k8sTicketNotes) Comment(ctx context.Context, ticketID, userID, content s
 	return err
 }
 
+// Proof implements bizk8s.ApprovalProof：审批工单的流程（含各级子流程）上有没有人真的审批过。在流程引擎的
+// 事务内读出——实例结束的那条命令里刚被跳过的审批环节此时尚未提交，另开连接看不到。
+func (t k8sTickets) Proof(ctx context.Context, tx txrun.Tx, ticketID, except string) (bizk8s.ApprovalEvidence, error) {
+	if t.runtime == nil {
+		return bizk8s.ApprovalEvidence{}, errors.New("the workflow runtime is not available for change approvals")
+	}
+	ev, err := t.runtime.ApprovalEvidenceOf(ctx, tx, bizticket.BusinessType, ticketID, except)
+	if err != nil {
+		return bizk8s.ApprovalEvidence{}, err
+	}
+	return bizk8s.ApprovalEvidence{Skipped: ev.SkippedApprovals, Approved: ev.HumanApprovals}, nil
+}
+
 // k8sBypass 免审批权限 = 持有「免审批执行变更」接口权限（与授权中间件同一口径；超管恒为 true）。
 type k8sBypass struct {
 	authz *bizsystem.AuthzUsecase
@@ -228,7 +245,8 @@ func (s k8sSelfRoles) find(ctx context.Context, code string) (*bizsystem.Role, e
 	return nil, nil
 }
 
-// Ensure implements bizk8s.SelfRoles。幂等：角色已存在即复用，已绑定即不动；并发创建以标识唯一约束兜底。
+// Ensure implements bizk8s.SelfRoles。幂等：角色已存在即复用，已绑定即不动；并发创建以标识唯一约束兜底，
+// 并发绑定以 (user_id, role_id) 唯一约束兜底。
 func (s k8sSelfRoles) Ensure(ctx context.Context, userID, username string) (string, error) {
 	code := K8sSelfRoleCode(userID)
 	role, err := s.find(ctx, code)
@@ -255,18 +273,12 @@ func (s k8sSelfRoles) Ensure(ctx context.Context, userID, username string) (stri
 	if role.Status != bizsystem.RoleStatusEnabled {
 		return "", errors.New("the self-service role of this user is disabled; ask an administrator to enable or remove role " + code)
 	}
-	bound, err := s.users.ListRoles(ctx, userID)
-	if err != nil {
+	// 只追加这一条绑定（已绑定即不动），不走「读出现有绑定 → 整组替换」：两个实例同时为同一用户首次授权、
+	// 或与管理员编辑他的角色撞在一起时，整组写回会把对方刚写的绑定覆盖掉。
+	if err := s.users.AddRole(ctx, userID, role.ID); err != nil {
 		return "", err
 	}
-	ids := make([]string, 0, len(bound)+1)
-	for _, r := range bound {
-		if r.ID == role.ID {
-			return role.ID, nil
-		}
-		ids = append(ids, r.ID)
-	}
-	return role.ID, s.users.BindRoles(ctx, userID, append(ids, role.ID))
+	return role.ID, nil
 }
 
 // ticketWithK8sChange 工单的流程监听器，外加容器平台的变更单同步。内嵌工单的 StatusSyncer：它的可选能力

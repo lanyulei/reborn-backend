@@ -76,11 +76,17 @@ type CredentialReader interface {
 	Credential(ctx context.Context, clusterID string) ([]byte, SavedEndpoint, error)
 }
 
+// defaultSyncTimeout 等待缓存首次同步的缺省上限。必须明显小于 core 调用本实例的超时（k8s.plane_timeout，
+// 缺省 30s，且 core 的计时先开始）：两者相等时，冷缓存的大集群上同步只要接近 30 秒，用户拿到的是 core 侧的
+// 通用超时，而不是数据面这个明确的「缓存建立中，请稍后重试」——缓存其实还在后台继续建立，重试即可。
+const defaultSyncTimeout = 25 * time.Second
+
 // Options 连接与缓存参数。
 type Options struct {
-	QPS         float32
-	Burst       int
-	CacheIdle   time.Duration
+	QPS       float32
+	Burst     int
+	CacheIdle time.Duration
+	// SyncTimeout 等待某类资源的缓存首次同步的上限；配置值须小于 core 的 k8s.plane_timeout（见 defaultSyncTimeout）。
 	SyncTimeout time.Duration
 	// MemoryLimit 进程堆内存上限（字节）；0 = 不限。
 	MemoryLimit uint64
@@ -97,7 +103,7 @@ func (o Options) withDefaults() Options {
 		o.CacheIdle = 15 * time.Minute
 	}
 	if o.SyncTimeout <= 0 {
-		o.SyncTimeout = 30 * time.Second
+		o.SyncTimeout = defaultSyncTimeout
 	}
 	return o
 }

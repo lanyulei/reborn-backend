@@ -402,3 +402,45 @@ func TestAuthService_ChangeMyPassword(t *testing.T) {
 		t.Fatalf("ChangeMyPassword(no identity) error = %v, want ErrTokenInvalid", err)
 	}
 }
+
+// TestAuthService_PasswordChangeRequired 内置超管的口令仍是迁移预置的初始口令时，登录应答与当前登录者
+// 信息都带出 password_change_required（纯提示：登录照常成功）；改密后两处都不再带出。
+func TestAuthService_PasswordChangeRequired(t *testing.T) {
+	t.Parallel()
+	svc, _, store, _ := newAuthService(t)
+	ctx := context.Background()
+	admin := &biz.User{ID: "user-admin", Username: "admin", Password: biz.PresetAdminPasswordHash, IsAdmin: true, Status: biz.StatusEnabled}
+	if err := store.CreateUser(ctx, admin); err != nil {
+		t.Fatalf("seed preset admin: %v", err)
+	}
+	alice := seedAuthUser(t, store, "alice")
+	const preset = "Admin123!" // 迁移 0001 注释里写明的种子口令（公开数据，不是任何环境的凭据）
+
+	login, err := svc.Login(ctx, &v1.LoginRequest{Username: "admin", Password: preset})
+	if err != nil || login.GetAccessToken() == "" || !login.GetPasswordChangeRequired() {
+		t.Fatalf("Login(preset password) = (required=%v, %v), want a successful login carrying the hint", login.GetPasswordChangeRequired(), err)
+	}
+	profile, err := svc.GetLoginProfile(claimsContext(admin.ID), &v1.GetLoginProfileRequest{})
+	if err != nil || !profile.GetPasswordChangeRequired() {
+		t.Fatalf("GetLoginProfile(preset password) = (required=%v, %v), want the hint", profile.GetPasswordChangeRequired(), err)
+	}
+	// 普通用户不带。
+	if login, err := svc.Login(ctx, &v1.LoginRequest{Username: "alice", Password: "plain-secret"}); err != nil || login.GetPasswordChangeRequired() {
+		t.Fatalf("Login(ordinary user) = (required=%v, %v), want no hint", login.GetPasswordChangeRequired(), err)
+	}
+	if profile, err := svc.GetLoginProfile(claimsContext(alice.ID), &v1.GetLoginProfileRequest{}); err != nil || profile.GetPasswordChangeRequired() {
+		t.Fatalf("GetLoginProfile(ordinary user) = (required=%v, %v), want no hint", profile.GetPasswordChangeRequired(), err)
+	}
+
+	// 提示不拦截任何接口：带着提示照常改密；改密后两处都不再带出。
+	if _, err := svc.ChangeMyPassword(claimsContext(admin.ID), &v1.ChangeMyPasswordRequest{OldPassword: preset, NewPassword: "N3w-Passw0rd!"}); err != nil {
+		t.Fatalf("ChangeMyPassword() error = %v", err)
+	}
+	login, err = svc.Login(ctx, &v1.LoginRequest{Username: "admin", Password: "N3w-Passw0rd!"})
+	if err != nil || login.GetPasswordChangeRequired() {
+		t.Fatalf("Login(after change) = (required=%v, %v), want no hint", login.GetPasswordChangeRequired(), err)
+	}
+	if profile, err := svc.GetLoginProfile(claimsContext(admin.ID), &v1.GetLoginProfileRequest{}); err != nil || profile.GetPasswordChangeRequired() {
+		t.Fatalf("GetLoginProfile(after change) = (required=%v, %v), want no hint", profile.GetPasswordChangeRequired(), err)
+	}
+}

@@ -112,10 +112,11 @@ func (uc *RecordUsecase) run(ctx context.Context, task *Task, start time.Time) (
 		}
 		return ResultSkipped, 0, nil
 	}
-	finish := func(status int32, result, msg string, series int) (string, int, error) {
+	// finishIn 落账并返回结果，interval 为到下一次执行的间隔；finish 是它的常规入口（一个记录周期，带抖动）。
+	finishIn := func(interval time.Duration, status int32, result, msg string, series int) (string, int, error) {
 		res := &RecordResult{
 			Status: status, Error: truncate(msg, maxErrorBytes), Duration: time.Since(start),
-			Series: int32(series), Interval: nextInterval(rule.Interval), // #nosec G115 -- 序列数受 max_series 约束
+			Series: int32(series), Interval: interval, // #nosec G115 -- 序列数受 max_series 约束
 		}
 		if err := uc.repo.Finish(ctx, task, res); err != nil {
 			return "", 0, err
@@ -130,6 +131,9 @@ func (uc *RecordUsecase) run(ctx context.Context, task *Task, start time.Time) (
 			}
 		}
 		return result, series, nil
+	}
+	finish := func(status int32, result, msg string, series int) (string, int, error) {
+		return finishIn(nextInterval(rule.Interval), status, result, msg, series)
 	}
 	if !monitorcontract.ValidMetricName(rule.Name) {
 		return finish(monitorcontract.RecordQueryError, ResultError, "record rule name is not a valid metric name", 0)
@@ -180,6 +184,13 @@ func (uc *RecordUsecase) run(ctx context.Context, task *Task, start time.Time) (
 	for _, chunk := range chunkSeries(series) {
 		if err := h.Write(wctx, chunk); err != nil {
 			msg := err.Error() + "; wrote " + strconv.Itoa(written) + " of " + strconv.Itoa(len(series)) + " series"
+			if written > 0 && task.LastStatus != monitorcontract.RecordWriteError {
+				// 已写出一部分分片：新指标里只有部分序列，缺口每多一刻，引用它的告警规则都可能把缺失的序列
+				// 当成「消失」而判恢复。上一轮不是写回失败时，隔 retryDelay 就重做一次（整轮重查、全部重写，
+				// 重复写入只是多一个点），把不一致窗口从一个记录周期压到一个重试间隔；连续写回失败则照旧等
+				// 一个记录周期，不给已经吃紧的写入端加压。
+				return finishIn(retryDelay, monitorcontract.RecordWriteError, ResultWriteError, joinNotes(msg, note), written)
+			}
 			return finish(monitorcontract.RecordWriteError, ResultWriteError, joinNotes(msg, note), written)
 		}
 		written += len(chunk)

@@ -76,8 +76,9 @@ func (l *listenerStub) OnInstanceFinished(_ context.Context, _ txrun.Tx, in *biz
 	return nil
 }
 
+// env 的 t 取 testing.TB：集成基准（bench_integration_test.go）经 newEnv 复用同一份夹具。
 type env struct {
-	t        *testing.T
+	t        testing.TB
 	d        *basedata.Data
 	defs     *biz.DefinitionUsecase
 	rt       *biz.RuntimeUsecase
@@ -87,7 +88,7 @@ type env struct {
 	dir      *bizsystem.DirectoryUsecase
 }
 
-func newEnv(t *testing.T) *env {
+func newEnv(t testing.TB) *env {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_SOURCE")
 	if dsn == "" {

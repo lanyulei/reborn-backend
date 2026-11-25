@@ -28,7 +28,9 @@ var patterns = []pattern{
 	{"aliyun_access_key", regexp.MustCompile(`\bLTAI[0-9A-Za-z]{12,24}\b`)},
 	{"jwt", regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b`)},
 	// password / passwd / pwd / secret / token / api_key / access_key = 或 : 后跟 ≥ 8 个非空白字符（允许引号包裹）。
-	{"password_assignment", regexp.MustCompile(`(?i)\b(?:password|passwd|pwd|secret|secret_key|api[_-]?key|access[_-]?key|token)\b\s*[:=]\s*["']?([^\s"']{8,})["']?`)},
+	// 键名前允许任意「下划线 / 连字符」前缀分段：真实配置里最常见的是 db_password、client_secret、
+	// access_token 这类写法——此前关键字前要求单词边界，它们全部漏报。
+	{"password_assignment", regexp.MustCompile(`(?i)\b(?:[a-z0-9]+[_-])*(?:password|passwd|pwd|secret|secret_key|api[_-]?key|access[_-]?key|token)\b\s*[:=]\s*["']?([^\s"']{8,})["']?`)},
 }
 
 // placeholderValues 赋值右侧出现这些片段视为占位符而非真实口令（文档里常见的 `password=<your-password>`）。

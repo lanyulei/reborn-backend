@@ -87,7 +87,8 @@ func TestHTTPServer_AuthLoginFlow(t *testing.T) {
 	if login.AccessToken == "" || login.RefreshToken == "" || login.ExpiresIn != "900" {
 		t.Fatalf("login tokens = %+v", login)
 	}
-	if login.User.Username != "bob" || strings.Contains(body, "password") {
+	// 应答里不得带出口令字段；passwordChangeRequired 是「仍为初始口令」的提示位，不是口令。
+	if login.User.Username != "bob" || strings.Contains(body, `"password"`) {
 		t.Fatalf("login user = %+v body = %q", login.User, body)
 	}
 

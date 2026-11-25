@@ -152,7 +152,8 @@ func TestCmdb_Neighbors(t *testing.T) {
 	if code, _ := doRequestWithToken(t, http.MethodGet, ts.URL+"/api/v1/cmdb/ci/00000000-0000-0000-0000-000000000001/neighbors", admin, ""); code != http.StatusNotFound {
 		t.Fatalf("unknown ci must be 404: %d", code)
 	}
-	// 受限用户（仅 host 可见）：交换机与配件及其边被隐藏，但经交换机的 h-2 仍不可达 → 只剩中心。
+	// 受限用户（仅 host 可见）：交换机与配件及其边被隐藏；h-2 只能经（不可见的）交换机到达，同样不出现 → 只剩中心。
+	// 此前范围外的节点照样参与展开并占用节点预算，h-2 会作为一个没有任何连线的孤立节点留在结果里。
 	user := createUser(t, ts, admin, "topo_user")
 	grantAssistantRole(t, ts, admin, user.Id, "cmdb_topo", "/cmdb.v1.CmdbRelationService/Neighbors", "/cmdb.v1.CmdbCIService/GetCI")
 	code, body := doRequestWithToken(t, http.MethodGet, ts.URL+"/api/v1/cmdb/scope/role", admin, "")
@@ -182,7 +183,7 @@ func TestCmdb_Neighbors(t *testing.T) {
 			t.Fatalf("scoped topology leaked %s", n.Name)
 		}
 	}
-	if len(scoped.Edges) != 0 || len(scoped.Nodes) != 2 {
+	if len(scoped.Edges) != 0 || len(scoped.Nodes) != 1 || scoped.Nodes[0].ID != host.ID {
 		t.Fatalf("scoped = %+v", scoped)
 	}
 }

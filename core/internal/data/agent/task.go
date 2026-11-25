@@ -108,6 +108,17 @@ func (r *taskRepo) Get(ctx context.Context, id string) (*biz.Task, error) {
 	return t, nil
 }
 
+// uuidEq 生成「uuid 列等于入参」的条件（? 为入参占位）。col::text = ? 用不上该列的索引（任务保留 90 天，
+// 按故障 / Profile 筛选会顺序扫描），所以入参是规范写法（小写带连字符）时改为 col = ?::uuid——此时两种
+// 写法命中的行完全相同（uuid 的文本形式恒为规范写法）。其它写法（大写、不带连字符、非法值）保持原来的文本
+// 比较：原行为是「查不到」，换成 ::uuid 会变成命中（大写）或报错（非法值）。
+func uuidEq(col, id string) string {
+	if idgen.IsUUID(id) {
+		return col + " = ?::uuid"
+	}
+	return col + "::text = ?"
+}
+
 // List implements biz.TaskRepo.
 func (r *taskRepo) List(ctx context.Context, f biz.TaskFilter, page, pageSize int64) ([]*biz.Task, int64, error) {
 	where := []string{"1 = 1"}
@@ -117,10 +128,10 @@ func (r *taskRepo) List(ctx context.Context, f biz.TaskFilter, page, pageSize in
 		where = append(where, strings.ReplaceAll(cond, "?", "$"+strconv.Itoa(len(args))))
 	}
 	if f.ProfileID != "" {
-		add("t.profile_id::text = ?", f.ProfileID)
+		add(uuidEq("t.profile_id", f.ProfileID), f.ProfileID)
 	}
 	if f.IncidentID != "" {
-		add("t.incident_id::text = ?", f.IncidentID)
+		add(uuidEq("t.incident_id", f.IncidentID), f.IncidentID)
 	}
 	if f.Status != "" {
 		add("t.status = ?", f.Status)
@@ -268,10 +279,12 @@ func (r *taskRepo) ExpireQueued(ctx context.Context, before time.Time, limit int
 }
 
 // ReleaseStale implements biz.TaskRepo：租约过期的 running 放回队列（持有实例已崩溃）。
-func (r *taskRepo) ReleaseStale(ctx context.Context, now time.Time, limit int) (int, error) {
+// locked_until 全部由数据库 now() + 租约算出，到期也用数据库时钟判定：拿实例本地时间比的话，
+// 应用时钟领先数据库超过宽限，仍在运行的任务会被提前放回并再次领取。
+func (r *taskRepo) ReleaseStale(ctx context.Context, limit int) (int, error) {
 	tag, err := r.data.Pool.Exec(ctx,
 		`UPDATE agent_task SET status = 'queued', result = '运行实例失联，重新排队', next_time = now(), lock_token = NULL, locked_until = NULL, update_time = now()
-		 WHERE id IN (SELECT id FROM agent_task WHERE status = 'running' AND locked_until < $1 LIMIT $2)`, now, limit)
+		 WHERE id IN (SELECT id FROM agent_task WHERE status = 'running' AND locked_until < now() LIMIT $1::int)`, limit)
 	if err != nil {
 		return 0, fmt.Errorf("release stale agent tasks: %w", err)
 	}
