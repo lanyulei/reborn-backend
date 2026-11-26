@@ -520,26 +520,22 @@ func TestPlaneRoleIsRestricted(t *testing.T) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
-	// 现状（钉住，不代表期望）：数据面角色是 k8s_audit 及其分区的属主（迁移 0072 为了分区维护把属主改成它），
-	// 属主权限盖过了迁移里「只授 SELECT / INSERT」的本意——改、删、清空审计它都能执行，审计「只增不改」
-	// 目前只靠代码约束。放在回滚的事务里验证，不动数据；哪天收紧了属主权限，这里会失败，届时改成断言 42501。
-	tx, err := e.d.Pool.Begin(ctxb())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = tx.Rollback(ctxb()) }()
+	// 审计只增不改（迁移 0092）：数据面角色仍是 k8s_audit 及其分区的属主（分区维护需要），但对它们的 UPDATE / DELETE /
+	// TRUNCATE 已被数据库收回——属主权限不再盖过迁移 0072「只授 SELECT / INSERT」的本意。属主权利（改表结构）保留。
+	// 每条语句各占一个回滚的事务：被拒绝的语句会毒化所在的事务。完整的权限矩阵见 audit_acl_integration_test.go。
 	for name, stmt := range map[string]string{
 		"update audit":   `UPDATE k8s_audit SET username = 'x'`,
 		"delete audit":   `DELETE FROM k8s_audit`,
 		"truncate audit": `TRUNCATE k8s_audit`,
-		"alter audit":    `ALTER TABLE k8s_audit ADD COLUMN IF NOT EXISTS it_probe int`,
 	} {
-		if _, err := tx.Exec(ctxb(), stmt); err != nil {
-			t.Errorf("%s: the data plane role owns k8s_audit and can run this today, got %v", name, err)
+		if err := e.asPlane(memberRole, map[string]string{name: stmt})[name]; pgCode(err) != "42501" {
+			t.Errorf("%s: want permission denied (42501), got %v", name, err)
 		}
 	}
-	if err := tx.Rollback(ctxb()); err != nil {
-		t.Fatal(err)
+	if err := e.asPlane(memberRole, map[string]string{
+		"alter audit": `ALTER TABLE k8s_audit ADD COLUMN IF NOT EXISTS it_probe int`,
+	})["alter audit"]; err != nil {
+		t.Errorf("alter audit: the data plane role still owns k8s_audit and must be able to change its schema, got %v", err)
 	}
 	t.Cleanup(func() {
 		if err := e.try(`DROP TABLE IF EXISTS k8s_plane_it_scratch`); err != nil {

@@ -96,11 +96,13 @@ const (
 	ResultIncomplete = "incomplete"  // 结果不完整（截断 / 部分结果），整轮不写
 )
 
-// 事件指令的处理结果（Observer.AddCommand 的 result）。
+// 事件指令的处理结果（Observer.AddCommand 的 result）。abandoned 是指令数，failed 是失败的执行次数：
+// 放弃的那一次执行同样是失败的，两个计数各记一笔。
 const (
-	CommandDone     = "done"     // 已执行
-	CommandRejected = "rejected" // 未执行：事件已不在告警中
-	CommandFailed   = "failed"   // 引擎自身故障，下一轮重试
+	CommandDone      = "done"      // 已执行
+	CommandRejected  = "rejected"  // 未执行：事件已不在告警中
+	CommandFailed    = "failed"    // 引擎自身故障，下一轮重试
+	CommandAbandoned = "abandoned" // 未执行：连续失败已满上限，引擎放弃（时间线写一条说明）
 )
 
 // ErrCommandGone 指令已不是待处理状态（被别的实例处理了）。
@@ -200,6 +202,21 @@ type CommandRepo interface {
 	// 任务行（与评估的提交串行）→ 事件仍在告警中则置为已关闭、删除它的判定状态、时间线记一条关闭、已关联
 	// 工单的入队一条 ticket_note，指令置已执行；否则指令置未执行。返回是否关闭了事件。newID 生成新行的主键。
 	CloseAlert(ctx context.Context, cmd AlertCommand, newID func() (string, error)) (bool, error)
+}
+
+// CommandFailureRepo 事件指令的失败记录与放弃（与 CommandRepo 是同一个仓储实现，拆开是为了让每个接口
+// 都不超过三个方法）。
+type CommandFailureRepo interface {
+	// RecordCommandFailure 记一次执行失败，指令仍是待处理才记（否则返回 ErrCommandGone，什么都不写）。
+	// first_failed_at 是当前这一段连续失败的起点：上一次失败距今超过 gap 就算中断过（引擎宕机、指令长期
+	// 没被领取），从这一次重新计时；否则保持不变。返回这一段连续失败是否已满 giveUp。两个时刻与判定都用
+	// 数据库时钟。
+	RecordCommandFailure(ctx context.Context, id string, gap, giveUp time.Duration) (bool, error)
+	// AbandonCommand 放弃一条连续失败已满 giveUp 的指令，单事务：锁指令行（FOR UPDATE SKIP LOCKED）→ 仍是
+	// 待处理且 first_failed_at 距今确已满 giveUp 才继续 → 指令置未执行、result = why、时间线追加一条
+	// action_failed（说明为 why，系统产生、没有操作人）。围栏未命中（已不是待处理、正被别的实例处理、失败
+	// 时段其实未满 giveUp）返回 false 且不写任何东西，所以多实例同时放弃也只会写一条事件。newID 生成事件的主键。
+	AbandonCommand(ctx context.Context, cmd AlertCommand, why string, giveUp time.Duration, newID func() (string, error)) (bool, error)
 }
 
 // RecordRepo 记录规则任务的读取与写回（领取 / 归还与评估任务共用同一套租约，见 TaskRepo）。

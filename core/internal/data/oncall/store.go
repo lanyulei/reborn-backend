@@ -535,6 +535,27 @@ func (t *txn) UpdateRemindedMasks(ctx context.Context, masks []biz.ShiftMask) er
 	return err
 }
 
+// purgeDeletedScheduleShiftsSQL 已删除值班表的班次的保留期清理（PurgeDeletedScheduleShifts 用；单独成常量供集成测试
+// 在真实库上核对执行计划）。$1 保留期，$2 批大小；时间取数据库时钟，与值班表 delete_time 的写入同一时钟源。
+//
+// 按值班表取行（迁移 0090 的 idx_oncall_shift_schedule）：从已删除超过保留期的值班表出发，经 schedule_id 索引取班次，
+// 取满一批即停。子查询不排序：按删除时间排序的话，每批都得先把所有已删除值班表的班次取出来排好序才能取前 N 条，
+// 积压越大每批越慢；这些行反正都要删，先后次序没有意义。
+//
+// 不需要在被删的行上重检条件：值班表没有恢复功能（delete_time 只会从 NULL 变成非 NULL），而班次的全部写路径都
+// 先锁一张未删除的值班表，已删除值班表的班次不会再被改写。
+const purgeDeletedScheduleShiftsSQL = `DELETE FROM oncall_shift WHERE id IN (
+	SELECT sh.id FROM oncall_shift sh
+	JOIN oncall_schedule sc ON sc.id = sh.schedule_id
+	WHERE sc.delete_time IS NOT NULL AND sc.delete_time < now() - $1::interval
+	LIMIT $2)`
+
+// PurgeDeletedScheduleShifts implements biz.Tx.PurgeDeletedScheduleShifts。语句幂等：多实例同时清理时后到者删到 0 行。
+func (t *txn) PurgeDeletedScheduleShifts(ctx context.Context, olderThan time.Duration, limit int) (int, error) {
+	n, err := t.exec(ctx, "purge shifts of deleted oncall schedules", purgeDeletedScheduleShiftsSQL, olderThan, limit)
+	return int(n), err
+}
+
 // ListDueDigests implements biz.Tx：本地时刻在播报时刻之后 30 分钟内且当日未播报的启用
 // 值班表（窗口用于避免当天晚些时候才设置播报时刻时立刻补发）。
 func (t *txn) ListDueDigests(ctx context.Context, now time.Time, limit int) ([]*biz.Schedule, error) {

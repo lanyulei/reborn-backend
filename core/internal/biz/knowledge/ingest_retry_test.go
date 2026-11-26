@@ -46,6 +46,10 @@ func (f *fakeIngestRepo) Finish(_ context.Context, _ string, status int32, _ *st
 
 func (f *fakeIngestRepo) SetDocumentTx(context.Context, txrun.Tx, string, string) error { return nil }
 
+func (f *fakeIngestRepo) PurgeFinished(context.Context, time.Duration, int) (int, error) {
+	return 0, nil
+}
+
 // fakeIngestFiles 导入源文件桩：Download 返回预置内容或错误。
 type fakeIngestFiles struct {
 	data []byte

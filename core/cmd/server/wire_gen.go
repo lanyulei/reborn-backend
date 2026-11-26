@@ -71,7 +71,7 @@ import (
 // 各域 data ProviderSet 在此显式列出；biz/service 顶层已聚合。
 // service 层消费的 biz 窄接口（AdminResolver ← UserUsecase）在组合根绑定，避免 biz 反向依赖 service。
 // server 消费的 data 层能力（存活探测 Pinger、表增长观测 TableStats）同在此绑定：两层互不 import。
-func wireApp(confServer *conf.Server, confData *conf.Data, security *conf.Security, notify *conf.Notify, assistant *conf.Assistant, monitor *conf.Monitor, k8S *conf.K8S, knowledge *conf.Knowledge, agent *conf.Agent, logger *slog.Logger) (*kratos.App, func(), error) {
+func wireApp(confServer *conf.Server, confData *conf.Data, security *conf.Security, notify *conf.Notify, assistant *conf.Assistant, monitor *conf.Monitor, k8S *conf.K8S, knowledge *conf.Knowledge, agent *conf.Agent, oncall *conf.Oncall, logger *slog.Logger) (*kratos.App, func(), error) {
 	roles, err := server.NewRoles(confServer, logger)
 	if err != nil {
 		return nil, nil, err
@@ -625,7 +625,7 @@ func wireApp(confServer *conf.Server, confData *conf.Data, security *conf.Securi
 	summarizer2 := biz3.NewKnowledgeSummarizer(bizSummarizer)
 	config := biz9.NewConfig(knowledge)
 	indexUsecase := biz9.NewIndexUsecase(documentRepo, spaceRepo, chunkRepo, indexRepo, embeddingClient, embedGuard, summarizer2, txManager, config, logger)
-	bizGovernanceUsecase := biz9.NewGovernanceUsecase(documentRepo, spaceRepo, searchLogRepo, chunkRepo, txManager, notificationUsecase, directoryUsecase, config, logger)
+	bizGovernanceUsecase := biz9.NewGovernanceUsecase(documentRepo, spaceRepo, searchLogRepo, ingestRepo, chunkRepo, txManager, notificationUsecase, directoryUsecase, config, logger)
 	adminService := service12.NewAdminService(indexUsecase, bizGovernanceUsecase)
 	incidentService := service13.NewIncidentService(incidentUsecase)
 	bizRuleUsecase := biz10.NewRuleUsecase(deps)
@@ -700,7 +700,8 @@ func wireApp(confServer *conf.Server, confData *conf.Data, security *conf.Securi
 	}
 	httpServer := server.NewHTTPServer(confServer, logger, userService, roleService, deptService, authService, systemConfigService, loginLogService, notifyChannelService, notifyTemplateService, notifyRouteService, notifySilenceService, notifySubscriptionService, notifyProducerService, notifyEventService, notifyDispatchService, notifyDeliveryLogService, notifyDeadLetterService, assistantService, assistantChatService, cmdbModelService, cmdbCIService, cmdbRelationService, cmdbScopeService, cmdbSyncService, cmdbInsightService, oncallGroupService, oncallScheduleService, oncallShareService, fileService, definitionService, instanceService, taskService, configService, openService, catalogService, ticketService, datasourceService, ruleGroupService, ruleService, alertService, muteService, subscriptionService, p2Services, credentialService, projectService, templateService, executionService, runnerService, scriptService, policyService, scheduleService, triggerService, clusterService, scopeService, auditService, resourceService, workloadService, streamService, helmRepoService, helmReleaseService, insightService, governanceService, changeService, k8S, spaceService, knowledgeService, ingestService, adminService, services, serviceServices, tokenSigner, authzUsecase, roles, dataData, metrics)
 	workerUsecase := biz8.NewWorkerUsecase(store, groupRepo, scheduleRepo, shiftRepo, notifier)
-	oncallLoops := worker.NewOncallLoops(workerUsecase, logger, metrics)
+	config2 := biz8.NewConfig(oncall)
+	oncallLoops := worker.NewOncallLoops(workerUsecase, config2, logger, metrics)
 	fileLoops := worker.NewFileLoops(usecase, logger, metrics)
 	webhookCaller := data6.NewWebhookCaller()
 	jobUsecase := biz5.NewJobUsecase(runtimeUsecase, jobRepo, jobRepo, configRepo, webhookCaller, logger)

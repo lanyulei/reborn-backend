@@ -17,8 +17,9 @@ import (
 )
 
 var (
-	_ biz.MaintenanceRepo = (*maintenanceRepo)(nil)
-	_ biz.WebhookRepo     = (*webhookRepo)(nil)
+	_ biz.MaintenanceRepo     = (*maintenanceRepo)(nil)
+	_ biz.SyncRecordPurgeRepo = (*maintenanceRepo)(nil)
+	_ biz.WebhookRepo         = (*webhookRepo)(nil)
 )
 
 // maintenanceRepo 历史分区维护（与通知管道同一策略：独立建表 + 短事务 ATTACH；lock_timeout 失败下轮重试）。
@@ -135,6 +136,58 @@ func (r *maintenanceRepo) DropPartitionsBefore(ctx context.Context, table string
 		dropped++
 	}
 	return dropped, nil
+}
+
+// 同步任务与运行记录的保留期清理（语句幂等：多实例同时跑，后到者删到 0 行）。$1 保留期，$2 批大小；时间取数据库时钟，
+// 与 finish_time 的写入同一时钟源。取行条件与迁移 0090 的部分索引谓词逐字一致：部分索引只有在查询条件能推出索引谓词
+// 时才会用得上；按 finish_time 有序取满一批即停。
+const (
+	// purgeSyncRunsSQL 已结束且结束时间早于保留期的运行记录。各采集源最近一次运行（cmdb_sync_source.last_run_id）
+	// 不在其中：数据面靠这个关联把租约过期的任务收尾并回写采集源状态（见 taskRepo.Claim），控制面也靠它展示最近一次同步。
+	purgeSyncRunsSQL = `DELETE FROM cmdb_sync_run WHERE id IN (
+	   SELECT r.id FROM cmdb_sync_run r
+	   WHERE r.status IN ('succeeded', 'failed') AND r.finish_time < now() - $1::interval
+	     AND NOT EXISTS (SELECT 1 FROM cmdb_sync_source s WHERE s.last_run_id = r.id)
+	   ORDER BY r.finish_time LIMIT $2)`
+	// purgeSyncTasksSQL 自身已结束、早于保留期、且它指向的运行记录已不存在的任务。运行记录只按自己的条件删，
+	// 任务在它的运行记录删掉之后才可删：不会出现「任务没了、运行记录还在」；反过来（运行记录已删、任务下一轮才删）
+	// 只是晚一轮，没有悬挂引用。
+	purgeSyncTasksSQL = `DELETE FROM cmdb_sync_task WHERE id IN (
+	   SELECT t.id FROM cmdb_sync_task t
+	   WHERE t.status IN ('succeeded', 'failed') AND t.finish_time < now() - $1::interval
+	     AND NOT EXISTS (SELECT 1 FROM cmdb_sync_run r WHERE r.id = t.run_id)
+	   ORDER BY t.finish_time LIMIT $2)`
+)
+
+// insufficientPrivilege SQLSTATE 42501（权限不足）。数据面账号是 cmdb_sync_role 的成员，两张表的 DELETE 授权来自迁移；
+// 用字面量而不是引入 pgerrcode（与 isDuplicateObject 同一写法，不新增直接依赖）。
+const insufficientPrivilege = "42501"
+
+// wrapPurgeErr 包装清理语句的错误：权限不足换成 biz.ErrPurgeDenied（用例据此降级，不当作维护失败），其余原样包装。
+func wrapPurgeErr(what string, err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == insufficientPrivilege {
+		return fmt.Errorf("%s: %w", what, biz.ErrPurgeDenied)
+	}
+	return fmt.Errorf("%s: %w", what, err)
+}
+
+// PurgeRuns implements biz.SyncRecordPurgeRepo。
+func (r *maintenanceRepo) PurgeRuns(ctx context.Context, olderThan time.Duration, limit int) (int, error) {
+	tag, err := r.data.Pool.Exec(ctx, purgeSyncRunsSQL, olderThan, limit)
+	if err != nil {
+		return 0, wrapPurgeErr("purge sync runs", err)
+	}
+	return int(tag.RowsAffected()), nil
+}
+
+// PurgeTasks implements biz.SyncRecordPurgeRepo。
+func (r *maintenanceRepo) PurgeTasks(ctx context.Context, olderThan time.Duration, limit int) (int, error) {
+	tag, err := r.data.Pool.Exec(ctx, purgeSyncTasksSQL, olderThan, limit)
+	if err != nil {
+		return 0, wrapPurgeErr("purge sync tasks", err)
+	}
+	return int(tag.RowsAffected()), nil
 }
 
 // webhookRepo 回调接入仓储。

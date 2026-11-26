@@ -906,6 +906,18 @@ type fakeCommandRepo struct {
 	closed  []string
 	listErr error
 	limit   int
+	// 连续失败：failures 是每条指令已记的失败次数，giveUpAt 是第几次记失败时报告「已满上限」（0 = 从不）；
+	// recordErr / abandonErr 是两个调用返回的错误，abandonOK 是放弃的围栏是否命中。attempts 是调用过放弃的指令，
+	// reasons 是放弃成功的说明，gaps / giveUps 是两次调用收到的阈值。
+	failures   map[string]int
+	giveUpAt   int
+	recordErr  error
+	abandonErr error
+	abandonOK  bool
+	attempts   []string
+	reasons    []string
+	gaps       []time.Duration
+	giveUps    []time.Duration
 }
 
 func (f *fakeCommandRepo) PendingCommands(_ context.Context, limit int) ([]AlertCommand, error) {
@@ -926,6 +938,33 @@ func (f *fakeCommandRepo) CloseAlert(_ context.Context, cmd AlertCommand, newID 
 	return f.open[cmd.ID], nil
 }
 
+func (f *fakeCommandRepo) RecordCommandFailure(_ context.Context, id string, gap, giveUp time.Duration) (bool, error) {
+	if f.recordErr != nil {
+		return false, f.recordErr
+	}
+	if f.failures == nil {
+		f.failures = map[string]int{}
+	}
+	f.failures[id]++
+	f.gaps, f.giveUps = append(f.gaps, gap), append(f.giveUps, giveUp)
+	return f.giveUpAt > 0 && f.failures[id] >= f.giveUpAt, nil
+}
+
+func (f *fakeCommandRepo) AbandonCommand(_ context.Context, cmd AlertCommand, why string, giveUp time.Duration, newID func() (string, error)) (bool, error) {
+	f.attempts, f.giveUps = append(f.attempts, cmd.ID), append(f.giveUps, giveUp)
+	if f.abandonErr != nil {
+		return false, f.abandonErr
+	}
+	if !f.abandonOK {
+		return false, nil
+	}
+	if _, err := newID(); err != nil {
+		return false, err
+	}
+	f.reasons = append(f.reasons, why)
+	return true, nil
+}
+
 func TestCommandUsecase(t *testing.T) {
 	cmd := func(id string, kind int32) AlertCommand {
 		return AlertCommand{ID: id, AlertID: "alert-" + id, Kind: kind}
@@ -939,7 +978,7 @@ func TestCommandUsecase(t *testing.T) {
 		outcome: map[string]error{"4": ErrCommandGone, "5": errors.New("deadlock")},
 	}
 	obs := &fakeObserver{}
-	uc := NewCommandUsecase(repo, obs, quietLogger())
+	uc := NewCommandUsecase(repo, repo, obs, quietLogger())
 	n, err := uc.RunOnce(context.Background())
 	// 1 关闭；2 事件已不在告警中；3 不认识的指令留给认识它的版本；4 被别的实例处理了；5 失败、仍待处理。
 	if err != nil || n != 0 || !slices.Equal(repo.closed, []string{"alert-1"}) || repo.limit != 100 {

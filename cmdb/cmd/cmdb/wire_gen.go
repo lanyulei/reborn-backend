@@ -54,7 +54,7 @@ func wireApp(confServer *conf.Server, confData *conf.Data, sync *conf.Sync, noti
 	v := collector.NewRegistry(sync)
 	workerUsecase := biz.NewWorkerUsecase(sourceRepo, taskRepo, stagingRepo, reconcileRepo, metaRepo, secretBox, notifier, v, logger)
 	maintenanceRepo := data.NewMaintenanceRepo(dataData)
-	maintenanceUsecase := biz.NewMaintenanceUsecase(maintenanceRepo, logger)
+	maintenanceUsecase := biz.NewMaintenanceUsecase(maintenanceRepo, maintenanceRepo, logger)
 	locker := data.NewLocker(dataData)
 	tableStatsRepo := data.NewTableStatsRepo(dataData)
 	metrics, cleanup2, err := server.NewMetrics(tableStatsRepo)

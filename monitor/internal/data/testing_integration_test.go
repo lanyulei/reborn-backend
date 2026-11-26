@@ -277,7 +277,7 @@ func (e *env) engine(masterKey string) *engine {
 		e: e, cache: cache, token: "it-" + e.id()[24:], obs: obs, inhibits: inhibits, stats: stats,
 		evaluator: biz.NewEvaluatorUsecase(NewTaskRepo(e.d), cfg, NewRoundRepo(e.d), cache, inhibits, stats, obs, testLogger()),
 		planner:   biz.NewPlannerUsecase(NewPlannerRepo(e.d), cache, obs, testLogger()),
-		commands:  biz.NewCommandUsecase(NewCommandRepo(e.d), obs, testLogger()),
+		commands:  biz.NewCommandUsecase(NewCommandRepo(e.d), NewCommandRepo(e.d), obs, testLogger()),
 		records:   biz.NewRecordUsecase(NewRecordRepo(e.d), cache, stats, obs, testLogger()),
 		watch:     biz.NewWatchUsecase(NewSelfmonRepo(e.d), obs, testLogger()),
 	}

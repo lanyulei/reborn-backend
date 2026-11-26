@@ -333,6 +333,9 @@ type Tx interface {
 	SetRemindedMask(ctx context.Context, shiftID string, mask int32) error
 	// UpdateRemindedMasks 批量覆盖班次的已提醒标记（修改提醒提前量时按值重映射，见 remapRemindedMasks）。
 	UpdateRemindedMasks(ctx context.Context, masks []ShiftMask) error
+	// PurgeDeletedScheduleShifts 物理清理所属值班表已删除、且删除时间早于 now() - olderThan 的班次，至多 limit 条；
+	// 返回清理条数。
+	PurgeDeletedScheduleShifts(ctx context.Context, olderThan time.Duration, limit int) (int, error)
 	// ListDueDigests 行锁（SKIP LOCKED）取出到达播报时刻且当日未播报的启用值班表。
 	ListDueDigests(ctx context.Context, now time.Time, limit int) ([]*Schedule, error)
 	// HasRecentManualNotify since 之后是否已手动发送过该值班表的该类通知。

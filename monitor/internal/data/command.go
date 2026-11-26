@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/lanyulei/reborn/backend/kit/dbx"
 	"github.com/lanyulei/reborn/backend/kit/monitorcontract"
@@ -13,10 +14,13 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-var _ biz.CommandRepo = (*commandRepo)(nil)
+var (
+	_ biz.CommandRepo        = (*commandRepo)(nil)
+	_ biz.CommandFailureRepo = (*commandRepo)(nil)
+)
 
 // commandRepo 事件指令（monitor_alert_cmd）的消费。引擎对该表只有 SELECT / DELETE 与
-// status、result、done_time 三列的 UPDATE。
+// status、result、done_time、first_failed_at、last_failed_at 五列的 UPDATE。
 type commandRepo struct {
 	data *Data
 }
@@ -139,4 +143,77 @@ func (r *commandRepo) CloseAlert(ctx context.Context, cmd biz.AlertCommand, newI
 		return nil
 	})
 	return closed, err
+}
+
+// RecordCommandFailure implements biz.CommandRepo。单语句，带「仍是待处理」围栏（别的实例刚处理掉就什么都不记）：
+// RETURNING 在更新后的行上求值，同一条语句就得到「这一段连续失败是否已满 giveUp」。两个时刻都取数据库时钟。
+// 多实例都来记也只会刷新 last_failed_at，first_failed_at 是这一段共有的起点。
+func (r *commandRepo) RecordCommandFailure(ctx context.Context, id string, gap, giveUp time.Duration) (bool, error) {
+	var exhausted bool
+	err := r.data.Pool.QueryRow(ctx,
+		`UPDATE monitor_alert_cmd
+		    SET first_failed_at = CASE
+		          WHEN first_failed_at IS NULL OR last_failed_at IS NULL OR last_failed_at < now() - $3::interval THEN now()
+		          ELSE first_failed_at END,
+		        last_failed_at = now()
+		  WHERE id = $1::uuid AND status = $2
+		RETURNING first_failed_at <= now() - $4::interval`,
+		id, monitorcontract.CmdPending, gap, giveUp).Scan(&exhausted)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, biz.ErrCommandGone
+	}
+	if err != nil {
+		return false, fmt.Errorf("record alert command failure: %w", err)
+	}
+	return exhausted, nil
+}
+
+// AbandonCommand implements biz.CommandRepo。三重围栏：FOR UPDATE SKIP LOCKED（别的实例正在处理这条指令就
+// 立即返回，不排队）→ 仍是待处理 → first_failed_at 距今确已满 giveUp（事务内的数据库时钟）。锁住指令行之后
+// 它不会再被别人改，后面的 UPDATE 仍带上同样的条件并核对行数。只动指令行与时间线，不碰告警与判定状态，
+// 所以不需要像 CloseAlert 那样锁任务行。
+func (r *commandRepo) AbandonCommand(ctx context.Context, cmd biz.AlertCommand, why string, giveUp time.Duration, newID func() (string, error)) (bool, error) {
+	abandoned := false
+	err := dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+		abandoned = false
+		var exhausted bool
+		err := tx.QueryRow(ctx,
+			`SELECT COALESCE(first_failed_at <= now() - $2::interval, false) FROM monitor_alert_cmd
+			  WHERE id = $1::uuid AND status = $3 FOR UPDATE SKIP LOCKED`,
+			cmd.ID, giveUp, monitorcontract.CmdPending).Scan(&exhausted)
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && !exhausted) {
+			// 已不是待处理、正被别的实例处理，或失败时段其实未满：什么都不写。
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("lock alert command: %w", err)
+		}
+		tag, err := tx.Exec(ctx,
+			`UPDATE monitor_alert_cmd SET status = $2, result = $3, done_time = now()
+			  WHERE id = $1 AND status = $4 AND first_failed_at <= now() - $5::interval`,
+			cmd.ID, monitorcontract.CmdRejected, why, monitorcontract.CmdPending, giveUp)
+		if err != nil {
+			return fmt.Errorf("abandon alert command: %w", err)
+		}
+		if tag.RowsAffected() != 1 {
+			return biz.ErrCommandGone
+		}
+		eventID, err := newID()
+		if err != nil {
+			return err
+		}
+		detail, err := json.Marshal(monitorcontract.AlertEventDetail{Text: why})
+		if err != nil {
+			return fmt.Errorf("encode alert event detail: %w", err)
+		}
+		// 操作人按既有约定取 NULL：这条记录由系统产生，不是下达关闭的那个人写的。
+		if _, err := tx.Exec(ctx,
+			"INSERT INTO monitor_alert_event (id, alert_id, type, operator, detail) VALUES ($1, $2, $3, NULL, $4::jsonb)",
+			eventID, cmd.AlertID, monitorcontract.AlertEventActionFailed, string(detail)); err != nil {
+			return fmt.Errorf("record abandoned alert command event: %w", err)
+		}
+		abandoned = true
+		return nil
+	})
+	return abandoned, err
 }

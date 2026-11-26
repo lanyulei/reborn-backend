@@ -23,6 +23,8 @@ const (
 	oncallRemindInterval  = 30 * time.Second
 	oncallDigestInterval  = time.Minute
 	oncallInspectInterval = time.Hour
+	// oncallPurgeInterval 已删除值班表的班次清理周期：一轮按预算分批删，积压留给后续轮次。
+	oncallPurgeInterval = time.Hour
 )
 
 // OncallLoops 值班域全部后台循环。
@@ -39,15 +41,24 @@ func (l *OncallLoops) Servers() []transport.Server {
 	return out
 }
 
-// NewOncallLoops 构造值班后台循环：补排班、上班提醒、每日播报、异常巡检。
-func NewOncallLoops(uc *bizoncall.WorkerUsecase, logger *slog.Logger, rec loop.Recorder) *OncallLoops {
+// NewOncallLoops 构造值班后台循环：补排班、上班提醒、每日播报、异常巡检、已删除值班表的班次清理。
+func NewOncallLoops(uc *bizoncall.WorkerUsecase, cfg bizoncall.Config, logger *slog.Logger, rec loop.Recorder) *OncallLoops {
 	// idle 屏蔽"处理条数 > 0 即立刻再跑一轮"的忙循环语义：这些任务一轮即处理完，
-	// 且巡检在异常持续存在期间每轮都会返回非零。
+	// 且巡检在异常持续存在期间每轮都会返回非零；清理每轮按预算删一批，积压留给后续轮次，
+	// 按周期消化即可，不该为此连续空转。
 	idle := func(fn func(ctx context.Context) (int, error)) func(ctx context.Context) (int, error) {
 		return func(ctx context.Context) (int, error) {
 			_, err := fn(ctx)
 			return 0, err
 		}
+	}
+	// 值班域的用例不打日志：清到行时在这里记一条（带表名与条数）。
+	purgeShifts := func(ctx context.Context) (int, error) {
+		n, err := uc.PurgeDeletedScheduleShifts(ctx, cfg.DeletedShiftRetention)
+		if n > 0 {
+			logger.InfoContext(ctx, "oncall: purged shifts of deleted schedules", "table", "oncall_shift", "count", n)
+		}
+		return n, err
 	}
 	return &OncallLoops{loops: []*loop.Loop{
 		loop.New("oncall-extend", oncallExtendInterval, logger, rec, idle(uc.Extend)),
@@ -55,5 +66,6 @@ func NewOncallLoops(uc *bizoncall.WorkerUsecase, logger *slog.Logger, rec loop.R
 		loop.New("oncall-remind", oncallRemindInterval, logger, rec, uc.Remind),
 		loop.New("oncall-digest", oncallDigestInterval, logger, rec, idle(uc.Digest)),
 		loop.New("oncall-inspect", oncallInspectInterval, logger, rec, idle(uc.Inspect)),
+		loop.New("oncall-purge", oncallPurgeInterval, logger, rec, idle(purgeShifts)),
 	}}
 }

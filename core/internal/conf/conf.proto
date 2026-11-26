@@ -27,6 +27,8 @@ message Bootstrap {
   Knowledge knowledge = 8;
   // agent 运维 Agent 域配置（任务预算、并发、保留期）；整段可省略 = 停用。
   Agent agent = 9;
+  // oncall 值班域配置（历史数据的保留期）；整段可省略。
+  Oncall oncall = 10;
 }
 
 // Server 是 HTTP 服务器配置（仅 HTTP 协议；gRPC 已停用）。
@@ -250,4 +252,14 @@ message Knowledge {
   google.protobuf.Duration search_log_retention = 2;
   // index_concurrency 单实例同时处理的索引任务数；缺省 2。
   int32 index_concurrency = 3;
+  // ingest_job_retention 已结束（成功 / 失败）的文件导入任务保留期，到期后由后台循环 knowledge-purge
+  // 分批物理删除；缺省 720h（30 天）。未设置取缺省值，显式 0s = 不清理。
+  google.protobuf.Duration ingest_job_retention = 4;
+}
+
+// Oncall 是值班域配置；整段可省略（省略时各项取缺省值）。
+message Oncall {
+  // deleted_schedule_shift_retention 已删除值班表的班次保留期，到期后由后台循环 oncall-purge 分批物理删除；
+  // 缺省 720h（30 天）。未设置取缺省值，显式 0s = 不清理。
+  google.protobuf.Duration deleted_schedule_shift_retention = 1;
 }

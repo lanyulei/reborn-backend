@@ -54,7 +54,7 @@ func buildWith(t *testing.T, c *conf.Engine, beats biz.InstanceRepo) *Set {
 	heartbeat, _ := biz.NewHeartbeatUsecase(beats, info, stats, logger)
 	return NewSet(c, info, NewUsecases(cache, inhibits, stats, biz.NewPlannerUsecase(nil, cache, obs, logger),
 		biz.NewEvaluatorUsecase(nil, nil, nil, cache, inhibits, stats, obs, logger),
-		biz.NewMaintenanceUsecase(nil, nil, logger), biz.NewCommandUsecase(nil, obs, logger),
+		biz.NewMaintenanceUsecase(nil, nil, logger), biz.NewCommandUsecase(nil, nil, obs, logger),
 		biz.NewRecordUsecase(nil, cache, stats, obs, logger), biz.NewWatchUsecase(nil, obs, logger), heartbeat),
 		nopLocker{}, nil, logger)
 }

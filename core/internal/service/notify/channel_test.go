@@ -425,3 +425,40 @@ func TestNotifyChannelService_ListChannelHealth(t *testing.T) {
 		t.Fatalf("scoped in-range list = %+v, %v", resp, err)
 	}
 }
+
+// 更新 Webhook 渠道时带回的是打码的请求头：用例层会把「掩码 = 不改」的请求头就地回填为库内真实取值。
+// 请求 proto 不能与用例层共用这张 map——日志中间件在 handler 返回后才打印请求，共用的话真实取值会进访问日志。
+func TestNotifyChannelService_UpdateWebhookHeadersKeepsTheRequestMasked(t *testing.T) {
+	t.Parallel()
+	svc, _ := newChannelService(t)
+	ctx := testCtx()
+
+	created, err := svc.CreateChannel(ctx, &notifyv1.CreateChannelRequest{
+		Type: notifyv1.NotifyChannelType_NOTIFY_CHANNEL_TYPE_WEBHOOK,
+		Name: "webhook-header-mask",
+		Detail: &notifyv1.CreateChannelRequest_Webhook{Webhook: &notifyv1.WebhookChannelConfig{
+			Url: "https://example.com/hook", Method: "POST", Headers: map[string]string{"X-Token": "real-token-value"},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CreateChannel(webhook with header) error = %v", err)
+	}
+	// 前端回显的是掩码，原样提交即「不改」。
+	req := &notifyv1.UpdateChannelRequest{Id: created.GetChannel().GetId(), Detail: &notifyv1.UpdateChannelRequest_Webhook{Webhook: &notifyv1.WebhookChannelConfig{
+		Url: "https://example.com/hook", Method: "POST", Headers: map[string]string{"X-Token": biz.WebhookHeaderMask},
+	}}}
+	if _, err := svc.UpdateChannel(ctx, req); err != nil {
+		t.Fatalf("UpdateChannel() error = %v", err)
+	}
+	if got := req.GetWebhook().GetHeaders()["X-Token"]; got != biz.WebhookHeaderMask {
+		t.Fatalf("request header after UpdateChannel() = %q; want it left as the submitted mask (the real value must not leak into the access log)", got)
+	}
+	// 库内的取值没有被动。
+	got, err := svc.GetChannel(ctx, &notifyv1.GetChannelRequest{Id: created.GetChannel().GetId()})
+	if err != nil {
+		t.Fatalf("GetChannel() error = %v", err)
+	}
+	if headers := got.GetChannel().GetDetail().(*notifyv1.NotifyChannel_Webhook).Webhook.GetHeaders(); headers["X-Token"] != biz.WebhookHeaderMask {
+		t.Fatalf("stored headers = %v; want the header kept (returned masked)", headers)
+	}
+}

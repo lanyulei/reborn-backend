@@ -158,7 +158,7 @@ func (r *maintenanceRepo) EnsureAuditPartitions(ctx context.Context, ahead int) 
 }
 
 // ensurePartition 确保某个月的分区存在（做法同 monitor 的判定记录表）：
-//  1. 独立建表（LIKE 父表含默认值 / 约束）并加区间 CHECK（ATTACH 时免扫描），属主对齐父表；
+//  1. 独立建表（LIKE 父表含默认值 / 约束）并加区间 CHECK（ATTACH 时免扫描），属主与权限对齐父表；
 //  2. 单短事务（lock_timeout 2s）：锁 DEFAULT 分区 → 迁出其中落在该区间的行 → ATTACH。
 //
 // 不用 CREATE TABLE … PARTITION OF：它对父表取 ACCESS EXCLUSIVE 并扫描 DEFAULT，会阻塞审计写入。
@@ -190,6 +190,14 @@ func (r *maintenanceRepo) ensurePartition(ctx context.Context, month time.Time) 
 		if _, err := r.data.Pool.Exec(ctx, fmt.Sprintf("ALTER TABLE %s OWNER TO %s", name, pgx.Identifier{parentOwner}.Sanitize())); err != nil {
 			return fmt.Errorf("align owner of %s: %w", name, err)
 		}
+	}
+	// 权限对齐父表——审计只增不改（迁移 0092）。迁移只处理了它执行时已存在的分区；默认权限规则帮不上忙：
+	// 它只按「建表时的角色」匹配，而这里通常是服务的登录账号建表、上面再把属主对齐到父表的属主。所以在建出
+	// 每个分区时显式收回属主的 UPDATE / DELETE / TRUNCATE（属主权利，重复执行是空操作）。新分区此时是空表，
+	// 没有读者；之后经父表写入照常。
+	if _, err := r.data.Pool.Exec(ctx, fmt.Sprintf("REVOKE UPDATE, DELETE, TRUNCATE ON %s FROM %s",
+		name, pgx.Identifier{parentOwner}.Sanitize())); err != nil {
+		return fmt.Errorf("revoke write access on %s: %w", name, err)
 	}
 	if _, err := r.data.Pool.Exec(ctx, fmt.Sprintf(
 		"ALTER TABLE %s ADD CONSTRAINT %s_range CHECK (create_time >= '%s' AND create_time < '%s')", name, name, lo, hi)); err != nil &&

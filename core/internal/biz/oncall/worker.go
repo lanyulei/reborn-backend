@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/lanyulei/reborn/backend/kit/loop"
 )
 
 // 后台任务批量与窗口参数。
@@ -16,9 +18,24 @@ const (
 	inspectWindow = 7 * 24 * time.Hour
 )
 
-// WorkerUsecase 值班后台任务：补排班、上班提醒、每日播报、异常巡检。多实例并发安全：
+// 已删除值班表的班次清理的分批参数（一轮 = oncall-purge 循环的一次迭代）。
+const (
+	// shiftPurgeBatch 每条 DELETE 至多删除的班次数：单条语句只锁一小段，不积压 WAL。
+	shiftPurgeBatch = 1000
+	// shiftPurgeStatements 一轮至多发出的 DELETE 条数，是时间预算之外的第二道闸（语句意外变慢时兜底）。
+	shiftPurgeStatements = 100
+	// shiftPurgeBudget 一轮用于班次清理的时间预算：删满一批且预算没用完才发下一条。首次启用（或长期停机后）
+	// 历史积压可能很大，每轮（每小时）只在这么多时间里分批删，剩下的留给后续轮次，不在一轮里猛删；稳态下第一条
+	// 语句就不足一批，预算用不上。
+	shiftPurgeBudget = 5 * time.Second
+)
+
+// shiftPurgeOpts 班次清理一轮的预算，取值见上。
+var shiftPurgeOpts = loop.PurgeOptions{Batch: shiftPurgeBatch, MaxStatements: shiftPurgeStatements, Budget: shiftPurgeBudget}
+
+// WorkerUsecase 值班后台任务：补排班、上班提醒、每日播报、异常巡检、已删除值班表的班次清理。多实例并发安全：
 // 补排班靠值班表行锁 + 幂等的"只补不删"；提醒与播报靠 SKIP LOCKED 行锁与同事务置位；
-// 巡检通知靠 notify 去重键。因此无需选主。
+// 巡检通知靠 notify 去重键；班次清理是幂等的 DELETE（后到者删到 0 行）。因此无需选主。
 type WorkerUsecase struct {
 	store     Store
 	groups    GroupRepo
@@ -234,4 +251,26 @@ func (uc *WorkerUsecase) Inspect(ctx context.Context) (int, error) {
 		}
 	}
 	return len(order), errors.Join(errs...)
+}
+
+// PurgeDeletedScheduleShifts 清理所属值班表已删除超过 retention 的班次（retention ≤ 0 = 不清理，不发语句），
+// 返回本轮清理的条数。分批：删满一批且预算没用完才发下一条，不足一批 / 条数用尽 / 预算用尽即停，没删完的留给下一轮。
+//
+// 可删的依据：删除值班表时未开始的班次已当场清除、进行中的已在删除时刻截断，留下的是纯历史班次；值班表没有恢复
+// 功能；班次的全部读取路径都只连接未删除的值班表（见 data 层 shiftJoins），这些行不再被任何查询或后台任务读到。
+func (uc *WorkerUsecase) PurgeDeletedScheduleShifts(ctx context.Context, retention time.Duration) (int, error) {
+	if retention <= 0 {
+		return 0, nil
+	}
+	return loop.PurgeBatched(ctx, shiftPurgeOpts, func(ctx context.Context) (int, error) {
+		var n int
+		err := uc.store.WithinTx(ctx, func(tx Tx) error {
+			var err error
+			if n, err = tx.PurgeDeletedScheduleShifts(ctx, retention, shiftPurgeOpts.Batch); err != nil {
+				return err
+			}
+			return nil
+		})
+		return n, err
+	})
 }

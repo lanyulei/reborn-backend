@@ -147,7 +147,12 @@ go test ./...               -race -shuffle=on
 - 通知渠道凭据主密钥经 `KRATOS_NOTIFY_MASTER_KEY` 注入（config.yaml 占位
   `${NOTIFY_MASTER_KEY}`；`openssl rand -hex 32` 生成）。AES-256-GCM 加密落库；
   **留空时服务照常启动**，仅在写入带 secret 的渠道处报 `NOTIFY_SECRET_UNAVAILABLE`
-  （不阻断未启用通知能力的部署），webhook 等无 secret 渠道不受影响。
+  （不阻断未启用通知能力的部署），webhook 等 secret 渠道不受影响。
+- 容器平台 kube 代理入口的认证失败限速以来源地址为键。缺省（及 `KRATOS_TRUSTED_PROXIES` 未设置时）对端是
+  回环 / 私网地址就采信 `X-Forwarded-For`——部署在会改写该头的反向代理后面时，直连的调用方可以伪造它换限速键。
+  经环境变量 `KRATOS_TRUSTED_PROXIES` 配置可信代理清单（逗号分隔的 CIDR 或 IP，如 `10.0.0.0/8,192.168.1.10`）
+  后，只有 TCP 对端属于清单时才采信该头，其余一律用对端地址。只在启动时读取；清单里没有有效条目时按未配置
+  处理并打 WARN。
 
 ## API 概览（HTTP）
 

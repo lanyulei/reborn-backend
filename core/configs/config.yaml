@@ -88,6 +88,8 @@ knowledge:
   search_log_retention: 7776000s
   # 单实例同时处理的索引任务数；缺省 2。
   index_concurrency: 2
+  # 已结束（成功 / 失败）的文件导入任务保留期；缺省 30 天，0s = 不清理。
+  ingest_job_retention: 2592000s
 agent:
   # 运维 Agent：以机器账号对故障做无人值守诊断，并按预案提出处置建议（设计见 backend/docs/ops-agent-functional-design.md）。
   # 模型接入与工具执行回环沿用 assistant 段；assistant.api_key 为空时即使 enabled 也不可用。
@@ -108,6 +110,9 @@ agent:
   retention: 7776000s
   queue_ttl: 600s
   retry_backoff: [30s, 120s, 600s]
+oncall:
+  # 已删除值班表的班次保留期；缺省 30 天，0s = 不清理（在用值班表的班次不受影响）。
+  deleted_schedule_shift_retention: 2592000s
 monitor:
   # 前端站点地址（如 https://ops.example.com）。非空时告警通知里的详情链接为
   # <site_url>/monitor/alert/<id>；留空则是站内相对路径（通知渠道里点不开，只适合站内消息）。

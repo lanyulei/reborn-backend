@@ -28,7 +28,7 @@ var ProviderSet = wire.NewSet(
 	NewRoundRepo, wire.Bind(new(biz.RoundRepo), new(*roundRepo)),
 	NewPlannerRepo, wire.Bind(new(biz.PlannerRepo), new(*plannerRepo)),
 	NewMaintenanceRepo, wire.Bind(new(biz.PartitionRepo), new(*maintenanceRepo)), wire.Bind(new(biz.RetentionRepo), new(*maintenanceRepo)), wire.Bind(new(biz.InhibitRepo), new(*configRepo)),
-	NewCommandRepo, wire.Bind(new(biz.CommandRepo), new(*commandRepo)),
+	NewCommandRepo, wire.Bind(new(biz.CommandRepo), new(*commandRepo)), wire.Bind(new(biz.CommandFailureRepo), new(*commandRepo)),
 	NewRecordRepo, wire.Bind(new(biz.RecordRepo), new(*recordRepo)),
 	NewSelfmonRepo, wire.Bind(new(biz.WatchRepo), new(*selfmonRepo)), wire.Bind(new(biz.InstanceRepo), new(*selfmonRepo)),
 )

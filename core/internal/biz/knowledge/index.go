@@ -36,6 +36,8 @@ const (
 	maxBatchSize            = 128
 	// defaultLogRetention 检索日志缺省保留期。
 	defaultLogRetention = 90 * 24 * time.Hour
+	// defaultIngestJobRetention 已结束的导入任务缺省保留期。
+	defaultIngestJobRetention = 30 * 24 * time.Hour
 )
 
 // Config 知识库域运行参数（由 conf.Knowledge 规整）。
@@ -43,12 +45,17 @@ type Config struct {
 	IndexConcurrency int
 	BatchSize        int
 	LogRetention     time.Duration
-	EmbeddingModel   string
+	// IngestJobRetention 已结束（成功 / 失败）的导入任务保留期；0 = 不清理。
+	IngestJobRetention time.Duration
+	EmbeddingModel     string
 }
 
 // NewConfig 从配置规整；nil 取缺省。
 func NewConfig(c *conf.Knowledge) Config {
-	cfg := Config{IndexConcurrency: defaultIndexConcurrency, BatchSize: defaultBatchSize, LogRetention: defaultLogRetention}
+	cfg := Config{
+		IndexConcurrency: defaultIndexConcurrency, BatchSize: defaultBatchSize, LogRetention: defaultLogRetention,
+		IngestJobRetention: defaultIngestJobRetention,
+	}
 	if c == nil {
 		return cfg
 	}
@@ -63,6 +70,11 @@ func NewConfig(c *conf.Knowledge) Config {
 	}
 	if d := c.GetSearchLogRetention(); d != nil && d.AsDuration() > 0 {
 		cfg.LogRetention = d.AsDuration()
+	}
+	// 未设置取缺省，显式设置按配置值：0（及负值）= 不清理。与检索日志不同，失败的任务可以手工重试，
+	// 多久以前的记录不再保留由部署方决定，缺省值只是给一个稳妥的起点。
+	if d := c.GetIngestJobRetention(); d != nil {
+		cfg.IngestJobRetention = max(d.AsDuration(), 0)
 	}
 	return cfg
 }

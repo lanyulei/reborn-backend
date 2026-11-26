@@ -545,6 +545,9 @@ type IngestRepo interface {
 	Finish(ctx context.Context, id string, status int32, documentID *string, chunkCount int32, errMsg string) error
 	// SetDocumentTx 在建档事务内把任务指向新建的文档：任务重领时据此续作而不是再建一篇。
 	SetDocumentTx(ctx context.Context, tx txrun.Tx, id, documentID string) error
+	// PurgeFinished 物理清理已结束（成功 / 失败）且 update_time 早于 now() - olderThan 的任务，至多 limit 条；
+	// 返回清理条数。只删终态行：排队 / 处理中（含租约过期等待重领）的任务不碰。
+	PurgeFinished(ctx context.Context, olderThan time.Duration, limit int) (int, error)
 }
 
 // IndexRepo 索引任务仓储。

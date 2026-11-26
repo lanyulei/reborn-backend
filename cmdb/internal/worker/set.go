@@ -44,16 +44,25 @@ func num(v int32, def int) int {
 	return int(v)
 }
 
+// retentionDur 保留期类参数：未设置取缺省；显式设置按配置值，0（及负值）= 不删除 / 不清理（与 dur 不同，
+// dur 把非正值一律当缺省）。
+func retentionDur(d *durationpb.Duration, def time.Duration) time.Duration {
+	if d == nil {
+		return def
+	}
+	return d.AsDuration()
+}
+
 // NewSet 构造循环并注入 conf 参数到各用例。属主令牌 = 主机名 + 随机串 + 循环序号。
 func NewSet(c *conf.Sync, scheduler *biz.SchedulerUsecase, worker *biz.WorkerUsecase, maintenance *biz.MaintenanceUsecase,
 	locker loop.Locker, rec loop.Recorder, logger *slog.Logger,
 ) (*Set, error) {
 	sc, wc, mc := c.GetScheduler(), c.GetWorker(), c.GetMaintenance()
-	retention := 365 * 24 * time.Hour
-	if mc.GetHistoryRetention() != nil {
-		retention = mc.GetHistoryRetention().AsDuration()
-	}
-	maintenance.WithOptions(biz.MaintenanceOptions{PartitionsAhead: num(mc.GetPartitionsAhead(), 2), HistoryRetention: retention})
+	maintenance.WithOptions(biz.MaintenanceOptions{
+		PartitionsAhead:  num(mc.GetPartitionsAhead(), 2),
+		HistoryRetention: retentionDur(mc.GetHistoryRetention(), 365*24*time.Hour),
+		RunRetention:     retentionDur(mc.GetRunRetention(), biz.DefaultRunRetention),
+	})
 	scheduler.WithOptions(biz.SchedulerOptions{StaleMultiplier: sc.GetStaleMultiplier(), StagingRetention: dur(sc.GetStagingRetention(), 24*time.Hour)})
 	worker.WithOptions(biz.WorkerOptions{
 		Lease: dur(wc.GetLease(), 5*time.Minute), CollectTimeout: dur(wc.GetCollectTimeout(), 10*time.Minute), StagingBatch: num(wc.GetStagingBatch(), 500),

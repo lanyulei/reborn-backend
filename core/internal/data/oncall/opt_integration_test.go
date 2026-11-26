@@ -17,8 +17,8 @@ func TestIntegration_ShiftReadsEquivalent(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	g := e.group(t, uA, uB, uC)
-	now := time.Now().UTC().Truncate(time.Second)
-	cfg := dailyConfig(now.Add(-time.Hour), uA, uB, uC)
+	start := time.Now().UTC()
+	cfg := dailyConfig(start.Add(-time.Hour), uA, uB, uC)
 	s1, err := e.schedules.Create(ctx, e.admin, g.ID, cfg)
 	if err != nil {
 		t.Fatalf("create s1: %v", err)
@@ -28,6 +28,10 @@ func TestIntegration_ShiftReadsEquivalent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create s2: %v", err)
 	}
+	// 判定时刻取在两张值班表都建好之后的下一个整秒：每张表的首个班次从它自己的创建时刻开始，下面的窗口
+	// [now, now+1s) 只有完全落在创建之后才一定盖住两张表。沿用创建之前取的时刻的话，创建耗时接近 1 秒时
+	//（机器有负载、或取时刻时恰好靠近整秒末尾）后建的那张表的首个班次会落在窗口之外——偶发失败。
+	now := time.Now().UTC().Add(time.Second).Truncate(time.Second)
 
 	ids := func(shifts []*biz.Shift) []string {
 		out := make([]string, 0, len(shifts))

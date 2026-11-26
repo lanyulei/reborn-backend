@@ -623,10 +623,18 @@ func (f *fakeMaintenance) DropPartitionsBefore(_ context.Context, _ string, befo
 	return 1, nil
 }
 
+func (f *fakeMaintenance) PurgeRuns(context.Context, time.Duration, int) (int, error) {
+	return 0, nil
+}
+
+func (f *fakeMaintenance) PurgeTasks(context.Context, time.Duration, int) (int, error) {
+	return 0, nil
+}
+
 func TestMaintenance_RunOnce(t *testing.T) {
 	t.Parallel()
 	repo := &fakeMaintenance{}
-	uc := NewMaintenanceUsecase(repo, testLogger()).WithOptions(MaintenanceOptions{PartitionsAhead: 2, HistoryRetention: 30 * 24 * time.Hour})
+	uc := NewMaintenanceUsecase(repo, repo, testLogger()).WithOptions(MaintenanceOptions{PartitionsAhead: 2, HistoryRetention: 30 * 24 * time.Hour})
 	now := time.Date(2026, 11, 15, 10, 0, 0, 0, time.UTC)
 	if err := uc.RunOnce(context.Background(), now); err != nil {
 		t.Fatal(err)
@@ -639,7 +647,7 @@ func TestMaintenance_RunOnce(t *testing.T) {
 	}
 	// 保留期 0 = 不删除；单项失败返回错误但不中断其它月份。
 	repo2 := &fakeMaintenance{fail: true}
-	uc2 := NewMaintenanceUsecase(repo2, testLogger()).WithOptions(MaintenanceOptions{PartitionsAhead: 1, HistoryRetention: 0})
+	uc2 := NewMaintenanceUsecase(repo2, repo2, testLogger()).WithOptions(MaintenanceOptions{PartitionsAhead: 1, HistoryRetention: 0})
 	if err := uc2.RunOnce(context.Background(), now); err == nil || len(repo2.dropped) != 0 {
 		t.Fatalf("expected ensure error and no drop, got err=%v dropped=%v", err, repo2.dropped)
 	}

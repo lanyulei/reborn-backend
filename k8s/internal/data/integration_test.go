@@ -13,6 +13,7 @@
 //
 // 仓储全部跑在 k8s_plane_role 成员的连接上（见 newEnv）：超出迁移 0072 / 0073 / 0074 / 0077 / 0078
 // 授权范围的语句被数据库直接拒绝，所以这里的通过意味着「数据面的 DB 角色确实能执行这些 SQL」。
+// 审计表只增不改的权限矩阵（迁移 0092）见 audit_acl_integration_test.go。
 
 package data
 
@@ -71,52 +72,24 @@ func newEnv(t *testing.T) *env {
 	if db := cfg.ConnConfig.Database; !strings.Contains(db, "test") {
 		t.Fatalf("TEST_DATABASE_SOURCE 指向库 %q：库名须含 \"test\"", db)
 	}
-	// 连接类错误会带上连接参数：落进测试输出之前去掉口令。
-	scrub := func(err error) string {
-		if err == nil {
-			return ""
-		}
-		if pwd := cfg.ConnConfig.Password; pwd != "" {
-			return strings.ReplaceAll(err.Error(), pwd, "***")
-		}
-		return err.Error()
-	}
 	ctx := context.Background()
-	cfg.MaxConns = 8
-	admin, err := pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
-		t.Fatalf("connect: %s", scrub(err))
-	}
+	admin := newPoolAs(t, "", func(cfg *pgxpool.Config) { cfg.MaxConns = 8 })
 	t.Cleanup(admin.Close)
 
 	// 角色是集群级对象：不存在才建，用完即删。清理顺序为后进先出——先关数据面连接池，再删角色，最后关 admin。
-	if _, err := admin.Exec(ctx, `DO $$ BEGIN
-		IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '`+memberRole+`') THEN
-			CREATE ROLE `+memberRole+` NOLOGIN IN ROLE `+planeRole+`;
-		END IF; END $$`); err != nil {
-		t.Fatalf("create member role: %s", scrub(err))
-	}
-	t.Cleanup(func() {
-		if _, err := admin.Exec(context.Background(), "DROP ROLE IF EXISTS "+memberRole); err != nil {
-			t.Errorf("drop member role: %v", err)
-		}
-	})
+	ensureMemberRole(ctx, t, admin, memberRole, planeRole)
 
-	planeCfg, _ := pgxpool.ParseConfig(dsn)
-	planeCfg.MaxConns = 16
-	// 启动参数里设置角色：该连接池的每个会话都以 planeRole 成员的权限执行；语句超时与生产连接池一致。
-	planeCfg.ConnConfig.RuntimeParams["role"] = memberRole
-	planeCfg.ConnConfig.RuntimeParams["statement_timeout"] = planeStatementTimeout
 	trace := &queryTracer{}
-	planeCfg.ConnConfig.Tracer = trace
-	plane, err := pgxpool.NewWithConfig(ctx, planeCfg)
-	if err != nil {
-		t.Fatalf("connect as the data plane role: %s", scrub(err))
-	}
+	plane := newPoolAs(t, memberRole, func(cfg *pgxpool.Config) {
+		cfg.MaxConns = 16
+		// 语句超时与生产连接池一致。
+		cfg.ConnConfig.RuntimeParams["statement_timeout"] = planeStatementTimeout
+		cfg.ConnConfig.Tracer = trace
+	})
 	t.Cleanup(plane.Close)
 	var who string
 	if err := plane.QueryRow(ctx, "SELECT current_user").Scan(&who); err != nil || who != memberRole {
-		t.Fatalf("data plane pool runs as %q (%s), want %s", who, scrub(err), memberRole)
+		t.Fatalf("data plane pool runs as %q (%v), want %s", who, err, memberRole)
 	}
 
 	e := &env{t: t, admin: admin, d: &Data{Pool: plane}, trace: trace}
@@ -136,6 +109,50 @@ func newEnv(t *testing.T) *env {
 }
 
 func ctxb() context.Context { return context.Background() }
+
+// newPoolAs 按 TEST_DATABASE_SOURCE 建连接池；role 非空时在启动参数里设置会话角色：该连接池的每个会话都以 role 的
+// 权限执行（生产里各服务用自己的登录账号连库，账号是组角色的成员）。adjust 可再调整配置。连接类错误会带上连接参数：
+// 落进测试输出之前去掉口令。
+func newPoolAs(t *testing.T, role string, adjust func(*pgxpool.Config)) *pgxpool.Pool {
+	t.Helper()
+	cfg, err := pgxpool.ParseConfig(os.Getenv("TEST_DATABASE_SOURCE"))
+	if err != nil {
+		t.Fatalf("parse TEST_DATABASE_SOURCE: %v", err)
+	}
+	if role != "" {
+		cfg.ConnConfig.RuntimeParams["role"] = role
+	}
+	if adjust != nil {
+		adjust(cfg)
+	}
+	pool, err := pgxpool.NewWithConfig(ctxb(), cfg)
+	if err != nil {
+		msg := err.Error()
+		if pwd := cfg.ConnConfig.Password; pwd != "" {
+			msg = strings.ReplaceAll(msg, pwd, "***")
+		}
+		t.Fatalf("connect (session role %q): %s", role, msg)
+	}
+	return pool
+}
+
+// ensureMemberRole 建一个测试专用的成员角色：member 加入 NOLOGIN 组角色 group，自身没有任何授权——会话角色为 member 的
+// 连接就只有 group 的权限。角色是集群级对象：不存在才建（上一次运行异常退出可能留下），用完即删；之后注册的清理
+// （关连接池）先于它执行（后进先出：先关连接池，再删角色）。
+func ensureMemberRole(ctx context.Context, t *testing.T, admin *pgxpool.Pool, member, group string) {
+	t.Helper()
+	if _, err := admin.Exec(ctx, `DO $$ BEGIN
+		IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '`+member+`') THEN
+			CREATE ROLE `+member+` NOLOGIN IN ROLE `+group+`;
+		END IF; END $$`); err != nil {
+		t.Fatalf("create member role %s: %v", member, err)
+	}
+	t.Cleanup(func() {
+		if _, err := admin.Exec(context.Background(), "DROP ROLE IF EXISTS "+member); err != nil {
+			t.Errorf("drop member role %s: %v", member, err)
+		}
+	})
+}
 
 // exec 以 admin 身份执行，出错即失败。
 func (e *env) exec(sql string, args ...any) {
@@ -472,10 +489,16 @@ func (e *env) execSessionsBulk(clusterID, tag string, count, records int, endedA
 // audit 以数据面身份写一条审计，返回它实际落在哪张表。
 func (e *env) audit(at time.Time) string {
 	e.t.Helper()
+	return e.insertAuditRow(e.id(), at)
+}
+
+// insertAuditRow 以数据面身份经父表写入一条指定 ID 与时间的审计，返回它实际落在哪张表。
+func (e *env) insertAuditRow(id string, at time.Time) string {
+	e.t.Helper()
 	var table string
 	if err := e.d.Pool.QueryRow(ctxb(),
 		`INSERT INTO k8s_audit (id, action, result, create_time) VALUES ($1, 'update', 1, $2) RETURNING tableoid::regclass::text`,
-		e.id(), at).Scan(&table); err != nil {
+		id, at).Scan(&table); err != nil {
 		e.t.Fatalf("insert audit: %v", err)
 	}
 	return table

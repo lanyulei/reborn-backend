@@ -112,6 +112,12 @@ Secret 的值掩码，单个对象超过 256KB 置空并标记 `truncated`。审
 | `K8S_PPROF=1` | 在内部接口监听上挂出 `/debug/pprof/*`，**只应答来自本机回环地址的请求**（堆里有集群令牌与内部密钥） |
 | `K8S_HELM_ALLOW_LOOPBACK=1` | 允许 Helm 仓库指向回环地址（仅本地开发与端到端测试；缺省拒绝回环、链路本地与元数据地址） |
 
+**审计表只追加**（迁移 0092 / 0093）：`k8s_audit` 的属主是 `k8s_plane_role`（审计月分区的预建与清理由数据面执行），
+但该角色对自己这张表的 UPDATE / DELETE / TRUNCATE 已被收回——只能插入与查询，审计记录不能被改、删、清空；
+core 角色（`k8s_core_role`）同样只有 SELECT / INSERT。例外是 DEFAULT 分区保留 DELETE：新月份的分区建好时要把
+此前落进 DEFAULT 的行搬过去。数据面每建出一个新分区都会对新分区做同样的收回（`ensurePartition`）。这只是防误操作：
+持有该角色凭据的人仍可以自己把权限授回去。
+
 ## 运行与检查
 
 ```bash

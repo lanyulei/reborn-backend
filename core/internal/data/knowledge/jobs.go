@@ -222,6 +222,28 @@ func (r *ingestRepo) SetDocumentTx(ctx context.Context, tx txrun.Tx, id, documen
 	return nil
 }
 
+// purgeFinishedIngestSQL 已结束的导入任务的保留期清理（PurgeFinished 用；单独成常量供集成测试在真实库上核对
+// 执行计划）。$1 保留期，$2 批大小；时间取数据库时钟，与 update_time 的写入（领取 / 落账均写 now()）同一时钟源。
+//
+// 子查询的取行条件与迁移 0090 的部分索引 idx_knowledge_ingest_job_finished 的谓词逐字相同：部分索引只有在查询
+// 条件能推出索引谓词时才会用得上；按 update_time 有序取满一批即停，积压再大每批也只扫一批的量。
+//
+// 外层 DELETE 把终态与时间条件再写一遍：READ COMMITTED 下，子查询取行之后、行锁到手之前，别的会话若恰好改写了
+// 这条任务（重试一条失败任务会把它置回排队），DELETE 等到行锁后会按改写后的行重检外层条件，不再满足就跳过。
+// 只按主键删的话，用户刚重试的任务会被这次清理顺手删掉。
+const purgeFinishedIngestSQL = `DELETE FROM knowledge_ingest_job j WHERE j.id IN (
+	   SELECT id FROM knowledge_ingest_job WHERE status IN (3, 4) AND update_time < now() - $1::interval ORDER BY update_time LIMIT $2)
+	AND j.status IN (3, 4) AND j.update_time < now() - $1::interval`
+
+// PurgeFinished implements biz.IngestRepo.PurgeFinished。语句幂等：多实例同时清理时后到者删到 0 行。
+func (r *ingestRepo) PurgeFinished(ctx context.Context, olderThan time.Duration, limit int) (int, error) {
+	tag, err := r.data.Pool.Exec(ctx, purgeFinishedIngestSQL, olderThan, limit)
+	if err != nil {
+		return 0, wrap("purge finished knowledge ingest jobs", err)
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 // ---------- 索引任务 ----------
 
 type indexRepo struct {

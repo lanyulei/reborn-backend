@@ -27,3 +27,5 @@ sync:
     interval: 3600s
     partitions_ahead: 2
     history_retention: 31536000s  # 365d；0 = 不删除
+    # 同步任务与运行记录的保留期；每个采集源最近一次运行始终保留。
+    run_retention: 15552000s  # 180d；0 = 不清理

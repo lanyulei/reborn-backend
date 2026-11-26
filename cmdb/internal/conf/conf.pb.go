@@ -472,8 +472,11 @@ type Sync_Maintenance struct {
 	PartitionsAhead int32 `protobuf:"varint,2,opt,name=partitions_ahead,json=partitionsAhead,proto3" json:"partitions_ahead,omitempty"`
 	// history_retention 变更历史保留期，缺省 365d；0 = 不删除。
 	HistoryRetention *durationpb.Duration `protobuf:"bytes,3,opt,name=history_retention,json=historyRetention,proto3" json:"history_retention,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// run_retention 同步任务与运行记录的保留期，缺省 180d（4320h）；未设置取缺省值，显式 0s = 不清理。
+	// 每个采集源最近一次运行（last_run_id 指向的那条）始终保留：数据面靠它关联判定「任务已死」。
+	RunRetention  *durationpb.Duration `protobuf:"bytes,4,opt,name=run_retention,json=runRetention,proto3" json:"run_retention,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Sync_Maintenance) Reset() {
@@ -527,6 +530,13 @@ func (x *Sync_Maintenance) GetHistoryRetention() *durationpb.Duration {
 	return nil
 }
 
+func (x *Sync_Maintenance) GetRunRetention() *durationpb.Duration {
+	if x != nil {
+		return x.RunRetention
+	}
+	return nil
+}
+
 var File_conf_conf_proto protoreflect.FileDescriptor
 
 const file_conf_conf_proto_rawDesc = "" +
@@ -542,7 +552,7 @@ const file_conf_conf_proto_rawDesc = "" +
 	"\x06Server\x12!\n" +
 	"\x04http\x18\x01 \x01(\v2\r.kitconf.HTTPR\x04http\"5\n" +
 	"\x04Data\x12-\n" +
-	"\bdatabase\x18\x01 \x01(\v2\x11.kitconf.DatabaseR\bdatabase\"\xfb\x06\n" +
+	"\bdatabase\x18\x01 \x01(\v2\x11.kitconf.DatabaseR\bdatabase\"\xbb\a\n" +
 	"\x04Sync\x12\x14\n" +
 	"\x05roles\x18\x01 \x03(\tR\x05roles\x122\n" +
 	"\tscheduler\x18\x02 \x01(\v2\x14.conf.Sync.SchedulerR\tscheduler\x12)\n" +
@@ -558,11 +568,12 @@ const file_conf_conf_proto_rawDesc = "" +
 	"\x05lease\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\x05lease\x12B\n" +
 	"\x0fcollect_timeout\x18\x04 \x01(\v2\x19.google.protobuf.DurationR\x0ecollectTimeout\x12B\n" +
 	"\x0frequest_timeout\x18\x05 \x01(\v2\x19.google.protobuf.DurationR\x0erequestTimeout\x12#\n" +
-	"\rstaging_batch\x18\x06 \x01(\x05R\fstagingBatch\x1a\xb7\x01\n" +
+	"\rstaging_batch\x18\x06 \x01(\x05R\fstagingBatch\x1a\xf7\x01\n" +
 	"\vMaintenance\x125\n" +
 	"\binterval\x18\x01 \x01(\v2\x19.google.protobuf.DurationR\binterval\x12)\n" +
 	"\x10partitions_ahead\x18\x02 \x01(\x05R\x0fpartitionsAhead\x12F\n" +
-	"\x11history_retention\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\x10historyRetention\"1\n" +
+	"\x11history_retention\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\x10historyRetention\x12>\n" +
+	"\rrun_retention\x18\x04 \x01(\v2\x19.google.protobuf.DurationR\frunRetention\"1\n" +
 	"\x06Notify\x12'\n" +
 	"\x06master\x18\x01 \x01(\v2\x0f.kitconf.MasterR\x06masterB<Z:github.com/lanyulei/reborn/backend/cmdb/internal/conf;confb\x06proto3"
 
@@ -612,11 +623,12 @@ var file_conf_conf_proto_depIdxs = []int32{
 	11, // 15: conf.Sync.Worker.request_timeout:type_name -> google.protobuf.Duration
 	11, // 16: conf.Sync.Maintenance.interval:type_name -> google.protobuf.Duration
 	11, // 17: conf.Sync.Maintenance.history_retention:type_name -> google.protobuf.Duration
-	18, // [18:18] is the sub-list for method output_type
-	18, // [18:18] is the sub-list for method input_type
-	18, // [18:18] is the sub-list for extension type_name
-	18, // [18:18] is the sub-list for extension extendee
-	0,  // [0:18] is the sub-list for field type_name
+	11, // 18: conf.Sync.Maintenance.run_retention:type_name -> google.protobuf.Duration
+	19, // [19:19] is the sub-list for method output_type
+	19, // [19:19] is the sub-list for method input_type
+	19, // [19:19] is the sub-list for extension type_name
+	19, // [19:19] is the sub-list for extension extendee
+	0,  // [0:19] is the sub-list for field type_name
 }
 
 func init() { file_conf_conf_proto_init() }

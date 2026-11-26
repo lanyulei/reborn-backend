@@ -31,7 +31,7 @@ var ProviderSet = wire.NewSet(
 	NewLocker, wire.Bind(new(loop.Locker), new(*locker)),
 	wire.Bind(new(biz.Pinger), new(*Data)),
 	NewNotifier, wire.Bind(new(biz.Notifier), new(*notifier)),
-	NewMaintenanceRepo, wire.Bind(new(biz.MaintenanceRepo), new(*maintenanceRepo)),
+	NewMaintenanceRepo, wire.Bind(new(biz.MaintenanceRepo), new(*maintenanceRepo)), wire.Bind(new(biz.SyncRecordPurgeRepo), new(*maintenanceRepo)),
 	NewWebhookRepo, wire.Bind(new(biz.WebhookRepo), new(*webhookRepo)),
 	NewTableStatsRepo, wire.Bind(new(biz.TableStats), new(*tableStatsRepo)),
 	collector.NewRegistry,

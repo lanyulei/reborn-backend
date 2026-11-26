@@ -61,7 +61,7 @@ func wireApp(confServer *conf.Server, confData *conf.Data, engine *conf.Engine, 
 	maintenanceRepo := data.NewMaintenanceRepo(dataData)
 	maintenanceUsecase := biz.NewMaintenanceUsecase(maintenanceRepo, maintenanceRepo, logger)
 	commandRepo := data.NewCommandRepo(dataData)
-	commandUsecase := biz.NewCommandUsecase(commandRepo, metrics, logger)
+	commandUsecase := biz.NewCommandUsecase(commandRepo, commandRepo, metrics, logger)
 	recordRepo := data.NewRecordRepo(dataData)
 	recordUsecase := biz.NewRecordUsecase(recordRepo, configCache, instanceStats, metrics, logger)
 	selfmonRepo := data.NewSelfmonRepo(dataData)

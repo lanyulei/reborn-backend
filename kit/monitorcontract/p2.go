@@ -155,7 +155,9 @@ const (
 //   - inhibit / uninhibit：InhibitKind、InhibitID（抑制规则）、InhibitAlertID（源告警）
 //   - escalate：Level；fire / resolve：Severity
 //   - ticket / ticket_note：TicketID、TicketNumber、Auto（自动建单为 true）
-//   - workflow：WorkflowInstanceID；action_failed：ActionKind、Error；notify：Text
+//   - workflow：WorkflowInstanceID；notify：Text
+//   - action_failed：事件动作最终失败时为 ActionKind、Error；引擎放弃了一条连续失败的手动关闭指令时只有 Text
+//     （没有操作人，说明里带原因）
 //
 // 用不到的键不落库（omitempty）。
 type AlertEventDetail struct {
@@ -191,7 +193,7 @@ const (
 
 	CmdPending  int32 = 1 // 待处理
 	CmdDone     int32 = 2 // 已执行
-	CmdRejected int32 = 3 // 未执行：事件已不在告警中
+	CmdRejected int32 = 3 // 未执行：事件已不在告警中；或引擎连续失败已满上限而放弃（result 与时间线的 action_failed 事件写明原因）
 )
 
 // 事件动作（monitor_alert_action：引擎按规则配置写入、core 的 monitor-action 循环执行）。
