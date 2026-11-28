@@ -33,11 +33,39 @@ import (
 type jobApprovals struct {
 	runtime     *bizworkflow.RuntimeUsecase
 	definitions *bizworkflow.DefinitionUsecase
+	evidence    bizjob.ApprovalEvidenceReader
 }
 
 // NewJobApprovals 构造作业审批的流程引擎适配器。
-func NewJobApprovals(runtime *bizworkflow.RuntimeUsecase, definitions *bizworkflow.DefinitionUsecase) bizjob.Approvals {
-	return jobApprovals{runtime: runtime, definitions: definitions}
+func NewJobApprovals(runtime *bizworkflow.RuntimeUsecase, definitions *bizworkflow.DefinitionUsecase, evidence bizjob.ApprovalEvidenceReader) bizjob.Approvals {
+	return jobApprovals{runtime: runtime, definitions: definitions, evidence: evidence}
+}
+
+// jobApprovalEvidence 作业审批的审批证据查询：取自流程引擎的实例仓储。直接依赖仓储而不是运行时用例——
+// 运行时用例的构造需要监听器，而作业审批的监听器又要用它查证据，经运行时取会成环。
+type jobApprovalEvidence struct {
+	lookup bizworkflow.InstanceLookup
+}
+
+// NewJobApprovalEvidence 构造作业审批的审批证据查询。
+func NewJobApprovalEvidence(lookup bizworkflow.InstanceLookup) bizjob.ApprovalEvidenceReader {
+	return jobApprovalEvidence{lookup: lookup}
+}
+
+// errNoApprovalEvidence 仓储没有提供审批证据（装配缺陷，不应发生）。
+var errNoApprovalEvidence = errors.New("job: approval evidence is not available")
+
+// ApprovalEvidenceTx implements bizjob.ApprovalEvidenceReader：只看这条执行名下的审批流程树。
+func (e jobApprovalEvidence) ApprovalEvidenceTx(ctx context.Context, tx bizjob.Tx, businessID, except string) (bizjob.ApprovalEvidence, error) {
+	r, ok := e.lookup.(bizworkflow.ApprovalEvidenceReader)
+	if !ok {
+		return bizjob.ApprovalEvidence{}, errNoApprovalEvidence
+	}
+	ev, err := r.ApprovalEvidenceTx(ctx, tx, jobcontract.ApprovalBusinessType, businessID, except)
+	if err != nil {
+		return bizjob.ApprovalEvidence{}, err
+	}
+	return bizjob.ApprovalEvidence{Skipped: ev.SkippedApprovals, Approved: ev.HumanApprovals}, nil
 }
 
 // Startable implements bizjob.Approvals.
@@ -84,9 +112,29 @@ func (a jobApprovals) StartTx(ctx context.Context, tx bizjob.Tx, p bizjob.Approv
 		}
 		return bizjob.ApprovalOutcome{}, err
 	}
-	return bizjob.ApprovalOutcome{
+	outcome := bizjob.ApprovalOutcome{
 		InstanceID: in.ID, Finished: in.Status != bizworkflow.InstanceRunning, Approved: in.Status == bizworkflow.InstanceCompleted,
-	}, nil
+	}
+	// 发起即结束且「通过」（审批节点被自动跳过时会这样）：与监听器同一口径看审批证据，没有人真的
+	// 审批过就不算通过（见 ApprovalSyncer.Resolve）。
+	if outcome.Finished && outcome.Approved {
+		ev, err := a.evidenceOf(ctx, tx, in.BusinessID, in.Initiator)
+		if err != nil {
+			return bizjob.ApprovalOutcome{}, err
+		}
+		if !bizjob.ApprovalReviewed(ev) {
+			outcome.Approved, outcome.Reason = false, bizjob.MsgApprovalUnreviewed
+		}
+	}
+	return outcome, nil
+}
+
+// evidenceOf 读取这条执行的审批证据；没有证据来源时返回错误（无法证明有人审批过就不批准）。
+func (a jobApprovals) evidenceOf(ctx context.Context, tx bizjob.Tx, businessID, submitter string) (bizjob.ApprovalEvidence, error) {
+	if a.evidence == nil {
+		return bizjob.ApprovalEvidence{}, errNoApprovalEvidence
+	}
+	return a.evidence.ApprovalEvidenceTx(ctx, tx, businessID, submitter)
 }
 
 // Cancel implements bizjob.Approvals.
@@ -111,7 +159,7 @@ func (l jobApprovalListener) OnInstanceFinished(ctx context.Context, tx txrun.Tx
 	default:
 		reason = "审批流程被终止"
 	}
-	return l.syncer.Resolve(ctx, tx, in.BusinessID, in.Status == bizworkflow.InstanceCompleted, reason)
+	return l.syncer.Resolve(ctx, tx, in.BusinessID, in.Status == bizworkflow.InstanceCompleted, in.Initiator, reason)
 }
 
 // jobApprovalViewer 谁能查看作业审批的流程实例（参与者之外）：能看全部执行记录的人——与执行详情同一口径

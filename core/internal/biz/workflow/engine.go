@@ -1,7 +1,9 @@
 package biz
 
 import (
+	"cmp"
 	"context"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -146,9 +148,9 @@ const (
 	maxAdvanceSteps     = 200
 	maxTasksPerInstance = 500
 	maxAssigneesPerTask = 100
-	// maxAutoSkips 单实例自动跳过节点（处理人为空、定时已过）的累计上限。回路里的人工任务
-	// 一旦解析不出处理人就不再阻塞：回路经定时节点每个周期空转一圈，历史与作业无限增长。
-	// 到上限即拒绝继续推进（作业转死信并通知流程管理员），由人工处理。
+	// maxAutoSkips 单实例自动跳过节点（明确选了跳过的人工任务处理人为空、定时已过）的累计上限。
+	// 回路里这样的任务一旦解析不出处理人就不再阻塞：回路经定时节点每个周期空转一圈，历史与作业
+	// 无限增长。到上限即拒绝继续推进（作业转死信并通知流程管理员），由人工处理。
 	maxAutoSkips = 500
 )
 
@@ -163,6 +165,10 @@ var (
 	ErrTaskNotAssignee    = errors.Forbidden(v1.ErrorReason_WORKFLOW_TASK_NOT_ASSIGNEE.String(), "you are not an assignee of this task")
 	ErrTaskTargetInvalid  = errors.BadRequest(v1.ErrorReason_WORKFLOW_TASK_TARGET_INVALID.String(), "invalid transfer user or return node")
 	ErrSignalNotAwaited   = errors.Conflict(v1.ErrorReason_WORKFLOW_SIGNAL_NOT_AWAITED.String(), "no node of this instance is waiting for the signal")
+	// ErrNoAssignee 人工任务解析不出处理人，且该节点没有明确选择跳过（缺省与 onEmpty = block，或转交流程
+	// 管理员而没有可用的管理员，见 blockIfEmpty）。确定性的配置 / 组织数据问题：发起则发起失败，推进则
+	// 那一次动作失败；由作业驱动的推进按 4xx 直接转死信，流程停在原处等人工处理。
+	ErrNoAssignee = errors.Conflict(v1.ErrorReason_WORKFLOW_NO_ASSIGNEE.String(), "a human task has no available assignee and must not be skipped")
 )
 
 // Instance 流程实例。
@@ -416,6 +422,7 @@ type Execution struct {
 	dir     Directory
 	proxies Proxies
 	duty    Duty
+	admins  Admins
 	cal     *Calendar
 	now     time.Time
 	steps   int
@@ -450,6 +457,18 @@ type Duty interface {
 // WithDuty 启用值班人规则；不启用时该规则解析为空。
 func (x *Execution) WithDuty(d Duty) *Execution {
 	x.duty = d
+	return x
+}
+
+// Admins 系统管理员查询端口（由 system 域实现）：「系统管理员」审批人规则据此取人。
+type Admins interface {
+	// AdminUserIDs 当前全部可用的超级管理员 ID（存在、启用、未删除），按 ID 排序。
+	AdminUserIDs(ctx context.Context) ([]string, error)
+}
+
+// WithAdmins 启用「系统管理员」审批人规则；不启用时该规则解析为空。
+func (x *Execution) WithAdmins(a Admins) *Execution {
+	x.admins = a
 	return x
 }
 
@@ -684,7 +703,9 @@ func (x *Execution) conditionErrors(n *Node, failed []any) error {
 	return x.history(n, "", ActionConditionError, "", "", map[string]any{"edges": failed})
 }
 
-// resolve 解析节点的处理人：各规则结果取并集、过滤为可用用户；为空时按 onEmpty 兜底。
+// resolve 解析节点的处理人：各规则结果取并集、过滤为可用用户；为空时按 onEmpty 处置（见 blockIfEmpty）：
+// 人工任务只有明确选了 skip 才以空结果交给调用方跳过，其余情况返回 ErrNoAssignee；抄送节点没有收件人时
+// 照旧返回空。
 func (x *Execution) resolve(ctx context.Context, n *Node) ([]string, error) {
 	if x.memo == nil {
 		return x.lookup(ctx, n)
@@ -715,6 +736,11 @@ func (x *Execution) lookup(ctx context.Context, n *Node) ([]string, error) {
 			got, err = x.dir.UserIDsByRoles(ctx, r.RoleCodes)
 		case RuleInitiator:
 			got = []string{in.Initiator}
+		case RuleSuperAdmin:
+			if x.admins != nil {
+				got, err = x.admins.AdminUserIDs(ctx)
+			}
+			// 不排除发起人：只有一名管理员的环境里，他要能审批自己提交的申请。
 		case RuleDeptLeader:
 			if in.InitiatorDept != "" {
 				got, err = x.dir.DeptLeaderIDs(ctx, in.InitiatorDept, r.Level, in.Initiator)
@@ -754,10 +780,27 @@ func (x *Execution) lookup(ctx context.Context, n *Node) ([]string, error) {
 			return nil, err
 		}
 	}
+	if len(users) == 0 {
+		return nil, blockIfEmpty(n)
+	}
 	if len(users) > maxAssigneesPerTask {
 		users = users[:maxAssigneesPerTask]
 	}
 	return users, nil
+}
+
+// blockIfEmpty 人工任务解析不出处理人（onEmpty = admin 时已经过了流程管理员兜底）时的处置：只有明确
+// 选了 skip 才跳过；缺省、block、转交流程管理员却没有可用管理员的都拦住，返回 ErrNoAssignee（说明里带
+// 节点名，没有名称的用节点 ID）。抄送节点没有收件人时无事可做，返回 nil，由调用方跳过该节点。
+func blockIfEmpty(n *Node) error {
+	if n.Type != NodeUserTask || n.Assignee.OnEmpty == OnEmptySkip {
+		return nil
+	}
+	why := " and must not be skipped"
+	if n.Assignee.OnEmpty == OnEmptyAdmin {
+		why = " and the workflow has no available admin to hand it to"
+	}
+	return errors.Conflict(ErrNoAssignee.Reason, fmt.Sprintf("node %q has no available assignee%s", cmp.Or(n.Name, n.ID), why))
 }
 
 // formStrings 把表单值规整为字符串列表：单个字符串或字符串数组；其余类型忽略。

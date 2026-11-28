@@ -182,7 +182,7 @@ func newEnv(t *testing.T) *env {
 	rt := bizworkflow.NewRuntimeUsecase(defs, instRepo, instRepo, instRepo, dir, usersAdapter{dir}, wfCfg,
 		bizworkflow.NewCalendarUsecase(wfCfg), txs,
 		notify, bizworkflow.Listeners{biz.BusinessType: biz.NewStatusSyncer(ticketRepo, ticketRepo)},
-		bizworkflow.Viewers{biz.BusinessType: access}, nil)
+		bizworkflow.Viewers{biz.BusinessType: access}, nil, bizsystem.NewAdminDirectory(datasystem.NewDirectoryRepo(d)))
 	stores, err := datafile.NewStores(c, d)
 	if err != nil {
 		t.Fatalf("NewStores() error = %v", err)

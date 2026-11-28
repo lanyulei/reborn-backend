@@ -78,4 +78,9 @@ enum ErrorReason {
   WORKFLOW_CLIENT_FORBIDDEN = 44 [(errors.code) = 403];
   // WORKFLOW_GRAPH_TOO_LARGE 流程图草稿超出大小上限，映射 HTTP 400。
   WORKFLOW_GRAPH_TOO_LARGE = 45 [(errors.code) = 400];
+  // WORKFLOW_NO_ASSIGNEE 人工任务解析不出处理人，且该节点没有明确选择跳过（审批人为空时缺省拦住，或选了
+  // 「转交流程管理员」而没有可用的管理员）：发起则发起失败，推进则那一次动作失败，映射 HTTP 409。
+  WORKFLOW_NO_ASSIGNEE = 46 [(errors.code) = 409];
+  // WORKFLOW_DEFINITION_BUILTIN 内置流程定义不能删除（可以修改、停用），映射 HTTP 409。
+  WORKFLOW_DEFINITION_BUILTIN = 47 [(errors.code) = 409];
 }

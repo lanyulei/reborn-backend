@@ -172,14 +172,14 @@ func TestJob_RiskRulesAndApproval(t *testing.T) {
 		t.Fatalf("idempotent submit started %d approvals", n)
 	}
 	// 审批通过 → 排队。
-	if err := f.svc.job.syncer.Resolve(context.Background(), testfake.Tx{}, pending, true, ""); err != nil {
+	if err := f.svc.job.syncer.Resolve(context.Background(), testfake.Tx{}, pending, true, "submitter", ""); err != nil {
 		t.Fatal(err)
 	}
 	expectStatus(t, "approved", ts, http.MethodGet, "/api/v1/job/execution/"+pending, admin, "", http.StatusOK, `"status":1`)
 
 	// 审批驳回 → 审批未通过，不可再取消。
 	rejected := executionID(t, expectStatus(t, "pending 2", ts, http.MethodPost, submit, admin, f.adhocBody(2, `{"command":"reboot now"}`, ""), http.StatusOK, `"status":9`))
-	if err := f.svc.job.syncer.Resolve(context.Background(), testfake.Tx{}, rejected, false, "审批被驳回"); err != nil {
+	if err := f.svc.job.syncer.Resolve(context.Background(), testfake.Tx{}, rejected, false, "submitter", "审批被驳回"); err != nil {
 		t.Fatal(err)
 	}
 	expectStatus(t, "rejected", ts, http.MethodGet, "/api/v1/job/execution/"+rejected, admin, "", http.StatusOK, `"status":10`, `"error":"审批被驳回"`, `"finishTime"`)
@@ -191,7 +191,7 @@ func TestJob_RiskRulesAndApproval(t *testing.T) {
 	if n := len(f.svc.job.approvals.Cancelled); n != 1 {
 		t.Fatalf("withdraw cancelled %d approval instances", n)
 	}
-	if err := f.svc.job.syncer.Resolve(context.Background(), testfake.Tx{}, withdrawn, true, ""); err != nil {
+	if err := f.svc.job.syncer.Resolve(context.Background(), testfake.Tx{}, withdrawn, true, "submitter", ""); err != nil {
 		t.Fatal(err)
 	}
 	expectStatus(t, "late approval ignored", ts, http.MethodGet, "/api/v1/job/execution/"+withdrawn, admin, "", http.StatusOK, `"status":6`)
@@ -270,7 +270,7 @@ func TestJob_Slicing(t *testing.T) {
 	if len(f.svc.job.approvals.Started) != 1 || start.BusinessID != group || start.Variables["host_count"] != 5 {
 		t.Fatalf("approval start = %+v (count %d)", start, len(f.svc.job.approvals.Started))
 	}
-	if err := f.svc.job.syncer.Resolve(context.Background(), testfake.Tx{}, group, true, ""); err != nil {
+	if err := f.svc.job.syncer.Resolve(context.Background(), testfake.Tx{}, group, true, "submitter", ""); err != nil {
 		t.Fatal(err)
 	}
 	list = expectStatus(t, "approved group", ts, http.MethodGet, "/api/v1/job/execution?page=1&pageSize=10&groupId="+group, admin, "", http.StatusOK)

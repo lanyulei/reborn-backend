@@ -448,9 +448,9 @@ func TestEngine_AssigneeResolution(t *testing.T) {
 		"form user (string)":                       {rule("a", `{"kind":"formUser","field":"owner"}`, ""), map[string]any{"owner": "o1"}, []string{"o1"}},
 		"form user (array)":                        {rule("a", `{"kind":"formUser","field":"owners"}`, ""), map[string]any{"owners": []any{"o2", "gone", 5.0}}, []string{"o2"}},
 		"form user excludes initiator":             {rule("a", `{"kind":"formUser","field":"owners"}`, ""), map[string]any{"owners": []any{"init", "o1"}}, []string{"o1"}},
-		"form user only initiator → skip":          {rule("a", `{"kind":"formUser","field":"owner"}`, ""), map[string]any{"owner": "init"}, nil},
+		"form user only initiator → skip chosen":   {rule("a", `{"kind":"formUser","field":"owner"}`, `,"onEmpty":"skip"`), map[string]any{"owner": "init"}, nil},
 		"form dept leader":                         {rule("a", `{"kind":"formDeptLeader","field":"dept"}`, ""), map[string]any{"dept": "d-fin"}, []string{"cfo"}},
-		"empty → skip":                             {rule("a", `{"kind":"user","userIds":["gone"]}`, ""), nil, nil},
+		"empty → skip only if chosen":              {rule("a", `{"kind":"user","userIds":["gone"]}`, `,"onEmpty":"skip"`), nil, nil},
 		"empty → admin":                            {rule("a", `{"kind":"user","userIds":["gone"]}`, `,"onEmpty":"admin"`), nil, []string{"adm"}},
 	}
 	for name, tt := range cases {

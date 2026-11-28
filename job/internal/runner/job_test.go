@@ -941,14 +941,15 @@ func TestEndToEnd(t *testing.T) {
 			t.Fatalf("%q leaked", leak)
 		}
 	}
-	// 节点心跳已落到引擎侧。
-	for id, hb := range e.store.Heartbeats {
-		if hb.Capacity != 2 || hb.AgentVersion != "test" || e.store.LastSeen[id].IsZero() {
-			t.Fatalf("heartbeat: %+v", hb)
-		}
+	// 节点心跳已落到引擎侧（节点还在后台上报：经加锁的快照读）。
+	hbs := e.store.HeartbeatsOf()
+	if len(hbs) != 1 {
+		t.Fatalf("heartbeats recorded = %d, want 1", len(hbs))
 	}
-	if len(e.store.Heartbeats) != 1 {
-		t.Fatal("no heartbeat recorded")
+	for id, rec := range hbs {
+		if rec.Heartbeat.Capacity != 2 || rec.Heartbeat.AgentVersion != "test" || rec.LastSeen.IsZero() {
+			t.Fatalf("heartbeat of %s: %+v at %v", id, rec.Heartbeat, rec.LastSeen)
+		}
 	}
 }
 

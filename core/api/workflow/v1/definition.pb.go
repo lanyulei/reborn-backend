@@ -48,7 +48,9 @@ type Definition struct {
 	// create_time 创建时间。
 	CreateTime *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=create_time,json=createTime,proto3" json:"create_time,omitempty"`
 	// update_time 更新时间。
-	UpdateTime    *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=update_time,json=updateTime,proto3" json:"update_time,omitempty"`
+	UpdateTime *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=update_time,json=updateTime,proto3" json:"update_time,omitempty"`
+	// builtin 是否内置流程（随版本预置）：可以修改、停用，不能删除。
+	Builtin       bool `protobuf:"varint,11,opt,name=builtin,proto3" json:"builtin,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -151,6 +153,13 @@ func (x *Definition) GetUpdateTime() *timestamppb.Timestamp {
 		return x.UpdateTime
 	}
 	return nil
+}
+
+func (x *Definition) GetBuiltin() bool {
+	if x != nil {
+		return x.Builtin
+	}
+	return false
 }
 
 // GraphIssue 流程图的一条校验问题。
@@ -1449,7 +1458,10 @@ type SimulatedStep struct {
 	// assignees 解析出的处理人 / 抄送人。
 	Assignees []*SimulatedUser `protobuf:"bytes,5,rep,name=assignees,proto3" json:"assignees,omitempty"`
 	// skipped 处理人为空，节点被跳过。
-	Skipped       bool `protobuf:"varint,6,opt,name=skipped,proto3" json:"skipped,omitempty"`
+	Skipped bool `protobuf:"varint,6,opt,name=skipped,proto3" json:"skipped,omitempty"`
+	// blocked 处理人为空且该节点没有明确选择跳过（审批人为空时缺省拦住，或选了「转交流程管理员」而没有
+	// 可用的管理员）：真实运行时流程会被拦在这一步，之后的节点不会经过，模拟也到此为止。
+	Blocked       bool `protobuf:"varint,7,opt,name=blocked,proto3" json:"blocked,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1526,12 +1538,19 @@ func (x *SimulatedStep) GetSkipped() bool {
 	return false
 }
 
+func (x *SimulatedStep) GetBlocked() bool {
+	if x != nil {
+		return x.Blocked
+	}
+	return false
+}
+
 // SimulateDefinitionResponse 模拟运行响应。
 type SimulateDefinitionResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// steps 依次经过的节点（人工任务一律按「同意」推进）。
 	Steps []*SimulatedStep `protobuf:"bytes,1,rep,name=steps,proto3" json:"steps,omitempty"`
-	// status 模拟结束时的流程状态：2=走到结束 1=未走完（达到推进上限）。
+	// status 模拟结束时的流程状态：2=走到结束 1=未走完（达到推进上限，或在某个节点被拦住）。
 	Status        int32 `protobuf:"varint,2,opt,name=status,proto3" json:"status,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1585,7 +1604,7 @@ var File_workflow_v1_definition_proto protoreflect.FileDescriptor
 
 const file_workflow_v1_definition_proto_rawDesc = "" +
 	"\n" +
-	"\x1cworkflow/v1/definition.proto\x12\vworkflow.v1\x1a\x1cgoogle/api/annotations.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1bbuf/validate/validate.proto\x1a\x1bsystem/v1/annotations.proto\"\xdb\x02\n" +
+	"\x1cworkflow/v1/definition.proto\x12\vworkflow.v1\x1a\x1cgoogle/api/annotations.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1bbuf/validate/validate.proto\x1a\x1bsystem/v1/annotations.proto\"\xf5\x02\n" +
 	"\n" +
 	"Definition\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x10\n" +
@@ -1600,7 +1619,8 @@ const file_workflow_v1_definition_proto_rawDesc = "" +
 	"createTime\x12;\n" +
 	"\vupdate_time\x18\n" +
 	" \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"updateTime\"l\n" +
+	"updateTime\x12\x18\n" +
+	"\abuiltin\x18\v \x01(\bR\abuiltin\"l\n" +
 	"\n" +
 	"GraphIssue\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x17\n" +
@@ -1698,14 +1718,15 @@ const file_workflow_v1_definition_proto_rawDesc = "" +
 	"\x0f_initiator_dept\"3\n" +
 	"\rSimulatedUser\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
-	"\x04name\x18\x02 \x01(\tR\x04name\"\xc1\x01\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\"\xdb\x01\n" +
 	"\rSimulatedStep\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x1b\n" +
 	"\tnode_name\x18\x02 \x01(\tR\bnodeName\x12\x12\n" +
 	"\x04type\x18\x03 \x01(\tR\x04type\x12\x12\n" +
 	"\x04mode\x18\x04 \x01(\tR\x04mode\x128\n" +
 	"\tassignees\x18\x05 \x03(\v2\x1a.workflow.v1.SimulatedUserR\tassignees\x12\x18\n" +
-	"\askipped\x18\x06 \x01(\bR\askipped\"f\n" +
+	"\askipped\x18\x06 \x01(\bR\askipped\x12\x18\n" +
+	"\ablocked\x18\a \x01(\bR\ablocked\"f\n" +
 	"\x1aSimulateDefinitionResponse\x120\n" +
 	"\x05steps\x18\x01 \x03(\v2\x1a.workflow.v1.SimulatedStepR\x05steps\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\x05R\x06status2\xe1\r\n" +

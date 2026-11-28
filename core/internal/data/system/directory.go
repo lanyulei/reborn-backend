@@ -13,7 +13,10 @@ import (
 )
 
 // 编译期断言锁住 biz 契约。
-var _ biz.DirectoryRepo = (*directoryRepo)(nil)
+var (
+	_ biz.DirectoryRepo = (*directoryRepo)(nil)
+	_ biz.AdminReader   = (*directoryRepo)(nil)
+)
 
 // directoryRepo 组织目录只读仓储的 PostgreSQL 实现。流程引擎在自己的事务里解析处理人，
 // 查询经 QueryerFrom 复用该事务的连接（不额外占用连接池）。
@@ -59,6 +62,20 @@ func (r *directoryRepo) ListActiveUserIDsByRoles(ctx context.Context, roleCodes 
 	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
 	if err != nil {
 		return nil, fmt.Errorf("scan user id: %w", err)
+	}
+	return ids, nil
+}
+
+// ListActiveAdminIDs implements biz.AdminReader：按用户 ID 排序，结果确定。
+func (r *directoryRepo) ListActiveAdminIDs(ctx context.Context) ([]string, error) {
+	rows, err := basedata.QueryerFrom(ctx, r.data.Pool).Query(ctx,
+		`SELECT id FROM "system_user" WHERE is_admin AND status = $1 AND delete_time IS NULL ORDER BY id`, biz.StatusEnabled)
+	if err != nil {
+		return nil, fmt.Errorf("list super admins: %w", err)
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return nil, fmt.Errorf("scan super admin id: %w", err)
 	}
 	return ids, nil
 }

@@ -40,4 +40,8 @@ enum ErrorReason {
   TICKET_RATING_UNAVAILABLE = 25 [(errors.code) = 409];
   // TICKET_FORM_LOCKED 当前不能修改表单（没有待处理的任务，或本环节没有可编辑的字段），映射 HTTP 409。
   TICKET_FORM_LOCKED = 26 [(errors.code) = 409];
+  // TICKET_CATEGORY_BUILTIN 内置工单分类不能删除（可以修改），映射 HTTP 409。
+  TICKET_CATEGORY_BUILTIN = 27 [(errors.code) = 409];
+  // TICKET_TEMPLATE_BUILTIN 内置工单模板不能删除（可以修改、停用），映射 HTTP 409。
+  TICKET_TEMPLATE_BUILTIN = 28 [(errors.code) = 409];
 }

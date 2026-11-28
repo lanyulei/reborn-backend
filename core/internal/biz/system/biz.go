@@ -5,4 +5,4 @@ package biz
 import "github.com/google/wire"
 
 // ProviderSet is system 域 biz providers.
-var ProviderSet = wire.NewSet(NewUserUsecase, NewRoleUsecase, NewDeptUsecase, NewDirectoryUsecase, NewSystemConfigUsecase, NewPermissionUsecase, NewAuthzUsecase, NewPasswordHasher, NewTokenSigner, NewAuthUsecase, NewAuthorizer, NewLoginLogUsecase, NewAvatarUsecase)
+var ProviderSet = wire.NewSet(NewUserUsecase, NewRoleUsecase, NewDeptUsecase, NewDirectoryUsecase, NewAdminDirectory, NewSystemConfigUsecase, NewPermissionUsecase, NewAuthzUsecase, NewPasswordHasher, NewTokenSigner, NewAuthUsecase, NewAuthorizer, NewLoginLogUsecase, NewAvatarUsecase)

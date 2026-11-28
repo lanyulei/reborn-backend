@@ -58,7 +58,7 @@ const (
 )
 
 func handoverRT(lookup *treeLookup, txs *txManagerFake) *RuntimeUsecase {
-	return NewRuntimeUsecase(nil, nil, nil, lookup, &dirStub{}, nil, nil, nil, txs, nil, nil, nil, nil)
+	return NewRuntimeUsecase(nil, nil, nil, lookup, &dirStub{}, nil, nil, nil, txs, nil, nil, nil, nil, nil)
 }
 
 // 请求的时间在批中途用尽：被打断的那个实例不算失败，游标停在最后一个处理过的实例上；带着游标
@@ -201,7 +201,7 @@ func detailRT(t *testing.T, s *State, seats map[string][]string, viewers Viewers
 		uidC: {ID: uidC, ParentInstanceID: uidA, RootID: uidR, Initiator: "init"},
 		uidS: {ID: uidS, ParentInstanceID: uidR, RootID: uidR, Initiator: "init"},
 	}, seats: seats}
-	return NewRuntimeUsecase(defs, nil, readerFake{s: s}, lookup, &dirStub{}, usersFake{}, nil, nil, nil, nil, nil, viewers, nil)
+	return NewRuntimeUsecase(defs, nil, readerFake{s: s}, lookup, &dirStub{}, usersFake{}, nil, nil, nil, nil, nil, viewers, nil, nil)
 }
 
 func childDetailState() *State {

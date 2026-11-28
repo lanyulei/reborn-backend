@@ -12,15 +12,16 @@ import (
 
 // DefinitionService 实现 api/workflow/v1 生成的 WorkflowDefinitionServiceServer。
 type DefinitionService struct {
-	uc    *biz.DefinitionUsecase
-	dir   biz.Directory
-	duty  biz.Duty
-	users biz.Users
+	uc     *biz.DefinitionUsecase
+	dir    biz.Directory
+	duty   biz.Duty
+	admins biz.Admins
+	users  biz.Users
 }
 
-// NewDefinitionService new a DefinitionService。dir / users 供模拟运行解析处理人与显示名。
-func NewDefinitionService(uc *biz.DefinitionUsecase, dir biz.Directory, users biz.Users, duty biz.Duty) *DefinitionService {
-	return &DefinitionService{uc: uc, dir: dir, users: users, duty: duty}
+// NewDefinitionService new a DefinitionService。dir / users / duty / admins 供模拟运行解析处理人与显示名。
+func NewDefinitionService(uc *biz.DefinitionUsecase, dir biz.Directory, users biz.Users, duty biz.Duty, admins biz.Admins) *DefinitionService {
+	return &DefinitionService{uc: uc, dir: dir, users: users, duty: duty, admins: admins}
 }
 
 // SimulateDefinition implements proto WorkflowDefinitionService/SimulateDefinition。
@@ -39,13 +40,15 @@ func (s *DefinitionService) SimulateDefinition(ctx context.Context, req *v1.Simu
 	}
 	res, err := s.uc.Simulate(ctx, req.GetId(), raw, biz.Instance{
 		Initiator: initiator, InitiatorDept: strings.ToLower(req.GetInitiatorDept()), Variables: req.GetVariables().AsMap(),
-	}, s.dir, s.users, s.duty)
+	}, s.dir, s.users, s.duty, s.admins)
 	if err != nil {
 		return nil, err
 	}
 	resp := &v1.SimulateDefinitionResponse{Status: res.Status, Steps: make([]*v1.SimulatedStep, 0, len(res.Steps))}
 	for _, st := range res.Steps {
-		step := &v1.SimulatedStep{NodeId: st.NodeID, NodeName: st.NodeName, Type: st.Type, Mode: st.Mode, Skipped: st.Skipped}
+		step := &v1.SimulatedStep{
+			NodeId: st.NodeID, NodeName: st.NodeName, Type: st.Type, Mode: st.Mode, Skipped: st.Skipped, Blocked: st.Blocked,
+		}
 		for _, id := range st.Assignees {
 			step.Assignees = append(step.Assignees, &v1.SimulatedUser{Id: id, Name: res.Names[id]})
 		}
@@ -154,7 +157,7 @@ func (s *DefinitionService) GetDefinitionVersion(ctx context.Context, req *v1.Ge
 func toProtoDefinition(d *biz.Definition) *v1.Definition {
 	return &v1.Definition{
 		Id: d.ID, Key: d.Key, Name: d.Name, Category: d.Category, Description: d.Description,
-		Status: d.Status, Revision: d.Revision, PublishedVersion: d.PublishedVersion,
+		Status: d.Status, Revision: d.Revision, PublishedVersion: d.PublishedVersion, Builtin: d.Builtin,
 		CreateTime: timestamppb.New(d.CreateTime), UpdateTime: timestamppb.New(d.UpdateTime),
 	}
 }

@@ -220,3 +220,31 @@ func IsTicketFormLocked(err error) bool {
 func ErrorTicketFormLocked(format string, args ...interface{}) *errors.Error {
 	return errors.New(409, ErrorReason_TICKET_FORM_LOCKED.String(), fmt.Sprintf(format, args...))
 }
+
+// TICKET_CATEGORY_BUILTIN 内置工单分类不能删除（可以修改），映射 HTTP 409。
+func IsTicketCategoryBuiltin(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := errors.FromError(err)
+	return e.Reason == ErrorReason_TICKET_CATEGORY_BUILTIN.String() && e.Code == 409
+}
+
+// TICKET_CATEGORY_BUILTIN 内置工单分类不能删除（可以修改），映射 HTTP 409。
+func ErrorTicketCategoryBuiltin(format string, args ...interface{}) *errors.Error {
+	return errors.New(409, ErrorReason_TICKET_CATEGORY_BUILTIN.String(), fmt.Sprintf(format, args...))
+}
+
+// TICKET_TEMPLATE_BUILTIN 内置工单模板不能删除（可以修改、停用），映射 HTTP 409。
+func IsTicketTemplateBuiltin(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := errors.FromError(err)
+	return e.Reason == ErrorReason_TICKET_TEMPLATE_BUILTIN.String() && e.Code == 409
+}
+
+// TICKET_TEMPLATE_BUILTIN 内置工单模板不能删除（可以修改、停用），映射 HTTP 409。
+func ErrorTicketTemplateBuiltin(format string, args ...interface{}) *errors.Error {
+	return errors.New(409, ErrorReason_TICKET_TEMPLATE_BUILTIN.String(), fmt.Sprintf(format, args...))
+}

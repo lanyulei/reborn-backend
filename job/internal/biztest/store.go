@@ -55,13 +55,15 @@ type HostRow struct {
 	Skipped     int32
 }
 
-// Store 内存仓储；实现 biz 的全部仓储接口。并发安全。
+// Store 内存仓储；实现 biz 的全部仓储接口。并发安全：状态在锁内读写，测试取状态也走加锁的方法
+// （节点在端到端测试里一边跑一边上报，直接读字段会与写入竞争）。Err / MaterialErr 是测试在两次请求
+// 之间设置的故障开关。
 type Store struct {
 	mu          sync.Mutex
 	now         time.Time
 	runners     map[string]*biz.Runner
-	Heartbeats  map[string]biz.Heartbeat
-	LastSeen    map[string]time.Time
+	heartbeats  map[string]biz.Heartbeat
+	lastSeen    map[string]time.Time
 	execs       map[string]*Execution
 	credentials map[string]*biz.Credential
 	projects    map[string]*biz.Project
@@ -86,7 +88,7 @@ var (
 func NewStore() *Store {
 	return &Store{
 		now:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-		runners: map[string]*biz.Runner{}, Heartbeats: map[string]biz.Heartbeat{}, LastSeen: map[string]time.Time{},
+		runners: map[string]*biz.Runner{}, heartbeats: map[string]biz.Heartbeat{}, lastSeen: map[string]time.Time{},
 		execs: map[string]*Execution{}, credentials: map[string]*biz.Credential{}, projects: map[string]*biz.Project{},
 		payloads: map[string][]byte{},
 	}
@@ -232,8 +234,26 @@ func (s *Store) Heartbeat(_ context.Context, id string, hb biz.Heartbeat) (bool,
 	if !ok {
 		return false, biz.ErrNotFound
 	}
-	s.Heartbeats[id], s.LastSeen[id] = hb, s.now
+	s.heartbeats[id], s.lastSeen[id] = hb, s.now
 	return r.Enabled, nil
+}
+
+// HeartbeatRecord 一个节点最近一次心跳及其落库时刻。
+type HeartbeatRecord struct {
+	Heartbeat biz.Heartbeat
+	LastSeen  time.Time
+}
+
+// HeartbeatsOf 返回全部节点最近一次心跳的快照（节点 ID → 心跳）。测试断言用：持锁拷贝，节点在别的
+// 协程里上报时读到的也是完整的一份。
+func (s *Store) HeartbeatsOf() map[string]HeartbeatRecord {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string]HeartbeatRecord, len(s.heartbeats))
+	for id, hb := range s.heartbeats {
+		out[id] = HeartbeatRecord{Heartbeat: hb, LastSeen: s.lastSeen[id]}
+	}
+	return out
 }
 
 // ClaimNext implements biz.QueueRepo.

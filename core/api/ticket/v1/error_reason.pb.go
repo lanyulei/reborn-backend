@@ -57,6 +57,10 @@ const (
 	ErrorReason_TICKET_RATING_UNAVAILABLE ErrorReason = 25
 	// TICKET_FORM_LOCKED 当前不能修改表单（没有待处理的任务，或本环节没有可编辑的字段），映射 HTTP 409。
 	ErrorReason_TICKET_FORM_LOCKED ErrorReason = 26
+	// TICKET_CATEGORY_BUILTIN 内置工单分类不能删除（可以修改），映射 HTTP 409。
+	ErrorReason_TICKET_CATEGORY_BUILTIN ErrorReason = 27
+	// TICKET_TEMPLATE_BUILTIN 内置工单模板不能删除（可以修改、停用），映射 HTTP 409。
+	ErrorReason_TICKET_TEMPLATE_BUILTIN ErrorReason = 28
 )
 
 // Enum value maps for ErrorReason.
@@ -77,6 +81,8 @@ var (
 		24: "TICKET_COMMENT_RATE_LIMITED",
 		25: "TICKET_RATING_UNAVAILABLE",
 		26: "TICKET_FORM_LOCKED",
+		27: "TICKET_CATEGORY_BUILTIN",
+		28: "TICKET_TEMPLATE_BUILTIN",
 	}
 	ErrorReason_value = map[string]int32{
 		"TICKET_UNSPECIFIED":          0,
@@ -94,6 +100,8 @@ var (
 		"TICKET_COMMENT_RATE_LIMITED": 24,
 		"TICKET_RATING_UNAVAILABLE":   25,
 		"TICKET_FORM_LOCKED":          26,
+		"TICKET_CATEGORY_BUILTIN":     27,
+		"TICKET_TEMPLATE_BUILTIN":     28,
 	}
 )
 
@@ -128,7 +136,7 @@ var File_ticket_v1_error_reason_proto protoreflect.FileDescriptor
 
 const file_ticket_v1_error_reason_proto_rawDesc = "" +
 	"\n" +
-	"\x1cticket/v1/error_reason.proto\x12\tticket.v1\x1a\x13errors/errors.proto*\x91\x04\n" +
+	"\x1cticket/v1/error_reason.proto\x12\tticket.v1\x1a\x13errors/errors.proto*\xd7\x04\n" +
 	"\vErrorReason\x12\x16\n" +
 	"\x12TICKET_UNSPECIFIED\x10\x00\x12#\n" +
 	"\x19TICKET_CATEGORY_NOT_FOUND\x10\x01\x1a\x04\xa8E\x94\x03\x12%\n" +
@@ -145,7 +153,9 @@ const file_ticket_v1_error_reason_proto_rawDesc = "" +
 	"\x15TICKET_LIMIT_EXCEEDED\x10\x17\x1a\x04\xa8E\x99\x03\x12%\n" +
 	"\x1bTICKET_COMMENT_RATE_LIMITED\x10\x18\x1a\x04\xa8E\xad\x03\x12#\n" +
 	"\x19TICKET_RATING_UNAVAILABLE\x10\x19\x1a\x04\xa8E\x99\x03\x12\x1c\n" +
-	"\x12TICKET_FORM_LOCKED\x10\x1a\x1a\x04\xa8E\x99\x03\x1a\x04\xa0E\xf4\x03B:Z8github.com/lanyulei/reborn/backend/core/api/ticket/v1;v1b\x06proto3"
+	"\x12TICKET_FORM_LOCKED\x10\x1a\x1a\x04\xa8E\x99\x03\x12!\n" +
+	"\x17TICKET_CATEGORY_BUILTIN\x10\x1b\x1a\x04\xa8E\x99\x03\x12!\n" +
+	"\x17TICKET_TEMPLATE_BUILTIN\x10\x1c\x1a\x04\xa8E\x99\x03\x1a\x04\xa0E\xf4\x03B:Z8github.com/lanyulei/reborn/backend/core/api/ticket/v1;v1b\x06proto3"
 
 var (
 	file_ticket_v1_error_reason_proto_rawDescOnce sync.Once

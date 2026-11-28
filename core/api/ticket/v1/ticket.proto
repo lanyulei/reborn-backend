@@ -252,6 +252,8 @@ message Category {
   int32 sort = 4;
   // templates 分类下的模板（不含表单），按排序值升序。
   repeated Template templates = 5;
+  // builtin 是否内置分类（随版本预置）：可以修改，不能删除。
+  bool builtin = 6;
 }
 
 // SlaDuration 一段时限。
@@ -311,6 +313,8 @@ message Template {
   string icon = 15;
   // form_columns 表单布局：1=单列（一行一个字段） 2=双列（一行两个字段，多行文本仍独占一行）。
   int32 form_columns = 16;
+  // builtin 是否内置模板（随版本预置）：可以修改、停用，不能删除。
+  bool builtin = 17;
 }
 
 // ListCatalogRequest 查询服务目录请求。

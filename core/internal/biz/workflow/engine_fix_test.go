@@ -95,11 +95,11 @@ func TestNormalizeVariables(t *testing.T) {
 	}
 }
 
-// 表单里选的人：大小写不同的 ID 不能绕过「不含发起人自己」。
+// 表单里选的人：大小写不同的 ID 不能绕过「不含发起人自己」（节点明确选了跳过：剔除后为空就跳过）。
 func TestEngine_FormUserInitiatorCaseInsensitive(t *testing.T) {
 	t.Parallel()
 	const initiator = "018f3e1a-0a00-7000-8000-00000000abcd"
-	node := `{"id":"a","type":"userTask","assignee":{"rules":[{"kind":"formUser","field":"approver"}]}}`
+	node := `{"id":"a","type":"userTask","assignee":{"rules":[{"kind":"formUser","field":"approver"}],"onEmpty":"skip"}}`
 	for name, form := range map[string]map[string]any{
 		"upper case":      {"approver": strings.ToUpper(initiator)},
 		"padded":          {"approver": " " + initiator + " "},
@@ -168,10 +168,10 @@ func TestCalendarAdd_DST(t *testing.T) {
 	}
 }
 
-// 回路里的人工任务解析不出处理人时不再阻塞：自动跳过的累计次数有上限，到上限即拒绝继续。
+// 回路里明确选了跳过的人工任务解析不出处理人时不再阻塞：自动跳过的累计次数有上限，到上限即拒绝继续。
 func TestEngine_AutoSkipLimit(t *testing.T) {
 	t.Parallel()
-	raw := linearGraph(`{"id":"a","type":"userTask","assignee":{"rules":[{"kind":"user","userIds":["gone"]}]}}`)
+	raw := linearGraph(`{"id":"a","type":"userTask","assignee":{"rules":[{"kind":"user","userIds":["gone"]}],"onEmpty":"skip"}}`)
 	dir := &dirStub{inactive: map[string]bool{"gone": true}}
 	h := start(t, raw, nil, dir)
 	h.wantStatus(InstanceCompleted)
@@ -256,8 +256,11 @@ func TestOncallRule(t *testing.T) {
 			t.Errorf("%s: assignees = %v, want [boss]", name, got)
 		}
 	}
-	// 只有主值班且他就是发起人：剔除后为空，缺省跳过该节点，流程直接结束。
-	if st := run(graph(""), dutyStub{"sch": {"init"}}, "init"); st.Instance.Status != InstanceCompleted || len(pending(st)) != 0 {
+	// 只有主值班且他就是发起人：剔除后为空。缺省拦住（发起失败）；明确选了跳过才跳过该节点，流程直接结束。
+	s := &State{Instance: Instance{ID: "inst", Initiator: "init", Status: InstanceRunning}}
+	wantNoAssignee(t, NewExecution(mustGraph(t, graph("")), s, &dirStub{}, time.Now()).WithDuty(dutyStub{"sch": {"init"}}).
+		Start(context.Background()), `"a"`, "must not be skipped")
+	if st := run(graph(`,"onEmpty":"skip"`), dutyStub{"sch": {"init"}}, "init"); st.Instance.Status != InstanceCompleted || len(pending(st)) != 0 {
 		t.Fatalf("status = %d pending = %v, want the node skipped", st.Instance.Status, pending(st))
 	}
 	// 校验：必须选了值班表。
@@ -281,7 +284,7 @@ func TestSimulate_LoopIsBounded(t *testing.T) {
 		{"id":"back","source":"gw","target":"a","condition":"true","priority":1,"jump":true},
 		{"id":"def","source":"gw","target":"m","isDefault":true},{"id":"e5","source":"m","target":"e"}],"settings":{}}`
 	dir := &countingDir{}
-	res, err := Simulate(context.Background(), mustGraph(t, raw), Instance{Initiator: "init"}, dir, nil)
+	res, err := Simulate(context.Background(), mustGraph(t, raw), Instance{Initiator: "init"}, dir, nil, nil)
 	if err != nil {
 		t.Fatalf("Simulate() error = %v", err)
 	}

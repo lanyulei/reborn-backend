@@ -367,7 +367,9 @@ type Category struct {
 	// sort 排序值，升序。
 	Sort int32 `protobuf:"varint,4,opt,name=sort,proto3" json:"sort,omitempty"`
 	// templates 分类下的模板（不含表单），按排序值升序。
-	Templates     []*Template `protobuf:"bytes,5,rep,name=templates,proto3" json:"templates,omitempty"`
+	Templates []*Template `protobuf:"bytes,5,rep,name=templates,proto3" json:"templates,omitempty"`
+	// builtin 是否内置分类（随版本预置）：可以修改，不能删除。
+	Builtin       bool `protobuf:"varint,6,opt,name=builtin,proto3" json:"builtin,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -435,6 +437,13 @@ func (x *Category) GetTemplates() []*Template {
 		return x.Templates
 	}
 	return nil
+}
+
+func (x *Category) GetBuiltin() bool {
+	if x != nil {
+		return x.Builtin
+	}
+	return false
 }
 
 // SlaDuration 一段时限。
@@ -599,7 +608,9 @@ type Template struct {
 	// icon 图标标识（前端图标集的键）；空 = 缺省图标。
 	Icon string `protobuf:"bytes,15,opt,name=icon,proto3" json:"icon,omitempty"`
 	// form_columns 表单布局：1=单列（一行一个字段） 2=双列（一行两个字段，多行文本仍独占一行）。
-	FormColumns   int32 `protobuf:"varint,16,opt,name=form_columns,json=formColumns,proto3" json:"form_columns,omitempty"`
+	FormColumns int32 `protobuf:"varint,16,opt,name=form_columns,json=formColumns,proto3" json:"form_columns,omitempty"`
+	// builtin 是否内置模板（随版本预置）：可以修改、停用，不能删除。
+	Builtin       bool `protobuf:"varint,17,opt,name=builtin,proto3" json:"builtin,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -744,6 +755,13 @@ func (x *Template) GetFormColumns() int32 {
 		return x.FormColumns
 	}
 	return 0
+}
+
+func (x *Template) GetBuiltin() bool {
+	if x != nil {
+		return x.Builtin
+	}
+	return false
 }
 
 // ListCatalogRequest 查询服务目录请求。
@@ -3447,13 +3465,14 @@ const file_ticket_v1_ticket_proto_rawDesc = "" +
 	"\fFormShowWhen\x129\n" +
 	"\x05field\x18\x01 \x01(\tB#\xbaH r\x1e2\x1c^[a-zA-Z][a-zA-Z0-9_]{0,31}$R\x05field\x12(\n" +
 	"\x06values\x18\x02 \x03(\tB\x10\xbaH\r\x92\x01\n" +
-	"\b\x01\x10\x14\"\x04r\x02\x18@R\x06values\"\x97\x01\n" +
+	"\b\x01\x10\x14\"\x04r\x02\x18@R\x06values\"\xb1\x01\n" +
 	"\bCategory\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12 \n" +
 	"\vdescription\x18\x03 \x01(\tR\vdescription\x12\x12\n" +
 	"\x04sort\x18\x04 \x01(\x05R\x04sort\x121\n" +
-	"\ttemplates\x18\x05 \x03(\v2\x13.ticket.v1.TemplateR\ttemplates\"{\n" +
+	"\ttemplates\x18\x05 \x03(\v2\x13.ticket.v1.TemplateR\ttemplates\x12\x18\n" +
+	"\abuiltin\x18\x06 \x01(\bR\abuiltin\"{\n" +
 	"\vSlaDuration\x12!\n" +
 	"\x05value\x18\x01 \x01(\x05B\v\xbaH\b\x1a\x06\x18\xa0\x8d\x06(\x01R\x05value\x12,\n" +
 	"\x04unit\x18\x02 \x01(\tB\x18\xbaH\x15r\x13R\x06minuteR\x04hourR\x03dayR\x04unit\x12\x1b\n" +
@@ -3462,7 +3481,7 @@ const file_ticket_v1_ticket_proto_rawDesc = "" +
 	"\bpriority\x18\x01 \x01(\x05B\r\xbaH\n" +
 	"\x1a\b0\x010\x020\x030\x04R\bpriority\x122\n" +
 	"\bresponse\x18\x02 \x01(\v2\x16.ticket.v1.SlaDurationR\bresponse\x120\n" +
-	"\aresolve\x18\x03 \x01(\v2\x16.ticket.v1.SlaDurationR\aresolve\"\xde\x04\n" +
+	"\aresolve\x18\x03 \x01(\v2\x16.ticket.v1.SlaDurationR\aresolve\"\xf8\x04\n" +
 	"\bTemplate\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1f\n" +
 	"\vcategory_id\x18\x02 \x01(\tR\n" +
@@ -3482,7 +3501,8 @@ const file_ticket_v1_ticket_proto_rawDesc = "" +
 	"\aci_link\x18\r \x01(\x05R\x06ciLink\x127\n" +
 	"\x06labels\x18\x0e \x03(\v2\x1f.ticket.v1.Template.LabelsEntryR\x06labels\x12\x12\n" +
 	"\x04icon\x18\x0f \x01(\tR\x04icon\x12!\n" +
-	"\fform_columns\x18\x10 \x01(\x05R\vformColumns\x1a9\n" +
+	"\fform_columns\x18\x10 \x01(\x05R\vformColumns\x12\x18\n" +
+	"\abuiltin\x18\x11 \x01(\bR\abuiltin\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x14\n" +

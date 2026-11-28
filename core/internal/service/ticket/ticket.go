@@ -95,7 +95,7 @@ func toProtoTemplate(t *biz.Template, detail bool, labels map[string]string) *v1
 	out := &v1.Template{
 		Id: t.ID, CategoryId: t.CategoryID, Name: t.Name, Description: t.Description, WorkflowKey: t.WorkflowKey,
 		NumberPrefix: t.NumberPrefix, Status: t.Status, Sort: t.Sort, UpdateTime: ts(t.UpdateTime), CiLink: t.CILink,
-		Icon: t.Icon, FormColumns: t.FormColumns,
+		Icon: t.Icon, FormColumns: t.FormColumns, Builtin: t.Builtin,
 	}
 	if detail {
 		out.Form, out.SlaEscalateTo, out.Labels = toProtoForm(t.Form), t.SLAEscalate, labels
@@ -151,7 +151,7 @@ func (s *CatalogService) list(ctx context.Context, enabledOnly bool) (*v1.ListCa
 	}
 	resp := &v1.ListCatalogResponse{Items: make([]*v1.Category, 0, len(categories))}
 	for _, c := range categories {
-		pc := &v1.Category{Id: c.ID, Name: c.Name, Description: c.Description, Sort: c.Sort, Templates: make([]*v1.Template, 0, len(c.Templates))}
+		pc := &v1.Category{Id: c.ID, Name: c.Name, Description: c.Description, Sort: c.Sort, Builtin: c.Builtin, Templates: make([]*v1.Template, 0, len(c.Templates))}
 		for _, t := range c.Templates {
 			pt := toProtoTemplate(t, false, nil)
 			if enabledOnly {
@@ -171,7 +171,7 @@ func (s *CatalogService) CreateCategory(ctx context.Context, req *v1.CreateCateg
 	if err != nil {
 		return nil, err
 	}
-	return &v1.CreateCategoryResponse{Category: &v1.Category{Id: c.ID, Name: c.Name, Description: c.Description, Sort: c.Sort}}, nil
+	return &v1.CreateCategoryResponse{Category: &v1.Category{Id: c.ID, Name: c.Name, Description: c.Description, Sort: c.Sort, Builtin: c.Builtin}}, nil
 }
 
 // UpdateCategory implements proto TicketCatalogService/UpdateCategory.

@@ -70,9 +70,35 @@ type ApprovalStart struct {
 // ApprovalOutcome 发起审批流程的结果。流程可能在发起时即结束（全部节点被跳过 / 自动通过）。
 type ApprovalOutcome struct {
 	InstanceID string
-	// Finished 发起即结束；Approved 结束时是否通过。
+	// Finished 发起即结束；Approved 结束时是否通过；Reason 发起即结束且未通过时记在执行上的原因（空 = 缺省说明）。
 	Finished bool
 	Approved bool
+	Reason   string
+}
+
+// MsgApprovalUnreviewed 流程以「通过」结束、却没有任何人审批过时记在执行上的原因。
+const MsgApprovalUnreviewed = "审批环节因处理人为空被自动跳过，没有人实际审批，作业未执行"
+
+// ApprovalEvidence 一条执行所挂审批流程树上的审批证据（见 workflow 域的 ApprovalEvidence）。
+type ApprovalEvidence struct {
+	// Skipped 因处理人为空被引擎自动跳过的审批环节数。
+	Skipped int
+	// Approved 由人（except 以外）点「同意」的次数。
+	Approved int
+}
+
+// ApprovalEvidenceReader 审批证据查询端口（由组合根适配流程引擎的实例仓储）。须在流程引擎的事务内读：
+// 实例结束的那条命令里新产生的历史此时尚未提交，另开连接读不到。
+type ApprovalEvidenceReader interface {
+	// ApprovalEvidenceTx 统计 businessID 这条执行的审批证据；except 是不计入「由人同意」的用户（通常是提交人）。
+	ApprovalEvidenceTx(ctx context.Context, tx Tx, businessID, except string) (ApprovalEvidence, error)
+}
+
+// ApprovalReviewed 报告审批流程「走完」能否落为批准：流程里确有审批环节被自动跳过、又没有任何人
+// （提交人以外）点过同意 → false。流程本来就没有审批环节（或这次走的分支上没有）时没有「被跳过的
+// 审批」，维持原行为。与容器平台的变更审批同一口径。
+func ApprovalReviewed(ev ApprovalEvidence) bool {
+	return ev.Approved > 0 || ev.Skipped == 0
 }
 
 // Approvals 审批流程（组合根适配 workflow 域的 RuntimeUsecase / DefinitionUsecase）。

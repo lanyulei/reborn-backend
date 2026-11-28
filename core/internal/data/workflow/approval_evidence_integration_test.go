@@ -15,12 +15,12 @@ import (
 func TestIntegration_ApprovalEvidence(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
-	graph := func(rules string) string {
-		return `{"nodes":[{"id":"s","type":"start"},{"id":"a","type":"userTask","name":"审批","assignee":{"rules":[` + rules + `]}},{"id":"e","type":"end"}],
+	graph := func(rules, onEmpty string) string {
+		return `{"nodes":[{"id":"s","type":"start"},{"id":"a","type":"userTask","name":"审批","assignee":{"rules":[` + rules + `]` + onEmpty + `}},{"id":"e","type":"end"}],
 			"edges":[{"id":"e1","source":"s","target":"a"},{"id":"e2","source":"a","target":"e"}],"settings":{}}`
 	}
-	e.publish("ev-approve", graph(`{"kind":"role","roleCodes":["ops"]}`))
-	e.publish("ev-skip", graph(`{"kind":"user","userIds":["`+uGone+`"]}`)) // 处理人已停用 → 节点被跳过
+	e.publish("ev-approve", graph(`{"kind":"role","roleCodes":["ops"]}`, ""))
+	e.publish("ev-skip", graph(`{"kind":"user","userIds":["`+uGone+`"]}`, `,"onEmpty":"skip"`)) // 处理人已停用且明确选了跳过 → 节点被跳过
 	repo, txs := NewInstanceRepo(e.d), basedata.NewTxManager(e.d)
 	read := func(businessID, except string) biz.ApprovalEvidence {
 		t.Helper()

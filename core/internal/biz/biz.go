@@ -54,6 +54,8 @@ var ProviderSet = wire.NewSet(
 	NewWorkflowDefinitionReferrers,
 	// 流程引擎解析处理人 / 用户信息：由 system 域的组织目录实现（单向依赖 workflow → system）。
 	wire.Bind(new(bizworkflow.Directory), new(*bizsystem.DirectoryUsecase)),
+	// 「系统管理员」审批人规则：流程引擎定义的 Admins 由 system 域实现（单向依赖 workflow → system）。
+	wire.Bind(new(bizworkflow.Admins), new(*bizsystem.AdminDirectory)),
 	// 值班人规则：流程引擎定义的 Duty 由值班域实现（单向依赖 workflow → oncall 的只读查询）。
 	wire.Bind(new(bizworkflow.Duty), new(*bizoncall.DutyUsecase)),
 	NewWorkflowUsers,
@@ -106,7 +108,7 @@ var ProviderSet = wire.NewSet(
 	NewJobHostSource,
 	// 作业中心二期 / 三期：审批与信号经流程引擎，结束通知经通知域，待分发的文件经文件域，
 	// 告警自愈读监控域的告警事件（适配器见 job_integrations.go；单向依赖 job → 各域）。
-	NewJobApprovals, NewJobSignals, NewJobRunPermission, NewJobNotifier, NewJobSiteURL, NewJobFiles, NewJobAlertFeed, NewJobAlertRules,
+	NewJobApprovals, NewJobApprovalEvidence, NewJobSignals, NewJobRunPermission, NewJobNotifier, NewJobSiteURL, NewJobFiles, NewJobAlertFeed, NewJobAlertRules,
 	// 容器平台域：启用角色与账号状态、用户显示名由 system 域提供，通知事件经 notify 的
 	// NotificationWriter 写入（单向依赖 k8s → system / notify）。
 	bizk8s.ProviderSet,

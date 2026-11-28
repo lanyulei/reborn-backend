@@ -9,7 +9,8 @@ import (
 
 // SkipReasonNoAssignee 人工任务节点因解析不出处理人被引擎自动跳过时，写进流转历史 detail 的原因
 // （见 Execution.openTask）。上层业务域据此区分「流程里安排了审批环节，但没有人有机会处理」与
-// 「有人审批过」——引擎的通用行为是跳过这种节点并让流程继续，是否接受这种「通过」由业务域自己判断。
+// 「有人审批过」——只有明确选了跳过（onEmpty = skip）的节点，引擎才会跳过它并让流程继续，是否接受
+// 这种「通过」由业务域自己判断；其余节点解析不出处理人时流程被拦住（见 blockIfEmpty），不留下这种记录。
 const SkipReasonNoAssignee = "no assignee"
 
 // ApprovalEvidence 一棵流程树（根流程及其名下各级子流程）上的审批证据。

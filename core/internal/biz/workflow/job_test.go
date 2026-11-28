@@ -75,7 +75,7 @@ func quietLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard
 
 // jobUC 只装配作业执行器走到的那几个依赖（运行时用例的事务管理与实例查询）。
 func jobUC(q *queueFake, txs *txManagerFake, lookup InstanceLookup, hooks WebhookResolver, caller ServiceCaller) *JobUsecase {
-	rt := NewRuntimeUsecase(nil, nil, nil, lookup, nil, nil, nil, nil, txs, nil, nil, nil, nil)
+	rt := NewRuntimeUsecase(nil, nil, nil, lookup, nil, nil, nil, nil, txs, nil, nil, nil, nil, nil)
 	return NewJobUsecase(rt, q, nil, hooks, caller, quietLogger())
 }
 

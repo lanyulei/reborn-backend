@@ -134,7 +134,7 @@ func newA2Env(t *testing.T) *a2Env {
 	defs := bizworkflow.NewDefinitionUsecase(defRepo, defRepo, defRepo, defRepo, wfCfg, bizworkflow.DefinitionReferrers{catalogRepo})
 	rt := bizworkflow.NewRuntimeUsecase(defs, instRepo, instRepo, instRepo, dir, topbiz.NewWorkflowUsers(dir), wfCfg, calendar, txs, notify,
 		bizworkflow.Listeners{bizticket.BusinessType: bizticket.NewStatusSyncer(ticketRepo, ticketRepo)},
-		bizworkflow.Viewers{bizticket.BusinessType: access}, nil)
+		bizworkflow.Viewers{bizticket.BusinessType: access}, nil, nil)
 	catalogs := bizticket.NewCatalogUsecase(catalogRepo, catalogRepo, catalogRepo, defs, a2Nobody{}, dir)
 	tickets := bizticket.NewUsecase(catalogRepo, ticketRepo, ticketRepo, comments, rt, a2Files{}, dir, access, txs,
 		bizticket.NewExtensions(ticketRepo, ticketRepo, rt, topbiz.NewTicketDeadlines(calendar), a2Resources{}, notify, quietLogger()))

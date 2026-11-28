@@ -37,7 +37,7 @@ func NewDefinitionRepo(data *basedata.Data) *definitionRepo {
 }
 
 // definitionColumns 定义查询列序（不含草稿），与 scanDefinition 一一对应。
-const definitionColumns = "id, key, name, category, description, status, revision, published_version, published_version_id, create_time, update_time"
+const definitionColumns = "id, key, name, category, description, status, revision, published_version, published_version_id, create_time, update_time, builtin"
 
 func scanDefinition(scan func(dest ...any) error, extra ...any) (*biz.Definition, error) {
 	var (
@@ -47,7 +47,7 @@ func scanDefinition(scan func(dest ...any) error, extra ...any) (*biz.Definition
 	)
 	dest := append([]any{
 		&d.ID, &d.Key, &d.Name, &d.Category, &d.Description, &status, &d.Revision,
-		&d.PublishedVersion, &versionID, &d.CreateTime, &d.UpdateTime,
+		&d.PublishedVersion, &versionID, &d.CreateTime, &d.UpdateTime, &d.Builtin,
 	}, extra...)
 	if err := scan(dest...); err != nil {
 		return nil, err
@@ -270,14 +270,21 @@ func (r *definitionRepo) Publish(ctx context.Context, id string, revision int32,
 // 多出一个实例——该实例照常按其绑定的不可变版本跑完，不影响正确性。
 func (r *definitionRepo) DeleteDefinition(ctx context.Context, id string) error {
 	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
-		var locked bool
+		var (
+			locked  bool
+			builtin bool
+		)
+		// 内置流程不能删除：先于「仍有进行中的实例」判定，报错才是它的原因。
 		err := tx.QueryRow(ctx,
-			"SELECT true FROM workflow_definition WHERE id = $1 AND delete_time IS NULL FOR UPDATE", id).Scan(&locked)
+			"SELECT true, builtin FROM workflow_definition WHERE id = $1 AND delete_time IS NULL FOR UPDATE", id).Scan(&locked, &builtin)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return biz.ErrDefinitionNotFound
 			}
 			return fmt.Errorf("lock workflow definition: %w", err)
+		}
+		if builtin {
+			return biz.ErrDefinitionBuiltin
 		}
 		var running bool
 		if err := tx.QueryRow(ctx,

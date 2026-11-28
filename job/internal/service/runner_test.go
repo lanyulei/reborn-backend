@@ -250,11 +250,12 @@ func TestHeartbeat(t *testing.T) {
 	if code != http.StatusOK || !strings.Contains(string(body), `"enabled":true`) {
 		t.Fatalf("heartbeat: %d %s", code, body)
 	}
-	hb := f.store.Heartbeats[id]
-	if len(hb.AgentVersion) != 32 || hb.Hostname != "runner-1" || hb.Capacity != 4 || hb.Running != 0 {
+	rec, ok := f.store.HeartbeatsOf()[id]
+	hb := rec.Heartbeat
+	if !ok || len(hb.AgentVersion) != 32 || hb.Hostname != "runner-1" || hb.Capacity != 4 || hb.Running != 0 {
 		t.Fatalf("heartbeat not sanitized: %+v", hb)
 	}
-	if f.store.LastSeen[id].IsZero() {
+	if rec.LastSeen.IsZero() {
 		t.Fatal("last_seen not written")
 	}
 	// 停用的节点心跳照常，应答 enabled=false。

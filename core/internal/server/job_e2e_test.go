@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
@@ -37,6 +38,14 @@ type jobServices struct {
 }
 
 // newJobServices 组装作业中心域：内存仓储 + 真实的 CMDB 适配器（topbiz.NewJobHostSource）。
+// reviewedEvidence 作业审批证据桩：没有任何审批环节被跳过——流程走完即算审批通过（与真实仓储在「没人被跳过」时的结果一致）。
+type reviewedEvidence struct{}
+
+// ApprovalEvidenceTx implements bizjob.ApprovalEvidenceReader。
+func (reviewedEvidence) ApprovalEvidenceTx(context.Context, bizjob.Tx, string, string) (bizjob.ApprovalEvidence, error) {
+	return bizjob.ApprovalEvidence{}, nil
+}
+
 func newJobServices(store *testfake.Store, scopes *bizcmdb.ScopeUsecase, models *bizcmdb.ModelUsecase, cis *bizcmdb.CIUsecase) jobServices {
 	js := testfake.NewJobStore()
 	users := monitorUsers{store: store}
@@ -51,7 +60,7 @@ func newJobServices(store *testfake.Store, scopes *bizcmdb.ScopeUsecase, models 
 	return jobServices{
 		script:    jobservice.NewScriptService(bizjob.NewScriptUsecase(js.Scripts(), users)),
 		policy:    jobservice.NewPolicyService(bizjob.NewPolicyUsecase(js.RiskRules(), js.Policies(), approvals, users)),
-		approvals: approvals, files: files, syncer: bizjob.NewApprovalSyncer(js.Executions()),
+		approvals: approvals, files: files, syncer: bizjob.NewApprovalSyncer(js.Executions(), reviewedEvidence{}),
 		credential: jobservice.NewCredentialService(bizjob.NewCredentialUsecase(js.Credentials(), js.Credentials(), sealer, users)),
 		project:    jobservice.NewProjectService(bizjob.NewProjectUsecase(js.Projects(), js.Projects(), sealer, users)),
 		template:   jobservice.NewTemplateService(bizjob.NewTemplateUsecase(js.Templates(), js.Templates(), targets, source, users), execUC),

@@ -219,7 +219,7 @@ go test ./...               -race -shuffle=on
   GET    /api/v1/workflow/task/{id}/return-target          可退回到的节点
   GET    /api/v1/workflow/user-candidate                   可选用户（最小披露）
   流程图 DSL（internal/biz/workflow/graph.go）：节点 start / end / userTask / cc / exclusiveGateway / parallelGateway；
-  处理人规则 user / role / initiator / deptLeader(level) / deptLeaderOf / formUser（排除发起人本人）/ formDeptLeader，多人模式 any（或签）/
+  处理人规则 user / role / initiator / deptLeader(level) / deptLeaderOf / formUser（排除发起人本人）/ formDeptLeader / superAdmin（系统管理员，见「流程引擎增强」），多人模式 any（或签）/
   all（会签）/ sequential（依次）；分支条件为 CEL（变量 form / initiator / initiatorDept，有成本上限，求值出错视为不命中走默认分支）。
   一致性：每条写命令 = 一个事务（实例行 FOR UPDATE → 状态机推进 → 回写 → 通知事件直插 → 业务监听器），失败整体回滚；
   同一实例的命令因行锁串行，重复提交返回 409 WORKFLOW_TASK_NOT_PENDING。上限：单实例 500 个任务、单次推进 200 步。
@@ -257,6 +257,18 @@ go test ./...               -race -shuffle=on
   userTask 可配 timeout（处理时限：仅提醒 / 自动同意 / 自动拒绝 / 转交流程管理员，可提前提醒）与
   formPermissions（字段码 → hidden / readonly / editable / required，由上层业务域解释）。
   超时「自动同意」与人工同意走同一道业务校验：业务域不放行（如工单本环节必填的字段还空着）时不自动同意，改为提醒。
+  人工任务「审批人为空时」（assignee.onEmpty）：只有明确选了 skip 才跳过该节点，其余一律拦住——缺省（没写 onEmpty，
+  等同 block），以及 admin（转交流程管理员 settings.admins）在没有可用的流程管理员时（没填，或都不可用）。抄送节点
+  没有收件人时照旧跳过。拦住 = 解析不出处理人的那一次推进以 WORKFLOW_NO_ASSIGNEE（409）失败，节点不会被跳过：
+  发起则发起失败，同意则同意不生效，由作业驱动的推进（定时到期、超时自动同意、子流程结束）直接转死信并通知流程管理员，
+  管理员的「跳过等待节点」也过不去。没填流程管理员的草稿不能发布（问题码 ADMINS_REQUIRED，保存草稿 / 模拟运行 /
+  详情页都会报）；此前已发布的版本照常执行、运行时同样按这条规则处置（没写 onEmpty 的审批节点从跳过变为拦住）。
+  被拦住之后：处理人规则能解析出人了（如补上了部门负责人）就重试作业或重新发起；因为没填流程管理员而被拦住的存量流程，
+  要补上流程管理员发布新版本后再发起。模拟运行把被拦住的节点标为 blocked。
+  审批人规则 superAdmin（系统管理员）：当前全部可用的超管，不依赖账号 / 角色 / 部门，新装机也能找到审批人；
+  不排除发起人（只有一名管理员的环境里要能自己走通流程）。内置流程的审批人都是它。
+  内置流程（builtin = true，迁移预置，标识以 builtin_ 开头）：可以修改、停用，不能删除
+  （WORKFLOW_DEFINITION_BUILTIN，409）；用户自建流程的标识不得以 builtin_ 开头（WORKFLOW_DEFINITION_INVALID）。
   作业队列 workflow_job：定时到期、任务超时、自动任务、父子流程衔接都排成作业，由后台执行器领取
   （SKIP LOCKED + 租约，多实例安全；每条作业只锁自己所属的实例；作业天然幂等）。两个循环分开领取：
   workflow-job 逐条执行引擎内部作业，workflow-service 并发（上限 4）执行自动任务——外部端点再慢也不会
@@ -312,6 +324,22 @@ go test ./...               -race -shuffle=on
   关联资源：模板可要求提单时关联 CMDB 资源（可选 / 必填）；只能关联提单人有权查看的资源，名称存快照。
   满意度：工单结束后提单人评价一次（POST /api/v1/ticket/order/{id}/rating）。
   统计：GET /api/v1/ticket/stats?days=30（数量与分布、每日趋势、平均处理时长、SLA 达成率、满意度）。
+
+内置流程与工单模板（迁移 0094 / 0095；开箱即用）：
+  流程 6 个：builtin_approval_admin（管理员审批）、builtin_approval_leader（部门负责人审批）、builtin_request_admin
+  （管理员审批并办理）、builtin_request_leader（部门负责人审批并办理）、builtin_task_handle（任务处理）、
+  builtin_event_handle（事件处置）。流程图与随图保存的设计器结构由前端设计器的数据模型生成，打开即可可视化编辑。
+  工单分类 4 个、模板 12 个：运维申请（通用审批申请、账号开通申请、权限申请、资源开通申请、咨询 / 服务请求、
+  值班调整申请）、变更管理（生产变更申请、K8s 变更审批）、故障管理（事件工单、任务 / 改进项）、容器平台
+  （申请命名空间与配额、申请集群权限）。三张容器平台模板的字段码是容器平台模块自动填单的约定
+  （summary / cluster / namespace / target / detail / link / reason），一律不必填。
+  内置的分类 / 模板同样可以修改（模板还可以停用），不能删除（TICKET_CATEGORY_BUILTIN / TICKET_TEMPLATE_BUILTIN，409）。
+  预置按固定 UUIDv7 写入、可重复执行：标识 / 名称已被用户占用的不建、不覆盖；模板绑定的内置流程不可用时不建；
+  分类名被占用时内置模板改挂到同名分类下。
+  默认接线只对「库里只有预置的超管一个用户」的新装机生效，存量库不动：作业审批流程指向 builtin_approval_admin，
+  K8s 自助申请（命名空间 / 权限）指向内置模板；管理员已经选了别的流程 / 模板时不覆盖。
+  作业审批的通过判定：流程「走完」不等于有人审批过——审批环节被自动跳过、又没有人（提交人以外）点过同意时
+  不批准，作业不执行（与 K8s 变更审批同一口径；流程本来没有审批环节时维持原行为）。
 
 角色：
   POST   /api/v1/system/role                     创建角色（可带 biz_scope：可管理的通知 biz 列表，空=不限）

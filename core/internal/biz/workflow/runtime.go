@@ -291,16 +291,18 @@ type RuntimeUsecase struct {
 	calendar  *CalendarUsecase
 	// duty 值班查询（值班人规则）；nil = 该规则解析为空。
 	duty Duty
+	// admins 系统管理员查询（「系统管理员」审批人规则）；nil = 该规则解析为空。
+	admins Admins
 }
 
 // NewRuntimeUsecase new a RuntimeUsecase.
 func NewRuntimeUsecase(defs *DefinitionUsecase, store InstanceStore, reader InstanceReader, lookup InstanceLookup, dir Directory,
 	users Users, proxies Proxies, calendar *CalendarUsecase, txs txrun.Manager, notify biznotify.NotificationWriter,
-	listeners Listeners, viewers Viewers, duty Duty,
+	listeners Listeners, viewers Viewers, duty Duty, admins Admins,
 ) *RuntimeUsecase {
 	return &RuntimeUsecase{
 		defs: defs, store: store, reader: reader, lookup: lookup, dir: dir, users: users, proxies: proxies,
-		calendar: calendar, txs: txs, notify: notify, listeners: listeners, viewers: viewers, duty: duty,
+		calendar: calendar, txs: txs, notify: notify, listeners: listeners, viewers: viewers, duty: duty, admins: admins,
 	}
 }
 
@@ -310,7 +312,7 @@ func (uc *RuntimeUsecase) exec(ctx context.Context, g *Graph, s *State) (*Execut
 	if err != nil {
 		return nil, err
 	}
-	x := NewExecution(g, s, uc.dir, time.Now()).WithProxies(uc.proxies).WithCalendar(cal).WithDuty(uc.duty)
+	x := NewExecution(g, s, uc.dir, time.Now()).WithProxies(uc.proxies).WithCalendar(cal).WithDuty(uc.duty).WithAdmins(uc.admins)
 	// 超时自动同意与人工同意走同一道业务校验（登记的监听器实现了 Guard 时）。
 	if guard, ok := uc.business(&s.Instance).(Guard); ok {
 		x.WithApproveGuard(func(ctx context.Context, n *Node) error {

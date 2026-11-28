@@ -95,6 +95,11 @@ const (
 	ErrorReason_WORKFLOW_CLIENT_FORBIDDEN ErrorReason = 44
 	// WORKFLOW_GRAPH_TOO_LARGE 流程图草稿超出大小上限，映射 HTTP 400。
 	ErrorReason_WORKFLOW_GRAPH_TOO_LARGE ErrorReason = 45
+	// WORKFLOW_NO_ASSIGNEE 人工任务解析不出处理人，且该节点没有明确选择跳过（审批人为空时缺省拦住，或选了
+	// 「转交流程管理员」而没有可用的管理员）：发起则发起失败，推进则那一次动作失败，映射 HTTP 409。
+	ErrorReason_WORKFLOW_NO_ASSIGNEE ErrorReason = 46
+	// WORKFLOW_DEFINITION_BUILTIN 内置流程定义不能删除（可以修改、停用），映射 HTTP 409。
+	ErrorReason_WORKFLOW_DEFINITION_BUILTIN ErrorReason = 47
 )
 
 // Enum value maps for ErrorReason.
@@ -134,6 +139,8 @@ var (
 		43: "WORKFLOW_CLIENT_UNAUTHORIZED",
 		44: "WORKFLOW_CLIENT_FORBIDDEN",
 		45: "WORKFLOW_GRAPH_TOO_LARGE",
+		46: "WORKFLOW_NO_ASSIGNEE",
+		47: "WORKFLOW_DEFINITION_BUILTIN",
 	}
 	ErrorReason_value = map[string]int32{
 		"WORKFLOW_UNSPECIFIED":            0,
@@ -170,6 +177,8 @@ var (
 		"WORKFLOW_CLIENT_UNAUTHORIZED":    43,
 		"WORKFLOW_CLIENT_FORBIDDEN":       44,
 		"WORKFLOW_GRAPH_TOO_LARGE":        45,
+		"WORKFLOW_NO_ASSIGNEE":            46,
+		"WORKFLOW_DEFINITION_BUILTIN":     47,
 	}
 )
 
@@ -204,7 +213,7 @@ var File_workflow_v1_error_reason_proto protoreflect.FileDescriptor
 
 const file_workflow_v1_error_reason_proto_rawDesc = "" +
 	"\n" +
-	"\x1eworkflow/v1/error_reason.proto\x12\vworkflow.v1\x1a\x13errors/errors.proto*\xa2\n" +
+	"\x1eworkflow/v1/error_reason.proto\x12\vworkflow.v1\x1a\x13errors/errors.proto*\xe9\n" +
 	"\n" +
 	"\vErrorReason\x12\x18\n" +
 	"\x14WORKFLOW_UNSPECIFIED\x10\x00\x12'\n" +
@@ -241,7 +250,9 @@ const file_workflow_v1_error_reason_proto_rawDesc = "" +
 	"\x17WORKFLOW_CLIENT_INVALID\x10*\x1a\x04\xa8E\x90\x03\x12&\n" +
 	"\x1cWORKFLOW_CLIENT_UNAUTHORIZED\x10+\x1a\x04\xa8E\x91\x03\x12#\n" +
 	"\x19WORKFLOW_CLIENT_FORBIDDEN\x10,\x1a\x04\xa8E\x93\x03\x12\"\n" +
-	"\x18WORKFLOW_GRAPH_TOO_LARGE\x10-\x1a\x04\xa8E\x90\x03\x1a\x04\xa0E\xf4\x03B<Z:github.com/lanyulei/reborn/backend/core/api/workflow/v1;v1b\x06proto3"
+	"\x18WORKFLOW_GRAPH_TOO_LARGE\x10-\x1a\x04\xa8E\x90\x03\x12\x1e\n" +
+	"\x14WORKFLOW_NO_ASSIGNEE\x10.\x1a\x04\xa8E\x99\x03\x12%\n" +
+	"\x1bWORKFLOW_DEFINITION_BUILTIN\x10/\x1a\x04\xa8E\x99\x03\x1a\x04\xa0E\xf4\x03B<Z:github.com/lanyulei/reborn/backend/core/api/workflow/v1;v1b\x06proto3"
 
 var (
 	file_workflow_v1_error_reason_proto_rawDescOnce sync.Once

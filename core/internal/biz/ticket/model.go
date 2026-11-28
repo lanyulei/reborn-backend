@@ -59,9 +59,13 @@ const (
 
 // 哨兵错误：reason 来自 api/ticket/v1 错误码枚举。
 var (
-	ErrCategoryNotFound    = errors.NotFound(v1.ErrorReason_TICKET_CATEGORY_NOT_FOUND.String(), "ticket category not found")
-	ErrCategoryNameExists  = errors.Conflict(v1.ErrorReason_TICKET_CATEGORY_NAME_EXISTS.String(), "ticket category name already exists")
-	ErrCategoryInUse       = errors.Conflict(v1.ErrorReason_TICKET_CATEGORY_IN_USE.String(), "ticket category still has templates")
+	ErrCategoryNotFound   = errors.NotFound(v1.ErrorReason_TICKET_CATEGORY_NOT_FOUND.String(), "ticket category not found")
+	ErrCategoryNameExists = errors.Conflict(v1.ErrorReason_TICKET_CATEGORY_NAME_EXISTS.String(), "ticket category name already exists")
+	ErrCategoryInUse      = errors.Conflict(v1.ErrorReason_TICKET_CATEGORY_IN_USE.String(), "ticket category still has templates")
+	// ErrCategoryBuiltin / ErrTemplateBuiltin 内置分类 / 模板不能删除（可以修改；模板还可以停用）：后续版本按
+	// 固定 ID 升级内置内容。
+	ErrCategoryBuiltin     = errors.Conflict(v1.ErrorReason_TICKET_CATEGORY_BUILTIN.String(), "built-in ticket categories cannot be deleted")
+	ErrTemplateBuiltin     = errors.Conflict(v1.ErrorReason_TICKET_TEMPLATE_BUILTIN.String(), "built-in ticket templates cannot be deleted; disable it instead")
 	ErrTemplateNotFound    = errors.NotFound(v1.ErrorReason_TICKET_TEMPLATE_NOT_FOUND.String(), "ticket template not found")
 	ErrTemplateNameExists  = errors.Conflict(v1.ErrorReason_TICKET_TEMPLATE_NAME_EXISTS.String(), "ticket template name already exists")
 	ErrTemplateInvalid     = errors.BadRequest(v1.ErrorReason_TICKET_TEMPLATE_INVALID.String(), "invalid ticket template")
@@ -204,6 +208,8 @@ type Category struct {
 	Description string
 	Sort        int32
 	Templates   []*Template
+	// Builtin 随版本预置的内置分类：可以修改，不能删除。
+	Builtin bool
 }
 
 // Template 工单模板。Form 仅详情读路径填充。
@@ -227,6 +233,8 @@ type Template struct {
 	SLA         []SLARule
 	SLAEscalate []string
 	CILink      int32
+	// Builtin 随版本预置的内置模板：可以修改、停用，不能删除。
+	Builtin bool
 }
 
 // Ticket 工单。Form / Data 仅详情读路径填充。
@@ -307,7 +315,7 @@ type CategoryWriter interface {
 	CreateCategory(ctx context.Context, c *Category, limit int) error
 	// UpdateCategory 整组更新；不存在返回 ErrCategoryNotFound。
 	UpdateCategory(ctx context.Context, c *Category) error
-	// DeleteCategory 软删；分类下仍有模板返回 ErrCategoryInUse。
+	// DeleteCategory 软删；分类下仍有模板返回 ErrCategoryInUse，内置分类返回 ErrCategoryBuiltin。
 	DeleteCategory(ctx context.Context, id string) error
 }
 
@@ -318,7 +326,7 @@ type TemplateWriter interface {
 	CreateTemplate(ctx context.Context, t *Template, limit int) error
 	// UpdateTemplate 整组更新；不存在返回 ErrTemplateNotFound。
 	UpdateTemplate(ctx context.Context, t *Template) error
-	// DeleteTemplate 软删；不存在返回 ErrTemplateNotFound。
+	// DeleteTemplate 软删；不存在返回 ErrTemplateNotFound，内置模板返回 ErrTemplateBuiltin。
 	DeleteTemplate(ctx context.Context, id string) error
 }
 

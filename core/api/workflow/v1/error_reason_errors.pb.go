@@ -486,3 +486,33 @@ func IsWorkflowGraphTooLarge(err error) bool {
 func ErrorWorkflowGraphTooLarge(format string, args ...interface{}) *errors.Error {
 	return errors.New(400, ErrorReason_WORKFLOW_GRAPH_TOO_LARGE.String(), fmt.Sprintf(format, args...))
 }
+
+// WORKFLOW_NO_ASSIGNEE 人工任务解析不出处理人，且该节点没有明确选择跳过（审批人为空时缺省拦住，或选了
+// 「转交流程管理员」而没有可用的管理员）：发起则发起失败，推进则那一次动作失败，映射 HTTP 409。
+func IsWorkflowNoAssignee(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := errors.FromError(err)
+	return e.Reason == ErrorReason_WORKFLOW_NO_ASSIGNEE.String() && e.Code == 409
+}
+
+// WORKFLOW_NO_ASSIGNEE 人工任务解析不出处理人，且该节点没有明确选择跳过（审批人为空时缺省拦住，或选了
+// 「转交流程管理员」而没有可用的管理员）：发起则发起失败，推进则那一次动作失败，映射 HTTP 409。
+func ErrorWorkflowNoAssignee(format string, args ...interface{}) *errors.Error {
+	return errors.New(409, ErrorReason_WORKFLOW_NO_ASSIGNEE.String(), fmt.Sprintf(format, args...))
+}
+
+// WORKFLOW_DEFINITION_BUILTIN 内置流程定义不能删除（可以修改、停用），映射 HTTP 409。
+func IsWorkflowDefinitionBuiltin(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := errors.FromError(err)
+	return e.Reason == ErrorReason_WORKFLOW_DEFINITION_BUILTIN.String() && e.Code == 409
+}
+
+// WORKFLOW_DEFINITION_BUILTIN 内置流程定义不能删除（可以修改、停用），映射 HTTP 409。
+func ErrorWorkflowDefinitionBuiltin(format string, args ...interface{}) *errors.Error {
+	return errors.New(409, ErrorReason_WORKFLOW_DEFINITION_BUILTIN.String(), fmt.Sprintf(format, args...))
+}

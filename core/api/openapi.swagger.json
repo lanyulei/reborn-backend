@@ -28123,6 +28123,10 @@
             "$ref": "#/definitions/Template"
           },
           "title": "templates 分类下的模板（不含表单），按排序值升序。"
+        },
+        "builtin": {
+          "type": "boolean",
+          "title": "builtin 是否内置分类（随版本预置）：可以修改，不能删除。"
         }
       },
       "title": "Category 工单分类。"
@@ -31572,6 +31576,10 @@
           "type": "string",
           "format": "date-time",
           "title": "update_time 更新时间。"
+        },
+        "builtin": {
+          "type": "boolean",
+          "title": "builtin 是否内置流程（随版本预置）：可以修改、停用，不能删除。"
         }
       },
       "title": "Definition 流程定义（出参，不含流程图）。"
@@ -47138,7 +47146,7 @@
         "status": {
           "type": "integer",
           "format": "int32",
-          "title": "status 模拟结束时的流程状态：2=走到结束 1=未走完（达到推进上限）。"
+          "title": "status 模拟结束时的流程状态：2=走到结束 1=未走完（达到推进上限，或在某个节点被拦住）。"
         }
       },
       "title": "SimulateDefinitionResponse 模拟运行响应。"
@@ -47468,6 +47476,10 @@
         "skipped": {
           "type": "boolean",
           "title": "skipped 处理人为空，节点被跳过。"
+        },
+        "blocked": {
+          "type": "boolean",
+          "title": "blocked 处理人为空且该节点没有明确选择跳过（审批人为空时缺省拦住，或选了「转交流程管理员」而没有\n可用的管理员）：真实运行时流程会被拦在这一步，之后的节点不会经过，模拟也到此为止。"
         }
       },
       "title": "SimulatedStep 模拟运行经过的一个节点。"
@@ -48499,6 +48511,10 @@
           "type": "integer",
           "format": "int32",
           "title": "form_columns 表单布局：1=单列（一行一个字段） 2=双列（一行两个字段，多行文本仍独占一行）。"
+        },
+        "builtin": {
+          "type": "boolean",
+          "title": "builtin 是否内置模板（随版本预置）：可以修改、停用，不能删除。"
         }
       },
       "title": "Template 工单模板。"

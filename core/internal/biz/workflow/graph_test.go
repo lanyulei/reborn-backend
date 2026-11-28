@@ -29,7 +29,11 @@ func TestParseGraph_Invalid(t *testing.T) {
 
 func TestValidate_Valid(t *testing.T) {
 	t.Parallel()
-	for name, raw := range map[string]string{"linear": linearGraph(task("a", "any", "u1")), "branching": branching, "parallel": parallel} {
+	for name, raw := range map[string]string{
+		"linear": linearGraph(task("a", "any", "u1")), "branching": branching, "parallel": parallel,
+		// 人工任务可以选「拦住」（解析不出处理人时不跳过）。
+		"block when empty": linearGraph(blockedTask("a", `,"onEmpty":"block"`)),
+	} {
 		if codes := issueCodes(t, raw); len(codes) > 0 {
 			t.Errorf("%s: unexpected issues %v", name, codes)
 		}
@@ -61,6 +65,8 @@ func TestValidate_Issues(t *testing.T) {
 		"bad mode":                  {linearGraph(task("a", "vote", "u1")), "ASSIGNEE_MODE"},
 		"incomplete rule":           {linearGraph(`{"id":"a","type":"userTask","assignee":{"rules":[{"kind":"deptLeader","level":0}]}}`), "ASSIGNEE_RULE_INVALID"},
 		"unknown rule":              {linearGraph(`{"id":"a","type":"userTask","assignee":{"rules":[{"kind":"oracle"}]}}`), "ASSIGNEE_RULE_UNKNOWN"},
+		"unknown on-empty policy":   {linearGraph(`{"id":"a","type":"userTask","assignee":{"rules":[{"kind":"initiator"}],"onEmpty":"halt"}}`), "ASSIGNEE_ON_EMPTY"},
+		"block on a cc node":        {linearGraph(`{"id":"a","type":"cc","assignee":{"rules":[{"kind":"initiator"}],"onEmpty":"block"}}`), "ON_EMPTY_BLOCK_NOT_ALLOWED"},
 		"reject to self":            {linearGraph(`{"id":"a","type":"userTask","assignee":{"rules":[{"kind":"initiator"}]},"onReject":{"to":"a"}}`), "ON_REJECT_TARGET"},
 		"reject to non-task":        {linearGraph(`{"id":"a","type":"userTask","assignee":{"rules":[{"kind":"initiator"}]},"onReject":{"to":"e"}}`), "ON_REJECT_TARGET"},
 		"condition outside gateway": {strings.Replace(linearGraph(ut("a")), `"source":"a","target":"e"`, `"source":"a","target":"e","condition":"true"`, 1), "CONDITION_NOT_ALLOWED"},

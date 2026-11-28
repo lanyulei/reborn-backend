@@ -76,12 +76,18 @@ const (
 	ModeSequential = "sequential"
 )
 
-// 处理人为空时的策略（userTask.assignee.onEmpty）。
+// 处理人为空时的策略（userTask.assignee.onEmpty）：人工任务的规则解析不出任何可用用户时怎么办。
+// 人工任务缺省拦住——只有明确选了 skip 才跳过，审批不会因为配置或组织数据的疏漏而「自动通过」。
 const (
-	// OnEmptySkip 自动跳过该节点。
+	// OnEmptySkip 跳过该节点，流程继续。人工任务必须明确选择它才跳过；抄送节点缺省就是跳过
+	//（没有收件人时无事可做）。
 	OnEmptySkip = "skip"
-	// OnEmptyAdmin 转交流程管理员（settings.admins）；管理员也为空时跳过。
+	// OnEmptyAdmin 转交流程管理员（settings.admins）；没有可用的管理员时拦住流程。
 	OnEmptyAdmin = "admin"
+	// OnEmptyBlock 拦住流程（人工任务的缺省值：不写 onEmpty 与写 block 等价）：走到该节点的那一次推进以
+	// ErrNoAssignee 失败——发起则发起失败，同意则同意不生效，由作业驱动的推进（定时到期、超时自动同意、
+	// 子流程结束）则作业转死信、通知流程管理员后停在原处。只适用于人工任务节点。
+	OnEmptyBlock = "block"
 )
 
 // 处理人规则类型（assignee.rules[].kind）。
@@ -103,6 +109,10 @@ const (
 	// RuleOncall 值班表（scheduleId）在流程到达该节点那一刻的主、备值班人；其中的发起人本人
 	// 会被排除（不能自己审批自己）。groupId 是值班表所属的值班组，仅供设计器回显。
 	RuleOncall = "oncall"
+	// RuleSuperAdmin 系统管理员：当前全部可用的超级管理员。不依赖任何账号、角色或部门，新装机
+	// 也只有它一定找得到人——内置审批流程的审批人用它。不排除发起人：只有一名管理员的环境里，
+	// 他要能自己走通流程。
+	RuleSuperAdmin = "superAdmin"
 )
 
 // 定义规模上限：发布校验与执行成本都必须有界。
@@ -270,8 +280,8 @@ type Edge struct {
 
 // Settings 流程级设置。
 type Settings struct {
-	// Admins 流程管理员用户 ID：处理人为空时的兜底处理人（onEmpty = admin），也是任务超时
-	// 转交、自动任务进死信时的通知对象。
+	// Admins 流程管理员用户 ID：处理人为空时的兜底处理人（onEmpty = admin；没有可用的管理员时流程
+	// 拦住），也是任务超时转交、自动任务进死信时的通知对象。
 	Admins []string `json:"admins,omitempty"`
 }
 
@@ -566,6 +576,10 @@ func (v *validator) assignee(n *Node) {
 	}
 	switch a.OnEmpty {
 	case "", OnEmptySkip, OnEmptyAdmin:
+	case OnEmptyBlock:
+		if n.Type != NodeUserTask {
+			v.node(n.ID, "ON_EMPTY_BLOCK_NOT_ALLOWED", "only user tasks may block the workflow when no assignee is found")
+		}
 	default:
 		v.node(n.ID, "ASSIGNEE_ON_EMPTY", "unknown onEmpty policy %q", a.OnEmpty)
 	}
@@ -576,7 +590,7 @@ func (v *validator) assignee(n *Node) {
 			ok = len(r.UserIDs) > 0 && len(r.UserIDs) <= maxRuleTargets
 		case RuleRole:
 			ok = len(r.RoleCodes) > 0 && len(r.RoleCodes) <= maxRuleTargets
-		case RuleInitiator:
+		case RuleInitiator, RuleSuperAdmin:
 		case RuleDeptLeader:
 			ok = r.Level >= 1 && r.Level <= maxDeptLevel
 		case RuleDeptLeaderOf:

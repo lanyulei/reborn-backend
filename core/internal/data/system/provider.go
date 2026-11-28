@@ -32,6 +32,7 @@ var ProviderSet = wire.NewSet(
 	wire.Bind(new(biz.DeptMover), new(*deptRepo)),
 	wire.Bind(new(biz.DeptMemberRepo), new(*deptRepo)),
 	wire.Bind(new(biz.DirectoryRepo), new(*directoryRepo)),
+	wire.Bind(new(biz.AdminReader), new(*directoryRepo)),
 	wire.Bind(new(biz.RefreshTokenReader), new(*refreshTokenRepo)),
 	wire.Bind(new(biz.RefreshTokenWriter), new(*refreshTokenRepo)),
 	wire.Bind(new(biz.PermissionPolicySource), new(*permissionRepo)),

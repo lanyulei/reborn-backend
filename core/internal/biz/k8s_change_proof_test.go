@@ -31,7 +31,7 @@ func TestK8sTicketsProof(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	l := &proofLookup{ev: bizworkflow.ApprovalEvidence{SkippedApprovals: 2, HumanApprovals: 1}}
-	rt := bizworkflow.NewRuntimeUsecase(nil, nil, nil, l, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	rt := bizworkflow.NewRuntimeUsecase(nil, nil, nil, l, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	tickets := k8sTickets{runtime: rt}
 
 	got, err := tickets.Proof(ctx, nil, "ticket-1", "u-requester")

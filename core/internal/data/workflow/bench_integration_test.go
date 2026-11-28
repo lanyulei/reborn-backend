@@ -142,7 +142,7 @@ func legacyRuntime(e *env) *biz.RuntimeUsecase {
 	instRepo := NewInstanceRepo(e.d)
 	return biz.NewRuntimeUsecase(e.defs, legacySaveStore{instRepo}, instRepo, instRepo, e.dir, usersAdapter{e.dir}, e.cfg,
 		biz.NewCalendarUsecase(e.cfg), basedata.NewTxManager(e.d), biznotify.NewNotificationUsecase(datanotify.NewEventRepo(e.d), nil),
-		biz.Listeners{"ticket": e.listener}, nil, nil)
+		biz.Listeners{"ticket": e.listener}, nil, nil, nil)
 }
 
 // seedBenchUsers 插入 n 个启用用户（会签席位），返回其 ID。

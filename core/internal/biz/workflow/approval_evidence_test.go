@@ -8,12 +8,12 @@ import (
 	"github.com/lanyulei/reborn/backend/core/internal/pkg/txrun"
 )
 
-// 审批证据按流转历史统计：审批环节因处理人为空被跳过时记的是 skip + SkipReasonNoAssignee，有人同意时记的是
-// 带操作人的 approve。这两条是引擎（engine.go）与仓储查询（data/workflow）之间的契约，这里把它们钉住——
+// 审批证据按流转历史统计：审批环节明确选了跳过、因处理人为空被跳过时记的是 skip + SkipReasonNoAssignee，有人同意时
+// 记的是带操作人的 approve。这两条是引擎（engine.go）与仓储查询（data/workflow）之间的契约，这里把它们钉住——
 // 引擎改了写法而查询没跟上，上层就会把「没人审批过」当成「没有审批环节」。
 func TestApprovalEvidenceHistoryContract(t *testing.T) {
 	t.Parallel()
-	h := start(t, linearGraph(`{"id":"a","type":"userTask","assignee":{"rules":[{"kind":"role","roleCodes":["nobody"]}]}}`), nil, &dirStub{})
+	h := start(t, linearGraph(`{"id":"a","type":"userTask","assignee":{"rules":[{"kind":"role","roleCodes":["nobody"]}],"onEmpty":"skip"}}`), nil, &dirStub{})
 	h.wantStatus(InstanceCompleted)
 	i := slices.IndexFunc(h.s.Histories, func(x *History) bool { return x.Action == ActionSkip })
 	if i < 0 || h.s.Histories[i].Detail["reason"] != SkipReasonNoAssignee || h.s.Histories[i].NodeID != "a" {

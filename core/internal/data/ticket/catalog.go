@@ -44,13 +44,13 @@ func uniqueViolation(err error, constraint string) bool {
 // ListCategories implements biz.CatalogReader.
 func (r *catalogRepo) ListCategories(ctx context.Context) ([]*biz.Category, error) {
 	rows, err := r.data.Pool.Query(ctx,
-		"SELECT id, name, description, sort FROM ticket_category WHERE delete_time IS NULL ORDER BY sort, create_time, id")
+		"SELECT id, name, description, sort, builtin FROM ticket_category WHERE delete_time IS NULL ORDER BY sort, create_time, id")
 	if err != nil {
 		return nil, fmt.Errorf("list ticket categories: %w", err)
 	}
 	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (*biz.Category, error) {
 		var c biz.Category
-		return &c, row.Scan(&c.ID, &c.Name, &c.Description, &c.Sort)
+		return &c, row.Scan(&c.ID, &c.Name, &c.Description, &c.Sort, &c.Builtin)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("scan ticket category: %w", err)
@@ -60,7 +60,7 @@ func (r *catalogRepo) ListCategories(ctx context.Context) ([]*biz.Category, erro
 
 // ListTemplates implements biz.CatalogReader（不含表单）。
 func (r *catalogRepo) ListTemplates(ctx context.Context, enabledOnly bool) ([]*biz.Template, error) {
-	sql := `SELECT id, category_id, name, description, workflow_key, number_prefix, status, sort, update_time, ci_link, icon, form_columns
+	sql := `SELECT id, category_id, name, description, workflow_key, number_prefix, status, sort, update_time, ci_link, icon, form_columns, builtin
 		FROM ticket_template WHERE delete_time IS NULL`
 	if enabledOnly {
 		sql += " AND status = 1"
@@ -74,7 +74,8 @@ func (r *catalogRepo) ListTemplates(ctx context.Context, enabledOnly bool) ([]*b
 			t                       biz.Template
 			status, ciLink, columns int16
 		)
-		err := row.Scan(&t.ID, &t.CategoryID, &t.Name, &t.Description, &t.WorkflowKey, &t.NumberPrefix, &status, &t.Sort, &t.UpdateTime, &ciLink, &t.Icon, &columns)
+		err := row.Scan(&t.ID, &t.CategoryID, &t.Name, &t.Description, &t.WorkflowKey, &t.NumberPrefix, &status, &t.Sort, &t.UpdateTime, &ciLink, &t.Icon, &columns,
+			&t.Builtin)
 		t.Status, t.CILink, t.FormColumns = int32(status), int32(ciLink), int32(columns)
 		return &t, err
 	})
@@ -93,11 +94,11 @@ func (r *catalogRepo) GetTemplate(ctx context.Context, id string) (*biz.Template
 	)
 	err := basedata.QueryerFrom(ctx, r.data.Pool).QueryRow(ctx,
 		`SELECT t.id, t.category_id, c.name, t.name, t.description, t.workflow_key, t.number_prefix, t.status, t.sort, t.form, t.update_time,
-			t.sla, t.sla_escalate, t.ci_link, t.icon, t.form_columns
+			t.sla, t.sla_escalate, t.ci_link, t.icon, t.form_columns, t.builtin
 		 FROM ticket_template t JOIN ticket_category c ON c.id = t.category_id
 		 WHERE t.id = $1 AND t.delete_time IS NULL`, id).
 		Scan(&t.ID, &t.CategoryID, &t.CategoryName, &t.Name, &t.Description, &t.WorkflowKey, &t.NumberPrefix, &status, &t.Sort, &form, &t.UpdateTime,
-			&sla, &escalate, &ciLink, &t.Icon, &columns)
+			&sla, &escalate, &ciLink, &t.Icon, &columns, &t.Builtin)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, biz.ErrTemplateNotFound
@@ -178,13 +179,20 @@ func (r *catalogRepo) UpdateCategory(ctx context.Context, c *biz.Category) error
 // 对分类行持键共享锁（见 CreateTemplate），二者互斥，不会留下挂在已删分类下的模板。
 func (r *catalogRepo) DeleteCategory(ctx context.Context, id string) error {
 	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
-		var locked bool
-		err := tx.QueryRow(ctx, "SELECT true FROM ticket_category WHERE id = $1 AND delete_time IS NULL FOR UPDATE", id).Scan(&locked)
+		var (
+			locked  bool
+			builtin bool
+		)
+		// 内置分类不能删除：先于「分类下仍有模板」判定，报错才是它的原因。
+		err := tx.QueryRow(ctx, "SELECT true, builtin FROM ticket_category WHERE id = $1 AND delete_time IS NULL FOR UPDATE", id).Scan(&locked, &builtin)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return biz.ErrCategoryNotFound
 			}
 			return fmt.Errorf("lock ticket category: %w", err)
+		}
+		if builtin {
+			return biz.ErrCategoryBuiltin
 		}
 		var used bool
 		if err := tx.QueryRow(ctx,
@@ -274,18 +282,35 @@ func (r *catalogRepo) UpdateTemplate(ctx context.Context, t *biz.Template) error
 	})
 }
 
-// DeleteTemplate implements biz.TemplateWriter.
+// DeleteTemplate implements biz.TemplateWriter：锁模板行后判定非内置再软删。内置模板只能停用——
+// 集群的变更审批、自助申请等配置引用着它，删掉会让那些功能在用到的那一刻才报错。
 func (r *catalogRepo) DeleteTemplate(ctx context.Context, id string) error {
-	tag, err := r.data.Pool.Exec(ctx,
-		"UPDATE ticket_template SET delete_time = now(), delete_user = $2 WHERE id = $1 AND delete_time IS NULL",
-		id, basedata.OperatorArg(ctx))
-	if err != nil {
-		return fmt.Errorf("soft delete ticket template: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return biz.ErrTemplateNotFound
-	}
-	return nil
+	return dbx.WithTx(ctx, r.data.Pool, func(tx pgx.Tx) error {
+		var (
+			locked  bool
+			builtin bool
+		)
+		err := tx.QueryRow(ctx, "SELECT true, builtin FROM ticket_template WHERE id = $1 AND delete_time IS NULL FOR UPDATE", id).Scan(&locked, &builtin)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return biz.ErrTemplateNotFound
+			}
+			return fmt.Errorf("lock ticket template: %w", err)
+		}
+		if builtin {
+			return biz.ErrTemplateBuiltin
+		}
+		tag, err := tx.Exec(ctx,
+			"UPDATE ticket_template SET delete_time = now(), delete_user = $2 WHERE id = $1 AND delete_time IS NULL",
+			id, basedata.OperatorArg(ctx))
+		if err != nil {
+			return fmt.Errorf("soft delete ticket template: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			return biz.ErrTemplateNotFound
+		}
+		return nil
+	})
 }
 
 // encodeTemplate 把模板的表单、SLA 规则与升级对象编码为 jsonb 实参（空值落 []）。

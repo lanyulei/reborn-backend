@@ -2,6 +2,7 @@ package biz
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -32,6 +33,10 @@ const (
 	graphCacheSize = 256
 )
 
+// BuiltinKeyPrefix 内置流程定义的标识前缀（随版本预置，如 builtin_approval_admin）。保留给系统：
+// 用户自建流程的标识不得以它开头，内置流程按标识幂等预置时才不会撞上用户的数据。
+const BuiltinKeyPrefix = "builtin_"
+
 // 哨兵错误：reason 来自 api/workflow/v1 错误码枚举。
 var (
 	ErrDefinitionNotFound    = errors.NotFound(v1.ErrorReason_WORKFLOW_DEFINITION_NOT_FOUND.String(), "workflow definition not found")
@@ -40,6 +45,8 @@ var (
 	ErrDefinitionUnavailable = errors.Conflict(v1.ErrorReason_WORKFLOW_DEFINITION_UNAVAILABLE.String(), "workflow definition is not published or is disabled")
 	ErrDefinitionConflict    = errors.Conflict(v1.ErrorReason_WORKFLOW_DEFINITION_CONFLICT.String(), "workflow definition was modified by someone else")
 	ErrDefinitionInUse       = errors.Conflict(v1.ErrorReason_WORKFLOW_DEFINITION_IN_USE.String(), "workflow definition still has running instances")
+	// ErrDefinitionBuiltin 内置流程定义不能删除（可以修改、停用）：后续版本按固定 ID 升级内置内容。
+	ErrDefinitionBuiltin = errors.Conflict(v1.ErrorReason_WORKFLOW_DEFINITION_BUILTIN.String(), "built-in workflow definitions cannot be deleted; disable it instead")
 	// ErrVersionInvalid 已发布版本的流程图通不过当前的校验规则（规则收紧后的存量版本，或数据
 	// 被改动）：依赖流程图的动作一律拒绝。是确定性的错误（重试也不会成功），按冲突返回——
 	// 作业执行器据此直接转死信，而不是无休止地重试。撤回 / 终止不依赖流程图，不受影响。
@@ -64,6 +71,8 @@ type Definition struct {
 	PublishedVersionID string
 	CreateTime         time.Time
 	UpdateTime         time.Time
+	// Builtin 随版本预置的内置流程：可以修改、停用，不能删除。
+	Builtin bool
 }
 
 // DefinitionVersion 已发布版本（不可变）。
@@ -275,18 +284,39 @@ func (uc *DefinitionUsecase) reaches(ctx context.Context, key, target string, de
 	return false, nil
 }
 
-// validate 解析并完整校验一份流程图：结构与配置（issuesOf）通过后再查外部引用。
+// validate 解析并完整校验一份流程图（保存草稿、发布、模拟运行与详情页的问题清单都走这里）：结构与
+// 配置（issuesOf）通过后，再查结构之外的问题——「转交流程管理员」却没有流程管理员，以及引用的外部
+// 对象。已发布版本的加载不走这里（见 cached）：那里只跑 issuesOf，规则收紧不让存量版本失效。
 func (uc *DefinitionUsecase) validate(ctx context.Context, selfKey string, raw []byte) (*Graph, []Issue, error) {
 	g, issues, err := issuesOf(raw)
 	if err != nil || len(issues) > 0 {
 		return g, issues, err
 	}
-	issues, err = uc.referenceIssues(ctx, selfKey, g)
-	return g, issues, err
+	refs, err := uc.referenceIssues(ctx, selfKey, g)
+	return g, append(adminIssues(g), refs...), err
+}
+
+// adminIssues 人工任务选了「转交流程管理员」、流程里却没有流程管理员：处理人为空时没有可转的人，
+// 流程会被拦住（见 blockIfEmpty）。这样的草稿不让发布，在问题清单里指出来；补上管理员，或把该节点
+// 改成别的处置，再发布。g 须已通过结构校验。
+func adminIssues(g *Graph) []Issue {
+	var issues []Issue
+	for i := range g.Nodes {
+		n := &g.Nodes[i]
+		if n.Type == NodeUserTask && n.Assignee.OnEmpty == OnEmptyAdmin && len(g.Settings.Admins) == 0 {
+			issues = append(issues, Issue{NodeID: n.ID, Code: "ADMINS_REQUIRED", Message: fmt.Sprintf(
+				"node %q hands to the workflow admins when no assignee is found, but the workflow has no admins", cmp.Or(n.Name, n.ID))})
+		}
+	}
+	return issues
 }
 
 // Create 创建流程定义（骨架草稿、启用、未发布）。
 func (uc *DefinitionUsecase) Create(ctx context.Context, d *Definition) (*Definition, error) {
+	if strings.HasPrefix(d.Key, BuiltinKeyPrefix) {
+		return nil, errors.BadRequest(ErrDefinitionInvalid.Reason,
+			"workflow key must not start with the built-in prefix "+BuiltinKeyPrefix)
+	}
 	id, err := idgen.NewID()
 	if err != nil {
 		return nil, err

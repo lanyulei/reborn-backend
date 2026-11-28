@@ -200,7 +200,11 @@ func (uc *ExecutionUsecase) submit(ctx context.Context, userID string, policy *P
 			return nil
 		}
 		// 流程发起即结束（节点全部自动通过或被跳过）：监听器触发时执行还没有记下流程实例，这里补上结果。
-		_, err = uc.writer.ResolveApprovalTx(ctx, tx, businessID, out.Approved, rejectedReason(out.Approved))
+		reason := out.Reason
+		if reason == "" {
+			reason = rejectedReason(out.Approved)
+		}
+		_, err = uc.writer.ResolveApprovalTx(ctx, tx, businessID, out.Approved, reason)
 		return err
 	})
 	if err != nil {
@@ -384,17 +388,31 @@ func (uc *ExecutionUsecase) SubmitAdhoc(ctx context.Context, userID string, in A
 // ApprovalSyncer 审批流程结束时把结果落到执行上。独立于 ExecutionUsecase：它被登记为流程引擎的监听器，
 // 而 ExecutionUsecase 经 Approvals 依赖流程引擎——合在一起会成环。
 type ApprovalSyncer struct {
-	writer ExecutionWriter
+	writer   ExecutionWriter
+	evidence ApprovalEvidenceReader
 }
 
-// NewApprovalSyncer new an ApprovalSyncer.
-func NewApprovalSyncer(writer ExecutionWriter) *ApprovalSyncer {
-	return &ApprovalSyncer{writer: writer}
+// NewApprovalSyncer new an ApprovalSyncer。
+func NewApprovalSyncer(writer ExecutionWriter, evidence ApprovalEvidenceReader) *ApprovalSyncer {
+	return &ApprovalSyncer{writer: writer, evidence: evidence}
 }
 
 // Resolve 在流程引擎的事务内落审批结果：通过 → 排队中；驳回 / 撤回 / 终止 → 审批未通过。
-// 只动仍是待审批的执行（已被取消的不受影响）。
-func (s *ApprovalSyncer) Resolve(ctx context.Context, tx Tx, businessID string, approved bool, reason string) error {
+// 只动仍是待审批的执行（已被取消的不受影响）。submitter 是执行的提交人（审批流程的发起人）。
+//
+// 「通过」不等于有人审批过：流程里的审批节点可以设置成处理人为空时自动跳过，流程会以通过结束。
+// 所以落批准之前先看审批证据（ApprovalReviewed）：确有审批环节被跳过、又没有任何人点过同意 →
+// 按未通过处理，作业不执行。没有证据来源、证据读不出来时同样不批准。
+func (s *ApprovalSyncer) Resolve(ctx context.Context, tx Tx, businessID string, approved bool, submitter, reason string) error {
+	if approved {
+		reviewed, err := s.reviewed(ctx, tx, businessID, submitter)
+		if err != nil {
+			return err
+		}
+		if !reviewed {
+			approved, reason = false, MsgApprovalUnreviewed
+		}
+	}
 	if reason == "" {
 		reason = rejectedReason(approved)
 	}
@@ -402,4 +420,16 @@ func (s *ApprovalSyncer) Resolve(ctx context.Context, tx Tx, businessID string, 
 		return fmt.Errorf("resolve job approval: %w", err)
 	}
 	return nil
+}
+
+// reviewed 这一次「通过」能否落为批准（见 ApprovalReviewed）。
+func (s *ApprovalSyncer) reviewed(ctx context.Context, tx Tx, businessID, submitter string) (bool, error) {
+	if s.evidence == nil {
+		return false, nil
+	}
+	ev, err := s.evidence.ApprovalEvidenceTx(ctx, tx, businessID, submitter)
+	if err != nil {
+		return false, fmt.Errorf("read job approval evidence: %w", err)
+	}
+	return ApprovalReviewed(ev), nil
 }
