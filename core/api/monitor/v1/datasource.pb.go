@@ -1719,6 +1719,315 @@ func (x *QueryDatasourceRangeResponse) GetDurationMs() int32 {
 	return 0
 }
 
+// ListMetricNamesRequest 指标名补全请求。
+type ListMetricNamesRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// datasource_id 数据源唯一标识。
+	DatasourceId string `protobuf:"bytes,1,opt,name=datasource_id,json=datasourceId,proto3" json:"datasource_id,omitempty"`
+	// limit 返回条数上限：不传取 200，至多 1000（超出夹紧）。
+	Limit         *int32 `protobuf:"varint,2,opt,name=limit,proto3,oneof" json:"limit,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListMetricNamesRequest) Reset() {
+	*x = ListMetricNamesRequest{}
+	mi := &file_monitor_v1_datasource_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListMetricNamesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListMetricNamesRequest) ProtoMessage() {}
+
+func (x *ListMetricNamesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_monitor_v1_datasource_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListMetricNamesRequest.ProtoReflect.Descriptor instead.
+func (*ListMetricNamesRequest) Descriptor() ([]byte, []int) {
+	return file_monitor_v1_datasource_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *ListMetricNamesRequest) GetDatasourceId() string {
+	if x != nil {
+		return x.DatasourceId
+	}
+	return ""
+}
+
+func (x *ListMetricNamesRequest) GetLimit() int32 {
+	if x != nil && x.Limit != nil {
+		return *x.Limit
+	}
+	return 0
+}
+
+// ListMetricNamesResponse 指标名列表（字典序）。
+type ListMetricNamesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Names         []string               `protobuf:"bytes,1,rep,name=names,proto3" json:"names,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListMetricNamesResponse) Reset() {
+	*x = ListMetricNamesResponse{}
+	mi := &file_monitor_v1_datasource_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListMetricNamesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListMetricNamesResponse) ProtoMessage() {}
+
+func (x *ListMetricNamesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_monitor_v1_datasource_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListMetricNamesResponse.ProtoReflect.Descriptor instead.
+func (*ListMetricNamesResponse) Descriptor() ([]byte, []int) {
+	return file_monitor_v1_datasource_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *ListMetricNamesResponse) GetNames() []string {
+	if x != nil {
+		return x.Names
+	}
+	return nil
+}
+
+// ListLabelNamesRequest 标签名补全请求。
+type ListLabelNamesRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// datasource_id 数据源唯一标识。
+	DatasourceId string `protobuf:"bytes,1,opt,name=datasource_id,json=datasourceId,proto3" json:"datasource_id,omitempty"`
+	// limit 返回条数上限：不传取 200，至多 1000（超出夹紧）。
+	Limit         *int32 `protobuf:"varint,2,opt,name=limit,proto3,oneof" json:"limit,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListLabelNamesRequest) Reset() {
+	*x = ListLabelNamesRequest{}
+	mi := &file_monitor_v1_datasource_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListLabelNamesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListLabelNamesRequest) ProtoMessage() {}
+
+func (x *ListLabelNamesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_monitor_v1_datasource_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListLabelNamesRequest.ProtoReflect.Descriptor instead.
+func (*ListLabelNamesRequest) Descriptor() ([]byte, []int) {
+	return file_monitor_v1_datasource_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *ListLabelNamesRequest) GetDatasourceId() string {
+	if x != nil {
+		return x.DatasourceId
+	}
+	return ""
+}
+
+func (x *ListLabelNamesRequest) GetLimit() int32 {
+	if x != nil && x.Limit != nil {
+		return *x.Limit
+	}
+	return 0
+}
+
+// ListLabelNamesResponse 标签名列表（字典序）。
+type ListLabelNamesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Names         []string               `protobuf:"bytes,1,rep,name=names,proto3" json:"names,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListLabelNamesResponse) Reset() {
+	*x = ListLabelNamesResponse{}
+	mi := &file_monitor_v1_datasource_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListLabelNamesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListLabelNamesResponse) ProtoMessage() {}
+
+func (x *ListLabelNamesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_monitor_v1_datasource_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListLabelNamesResponse.ProtoReflect.Descriptor instead.
+func (*ListLabelNamesResponse) Descriptor() ([]byte, []int) {
+	return file_monitor_v1_datasource_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *ListLabelNamesResponse) GetNames() []string {
+	if x != nil {
+		return x.Names
+	}
+	return nil
+}
+
+// ListLabelValuesRequest 标签值补全请求。
+type ListLabelValuesRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// datasource_id 数据源唯一标识。
+	DatasourceId string `protobuf:"bytes,1,opt,name=datasource_id,json=datasourceId,proto3" json:"datasource_id,omitempty"`
+	// label 标签名，Prometheus 标签名语法。
+	Label string `protobuf:"bytes,2,opt,name=label,proto3" json:"label,omitempty"`
+	// limit 返回条数上限：不传取 200，至多 1000（超出夹紧）。
+	Limit         *int32 `protobuf:"varint,3,opt,name=limit,proto3,oneof" json:"limit,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListLabelValuesRequest) Reset() {
+	*x = ListLabelValuesRequest{}
+	mi := &file_monitor_v1_datasource_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListLabelValuesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListLabelValuesRequest) ProtoMessage() {}
+
+func (x *ListLabelValuesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_monitor_v1_datasource_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListLabelValuesRequest.ProtoReflect.Descriptor instead.
+func (*ListLabelValuesRequest) Descriptor() ([]byte, []int) {
+	return file_monitor_v1_datasource_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *ListLabelValuesRequest) GetDatasourceId() string {
+	if x != nil {
+		return x.DatasourceId
+	}
+	return ""
+}
+
+func (x *ListLabelValuesRequest) GetLabel() string {
+	if x != nil {
+		return x.Label
+	}
+	return ""
+}
+
+func (x *ListLabelValuesRequest) GetLimit() int32 {
+	if x != nil && x.Limit != nil {
+		return *x.Limit
+	}
+	return 0
+}
+
+// ListLabelValuesResponse 标签值列表（字典序）。
+type ListLabelValuesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Values        []string               `protobuf:"bytes,1,rep,name=values,proto3" json:"values,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListLabelValuesResponse) Reset() {
+	*x = ListLabelValuesResponse{}
+	mi := &file_monitor_v1_datasource_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListLabelValuesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListLabelValuesResponse) ProtoMessage() {}
+
+func (x *ListLabelValuesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_monitor_v1_datasource_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListLabelValuesResponse.ProtoReflect.Descriptor instead.
+func (*ListLabelValuesResponse) Descriptor() ([]byte, []int) {
+	return file_monitor_v1_datasource_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *ListLabelValuesResponse) GetValues() []string {
+	if x != nil {
+		return x.Values
+	}
+	return nil
+}
+
 var File_monitor_v1_datasource_proto protoreflect.FileDescriptor
 
 const file_monitor_v1_datasource_proto_rawDesc = "" +
@@ -1876,7 +2185,29 @@ const file_monitor_v1_datasource_proto_rawDesc = "" +
 	"\ttruncated\x18\x03 \x01(\bR\ttruncated\x12\x1a\n" +
 	"\bwarnings\x18\x04 \x03(\tR\bwarnings\x12\x1f\n" +
 	"\vduration_ms\x18\x05 \x01(\x05R\n" +
-	"durationMs2\xfb\f\n" +
+	"durationMs\"x\n" +
+	"\x16ListMetricNamesRequest\x12-\n" +
+	"\rdatasource_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\fdatasourceId\x12%\n" +
+	"\x05limit\x18\x02 \x01(\x05B\n" +
+	"\xbaH\a\x1a\x05\x18\xe8\a(\x01H\x00R\x05limit\x88\x01\x01B\b\n" +
+	"\x06_limit\"/\n" +
+	"\x17ListMetricNamesResponse\x12\x14\n" +
+	"\x05names\x18\x01 \x03(\tR\x05names\"w\n" +
+	"\x15ListLabelNamesRequest\x12-\n" +
+	"\rdatasource_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\fdatasourceId\x12%\n" +
+	"\x05limit\x18\x02 \x01(\x05B\n" +
+	"\xbaH\a\x1a\x05\x18\xe8\a(\x01H\x00R\x05limit\x88\x01\x01B\b\n" +
+	"\x06_limit\".\n" +
+	"\x16ListLabelNamesResponse\x12\x14\n" +
+	"\x05names\x18\x01 \x03(\tR\x05names\"\xb4\x01\n" +
+	"\x16ListLabelValuesRequest\x12-\n" +
+	"\rdatasource_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\fdatasourceId\x12:\n" +
+	"\x05label\x18\x02 \x01(\tB$\xbaH!r\x1f\x10\x01\x18\x80\x012\x18^[a-zA-Z_][a-zA-Z0-9_]*$R\x05label\x12%\n" +
+	"\x05limit\x18\x03 \x01(\x05B\n" +
+	"\xbaH\a\x1a\x05\x18\xe8\a(\x01H\x00R\x05limit\x88\x01\x01B\b\n" +
+	"\x06_limit\"1\n" +
+	"\x17ListLabelValuesResponse\x12\x16\n" +
+	"\x06values\x18\x01 \x03(\tR\x06values2\x8a\x11\n" +
 	"\x18MonitorDatasourceService\x12\x97\x01\n" +
 	"\x0fListDatasources\x12\".monitor.v1.ListDatasourcesRequest\x1a#.monitor.v1.ListDatasourcesResponse\";\xc2\xf3\x18\x15查询监控数据源\x82\xd3\xe4\x93\x02\x1c\x12\x1a/api/v1/monitor/datasource\x12\x9c\x01\n" +
 	"\rGetDatasource\x12 .monitor.v1.GetDatasourceRequest\x1a!.monitor.v1.GetDatasourceResponse\"F\xc2\xf3\x18\x1b查询监控数据源详情\x82\xd3\xe4\x93\x02!\x12\x1f/api/v1/monitor/datasource/{id}\x12\x9d\x01\n" +
@@ -1887,7 +2218,10 @@ const file_monitor_v1_datasource_proto_rawDesc = "" +
 	"\x0eTestDatasource\x12!.monitor.v1.TestDatasourceRequest\x1a\".monitor.v1.TestDatasourceResponse\"H\xc2\xf3\x18\x15测试数据源连接\x82\xd3\xe4\x93\x02):\x01*\"$/api/v1/monitor/datasource/{id}:test\x12\xb0\x01\n" +
 	"\x15ListDatasourceOptions\x12(.monitor.v1.ListDatasourceOptionsRequest\x1a).monitor.v1.ListDatasourceOptionsResponse\"B\xc2\xf3\x18\x15查询数据源选项\x82\xd3\xe4\x93\x02#\x12!/api/v1/monitor/datasource-option\x12\x8c\x01\n" +
 	"\x0fQueryDatasource\x12\".monitor.v1.QueryDatasourceRequest\x1a#.monitor.v1.QueryDatasourceResponse\"0\xc2\xf3\x18\f即时查询\x82\xd3\xe4\x93\x02\x1a:\x01*\"\x15/api/v1/monitor/query\x12\xa1\x01\n" +
-	"\x14QueryDatasourceRange\x12'.monitor.v1.QueryDatasourceRangeRequest\x1a(.monitor.v1.QueryDatasourceRangeResponse\"6\xc2\xf3\x18\f区间查询\x82\xd3\xe4\x93\x02 :\x01*\"\x1b/api/v1/monitor/query-rangeB;Z9github.com/lanyulei/reborn/backend/core/api/monitor/v1;v1b\x06proto3"
+	"\x14QueryDatasourceRange\x12'.monitor.v1.QueryDatasourceRangeRequest\x1a(.monitor.v1.QueryDatasourceRangeResponse\"6\xc2\xf3\x18\f区间查询\x82\xd3\xe4\x93\x02 :\x01*\"\x1b/api/v1/monitor/query-range\x12\xae\x01\n" +
+	"\x0fListMetricNames\x12\".monitor.v1.ListMetricNamesRequest\x1a#.monitor.v1.ListMetricNamesResponse\"R\xc2\xf3\x18\x0f指标名补全\x82\xd3\xe4\x93\x029\x127/api/v1/monitor/datasource/{datasource_id}/metric-names\x12\xaa\x01\n" +
+	"\x0eListLabelNames\x12!.monitor.v1.ListLabelNamesRequest\x1a\".monitor.v1.ListLabelNamesResponse\"Q\xc2\xf3\x18\x0f标签名补全\x82\xd3\xe4\x93\x028\x126/api/v1/monitor/datasource/{datasource_id}/label-names\x12\xae\x01\n" +
+	"\x0fListLabelValues\x12\".monitor.v1.ListLabelValuesRequest\x1a#.monitor.v1.ListLabelValuesResponse\"R\xc2\xf3\x18\x0f标签值补全\x82\xd3\xe4\x93\x029\x127/api/v1/monitor/datasource/{datasource_id}/label-valuesB;Z9github.com/lanyulei/reborn/backend/core/api/monitor/v1;v1b\x06proto3"
 
 var (
 	file_monitor_v1_datasource_proto_rawDescOnce sync.Once
@@ -1901,7 +2235,7 @@ func file_monitor_v1_datasource_proto_rawDescGZIP() []byte {
 	return file_monitor_v1_datasource_proto_rawDescData
 }
 
-var file_monitor_v1_datasource_proto_msgTypes = make([]protoimpl.MessageInfo, 28)
+var file_monitor_v1_datasource_proto_msgTypes = make([]protoimpl.MessageInfo, 34)
 var file_monitor_v1_datasource_proto_goTypes = []any{
 	(*DatasourceConnection)(nil),          // 0: monitor.v1.DatasourceConnection
 	(*Datasource)(nil),                    // 1: monitor.v1.Datasource
@@ -1929,16 +2263,22 @@ var file_monitor_v1_datasource_proto_goTypes = []any{
 	(*QueryDatasourceResponse)(nil),       // 23: monitor.v1.QueryDatasourceResponse
 	(*QueryDatasourceRangeRequest)(nil),   // 24: monitor.v1.QueryDatasourceRangeRequest
 	(*QueryDatasourceRangeResponse)(nil),  // 25: monitor.v1.QueryDatasourceRangeResponse
-	nil,                                   // 26: monitor.v1.DatasourceConnection.HeadersEntry
-	nil,                                   // 27: monitor.v1.QuerySeries.LabelsEntry
-	(*timestamppb.Timestamp)(nil),         // 28: google.protobuf.Timestamp
+	(*ListMetricNamesRequest)(nil),        // 26: monitor.v1.ListMetricNamesRequest
+	(*ListMetricNamesResponse)(nil),       // 27: monitor.v1.ListMetricNamesResponse
+	(*ListLabelNamesRequest)(nil),         // 28: monitor.v1.ListLabelNamesRequest
+	(*ListLabelNamesResponse)(nil),        // 29: monitor.v1.ListLabelNamesResponse
+	(*ListLabelValuesRequest)(nil),        // 30: monitor.v1.ListLabelValuesRequest
+	(*ListLabelValuesResponse)(nil),       // 31: monitor.v1.ListLabelValuesResponse
+	nil,                                   // 32: monitor.v1.DatasourceConnection.HeadersEntry
+	nil,                                   // 33: monitor.v1.QuerySeries.LabelsEntry
+	(*timestamppb.Timestamp)(nil),         // 34: google.protobuf.Timestamp
 }
 var file_monitor_v1_datasource_proto_depIdxs = []int32{
-	26, // 0: monitor.v1.DatasourceConnection.headers:type_name -> monitor.v1.DatasourceConnection.HeadersEntry
+	32, // 0: monitor.v1.DatasourceConnection.headers:type_name -> monitor.v1.DatasourceConnection.HeadersEntry
 	2,  // 1: monitor.v1.Datasource.spec:type_name -> monitor.v1.DatasourceSpec
-	28, // 2: monitor.v1.Datasource.health_time:type_name -> google.protobuf.Timestamp
-	28, // 3: monitor.v1.Datasource.create_time:type_name -> google.protobuf.Timestamp
-	28, // 4: monitor.v1.Datasource.update_time:type_name -> google.protobuf.Timestamp
+	34, // 2: monitor.v1.Datasource.health_time:type_name -> google.protobuf.Timestamp
+	34, // 3: monitor.v1.Datasource.create_time:type_name -> google.protobuf.Timestamp
+	34, // 4: monitor.v1.Datasource.update_time:type_name -> google.protobuf.Timestamp
 	0,  // 5: monitor.v1.DatasourceSpec.connection:type_name -> monitor.v1.DatasourceConnection
 	1,  // 6: monitor.v1.ListDatasourcesResponse.items:type_name -> monitor.v1.Datasource
 	1,  // 7: monitor.v1.GetDatasourceResponse.datasource:type_name -> monitor.v1.Datasource
@@ -1948,12 +2288,12 @@ var file_monitor_v1_datasource_proto_depIdxs = []int32{
 	1,  // 11: monitor.v1.UpdateDatasourceResponse.datasource:type_name -> monitor.v1.Datasource
 	0,  // 12: monitor.v1.TestDatasourceConfigRequest.connection:type_name -> monitor.v1.DatasourceConnection
 	17, // 13: monitor.v1.ListDatasourceOptionsResponse.items:type_name -> monitor.v1.DatasourceOption
-	27, // 14: monitor.v1.QuerySeries.labels:type_name -> monitor.v1.QuerySeries.LabelsEntry
+	33, // 14: monitor.v1.QuerySeries.labels:type_name -> monitor.v1.QuerySeries.LabelsEntry
 	20, // 15: monitor.v1.QuerySeries.points:type_name -> monitor.v1.QueryPoint
-	28, // 16: monitor.v1.QueryDatasourceRequest.time:type_name -> google.protobuf.Timestamp
+	34, // 16: monitor.v1.QueryDatasourceRequest.time:type_name -> google.protobuf.Timestamp
 	21, // 17: monitor.v1.QueryDatasourceResponse.series:type_name -> monitor.v1.QuerySeries
-	28, // 18: monitor.v1.QueryDatasourceRangeRequest.start:type_name -> google.protobuf.Timestamp
-	28, // 19: monitor.v1.QueryDatasourceRangeRequest.end:type_name -> google.protobuf.Timestamp
+	34, // 18: monitor.v1.QueryDatasourceRangeRequest.start:type_name -> google.protobuf.Timestamp
+	34, // 19: monitor.v1.QueryDatasourceRangeRequest.end:type_name -> google.protobuf.Timestamp
 	21, // 20: monitor.v1.QueryDatasourceRangeResponse.series:type_name -> monitor.v1.QuerySeries
 	3,  // 21: monitor.v1.MonitorDatasourceService.ListDatasources:input_type -> monitor.v1.ListDatasourcesRequest
 	5,  // 22: monitor.v1.MonitorDatasourceService.GetDatasource:input_type -> monitor.v1.GetDatasourceRequest
@@ -1965,18 +2305,24 @@ var file_monitor_v1_datasource_proto_depIdxs = []int32{
 	18, // 28: monitor.v1.MonitorDatasourceService.ListDatasourceOptions:input_type -> monitor.v1.ListDatasourceOptionsRequest
 	22, // 29: monitor.v1.MonitorDatasourceService.QueryDatasource:input_type -> monitor.v1.QueryDatasourceRequest
 	24, // 30: monitor.v1.MonitorDatasourceService.QueryDatasourceRange:input_type -> monitor.v1.QueryDatasourceRangeRequest
-	4,  // 31: monitor.v1.MonitorDatasourceService.ListDatasources:output_type -> monitor.v1.ListDatasourcesResponse
-	6,  // 32: monitor.v1.MonitorDatasourceService.GetDatasource:output_type -> monitor.v1.GetDatasourceResponse
-	8,  // 33: monitor.v1.MonitorDatasourceService.CreateDatasource:output_type -> monitor.v1.CreateDatasourceResponse
-	10, // 34: monitor.v1.MonitorDatasourceService.UpdateDatasource:output_type -> monitor.v1.UpdateDatasourceResponse
-	12, // 35: monitor.v1.MonitorDatasourceService.DeleteDatasource:output_type -> monitor.v1.DeleteDatasourceResponse
-	14, // 36: monitor.v1.MonitorDatasourceService.TestDatasourceConfig:output_type -> monitor.v1.TestDatasourceConfigResponse
-	16, // 37: monitor.v1.MonitorDatasourceService.TestDatasource:output_type -> monitor.v1.TestDatasourceResponse
-	19, // 38: monitor.v1.MonitorDatasourceService.ListDatasourceOptions:output_type -> monitor.v1.ListDatasourceOptionsResponse
-	23, // 39: monitor.v1.MonitorDatasourceService.QueryDatasource:output_type -> monitor.v1.QueryDatasourceResponse
-	25, // 40: monitor.v1.MonitorDatasourceService.QueryDatasourceRange:output_type -> monitor.v1.QueryDatasourceRangeResponse
-	31, // [31:41] is the sub-list for method output_type
-	21, // [21:31] is the sub-list for method input_type
+	26, // 31: monitor.v1.MonitorDatasourceService.ListMetricNames:input_type -> monitor.v1.ListMetricNamesRequest
+	28, // 32: monitor.v1.MonitorDatasourceService.ListLabelNames:input_type -> monitor.v1.ListLabelNamesRequest
+	30, // 33: monitor.v1.MonitorDatasourceService.ListLabelValues:input_type -> monitor.v1.ListLabelValuesRequest
+	4,  // 34: monitor.v1.MonitorDatasourceService.ListDatasources:output_type -> monitor.v1.ListDatasourcesResponse
+	6,  // 35: monitor.v1.MonitorDatasourceService.GetDatasource:output_type -> monitor.v1.GetDatasourceResponse
+	8,  // 36: monitor.v1.MonitorDatasourceService.CreateDatasource:output_type -> monitor.v1.CreateDatasourceResponse
+	10, // 37: monitor.v1.MonitorDatasourceService.UpdateDatasource:output_type -> monitor.v1.UpdateDatasourceResponse
+	12, // 38: monitor.v1.MonitorDatasourceService.DeleteDatasource:output_type -> monitor.v1.DeleteDatasourceResponse
+	14, // 39: monitor.v1.MonitorDatasourceService.TestDatasourceConfig:output_type -> monitor.v1.TestDatasourceConfigResponse
+	16, // 40: monitor.v1.MonitorDatasourceService.TestDatasource:output_type -> monitor.v1.TestDatasourceResponse
+	19, // 41: monitor.v1.MonitorDatasourceService.ListDatasourceOptions:output_type -> monitor.v1.ListDatasourceOptionsResponse
+	23, // 42: monitor.v1.MonitorDatasourceService.QueryDatasource:output_type -> monitor.v1.QueryDatasourceResponse
+	25, // 43: monitor.v1.MonitorDatasourceService.QueryDatasourceRange:output_type -> monitor.v1.QueryDatasourceRangeResponse
+	27, // 44: monitor.v1.MonitorDatasourceService.ListMetricNames:output_type -> monitor.v1.ListMetricNamesResponse
+	29, // 45: monitor.v1.MonitorDatasourceService.ListLabelNames:output_type -> monitor.v1.ListLabelNamesResponse
+	31, // 46: monitor.v1.MonitorDatasourceService.ListLabelValues:output_type -> monitor.v1.ListLabelValuesResponse
+	34, // [34:47] is the sub-list for method output_type
+	21, // [21:34] is the sub-list for method input_type
 	21, // [21:21] is the sub-list for extension type_name
 	21, // [21:21] is the sub-list for extension extendee
 	0,  // [0:21] is the sub-list for field type_name
@@ -1992,13 +2338,16 @@ func file_monitor_v1_datasource_proto_init() {
 	file_monitor_v1_datasource_proto_msgTypes[13].OneofWrappers = []any{}
 	file_monitor_v1_datasource_proto_msgTypes[18].OneofWrappers = []any{}
 	file_monitor_v1_datasource_proto_msgTypes[22].OneofWrappers = []any{}
+	file_monitor_v1_datasource_proto_msgTypes[26].OneofWrappers = []any{}
+	file_monitor_v1_datasource_proto_msgTypes[28].OneofWrappers = []any{}
+	file_monitor_v1_datasource_proto_msgTypes[30].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_monitor_v1_datasource_proto_rawDesc), len(file_monitor_v1_datasource_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   28,
+			NumMessages:   34,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

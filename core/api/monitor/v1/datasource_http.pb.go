@@ -22,6 +22,9 @@ const OperationMonitorDatasourceServiceDeleteDatasource = "/monitor.v1.MonitorDa
 const OperationMonitorDatasourceServiceGetDatasource = "/monitor.v1.MonitorDatasourceService/GetDatasource"
 const OperationMonitorDatasourceServiceListDatasourceOptions = "/monitor.v1.MonitorDatasourceService/ListDatasourceOptions"
 const OperationMonitorDatasourceServiceListDatasources = "/monitor.v1.MonitorDatasourceService/ListDatasources"
+const OperationMonitorDatasourceServiceListLabelNames = "/monitor.v1.MonitorDatasourceService/ListLabelNames"
+const OperationMonitorDatasourceServiceListLabelValues = "/monitor.v1.MonitorDatasourceService/ListLabelValues"
+const OperationMonitorDatasourceServiceListMetricNames = "/monitor.v1.MonitorDatasourceService/ListMetricNames"
 const OperationMonitorDatasourceServiceQueryDatasource = "/monitor.v1.MonitorDatasourceService/QueryDatasource"
 const OperationMonitorDatasourceServiceQueryDatasourceRange = "/monitor.v1.MonitorDatasourceService/QueryDatasourceRange"
 const OperationMonitorDatasourceServiceTestDatasource = "/monitor.v1.MonitorDatasourceService/TestDatasource"
@@ -40,6 +43,13 @@ type MonitorDatasourceServiceHTTPServer interface {
 	ListDatasourceOptions(context.Context, *ListDatasourceOptionsRequest) (*ListDatasourceOptionsResponse, error)
 	// ListDatasources ListDatasources 分页查询数据源。
 	ListDatasources(context.Context, *ListDatasourcesRequest) (*ListDatasourcesResponse, error)
+	// ListLabelNames ListLabelNames 标签名补全：返回数据源的全部标签名（字典序）。
+	ListLabelNames(context.Context, *ListLabelNamesRequest) (*ListLabelNamesResponse, error)
+	// ListLabelValues ListLabelValues 标签值补全：返回指定标签的值列表（字典序）。
+	ListLabelValues(context.Context, *ListLabelValuesRequest) (*ListLabelValuesResponse, error)
+	// ListMetricNames ListMetricNames 指标名补全：返回数据源的指标名列表（字典序）。只读元数据、不执行查询，
+	// 供 PromQL 编辑器自动补全使用；补全失败静默降级，不影响输入。
+	ListMetricNames(context.Context, *ListMetricNamesRequest) (*ListMetricNamesResponse, error)
 	// QueryDatasource QueryDatasource 即时查询：在指定数据源上执行 PromQL，取某一时刻的值。返回至多 500 条序列。
 	// PromQL 有误返回 400 MONITOR_QUERY_INVALID；数据源不可达返回 502 MONITOR_DATASOURCE_UNREACHABLE。
 	QueryDatasource(context.Context, *QueryDatasourceRequest) (*QueryDatasourceResponse, error)
@@ -68,6 +78,9 @@ func RegisterMonitorDatasourceServiceHTTPServer(s *http.Server, srv MonitorDatas
 	r.Handle("GET", "/api/v1/monitor/datasource-option", _MonitorDatasourceService_ListDatasourceOptions0_HTTP_Handler(srv))
 	r.Handle("POST", "/api/v1/monitor/query", _MonitorDatasourceService_QueryDatasource0_HTTP_Handler(srv))
 	r.Handle("POST", "/api/v1/monitor/query-range", _MonitorDatasourceService_QueryDatasourceRange0_HTTP_Handler(srv))
+	r.Handle("GET", "/api/v1/monitor/datasource/{datasource_id}/metric-names", _MonitorDatasourceService_ListMetricNames0_HTTP_Handler(srv))
+	r.Handle("GET", "/api/v1/monitor/datasource/{datasource_id}/label-names", _MonitorDatasourceService_ListLabelNames0_HTTP_Handler(srv))
+	r.Handle("GET", "/api/v1/monitor/datasource/{datasource_id}/label-values", _MonitorDatasourceService_ListLabelValues0_HTTP_Handler(srv))
 }
 
 func _MonitorDatasourceService_ListDatasources0_HTTP_Handler(srv MonitorDatasourceServiceHTTPServer) func(ctx http.Context) error {
@@ -272,6 +285,72 @@ func _MonitorDatasourceService_QueryDatasourceRange0_HTTP_Handler(srv MonitorDat
 	}
 }
 
+func _MonitorDatasourceService_ListMetricNames0_HTTP_Handler(srv MonitorDatasourceServiceHTTPServer) func(ctx http.Context) error {
+	return func(ctx http.Context) error {
+		var in ListMetricNamesRequest
+		if err := ctx.BindQuery(&in); err != nil {
+			return err
+		}
+		if err := ctx.BindVars(&in); err != nil {
+			return err
+		}
+		http.SetOperation(ctx, OperationMonitorDatasourceServiceListMetricNames)
+		h := ctx.Middleware(func(ctx context.Context, req interface{}) (interface{}, error) {
+			return srv.ListMetricNames(ctx, req.(*ListMetricNamesRequest))
+		})
+		out, err := h(ctx, &in)
+		if err != nil {
+			return err
+		}
+		reply := out.(*ListMetricNamesResponse)
+		return ctx.Result(200, reply)
+	}
+}
+
+func _MonitorDatasourceService_ListLabelNames0_HTTP_Handler(srv MonitorDatasourceServiceHTTPServer) func(ctx http.Context) error {
+	return func(ctx http.Context) error {
+		var in ListLabelNamesRequest
+		if err := ctx.BindQuery(&in); err != nil {
+			return err
+		}
+		if err := ctx.BindVars(&in); err != nil {
+			return err
+		}
+		http.SetOperation(ctx, OperationMonitorDatasourceServiceListLabelNames)
+		h := ctx.Middleware(func(ctx context.Context, req interface{}) (interface{}, error) {
+			return srv.ListLabelNames(ctx, req.(*ListLabelNamesRequest))
+		})
+		out, err := h(ctx, &in)
+		if err != nil {
+			return err
+		}
+		reply := out.(*ListLabelNamesResponse)
+		return ctx.Result(200, reply)
+	}
+}
+
+func _MonitorDatasourceService_ListLabelValues0_HTTP_Handler(srv MonitorDatasourceServiceHTTPServer) func(ctx http.Context) error {
+	return func(ctx http.Context) error {
+		var in ListLabelValuesRequest
+		if err := ctx.BindQuery(&in); err != nil {
+			return err
+		}
+		if err := ctx.BindVars(&in); err != nil {
+			return err
+		}
+		http.SetOperation(ctx, OperationMonitorDatasourceServiceListLabelValues)
+		h := ctx.Middleware(func(ctx context.Context, req interface{}) (interface{}, error) {
+			return srv.ListLabelValues(ctx, req.(*ListLabelValuesRequest))
+		})
+		out, err := h(ctx, &in)
+		if err != nil {
+			return err
+		}
+		reply := out.(*ListLabelValuesResponse)
+		return ctx.Result(200, reply)
+	}
+}
+
 type MonitorDatasourceServiceHTTPClient interface {
 	// CreateDatasource CreateDatasource 新建数据源；名称重复返回 409 MONITOR_DATASOURCE_NAME_EXISTS。
 	CreateDatasource(ctx context.Context, req *CreateDatasourceRequest, opts ...http.CallOption) (rsp *CreateDatasourceResponse, err error)
@@ -284,6 +363,13 @@ type MonitorDatasourceServiceHTTPClient interface {
 	ListDatasourceOptions(ctx context.Context, req *ListDatasourceOptionsRequest, opts ...http.CallOption) (rsp *ListDatasourceOptionsResponse, err error)
 	// ListDatasources ListDatasources 分页查询数据源。
 	ListDatasources(ctx context.Context, req *ListDatasourcesRequest, opts ...http.CallOption) (rsp *ListDatasourcesResponse, err error)
+	// ListLabelNames ListLabelNames 标签名补全：返回数据源的全部标签名（字典序）。
+	ListLabelNames(ctx context.Context, req *ListLabelNamesRequest, opts ...http.CallOption) (rsp *ListLabelNamesResponse, err error)
+	// ListLabelValues ListLabelValues 标签值补全：返回指定标签的值列表（字典序）。
+	ListLabelValues(ctx context.Context, req *ListLabelValuesRequest, opts ...http.CallOption) (rsp *ListLabelValuesResponse, err error)
+	// ListMetricNames ListMetricNames 指标名补全：返回数据源的指标名列表（字典序）。只读元数据、不执行查询，
+	// 供 PromQL 编辑器自动补全使用；补全失败静默降级，不影响输入。
+	ListMetricNames(ctx context.Context, req *ListMetricNamesRequest, opts ...http.CallOption) (rsp *ListMetricNamesResponse, err error)
 	// QueryDatasource QueryDatasource 即时查询：在指定数据源上执行 PromQL，取某一时刻的值。返回至多 500 条序列。
 	// PromQL 有误返回 400 MONITOR_QUERY_INVALID；数据源不可达返回 502 MONITOR_DATASOURCE_UNREACHABLE。
 	QueryDatasource(ctx context.Context, req *QueryDatasourceRequest, opts ...http.CallOption) (rsp *QueryDatasourceResponse, err error)
@@ -386,6 +472,58 @@ func (c *MonitorDatasourceServiceHTTPClientImpl) ListDatasources(ctx context.Con
 	opts = append([]http.CallOption{
 		http.Accept("application/protojson"),
 		http.Operation(OperationMonitorDatasourceServiceListDatasources),
+		http.PathTemplate(pattern),
+	}, opts...)
+	err := c.cc.Invoke(ctx, "GET", path, nil, &out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ListLabelNames ListLabelNames 标签名补全：返回数据源的全部标签名（字典序）。
+func (c *MonitorDatasourceServiceHTTPClientImpl) ListLabelNames(ctx context.Context, in *ListLabelNamesRequest, opts ...http.CallOption) (*ListLabelNamesResponse, error) {
+	var out ListLabelNamesResponse
+	pattern := "/api/v1/monitor/datasource/{datasource_id}/label-names"
+	path := http.BuildPath(pattern, in, http.WithQueryParams())
+	opts = append([]http.CallOption{
+		http.Accept("application/protojson"),
+		http.Operation(OperationMonitorDatasourceServiceListLabelNames),
+		http.PathTemplate(pattern),
+	}, opts...)
+	err := c.cc.Invoke(ctx, "GET", path, nil, &out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ListLabelValues ListLabelValues 标签值补全：返回指定标签的值列表（字典序）。
+func (c *MonitorDatasourceServiceHTTPClientImpl) ListLabelValues(ctx context.Context, in *ListLabelValuesRequest, opts ...http.CallOption) (*ListLabelValuesResponse, error) {
+	var out ListLabelValuesResponse
+	pattern := "/api/v1/monitor/datasource/{datasource_id}/label-values"
+	path := http.BuildPath(pattern, in, http.WithQueryParams())
+	opts = append([]http.CallOption{
+		http.Accept("application/protojson"),
+		http.Operation(OperationMonitorDatasourceServiceListLabelValues),
+		http.PathTemplate(pattern),
+	}, opts...)
+	err := c.cc.Invoke(ctx, "GET", path, nil, &out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ListMetricNames ListMetricNames 指标名补全：返回数据源的指标名列表（字典序）。只读元数据、不执行查询，
+// 供 PromQL 编辑器自动补全使用；补全失败静默降级，不影响输入。
+func (c *MonitorDatasourceServiceHTTPClientImpl) ListMetricNames(ctx context.Context, in *ListMetricNamesRequest, opts ...http.CallOption) (*ListMetricNamesResponse, error) {
+	var out ListMetricNamesResponse
+	pattern := "/api/v1/monitor/datasource/{datasource_id}/metric-names"
+	path := http.BuildPath(pattern, in, http.WithQueryParams())
+	opts = append([]http.CallOption{
+		http.Accept("application/protojson"),
+		http.Operation(OperationMonitorDatasourceServiceListMetricNames),
 		http.PathTemplate(pattern),
 	}, opts...)
 	err := c.cc.Invoke(ctx, "GET", path, nil, &out, opts...)

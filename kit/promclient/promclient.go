@@ -183,6 +183,7 @@ type Client struct {
 	queryURL  string
 	rangeURL  string
 	writeURL  string
+	apiBase   string
 	header    http.Header
 	secret    string
 	timeout   time.Duration
@@ -321,6 +322,8 @@ func New(cfg Config) (*Client, error) {
 
 	base := strings.TrimRight(u.Path, "/")
 	u.RawPath = ""
+	u.Path = base + "/api/v1"
+	apiBase := u.String()
 	u.Path = base + "/api/v1/query"
 	queryURL := u.String()
 	u.Path = base + "/api/v1/query_range"
@@ -374,6 +377,7 @@ func New(cfg Config) (*Client, error) {
 		transport: transport,
 		queryURL:  queryURL,
 		rangeURL:  rangeURL,
+		apiBase:   apiBase,
 		writeURL:  writeURL,
 		header:    header,
 		secret:    cfg.Secret,

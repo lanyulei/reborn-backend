@@ -1413,6 +1413,8 @@ type MonitorQueryClient struct {
 	Err    error
 	Result *biz.QueryResult
 	conns  []biz.Connection
+	names  []string
+	limits []int
 	// Block 非空时查询阻塞到它被关闭（并发额度测试用）。
 	Block chan struct{}
 }
@@ -1458,6 +1460,62 @@ func (c *MonitorQueryClient) Instant(_ context.Context, conn biz.Connection, _ s
 // Range implements biz.QueryClient.
 func (c *MonitorQueryClient) Range(_ context.Context, conn biz.Connection, _ string, _, _ time.Time, _ time.Duration, _ int) (*biz.QueryResult, error) {
 	return c.run(conn)
+}
+
+// Names 收到过的补全请求记录（按调用顺序：__name__ / __label_names__ / 具体标签名）。
+func (c *MonitorQueryClient) Names() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.names)
+}
+
+// Limits 收到过的补全 limit（与 Names 一一对应；断言用例层的夹紧）。
+func (c *MonitorQueryClient) Limits() []int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.limits)
+}
+
+// MetricNames implements biz.QueryClient.
+func (c *MonitorQueryClient) MetricNames(_ context.Context, conn biz.Connection, limit int) ([]string, error) {
+	c.mu.Lock()
+	c.conns = append(c.conns, conn)
+	c.names = append(c.names, "__name__")
+	c.limits = append(c.limits, limit)
+	err := c.Err
+	c.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	return []string{"up", "process_cpu_seconds_total"}, nil
+}
+
+// LabelNames implements biz.QueryClient.
+func (c *MonitorQueryClient) LabelNames(_ context.Context, conn biz.Connection, limit int) ([]string, error) {
+	c.mu.Lock()
+	c.conns = append(c.conns, conn)
+	c.names = append(c.names, "__label_names__")
+	c.limits = append(c.limits, limit)
+	err := c.Err
+	c.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	return []string{"job", "instance"}, nil
+}
+
+// LabelValues implements biz.QueryClient.
+func (c *MonitorQueryClient) LabelValues(_ context.Context, conn biz.Connection, label string, limit int) ([]string, error) {
+	c.mu.Lock()
+	c.conns = append(c.conns, conn)
+	c.names = append(c.names, label)
+	c.limits = append(c.limits, limit)
+	err := c.Err
+	c.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	return []string{"value-1", "value-2"}, nil
 }
 
 // MonitorTargets 通知对象候选项的内存桩（biz.TargetSource）。

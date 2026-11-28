@@ -15768,6 +15768,133 @@
         ]
       }
     },
+    "/api/v1/monitor/datasource/{datasourceId}/label-names": {
+      "get": {
+        "summary": "ListLabelNames 标签名补全：返回数据源的全部标签名（字典序）。",
+        "operationId": "MonitorDatasourceService_ListLabelNames",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListLabelNamesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "datasourceId",
+            "description": "datasource_id 数据源唯一标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "limit",
+            "description": "limit 返回条数上限：不传取 200，至多 1000（超出夹紧）。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "MonitorDatasourceService"
+        ]
+      }
+    },
+    "/api/v1/monitor/datasource/{datasourceId}/label-values": {
+      "get": {
+        "summary": "ListLabelValues 标签值补全：返回指定标签的值列表（字典序）。",
+        "operationId": "MonitorDatasourceService_ListLabelValues",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListLabelValuesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "datasourceId",
+            "description": "datasource_id 数据源唯一标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "label",
+            "description": "label 标签名，Prometheus 标签名语法。",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "limit",
+            "description": "limit 返回条数上限：不传取 200，至多 1000（超出夹紧）。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "MonitorDatasourceService"
+        ]
+      }
+    },
+    "/api/v1/monitor/datasource/{datasourceId}/metric-names": {
+      "get": {
+        "summary": "ListMetricNames 指标名补全：返回数据源的指标名列表（字典序）。只读元数据、不执行查询，\n供 PromQL 编辑器自动补全使用；补全失败静默降级，不影响输入。",
+        "operationId": "MonitorDatasourceService_ListMetricNames",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/ListMetricNamesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/Status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "datasourceId",
+            "description": "datasource_id 数据源唯一标识。",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "limit",
+            "description": "limit 返回条数上限：不传取 200，至多 1000（超出夹紧）。",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "MonitorDatasourceService"
+        ]
+      }
+    },
     "/api/v1/monitor/datasource/{id}": {
       "get": {
         "summary": "GetDatasource 查询数据源详情。",
@@ -39766,6 +39893,30 @@
       },
       "title": "ListKubeTokensResponse 查询限时 kubeconfig 响应。"
     },
+    "ListLabelNamesResponse": {
+      "type": "object",
+      "properties": {
+        "names": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "title": "ListLabelNamesResponse 标签名列表（字典序）。"
+    },
+    "ListLabelValuesResponse": {
+      "type": "object",
+      "properties": {
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "title": "ListLabelValuesResponse 标签值列表（字典序）。"
+    },
     "ListLoginLogsResponse": {
       "type": "object",
       "properties": {
@@ -39798,6 +39949,18 @@
         }
       },
       "title": "ListMessagesResponse 查询会话消息响应。"
+    },
+    "ListMetricNamesResponse": {
+      "type": "object",
+      "properties": {
+        "names": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "title": "ListMetricNamesResponse 指标名列表（字典序）。"
     },
     "ListModelGroupsResponse": {
       "type": "object",

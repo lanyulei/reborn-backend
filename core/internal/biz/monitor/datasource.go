@@ -22,6 +22,10 @@ const (
 	maxRangeSteps = 11000
 	// maxQueryPoints 一次查询返回的采样点总数上限，超出截断并标记。
 	maxQueryPoints = 200000
+	// defaultCompletionLimit 补全接口（指标名 / 标签名 / 标签值）的缺省返回条数。
+	defaultCompletionLimit = 200
+	// maxCompletionLimit 补全接口允许的最大返回条数：超过即夹紧，防止一次性拉回超大标签集。
+	maxCompletionLimit = 1000
 	// maxConcurrentQueries 本进程同时在途的测试连接 / 即时查询数。这是实例的自我保护（防止慢
 	// 数据源占满出站连接与内存），不是全局配额：N 个实例就是 N 份额度。
 	maxConcurrentQueries = 8
@@ -559,6 +563,59 @@ func (uc *DatasourceUsecase) QueryRange(ctx context.Context, datasourceID, expr 
 	return uc.query(ctx, datasourceID, func(ctx context.Context, conn Connection) (*QueryResult, error) {
 		return uc.client.Range(ctx, conn, expr, start, end, step, maxQuerySeries)
 	})
+}
+
+// metadata 在启用的数据源上读取一次补全元数据（指标名 / 标签名 / 标签值）：与 query 相同的
+// 可查性检查、并发闸门与单请求超时，只是结果为字符串列表（无采样点，无需截点）。
+func (uc *DatasourceUsecase) metadata(ctx context.Context, datasourceID string, call func(ctx context.Context, conn Connection) ([]string, error)) ([]string, error) {
+	conn, err := uc.queryable(ctx, datasourceID)
+	if err != nil {
+		return nil, err
+	}
+	release, ok := uc.acquire()
+	if !ok {
+		return nil, ErrQueryBusy
+	}
+	defer release()
+	mctx, cancel := context.WithTimeout(ctx, queryTimeout(conn))
+	defer cancel()
+	return call(mctx, conn)
+}
+
+// ListMetricNames 指标名补全数据：字典序，至多 limit 条（≤0 或超上限按缺省 / 上限夹紧）。
+func (uc *DatasourceUsecase) ListMetricNames(ctx context.Context, datasourceID string, limit int) ([]string, error) {
+	limit = clampCompletionLimit(limit)
+	return uc.metadata(ctx, datasourceID, func(ctx context.Context, conn Connection) ([]string, error) {
+		return uc.client.MetricNames(ctx, conn, limit)
+	})
+}
+
+// ListLabelNames 标签名补全数据。
+func (uc *DatasourceUsecase) ListLabelNames(ctx context.Context, datasourceID string, limit int) ([]string, error) {
+	limit = clampCompletionLimit(limit)
+	return uc.metadata(ctx, datasourceID, func(ctx context.Context, conn Connection) ([]string, error) {
+		return uc.client.LabelNames(ctx, conn, limit)
+	})
+}
+
+// ListLabelValues 标签值补全数据；label 名非法由 client 返回查询领域错误。
+func (uc *DatasourceUsecase) ListLabelValues(ctx context.Context, datasourceID, label string, limit int) ([]string, error) {
+	limit = clampCompletionLimit(limit)
+	return uc.metadata(ctx, datasourceID, func(ctx context.Context, conn Connection) ([]string, error) {
+		return uc.client.LabelValues(ctx, conn, label, limit)
+	})
+}
+
+// clampCompletionLimit 补全条数夹紧：≤0 取缺省，超过上限取上限。
+func clampCompletionLimit(limit int) int {
+	switch {
+	case limit <= 0:
+		return defaultCompletionLimit
+	case limit > maxCompletionLimit:
+		return maxCompletionLimit
+	default:
+		return limit
+	}
 }
 
 // capPoints 把采样点总数压到 maxQueryPoints 以内：超出的序列整条丢弃并标记截断。

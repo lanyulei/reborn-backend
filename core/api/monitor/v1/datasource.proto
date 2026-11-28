@@ -86,6 +86,22 @@ service MonitorDatasourceService {
     };
     option (system.v1.title) = "区间查询";
   }
+  // ListMetricNames 指标名补全：返回数据源的指标名列表（字典序）。只读元数据、不执行查询，
+  // 供 PromQL 编辑器自动补全使用；补全失败静默降级，不影响输入。
+  rpc ListMetricNames(ListMetricNamesRequest) returns (ListMetricNamesResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/datasource/{datasource_id}/metric-names"};
+    option (system.v1.title) = "指标名补全";
+  }
+  // ListLabelNames 标签名补全：返回数据源的全部标签名（字典序）。
+  rpc ListLabelNames(ListLabelNamesRequest) returns (ListLabelNamesResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/datasource/{datasource_id}/label-names"};
+    option (system.v1.title) = "标签名补全";
+  }
+  // ListLabelValues 标签值补全：返回指定标签的值列表（字典序）。
+  rpc ListLabelValues(ListLabelValuesRequest) returns (ListLabelValuesResponse) {
+    option (google.api.http) = {get: "/api/v1/monitor/datasource/{datasource_id}/label-values"};
+    option (system.v1.title) = "标签值补全";
+  }
 }
 
 // DatasourceConnection 数据源的连接配置。
@@ -419,4 +435,49 @@ message QueryDatasourceRangeResponse {
   repeated string warnings = 4;
   // duration_ms 查询耗时毫秒。
   int32 duration_ms = 5;
+}
+
+// ListMetricNamesRequest 指标名补全请求。
+message ListMetricNamesRequest {
+  // datasource_id 数据源唯一标识。
+  string datasource_id = 1 [(buf.validate.field).string.uuid = true];
+  // limit 返回条数上限：不传取 200，至多 1000（超出夹紧）。
+  optional int32 limit = 2 [(buf.validate.field).int32 = {gte: 1, lte: 1000}];
+}
+
+// ListMetricNamesResponse 指标名列表（字典序）。
+message ListMetricNamesResponse {
+  repeated string names = 1;
+}
+
+// ListLabelNamesRequest 标签名补全请求。
+message ListLabelNamesRequest {
+  // datasource_id 数据源唯一标识。
+  string datasource_id = 1 [(buf.validate.field).string.uuid = true];
+  // limit 返回条数上限：不传取 200，至多 1000（超出夹紧）。
+  optional int32 limit = 2 [(buf.validate.field).int32 = {gte: 1, lte: 1000}];
+}
+
+// ListLabelNamesResponse 标签名列表（字典序）。
+message ListLabelNamesResponse {
+  repeated string names = 1;
+}
+
+// ListLabelValuesRequest 标签值补全请求。
+message ListLabelValuesRequest {
+  // datasource_id 数据源唯一标识。
+  string datasource_id = 1 [(buf.validate.field).string.uuid = true];
+  // label 标签名，Prometheus 标签名语法。
+  string label = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+    pattern: "^[a-zA-Z_][a-zA-Z0-9_]*$"
+  }];
+  // limit 返回条数上限：不传取 200，至多 1000（超出夹紧）。
+  optional int32 limit = 3 [(buf.validate.field).int32 = {gte: 1, lte: 1000}];
+}
+
+// ListLabelValuesResponse 标签值列表（字典序）。
+message ListLabelValuesResponse {
+  repeated string values = 1;
 }

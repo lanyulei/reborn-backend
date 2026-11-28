@@ -85,6 +85,13 @@ type QueryClient interface {
 	Instant(ctx context.Context, conn Connection, expr string, ts time.Time, maxSeries int) (*QueryResult, error)
 	// Range 区间查询。
 	Range(ctx context.Context, conn Connection, expr string, start, end time.Time, step time.Duration, maxSeries int) (*QueryResult, error)
+	// MetricNames 列出数据源的指标名（PromQL 编辑器补全用，只读元数据、不执行查询）。
+	// limit ≤ 0 表示不截断；失败返回与查询一致的领域错误（已去除凭据）。
+	MetricNames(ctx context.Context, conn Connection, limit int) ([]string, error)
+	// LabelNames 列出数据源的全部标签名。
+	LabelNames(ctx context.Context, conn Connection, limit int) ([]string, error)
+	// LabelValues 列出指定标签的值；label 名非法返回与查询一致的领域错误。
+	LabelValues(ctx context.Context, conn Connection, label string, limit int) ([]string, error)
 }
 
 // RuleReader 规则读仓储。

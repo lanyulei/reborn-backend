@@ -499,6 +499,36 @@ func (q *QueryClient) Range(ctx context.Context, conn biz.Connection, expr strin
 	return queryResult(res, err)
 }
 
+// MetricNames implements biz.QueryClient.
+func (q *QueryClient) MetricNames(ctx context.Context, conn biz.Connection, limit int) ([]string, error) {
+	c, err := q.newPromClient(conn, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer c.Close()
+	return c.MetricNames(ctx, limit)
+}
+
+// LabelNames implements biz.QueryClient.
+func (q *QueryClient) LabelNames(ctx context.Context, conn biz.Connection, limit int) ([]string, error) {
+	c, err := q.newPromClient(conn, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer c.Close()
+	return c.LabelNames(ctx, limit)
+}
+
+// LabelValues implements biz.QueryClient.
+func (q *QueryClient) LabelValues(ctx context.Context, conn biz.Connection, label string, limit int) ([]string, error) {
+	c, err := q.newPromClient(conn, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer c.Close()
+	return c.LabelValues(ctx, label, limit)
+}
+
 func queryResult(res *promclient.Result, err error) (*biz.QueryResult, error) {
 	if err != nil {
 		var pe *promclient.Error

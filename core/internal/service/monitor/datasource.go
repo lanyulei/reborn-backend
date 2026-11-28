@@ -191,3 +191,30 @@ func (s *DatasourceService) QueryDatasourceRange(ctx context.Context, req *v1.Qu
 		ResultType: res.Type, Series: toProtoSeries(res.Series), Truncated: res.Truncated, Warnings: res.Warnings, DurationMs: millis(res.Duration),
 	}, nil
 }
+
+// ListMetricNames implements proto MonitorDatasourceService/ListMetricNames.
+func (s *DatasourceService) ListMetricNames(ctx context.Context, req *v1.ListMetricNamesRequest) (*v1.ListMetricNamesResponse, error) {
+	names, err := s.uc.ListMetricNames(ctx, req.GetDatasourceId(), int(req.GetLimit())) // #nosec G115 -- proto 校验 ≤1000
+	if err != nil {
+		return nil, err
+	}
+	return &v1.ListMetricNamesResponse{Names: names}, nil
+}
+
+// ListLabelNames implements proto MonitorDatasourceService/ListLabelNames.
+func (s *DatasourceService) ListLabelNames(ctx context.Context, req *v1.ListLabelNamesRequest) (*v1.ListLabelNamesResponse, error) {
+	names, err := s.uc.ListLabelNames(ctx, req.GetDatasourceId(), int(req.GetLimit())) // #nosec G115 -- proto 校验 ≤1000
+	if err != nil {
+		return nil, err
+	}
+	return &v1.ListLabelNamesResponse{Names: names}, nil
+}
+
+// ListLabelValues implements proto MonitorDatasourceService/ListLabelValues.
+func (s *DatasourceService) ListLabelValues(ctx context.Context, req *v1.ListLabelValuesRequest) (*v1.ListLabelValuesResponse, error) {
+	values, err := s.uc.ListLabelValues(ctx, req.GetDatasourceId(), req.GetLabel(), int(req.GetLimit())) // #nosec G115 -- proto 校验 ≤1000
+	if err != nil {
+		return nil, err
+	}
+	return &v1.ListLabelValuesResponse{Values: values}, nil
+}

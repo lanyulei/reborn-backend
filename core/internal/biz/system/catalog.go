@@ -1087,6 +1087,9 @@ var permissionCatalog = []MenuSpec{
 					"/monitor.v1.MonitorEscalationService/ListEscalationOptions",
 					"/monitor.v1.MonitorDatasourceService/QueryDatasource",
 					"/monitor.v1.MonitorDatasourceService/QueryDatasourceRange",
+					"/monitor.v1.MonitorDatasourceService/ListMetricNames",
+					"/monitor.v1.MonitorDatasourceService/ListLabelNames",
+					"/monitor.v1.MonitorDatasourceService/ListLabelValues",
 				},
 			},
 			{
@@ -1102,6 +1105,9 @@ var permissionCatalog = []MenuSpec{
 					"/monitor.v1.MonitorEscalationService/ListEscalationOptions",
 					"/monitor.v1.MonitorDatasourceService/QueryDatasource",
 					"/monitor.v1.MonitorDatasourceService/QueryDatasourceRange",
+					"/monitor.v1.MonitorDatasourceService/ListMetricNames",
+					"/monitor.v1.MonitorDatasourceService/ListLabelNames",
+					"/monitor.v1.MonitorDatasourceService/ListLabelValues",
 				},
 			},
 			{
@@ -1320,6 +1326,9 @@ var permissionCatalog = []MenuSpec{
 					"/monitor.v1.MonitorRecordRuleService/ValidateRecordRule",
 					"/monitor.v1.MonitorDatasourceService/QueryDatasource",
 					"/monitor.v1.MonitorDatasourceService/QueryDatasourceRange",
+					"/monitor.v1.MonitorDatasourceService/ListMetricNames",
+					"/monitor.v1.MonitorDatasourceService/ListLabelNames",
+					"/monitor.v1.MonitorDatasourceService/ListLabelValues",
 				},
 			},
 			{
@@ -1331,6 +1340,9 @@ var permissionCatalog = []MenuSpec{
 					"/monitor.v1.MonitorRecordRuleService/ValidateRecordRule",
 					"/monitor.v1.MonitorDatasourceService/QueryDatasource",
 					"/monitor.v1.MonitorDatasourceService/QueryDatasourceRange",
+					"/monitor.v1.MonitorDatasourceService/ListMetricNames",
+					"/monitor.v1.MonitorDatasourceService/ListLabelNames",
+					"/monitor.v1.MonitorDatasourceService/ListLabelValues",
 				},
 			},
 			{
@@ -1389,6 +1401,9 @@ var permissionCatalog = []MenuSpec{
 			"/monitor.v1.MonitorDatasourceService/ListDatasourceOptions",
 			"/monitor.v1.MonitorDatasourceService/QueryDatasource",
 			"/monitor.v1.MonitorDatasourceService/QueryDatasourceRange",
+			"/monitor.v1.MonitorDatasourceService/ListMetricNames",
+			"/monitor.v1.MonitorDatasourceService/ListLabelNames",
+			"/monitor.v1.MonitorDatasourceService/ListLabelValues",
 		},
 	},
 	{
